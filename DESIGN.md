@@ -323,7 +323,7 @@ The design is stored as a JSON document validated against another built-in meta-
 A **form** is a user-designed data-entry screen over one tab. It is not a tab itself: it has no tree grid and holds no data of its own. It is a different view of the data in the tab it is bound to.
 
 **Form design** specifies:
-- **Bound tab**: the name of a tree sheet. The form has the same schema as that tab, so there is no separate output schema. The binding is by name and is literal, like a formula reference: renaming or removing the tab leaves the form unbound and showing an error naming the missing tab (see Renames do not rewrite formulas). Several forms may bind to the same tab.
+- **Bound tab**: the name of a tree sheet. The form has the same schema as that tab, so there is no separate output schema. The binding is by name and is literal, like a formula reference: renaming or removing the tab leaves the form unbound and showing an error naming the missing tab (see Renames do not rewrite formulas). **A tab can have at most one form.** Creating a form, or changing a form's bound tab, is refused if that tab already has one, and the message names the existing form. A file that breaks the rule still opens (as with name clashes): the first form in the manifest order keeps the binding and any other form bound to the same tab is shown as unbound with an error naming the conflict. A tab can still be edited directly while its form is open, since both are views of the same data and every edit is an ordinary tab edit.
 - **Layout**: a tree of widgets (fields, groups, repeaters, labels). Each field widget binds to a path in the bound tab's schema and takes its editor from the `TypeSpec` (toggle, dropdown, numeric, text, date). Repeaters bind to array nodes, groups to objects. A field may have a label and help text.
 - **Buttons**: zero or more. Each has a label, an optional enable condition, and a Python procedure (the name of a function in a workbook module). Different buttons can name different procedures, and several buttons may share one.
 
@@ -359,12 +359,14 @@ A **data source** is a named connection to something outside the workbook. v1 su
 
 Data sources are the only way Python code reaches outside the workbook. The sandbox still exposes no `socket`, `subprocess`, `os`, or file I/O modules; everything external goes through a named source and its explicit grant.
 
-**Definition.** A source has a name, a kind, and connection details (SQLite path; database host, port, and name; endpoint base URL; default headers). The definition is stored in the workbook, in a Data sources panel. **Secrets (passwords, tokens, API keys) are never stored in the workbook file.** They live in the operating system's credential store under the source name, and the workbook holds only a reference. Opening a workbook on another machine asks the user to supply them again.
+**Specification.** Each data source is one *specification*, and a specification is the unit that carries the **credentials**. It has a name, a kind, the connection details (SQLite path; database host, port, and name; endpoint base URL; default headers), the credentials to use (a user name and a password, or a token or API key), and optional pooling settings (see Connection pooling). The specifications are edited in a Data sources panel.
+- **Several specifications may point at the same database or endpoint**, each with its own credentials. This is how a workbook uses, for example, a read-only account for reports and a different account for writes: two specifications, two names, each separately granted.
+- **Secrets (passwords, tokens, API keys) are never stored in the workbook file.** The specification stored in the file holds the non-secret parts, including the user name. The secret itself lives in the operating system's credential store, filed under the workbook id and the specification's name, and belongs to that specification alone. Opening a workbook on another machine asks the user to supply the secrets again.
 
 **Names.** A source name is a Python identifier in the shared formula namespace, so it follows the rules in Names and reserved words and is available in formulas, button procedures, and report expressions as a global object.
 
 **Explicit grants.** Every source must be **explicitly granted by the user, one by one**. There is no blanket "allow network" setting.
-- A grant is recorded in user config, keyed by the workbook id, the source name, and a hash of the source's connection definition (kind, host, port, database or path, base URL). Changing where a source points invalidates its grant, so an edited file cannot redirect an already-granted name to a different server.
+- A grant is recorded in user config, keyed by the workbook id, the source name, and a hash of the specification's connection definition (kind, host, port, database or path, base URL, and user name). Changing where a source points, or which account it uses, invalidates its grant, so an edited file cannot redirect an already-granted name to a different server or account. Two specifications to the same server are granted separately, each with its own level.
 - A grant has a level, **read** or **read-write**, chosen by the user when granting. The grant dialog states the exact target (for example `postgres://db.example.com:5432/sales`) and the level.
 - Granting needs the workbook itself to be trusted first. In an untrusted workbook no Python runs, so no source can be reached.
 - Grants are listed and revoked in settings and in the Data sources panel.
@@ -385,6 +387,16 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - Reads in formulas are slow and not deterministic, so they are treated as **volatile**: their results are cached for a recalculation pass keyed by (source, call, parameters) and refresh only on a recalculation pass or explicit "Recalculate" (see Evaluation and scheduling). Editing a source node does not by itself re-run a query, unless the query's parameters depend on it.
 
 **Limits.** Waiting for I/O does not count against the per-formula CPU budget, but every call has its own timeout (default 30 seconds) and a maximum response size (default 16 MB), both workbook settings (see Settings and limits). A source failure (connection, authentication, SQL error, HTTP error status, timeout, oversize response) produces a new error kind, `#SOURCE!`, with the details in the message.
+
+**Connection pooling.** Pooling is a property of a specification, off unless the specification allows it.
+- **Off (the default):** each call opens a connection, uses it, and closes it.
+- **On:** the specification states a **maximum connection count** (a whole number of at least 1; it is required when pooling is on). Connections are kept after use and reused, up to that many at once.
+- Calls that need a connection when all are in use wait for one to be returned, and fail with `#SOURCE!` if none is returned within the call timeout.
+- A pool belongs to one specification only. Two specifications to the same server never share connections, because their credentials differ.
+- A connection is reset when it goes back into the pool (open transactions rolled back, session state discarded), and the read-only enforcement is applied again each time it is handed out.
+- Pools are closed when the workbook is closed, when the specification is edited or its grant revoked, and when the application exits.
+- **SQLite specifications cannot enable pooling**, as the database is a local file. For HTTP, pooling means keeping connections alive for reuse, up to the maximum.
+- Evaluation is sequential in v1 (see Evaluation and scheduling), so a pool in practice holds about one connection in use. Its value is avoiding the cost of reconnecting. The maximum still limits the total number of connections to the server, including any held by abandoned evaluations (see Settings and limits): such a connection counts against the maximum until the abandoned call returns, and is then closed instead of being reused.
 
 **Web port** *(later version)*. Browsers cannot open raw database connections, so SQLite, PostgreSQL, and MariaDB sources will be unavailable on the web. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
 
