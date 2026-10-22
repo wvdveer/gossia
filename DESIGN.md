@@ -95,6 +95,23 @@ Unions (`xs:choice`, `oneOf` / `anyOf`) are the most probable first widening. Th
 
 A formula is a Python expression string attached to a node **location** (its path), with a cached result. Formulas are stored beside the data (a parallel `formulas` map keyed by path), not inside it, so the data stays valid JSON / XML.
 
+**Entering formulas.** Formulas are entered as in Excel.
+- A **formula bar** sits above the tree grid. For the selected node it shows the node's path (for example `Orders.items[2].price`) and its content: the formula text if it has one, otherwise the literal value. Cells can also be edited in place (F2 or double-click), and the bar and the cell edit the same text.
+- Text that **starts with `=`** is a formula, and what follows is a single Python expression: `=SUM(Orders.items.price)`. Anything else is a literal, parsed to the node's type.
+- To enter a literal string that begins with `=`, start it with an apostrophe: `'=total` is stored as `=total`. A single leading apostrophe on entry is removed, so a literal that really starts with an apostrophe is typed with two. The apostrophe rule applies only to text-typed nodes.
+- The expression is a Python *expression*, not statements. It may span lines (Shift+Enter in the bar) when the line breaks fall inside brackets, and may use lambdas and comprehensions. Surrounding whitespace is ignored.
+- Enter commits and Esc cancels. A commit is one undoable entry. Replacing a formula with a literal removes the formula. Clearing the text removes both, leaving an absent optional node or an empty flagged required one.
+- Committing queues a recalculation. The cell shows its last value (or empty) with the pending marker until the result arrives (see Evaluation and scheduling).
+- Pasting a formula pastes its text verbatim, with no reference adjustment, as references are literal.
+- On a node inside a computed subtree the bar is read-only and shows which formula and location computes it.
+- Report expressions, form button conditions, and similar designer fields take a bare Python expression and do not use the `=` prefix.
+
+**Syntax errors.** A formula whose text does not parse is **not rejected**. It is kept, and the node holds the error value `#SYNTAX!`, whose message gives Python's description and the line and column. The text stays in the overlay so the author can correct it. As for other errors, dependents see the error (see Error values), and the `ErrorValue`'s `.exception` is the `SyntaxError`.
+- Parsing only reads the text and never runs it, so the syntax check also happens in an untrusted workbook.
+- A formula rejected by the double-underscore attribute check (see Python engine) is reported the same way, as `#SYNTAX!` with a message saying that double-underscore access is not allowed.
+- While the author types, the bar shows a non-blocking syntax hint. It never prevents committing.
+- There is no autocomplete in v1.
+
 **Stored values.** A formula's result is written into the data tree at its node and saved with the sheet, so the data file is complete and valid JSON / XML on its own. Other tools can read it without running any Python. The formula text and its status live only in the overlay.
 - On save, the tree holds the latest computed values and the overlay holds the formulas. Readers that ignore the overlay see plain data.
 - On open, a **trusted** workbook is fully recalculated, so volatile functions (`NOW`, `RAND`) take fresh values. An **untrusted** workbook shows the stored values and runs nothing (see Trust model).
@@ -157,7 +174,7 @@ An index that falls outside the array after an edit yields `#REF!` like any othe
   - **XML nodes** typed `date` / `dateTime` hold dates as `Value::Date` / `Value::DateTime`. They read in Python as `datetime.date` / `datetime.datetime` and accept those directly. A timezone-aware `datetime` keeps its offset and a naive one stays naive.
   - **JSON nodes** are always plain strings, even with `format: date` or `date-time`. They read as `str` and accept only `str`, so the author converts, e.g. `my_datetime.isoformat()`. The `format` keyword is still checked as a constraint (the string must be valid ISO 8601), but never changes the node's kind.
 
-**Error values** are first-class: `#TYPE!` (path plus "expected X, got Y"), `#REF!`, `#NAME!`, `#VALUE!`, `#DIV/0!`, `#CIRCULAR!`, `#PYERR!` (with traceback), `#TIMEOUT!`, `#SOURCE!` (a data source failed), `#UNTRUSTED!`. Errors propagate to dependents unless handled by `IFERROR`. Each carries a message shown in a tooltip.
+**Error values** are first-class: `#TYPE!` (path plus "expected X, got Y"), `#REF!`, `#NAME!`, `#VALUE!`, `#DIV/0!`, `#CIRCULAR!`, `#SYNTAX!` (the formula does not parse), `#PYERR!` (with traceback), `#TIMEOUT!`, `#SOURCE!` (a data source failed), `#UNTRUSTED!`. Errors propagate to dependents unless handled by `IFERROR`. Each carries a message shown in a tooltip.
 
 **Errors inside Python.** A node holding an error value is read from Python as an `ErrorValue` object, not as an exception. Python's own exceptions stay the mechanism for failure, and the `ErrorValue` carries the one that caused it.
 - `ErrorValue` has `.exception` (the original exception instance, with its traceback), `.kind` (e.g. `"#DIV/0!"`), `.message`, and `.path` (the node where the error originated). It is the same object whether the node errored directly or by propagation.
@@ -209,7 +226,7 @@ A formula is a Python expression and the library behaves as Python programmers e
 | Strings | Python `str` with f-strings, `.format`, `%`. `TEXT` uses Python format specs, not Excel format codes. |
 | Dates | Python `date` / `datetime` objects, not serial numbers. XML `date` / `dateTime` nodes read and accept them directly; JSON nodes are strings, so the author converts explicitly (e.g. `.isoformat()`). See Scalar types. |
 | Lookups | `VLOOKUP`-style functions take lists of objects and field names. Missing keys raise. `#N/A` only from explicit `NA()`. |
-| Errors | `ZeroDivisionError` -> `#DIV/0!`; `KeyError` / `IndexError` / `AttributeError` on a reference -> `#REF!`; `TypeError` -> `#TYPE!`; `ValueError` -> `#VALUE!`; `NameError` -> `#NAME!`; anything else -> `#PYERR!`. Traceback goes in the tooltip. |
+| Errors | `ZeroDivisionError` -> `#DIV/0!`; `KeyError` / `IndexError` / `AttributeError` on a reference -> `#REF!`; `TypeError` -> `#TYPE!`; `ValueError` -> `#VALUE!`; `NameError` -> `#NAME!`; `SyntaxError` -> `#SYNTAX!`; anything else -> `#PYERR!`. Traceback goes in the tooltip. |
 | Function list | Not a parity target. v1 ships a small Excel-named set that is useful over trees: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `IFERROR`, `VLOOKUP`, `FILTER`, `SORT`, `UNIQUE`, `CONCAT`, `ISERROR`, `VALID`, `TEXTJOIN`, `JSONPATH`, `XMLPATH`. Everything else comes from a Python stdlib subset (`math`, `statistics`, `datetime`, `re`, `json`, `itertools`). |
 
 **Array concatenation**: `CONCAT(*arrays)` returns one list holding the items of each argument in order, e.g. `CONCAT(Orders.items, Archive.items)`. Arguments may be lists or array proxies; a non-array argument is a `#TYPE!` error. In the Python-first spirit, `CONCAT` means list concatenation, not text joining (use `TEXTJOIN` or `str.join` for text). Plain Python also works: array proxies support `+` and unpacking (`[*a, *b]`). On an array node, the result must still match the node's item type, so a mix of incompatible item types fails result checking.
