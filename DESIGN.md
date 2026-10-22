@@ -384,7 +384,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - **Writes** (`execute`, `post`, `put`, `patch`, `delete`) are allowed **only in button procedures**, because formulas and reports re-run automatically and must not have side effects. Writes happen immediately during the call; they are not part of the atomic tab-write rule for procedures (see Forms), so a procedure that fails after a write does not undo it.
 - Reads in formulas are slow and not deterministic, so they are treated as **volatile**: their results are cached for a recalculation pass keyed by (source, call, parameters) and refresh only on a recalculation pass or explicit "Recalculate" (see Evaluation and scheduling). Editing a source node does not by itself re-run a query, unless the query's parameters depend on it.
 
-**Limits.** Waiting for I/O does not count against the per-formula CPU budget, but every call has its own timeout (proposed default 30 seconds, configurable) and a maximum response size (proposed default 16 MB). A source failure (connection, authentication, SQL error, HTTP error status, timeout, oversize response) produces a new error kind, `#SOURCE!`, with the details in the message.
+**Limits.** Waiting for I/O does not count against the per-formula CPU budget, but every call has its own timeout (default 30 seconds) and a maximum response size (default 16 MB), both workbook settings (see Settings and limits). A source failure (connection, authentication, SQL error, HTTP error status, timeout, oversize response) produces a new error kind, `#SOURCE!`, with the details in the message.
 
 **Web port** *(later version)*. Browsers cannot open raw database connections, so SQLite, PostgreSQL, and MariaDB sources will be unavailable on the web. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
 
@@ -409,7 +409,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - The Python engine is built without any operating-system access: no `os`, `subprocess`, `socket`, or file I/O modules exist in it (see Python engine for what this rests on). External access is only through named data sources, each separately granted by the user (see Data sources). Trusting a workbook does not by itself grant any source.
 - `open`, `exec`, `eval`, `compile`, and `__import__` are removed from the builtins formulas see, and double-underscore attribute access is rejected when a formula is entered. These catch mistakes; they are not a boundary (see Python engine).
 
-**Resource limits.** Evaluation takes a **budget**: a deadline and optionally a step count. Exceeding it aborts the evaluation with a new error kind, `#TIMEOUT!`, distinct from other Python errors. Proposed defaults, configurable: 1 second per formula and 10 seconds per recalculation. A memory limit is not promised in v1. How the budget is enforced is described under Python engine.
+**Resource limits.** Evaluation takes a **budget**: a deadline and optionally a step count. Exceeding it aborts the evaluation with a new error kind, `#TIMEOUT!`, distinct from other Python errors. The limits are user settings (defaults: 1 second per formula and 10 seconds per recalculation; see Settings and limits). A memory limit is not promised in v1. How the budget is enforced is described under Python engine.
 
 ## Python engine
 
@@ -428,7 +428,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 **Cancelling a running formula (the budget)**
 - The mechanism works: a watchdog thread sends a closure through `user_signal_channel`, and the VM raises it inside the running code. A `while True: pass` loop and a loop of builtin calls were both stopped about 300 ms after a 300 ms deadline, with the exception surfacing as an ordinary Python error. The interpreter was **reusable afterwards**.
 - **A single long builtin call cannot be interrupted.** `sum(range(10**10))` ignored the signal for as long as the test ran (it was killed externally after 20 seconds), because the signal is only checked between bytecode instructions. So the budget cannot catch everything.
-- Mitigation: when a cancellation does not take effect within a grace period, abandon the evaluation thread and start a fresh interpreter, accepting that the old thread runs until the call finishes. Also guard the obvious cases (for example reject `range` and repeat sizes above a limit). The abandon path is the real backstop on desktop.
+- Mitigation: when a cancellation does not take effect within a grace period, abandon the evaluation thread and start a fresh interpreter, accepting that the old thread runs until the call finishes. Also guard the obvious cases (for example `range` above a size limit). The abandon path is the real backstop on desktop, and the number of abandoned threads is limited by a setting (default 20); see Settings and limits.
 - On **wasm32** there is no second thread, so the Web Worker termination described earlier remains the only mechanism.
 
 **What the sandbox really is**
@@ -485,6 +485,39 @@ All Python evaluation (formulas, form button procedures, report expressions) run
 
 **Forms.** Button procedures run on the same thread, one at a time (as already specified). While one runs, the form's buttons are disabled and the status bar shows it.
 
+## Settings and limits
+
+Limits are not hard-coded. The user sets them, with defaults, in two places.
+
+- **Workbook settings** are stored in the workbook (`settings.json`) and edited in a *Workbook settings* panel. They govern how that workbook's Python and data sources run.
+- **Application preferences** belong to the user, not to any file. They hold the limits that apply *before* a workbook is open or trusted (reading a file, importing), and a **ceiling** for each workbook setting.
+
+**A workbook cannot raise its own limits past the user's ceilings.** A file is untrusted input, so a hostile workbook that asks for a one-hour time limit gets the ceiling instead. The panel shows each value with its default and ceiling, rejects out-of-range input, and shows the effective value when a ceiling applies. Workbook settings are part of the executable content covered by trust, since they govern execution (see Trust model); editing them inside the application keeps trust, and a change made outside it drops trust. Changes are undoable edits.
+
+**Workbook settings**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Formula time limit | 1 s | Longest a single formula, button procedure, or module load step may run (CPU time, not I/O waits) before `#TIMEOUT!`. |
+| Recalculation time limit | 10 s | Longest one recalculation pass may run. |
+| Cancel grace period | 500 ms | After a cancel signal, how long to wait for the evaluation to stop before abandoning it. |
+| **Maximum abandoned threads** | **20** | How many abandoned evaluations (see below) may still be running at once. |
+| Maximum range length | 10,000,000 | Largest sequence `range` may produce. |
+| Data source call timeout | 30 s | Longest a data source call may take, including waiting for I/O. |
+| Maximum response size | 16 MB | Largest data source response accepted. |
+
+More settings can be added in the same way, with a default and a ceiling each.
+
+**Application preferences** (not stored in workbooks): the ceiling for each workbook setting; and limits that apply while a file is being read or imported, namely the maximum number of zip entries, maximum total uncompressed size, maximum import file size, and maximum nesting depth; plus the undo history bounds (entry count and memory budget).
+
+**Abandoned threads.** A formula that does not stop after a cancel signal and the grace period (for example one long builtin call, which cannot be interrupted; see Python engine) is **abandoned**: its result is discarded, its node gets `#TIMEOUT!`, and a fresh interpreter takes over so evaluation continues. The abandoned thread keeps running until its call returns, and then it is released. The number of such threads still running is limited by *Maximum abandoned threads*.
+- The count appears in the status bar when it is above zero (for example `2 abandoned`).
+- **At the limit, evaluation is suspended.** No new evaluation starts, pending cells keep their pending marker, and the status bar shows `Evaluation suspended: 20 abandoned threads still running`. It resumes by itself when the count drops below the limit.
+- The panel offers **Save and restart**, which saves the workbook (without waiting for evaluation, flagging pending cells as for any save) and restarts the application, since a thread that never returns can only be cleared that way.
+- Raising the limit takes effect immediately, up to the user's ceiling.
+
+**Guards on builtins.** The `range` builtin is replaced by a version that refuses a length above *Maximum range length*, raising `ValueError` (shown as `#VALUE!`) with a message naming the setting. This catches the accidental case such as `sum(range(10**10))` before it starts. Guards are **best effort**, not a security boundary: they cover the wrapped builtins and obvious literals, not every way to build a huge value. The abandoned-thread limit is the real backstop, and a memory limit is not promised in v1.
+
 ## Undo and redo
 
 The workbook keeps one **edit log** so that user edits can be undone and redone. The history is a single linear sequence for the whole workbook, like Excel's, not one per tab.
@@ -516,7 +549,7 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 - Undoing or redoing a change to executable content (a formula, module, button, or report expression) counts as an edit made in the app, so it keeps the workbook's trust (see Trust model).
 - Undo and redo are disabled while a button procedure is running.
 - The log tracks the saved state, so undoing back to the saved point clears the "modified" mark.
-- The history lives in memory only. It is not saved in the `.clio` file and is cleared when the workbook is closed. It is bounded by an entry count and a memory budget, and the oldest entries are dropped first.
+- The history lives in memory only. It is not saved in the `.clio` file and is cleared when the workbook is closed. It is bounded by an entry count and a memory budget (application preferences), and the oldest entries are dropped first.
 - Keys: Ctrl+Z to undo, Ctrl+Y or Ctrl+Shift+Z to redo.
 
 **Structure.** `cliotree-core` defines the primitive edit operations on the data tree and how to apply and invert them. The workbook-level log, which also covers the other kinds of edit above, lives in the layer above (`cliotree-calc`), and the UI only issues edits and requests undo and redo.
@@ -558,7 +591,7 @@ An array whose items are objects can be shown as a table instead of as indented 
 - **Alternative to inference.** The import dialog also offers "bind to an existing schema sheet". The data is then loaded against that schema, and anything that doesn't match follows the normal invalid-data rules (kept, flagged, unrecognised content preserved).
 - **Names.** The tabs are named from the file name, sanitised to a valid identifier (invalid characters become `_`; a leading digit, a leading underscore, a reserved word, or a clash with an existing name gets a prefix or numeric suffix). The schema sheet is `<Name>Schema`. The dialog lets the user change both before importing.
 - **Import report.** A dialog shows the inferred schema and every warning (dropped nulls, type conflicts, oversized integers, a dropped DOCTYPE) before the user confirms. Nothing is added to the workbook until then.
-- Parsing is bounded: limits on file size and nesting depth guard against hostile input. Importing never runs Python.
+- Parsing is bounded: limits on file size and nesting depth guard against hostile input (application preferences; see Settings and limits). Importing never runs Python.
 
 **Schema inference** always produces a schema inside the v1 subset (closed objects, arrays, simple types, no unions or nulls). It is a starting point; the user can edit the schema sheet afterwards.
 
@@ -600,6 +633,7 @@ reports/<Report>.json                    report design (later version; reserved)
 forms/<Form>.json                        form design
 modules/<name>.py                        Python modules
 datasources.json                         data source definitions, no secrets
+settings.json                            workbook settings (see Settings and limits)
 ```
 
 - **Tabs** are one directory each. Tab names are valid identifiers and unique ignoring case (see Names and reserved words), so they are safe as file names on every platform. A schema sheet is stored the same way as any tree sheet (JSON or XML data, according to its meta-schema).
@@ -623,7 +657,7 @@ datasources.json                         data source definitions, no secrets
 - Saving waits for outstanding evaluation (see Evaluation and scheduling).
 
 **Reading**
-- The zip is treated as untrusted input. Entry paths that are absolute or contain `..` are rejected, and limits apply to the number of entries and to total uncompressed size (to guard against zip bombs). Opening a file never runs anything; Python only runs after the trust check.
+- The zip is treated as untrusted input. Entry paths that are absolute or contain `..` are rejected, and limits apply to the number of entries and to total uncompressed size (to guard against zip bombs; these are application preferences, see Settings and limits). Opening a file never runs anything; Python only runs after the trust check.
 - **Versioning.** The same major version opens. A newer minor version opens with a warning, and unknown entries are kept and written back unchanged on save. A newer major version is refused with a message saying which version is needed. Older formats are upgraded in memory on open, and the user is warned before the upgraded file overwrites the original.
 - The trust hash is computed from the parsed executable content (see Trust model), not from the bytes of the archive. Reordering entries or changing whitespace does not change it.
 
@@ -700,7 +734,7 @@ The project has automated tests at several levels, and **all of them run in a CI
 0. **CI skeleton**: workspace, pinned toolchain, lint and test jobs running on Linux (see Testing and CI). Every later step adds its tests together with its code.
 1. **core**: `Value`, `TypeSpec`, JSON Schema lowering, validation, tests.
 2. **calc**: graph, evaluator, error values, with a trivial fake engine first.
-3. **RustPython** integration, proxies, `JSONPATH`.
+3. **RustPython** integration, proxies, `JSONPATH`, and measuring the proxy layer's overhead against the spike's plain-dict figures.
 4. **app**: tree grid, formula bar, tabs, the edit log with undo and redo, then the tabular view of arrays.
 5. **std** functions, workbook modules, trust.
 6. **XSD** subset and XML adapter.
