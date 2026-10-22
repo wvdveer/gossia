@@ -227,17 +227,17 @@ A formula is a Python expression and the library behaves as Python programmers e
 | Dates | Python `date` / `datetime` objects, not serial numbers. XML `date` / `dateTime` nodes read and accept them directly; JSON nodes are strings, so the author converts explicitly (e.g. `.isoformat()`). See Scalar types. |
 | Lookups | `VLOOKUP`-style functions take lists of objects and field names. Missing keys raise. `#N/A` only from explicit `NA()`. |
 | Errors | `ZeroDivisionError` -> `#DIV/0!`; `KeyError` / `IndexError` / `AttributeError` on a reference -> `#REF!`; `TypeError` -> `#TYPE!`; `ValueError` -> `#VALUE!`; `NameError` -> `#NAME!`; `SyntaxError` -> `#SYNTAX!`; anything else -> `#PYERR!`. Traceback goes in the tooltip. |
-| Function list | Not a parity target. v1 ships a small Excel-named set that is useful over trees: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `IFERROR`, `VLOOKUP`, `FILTER`, `SORT`, `UNIQUE`, `CONCAT`, `ISERROR`, `VALID`, `TEXTJOIN`, `JSONPATH`, `XMLPATH`. Everything else comes from a Python stdlib subset (`math`, `statistics`, `datetime`, `re`, `json`, `itertools`). |
+| Function list | Not a parity target. v1 ships a small Excel-named set that is useful over trees: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `IFERROR`, `VLOOKUP`, `FILTER`, `SORT`, `UNIQUE`, `CONCAT`, `ISERROR`, `VALID`, `TEXTJOIN`, `JSONPATH`, `XMLPATH`. Everything else comes from the Python standard library modules that work in the engine (`math`, `datetime`, `re`, `json`, `itertools`, ...; see Python engine). |
 
 **Array concatenation**: `CONCAT(*arrays)` returns one list holding the items of each argument in order, e.g. `CONCAT(Orders.items, Archive.items)`. Arguments may be lists or array proxies; a non-array argument is a `#TYPE!` error. In the Python-first spirit, `CONCAT` means list concatenation, not text joining (use `TEXTJOIN` or `str.join` for text). Plain Python also works: array proxies support `+` and unpacking (`[*a, *b]`). On an array node, the result must still match the node's item type, so a mix of incompatible item types fails result checking.
 
 Most built-ins are one-line Python over the stdlib. Only the tree-aware pieces (`JSONPATH`, `XMLPATH`, proxies) need real Rust.
 
-**Extensibility**: custom functions live in Python modules stored in the workbook. Every public callable in them is imported into the formula globals.
+**Extensibility**: custom functions live in Python modules stored in the workbook (see Python modules). Every module is available to formulas without an `import`, and its public functions can be called by bare name.
 
 ## Names and reserved words
 
-Formulas, form button procedures, and report expressions share one flat namespace per workbook. It holds tab names (tree sheets and reports), data source names, module-level functions, built-in functions, Python builtins, the special names `this`, `parent`, `root`, `ErrorValue`, and `PropagatedError`, and the exposed stdlib modules (`math`, `statistics`, ...). Every name in it must be unique and mean the same thing everywhere. **Shadowing is not permitted**, with one exception (below).
+Formulas, form button procedures, and report expressions share one flat namespace per workbook. It holds tab names (tree sheets and reports), data source names, module-level functions, built-in functions, Python builtins, the special names `this`, `parent`, `root`, `ErrorValue`, and `PropagatedError`, workbook module names, and the exposed stdlib modules (`math`, `datetime`, ...). Every name in it must be unique and mean the same thing everywhere. **Shadowing is not permitted**, with one exception (below).
 
 **Reserved names.** These cannot be used as tab names, report names, data source names, or module-level function names:
 - Python keywords (`keyword.iskeyword`). `class` passes `isidentifier()` but is not usable.
@@ -257,6 +257,40 @@ Formulas, form button procedures, and report expressions share one flat namespac
 
 **Future built-ins.** The file records the reserved-names version it was created against. If a later release adds a built-in whose name an existing tab already uses, the tab keeps its name and **shadows** the newer built-in in that workbook, and a warning tells the author. This is the only permitted shadowing; it stops an upgrade from breaking old workbooks. New workbooks use the current list, with no exception.
 
+## Python modules
+
+Custom Python lives in **modules** stored in the workbook. The design follows Excel and its Visual Basic modules: a separate code editor with a project tree, one module per code window, and public functions that cells can call by name.
+
+**The code editor** (opened from the menu or with Alt+F11, as in Excel) is the code area that also holds form designs.
+- **Project explorer** on the left: a tree with a *Modules* branch listing the workbook's modules, and a *Forms* branch listing form designs (see Forms). Double-click opens an item in the editor.
+- **Editor panes** on the right, one tab per open module: a monospace editor with line numbers, syntax highlighting, and automatic indentation.
+- **Procedure box** above the editor, like the VBE's: a drop-down listing the module's top-level functions, which jumps to the one chosen.
+- **Insert > Module** creates a module, and rename and delete are in the explorer's context menu. **Export** and **Import** write and read a module as a plain `.py` file, the way Excel exports a `.bas`.
+- **Compile** checks the open module and lists problems (syntax errors, import cycles) with line and column, each clickable.
+- **Immediate window** at the bottom, like the VBE's: type a Python expression, press Enter, and see its result or error. It runs against the live workbook on the evaluation thread, under the same budgets, and needs the workbook to be trusted.
+- There is no debugger (breakpoints, stepping) in v1.
+
+**Modules are loaded for every formula.** The formula context behaves as though it had imported all of the workbook's modules.
+- A module is available **by name**, like an imported module: `Tax.vat(Orders.total)`.
+- Its **public functions** (names not starting with an underscore) are also callable by **bare name**, like Excel's public functions: `vat(Orders.total)`. This is the same flat namespace described in Names and reserved words, so a clash is an error, not a silent override.
+- The same applies in form button procedures, report expressions, and the Immediate window.
+
+**Modules importing each other.** A module may `import` other workbook modules (and the allowed standard library modules). **Circular imports are not allowed.**
+- Import statements are read from the module source when it is saved or loaded. If the modules form a cycle, the whole cycle fails with an error that names the cycle (`A -> B -> A`). None of the modules in it are loaded, and calling their functions gives `#NAME!`.
+- Modules are loaded in dependency order.
+- An import of something that exists neither as a workbook module nor as an available standard library module is a load error for that module.
+
+**Loading and errors**
+- Top-level statements in a module run once, when the module is loaded, under a load budget. Modules are for definitions (functions, constants), not for effects.
+- A module with a syntax error, an import error, or an exception at load is marked failed (red in the explorer) and is listed in the error panel. Its functions are unavailable, and formulas that use them show `#NAME!` (with a message pointing at the failed module). Other modules are unaffected.
+- A module's functions see the workbook the same way formulas do: they can read sheets such as `Orders.items` by name, and the reads are recorded as dependencies of whichever formula is running. This is looked up when the function is called, not when the module is loaded.
+
+**Dependencies and recalculation.** When a formula uses a name that a module provides, it records a dependency on that module. Editing a module reloads it and recalculates exactly the formulas that depend on it, which show the pending marker until the results arrive.
+
+**Names and storage.** A module name is a valid identifier, unique ignoring case, not a reserved word, and distinct from every tab and data source name. Modules are stored as `modules/<name>.py` in the `.clio` file. Their order in the explorer is recorded in the manifest.
+
+**Editing, undo, and trust.** Module edits are logged for undo and redo (rapid typing is merged), and the double-underscore check applies to module source. Module sources are executable content, so in an untrusted workbook they are shown and can be edited but are not loaded, and the Immediate window is disabled.
+
 ## Reports
 
 A **report** is a tab that takes data from other tabs and presents it visually: tables, text, and charts such as bar, line, pie, and scatter. A report holds no data of its own and is never the target of a formula or form.
@@ -268,7 +302,7 @@ A **report** is a tab that takes data from other tabs and presents it visually: 
   - `table`: rows from an array (or any list) with chosen columns, each column an expression over the row.
   - `chart`: a chart type, plus series. Each series gives expressions for its x and y values (or label and value for pie). Titles, axis labels, and colours are settable.
   - `group`: a titled container, optionally repeated once per item of a list (e.g. one section per customer).
-- **Expressions** are Python, evaluated like formulas. Block data comes from expressions such as `[o.total for o in Orders.items]` or `statistics.mean(...)`.
+- **Expressions** are Python, evaluated like formulas. Block data comes from expressions such as `[o.total for o in Orders.items]` or `AVERAGE(...)`.
 
 The design is stored as a JSON document validated against another built-in meta-schema (`builtin:report`), like forms. A report tab's content is that design document, and a report designer is a visual editor over it.
 
@@ -403,7 +437,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 
 **Modules that work**
 - Import fine without `host_env`: `math`, `datetime`, `re`, `json`, `itertools`, `decimal`, `fractions`, `collections`, `functools`, `string`, `textwrap`, `time`, `io`, `sys`.
-- **`statistics` and `random` fail** (`no os specific module found`), because they import `os`. Options: ship a small replacement `statistics` written for the workbook environment, or provide a minimal stub `os` module. A replacement `statistics` (`mean`, `median`, `stdev`, ...) is the cleaner choice and is part of v1. `random` is omitted, and `RAND` is a Rust-backed built-in instead.
+- **`statistics` and `random` fail** (`no os specific module found`), because they import `os`. They are therefore **not available in v1**, and no replacement is planned. The built-in aggregates (`SUM`, `AVERAGE`, ...) cover the common cases, and a workbook module can supply anything else.
 - Registering only an allowlist of native modules was not tested, because nothing dangerous is compiled in. It remains an option for trimming size.
 
 **Speed (release build, Windows)**
