@@ -423,7 +423,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - RustPython 0.6.0 from crates.io **did not build** from a fresh dependency resolution: its `ruff` parser crates resolve to 0.16.10, which breaks the code generator, and pinning them to 0.16.5 breaks the parser. RustPython 0.5.0 fails on a `malachite-bigint` version clash. On Windows, `rustpython-host_env` also needed its `ctypes` feature.
 - It built only from the repository's own `Cargo.lock`, which uses a git dependency on RustPython's `ruff` fork. On Windows that checkout failed with "path too long" and needed a clone with `core.longpaths` and a `[patch]` to a local copy.
 - It needs **rustc 1.97 or newer** (the stable toolchain on the test machine had to be updated from 1.94).
-- Consequence: depend on RustPython by pinned git revision, together with its lock file, and vendor or mirror the `ruff` fork. Do not rely on a plain `rustpython = "0.6"` dependency. Expect to re-check this on every upgrade, and keep the `PythonEngine` trait.
+- Consequence: depend on RustPython by pinned git revision, together with its lock file, and vendor or mirror the `ruff` fork. Do not rely on a plain `rustpython = "0.6"` dependency (see Build and dependencies for how it is vendored). Expect to re-check this on every upgrade, and keep the `PythonEngine` trait.
 
 **Cancelling a running formula (the budget)**
 - The mechanism works: a watchdog thread sends a closure through `user_signal_channel`, and the VM raises it inside the running code. A `while True: pass` loop and a loop of builtin calls were both stopped about 300 ms after a 300 ms deadline, with the exception surfacing as an ordinary Python error. The interpreter was **reusable afterwards**.
@@ -723,15 +723,47 @@ The project has automated tests at several levels, and **all of them run in a CI
 | Snapshots | level 7 with software rendering | advisory at first |
 | Nightly | fuzzing, performance, `cargo audit` | no |
 
-- The Rust toolchain is pinned in `rust-toolchain.toml` (1.97 or newer, as RustPython requires) and the dependency set is locked, including the RustPython git revision and the `ruff` fork (see Python engine).
+- The Rust toolchain is pinned in `rust-toolchain.toml` (1.97 or newer is required, as RustPython requires) and the dependency set is locked, including the RustPython git revision and the `ruff` fork (see Build and dependencies).
 - Build caching (for example `Swatinem/rust-cache`) keeps runs short, because RustPython takes several minutes to build from scratch.
 - On failure the job uploads logs, snapshot diffs, and screenshots as artifacts.
 - Coverage is reported with `cargo llvm-cov` for information, not as a gate.
 - Because development happens on Windows, a Windows job running levels 1 to 3 is added once the basic pipeline is stable. It exists to catch path, case-sensitivity, and line-ending differences, which this design has several rules about (tab names unique ignoring case, per-tab files).
 
+## Build and dependencies
+
+**Required Rust version.** The project requires **Rust 1.97 or newer**. This is a project requirement for every developer and for CI, not just a CI detail. It comes from RustPython and its `ruff` fork (see Python engine), and it is re-checked whenever they are upgraded.
+- The workspace `Cargo.toml` declares `rust-version = "1.97"`, so Cargo itself refuses to build with an older compiler and says why.
+- `rust-toolchain.toml` pins the exact toolchain used by developers and CI. It starts at 1.99.1, the version the spike was run with, and is raised deliberately, not automatically.
+- The README states the requirement, and a developer on an older toolchain is told to update with `rustup update stable`.
+
+**The vendor folder.** Dependencies that cannot come from crates.io as published (RustPython, and the `ruff` fork it needs) live in a `vendor/` folder at the root of the repository.
+- **Not committed.** `vendor/` is in `.gitignore`. Its contents are downloaded, never stored in the repository.
+- **Not cleared between builds.** An ordinary build, rebuild, or `cargo clean` leaves it alone, so a build does not download anything again.
+- **Cleared by the project's `clean`.** The project's own clean command (`cargo xtask clean`) removes `vendor/` as well as the build output. After it, the next build fetches everything again.
+- **Fetched on demand.** The build script checks that every required vendor item exists under `vendor/`. If one is missing, it calls a separate **fetch script**, which downloads the item and does any build steps it needs, and then the build carries on.
+
+**What is pinned.** A committed file, `vendor.lock`, lists each vendor item with its source URL and **exact commit hash**. The content is not committed, but its identity is, so every developer and CI build gets the same code.
+- Items at first: RustPython at the revision chosen after the spike, and the `ruff` fork at the revision that RustPython's own lock file names.
+- The fetch script checks out that exact commit and verifies it against `vendor.lock`. A mismatch is an error.
+- Each item gets a stamp file (`.complete`) holding the pinned hash. It is written only after the download and any build steps succeed, so an interrupted fetch is detected and redone. If `vendor.lock` changes, the stamp no longer matches and the item is fetched again.
+- To upgrade, a developer runs `cargo xtask vendor update <item> <commit>`, which edits `vendor.lock` for review in the usual way.
+- The URL in `vendor.lock` can point at a mirror if an upstream repository disappears.
+
+**The fetch script is cross-platform.** It is a small Rust program in its own package (`tools/fetch-vendor`), so it runs the same on Windows, Linux, and in CI, with no shell scripting. The build script runs it with a separate target directory, to avoid deadlocking on Cargo's lock on the main one.
+
+**Windows long paths.** The spike found that checking out the whole `ruff` repository fails on Windows because of very long test file names. The fetch script avoids the problem by **sparse checkout**: it fetches only the crates RustPython needs and none of the rest, and it sets git's `core.longpaths` as well. Nothing else about the layout depends on the platform.
+
+**How Cargo uses it.** The workspace refers to the vendored sources by path (`vendor/rustpython/...`), and patches the `ruff` crates to `vendor/ruff/...`. All other dependencies come from crates.io in the usual way, locked by `Cargo.lock`.
+
+**Offline and failure.** If a fetch fails, for example without network access, the build stops with a message that names the item, the URL, and the directory. The environment variable `CLIOTREE_VENDOR_DIR` can point at a copy of the vendor folder prepared elsewhere.
+
+**CI.** The pipeline uses the same build script, so there is no separate CI procedure. The `vendor/` folder is cached, keyed by the hash of `vendor.lock`, and a cache miss simply fetches again (see Testing and CI).
+
+**Security.** Fetching does not run anything from the downloaded repositories. Cargo does run the build scripts of dependencies when it builds them, as it does for any crate, which is why the pins are exact commits and changes to `vendor.lock` are reviewed.
+
 ## Build order
 
-0. **CI skeleton**: workspace, pinned toolchain, lint and test jobs running on Linux (see Testing and CI). Every later step adds its tests together with its code.
+0. **CI skeleton**: workspace, `rust-version` and pinned toolchain, the `vendor/` folder with its fetch script and `vendor.lock`, lint and test jobs running on Linux (see Build and dependencies, and Testing and CI). Every later step adds its tests together with its code.
 1. **core**: `Value`, `TypeSpec`, JSON Schema lowering, validation, tests.
 2. **calc**: graph, evaluator, error values, with a trivial fake engine first.
 3. **RustPython** integration, proxies, `JSONPATH`, and measuring the proxy layer's overhead against the spike's plain-dict figures.
