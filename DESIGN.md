@@ -53,6 +53,7 @@ Rules:
 - When a schema sheet is edited, every sheet bound to it is re-lowered to `TypeSpec` and revalidated, and dependent formula results are rechecked.
 - A schema sheet must be valid against its meta-schema, and also lowerable to `TypeSpec` (so it may use only the supported subset of its language).
 - Neither bundled meta-schema is the official one (the W3C `XMLSchema.xsd` or the JSON Schema 2020-12 meta-schema). Each is our own schema that describes exactly the supported v1 subset, written using only that subset, and lowered through the normal path like any other schema. The two are kept parallel: the same concepts, the same restrictions, and the same exclusions. Widening a subset means updating its meta-schema in the same change.
+- **Meta-schema** means a schema that describes schema documents, and only these two are meta-schemas. The application also bundles ordinary built-in schemas for its own design documents: `builtin:form` (form designs) and, in a later version, `builtin:report` (report designs). These describe designs, not schemas, are not meta-schemas, and are never the binding of a tab. They exist only to validate those documents, which are written in the same subset and lowered through the same path.
 - Meta-schemas without unions can only approximate the language. Anything the structure can't express is caught by lowering, which reports precise errors (e.g. an `enum` with a bad value) and is the authoritative check.
 
 ### Schema subsets (v1)
@@ -311,7 +312,7 @@ A **report** is a tab that takes data from other tabs and presents it visually: 
   - `group`: a titled container, optionally repeated once per item of a list (e.g. one section per customer).
 - **Expressions** are Python, evaluated like formulas. Block data comes from expressions such as `[o.total for o in Orders.items]` or `AVERAGE(...)`.
 
-The design is stored as a JSON document validated against another built-in meta-schema (`builtin:report`), like forms. A report tab's content is that design document, and a report designer is a visual editor over it.
+The design is stored as a JSON document validated against a built-in schema (`builtin:report`), like forms. A report tab's content is that design document, and a report designer is a visual editor over it.
 
 **Behaviour**
 - A report is live. Its expressions record dependencies like formulas, so editing a source node re-renders only the affected blocks.
@@ -364,7 +365,28 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 
 **Specification.** Each data source is one *specification*, and a specification is the unit that carries the **credentials**. It has a name, a kind, the connection details (SQLite path; database host, port, and name; endpoint base URL; default headers), the credentials to use (a user name and a password, or a token or API key), and optional pooling settings (see Connection pooling). The specifications are edited in a Data sources panel.
 - **Several specifications may point at the same database or endpoint**, each with its own credentials. This is how a workbook uses, for example, a read-only account for reports and a different account for writes: two specifications, two names, each separately granted.
-- **Secrets (passwords, tokens, API keys) are never stored in the workbook file.** The specification stored in the file holds the non-secret parts, including the user name. The secret itself lives in the operating system's credential store, filed under the workbook id and the specification's name, and belongs to that specification alone. Opening a workbook on another machine asks the user to supply the secrets again.
+- **Secrets (passwords, tokens, API keys) are never stored in the workbook file.** The specification stored in the file holds the non-secret parts, including the user name. The secret itself lives in the operating system's credential store, filed under the workbook id and the specification's name, and belongs to that specification alone. Opening a workbook on another machine does not prompt for them: the specification is marked *credentials needed* until the user enters them in its form (see Creating a specification).
+
+**Creating a specification.** Credentials are not a separate step or dialog: they are **part of the settings entered when a specification is created**, in the same form. The form is opened from the Data sources panel (*New*, or *Edit* on an existing one).
+- **Fields** depend on the kind.
+  - *PostgreSQL and MariaDB:* name, host, port, database, user name, password, and optional pooling settings (see Connection pooling).
+  - *HTTP/HTTPS:* name, base URL, default headers, and the kind of authentication: none, basic (user name and password), bearer token, or API key (a header name or query parameter, and the key). It also has an optional *test path*.
+  - *SQLite:* name and file path. It has no credentials.
+- **Secret fields are masked.** When editing an existing specification the stored secret is never shown. A field offers *Change*, and leaving it alone keeps the stored value; *Clear* removes it.
+- **Test button.** The form has a **Test** button, which checks the settings as entered, before they are saved.
+  - Databases: it opens a single throwaway connection (never one from a pool), authenticates, and runs a trivial read-only query. It reports success with the server version and the time taken, or the reason for failure (unreachable, authentication refused, TLS problem, unknown database).
+  - HTTP: it sends a `GET` to the test path (or the base URL), with the entered authentication. A 2xx or 3xx response is success; 401 or 403 is reported as an authentication failure; other statuses are shown as information.
+  - SQLite: it checks that the file exists and can be opened read-only.
+  - The test runs in the background with a spinner, can be cancelled, and obeys the data source call timeout (see Settings and limits). It never blocks the form.
+  - The result stays on the form for the session. A passed test is not required to save, and saving after a failed test warns but is allowed.
+  - Test checks connectivity and the credentials only. It cannot show whether an account may write, so it says nothing about a read-write grant.
+  - It is a Rust-side check that does not run Python, so it works in an untrusted workbook. It does not need a grant and does not create one.
+- **The target is always shown in full** (for example `postgres://db.example.com:5432/sales as reporting_ro`), so the user can see where the secret is going. In a workbook that came from a file, secret fields stay disabled until the user has confirmed the target once, so that a file cannot quietly point a specification at another server and have a password typed into it.
+- **Saving** stores the non-secret part in the workbook and the secret in the operating system's credential store. It does not grant access. The user then grants the specification, choosing read or read-write, as a separate explicit step (see Explicit grants), which the panel offers straight after a successful save.
+- **Secrets are tied to the target.** A stored secret is filed with a hash of the specification's target and user name. If either changes, the stored secret is no longer used and the specification returns to *credentials needed*, so a saved password is never sent to a different server or account without being entered again. The form can offer to keep it after showing the new target.
+- **Rename, copy, and delete.** Renaming a specification moves its secret to the new name. Copying one copies the non-secret settings only; the copy needs its own credentials. Deleting one asks for confirmation and removes its secret.
+- **No credential store available** (for example a headless Linux session): the form says so, and the secret is held in memory for the current session only, not persisted. It must be entered again in each session.
+- **Credentials needed.** A specification without stored credentials on this computer is shown with a *credentials needed* badge in the panel. Nothing prompts when a workbook opens and nothing prompts during evaluation. Calls to such a source fail with `#SOURCE!` and a message saying that credentials have not been entered on this computer. Declining to enter them simply leaves that source unavailable; the rest of the workbook works.
 
 **Names.** A source name is a Python identifier in the shared formula namespace, so it follows the rules in Names and reserved words and is available in formulas, button procedures, and report expressions as a global object.
 
