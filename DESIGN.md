@@ -586,7 +586,7 @@ An array whose items are objects can be shown as a table instead of as indented 
 
 **What the table shows**
 - One **row** per item, with the item index in a row header.
-- One **column** per scalar field of the item type, in the schema's declared order, with the field name as the header.
+- One **column** per scalar field of the item type, in the schema's declared order, with the field name as the header. Hidden columns and rows are not drawn (see Sorting, filtering, column order, and hiding).
 - A field that is itself an object is **flattened** into dotted columns (`address.city`), to any depth.
 - A field that is an array or a map has a **summary cell** (for example `[5 items]`). Opening it drills into that value as an ordinary tree below the table, so tables do not nest.
 - Optional fields that are absent appear as empty cells that can be filled.
@@ -596,8 +596,38 @@ An array whose items are objects can be shown as a table instead of as indented 
 **Editing in the table**
 - Add a row at the end, insert above or below, delete rows, and move rows up or down. These are structural edits and are undoable.
 - A formula on the array node itself makes the whole array computed, so the table is read-only.
-- Clicking a column header sorts the **display** only, and the row header still shows each item's real index. Because references like `items[2]` are literal, the table never reorders data implicitly. An explicit command, "Apply this order to the data", turns the current display order into a real reorder.
 - Cell ranges copy and paste as tab-separated text. A paste validates each cell and is applied as one undoable entry; cells that don't validate are rejected with a message and nothing is written.
+
+**Sorting, filtering, column order, and hiding**
+
+*Filtering hides the rows that do not match.* A column header menu offers **Filter**, as in Excel. Rows that are filtered out are **hidden**, and hidden in exactly the sense defined under Hiding below: they still exist logically, keep their indices, and are read, validated, saved, and recalculated as usual. A filter changes what is drawn and nothing else, so unlike a sort it is not an edit of the data and is not undoable.
+- **Conditions.** A column can be filtered in two ways, which combine: by a **list of values** (checkboxes of the distinct values in the column, including `(blank)` for absent values and `(errors)`), and by a **condition** chosen for the column's type: equals, does not equal, greater or less than, between, begins with, ends with, contains (strings, with an ignore-case option), and is blank. Comparisons use Python's ordering for the type.
+- **Several columns** can be filtered together. A row is shown only if it passes every column's filter.
+- **Indicator.** A filtered column shows a funnel on its header, and the table shows how many rows are shown, for example `12 of 340`. The marker where rows are hidden counts them separately from rows the user hid by hand.
+- **Clearing.** The header menu has **Clear filter** for a column, and the table has **Clear all filters**. Clearing makes the rows visible again unless they were also hidden by hand.
+- **Live, with one exception.** A filter is re-evaluated as the data changes, including when recalculation changes a computed value. The exception is rows the user has just added or edited: such a row stays visible even if it no longer matches, until the filter is next changed or the user chooses **Reapply filter**. This stops a row vanishing while it is being typed into.
+- **Filtering a computed array** is allowed, since it changes only the view.
+- **Where.** Filtering is available in the tabular view only.
+- **State.** Filters are view state, saved with the tab in the overlay (by field name), not part of the data, and not part of the trust hash.
+
+*Sorting changes the data.* Clicking a column header sorts the array's items by that column, ascending, then descending on the next click. The sort is a real reorder of the array, so it is logical and not just visual: after sorting `Data.items`, the reference `Data.items[2]` points at whatever item is now third. References are literal (see Formulas), so nothing is adjusted.
+- A sort is one undoable entry. It is stable, so items with equal keys keep their relative order.
+- Values are ordered by Python's comparison for their type (numbers numerically, strings by code point, dates chronologically). Absent values and error values sort last in either direction.
+- Formulas belong to their location, not to an item. A sort therefore moves the literal values, comments, and children of each item, but a formula stays at its position and is recalculated against the item that is now there.
+- A computed (formula-driven) array is read-only and cannot be sorted. The header click explains why, and a formula can use `SORT` instead.
+
+*Column order changes the field order.* Dragging a column header to a new position reorders the **fields** of the item type, and so the field order of every item. This is a real change to the schema's declared order (the `properties` order for JSON Schema, the `xs:sequence` order for XSD), made on the schema sheet that the tab is bound to, as one undoable entry.
+- The field order is what Python sees when it iterates an object's fields, and what files are written with. For XSD it is also the order of elements in the XML.
+- The change applies to everything bound to that schema. If other tabs use the same schema sheet, their field order changes with it, and the confirmation says so.
+- Dotted columns (fields of a nested object) can be reordered only among the fields of the same parent. A column cannot be dragged to a different parent.
+
+*Hiding.* Columns, rows, and any other data value can be **hidden**, and any hidden value can be **unhidden**.
+- **Hidden values still exist logically.** Hiding, whether by hand or by a filter, changes only what is drawn. A hidden row keeps its index (`Data.items[2]` is still the third item), formulas read hidden values as usual, they are validated, saved, exported, and recalculated like any other, and their errors still count in the status bar.
+- **Where.** Hide a column from its header menu, a row from its row header menu, and any node from its context menu in the tree view. Hiding a node or row hides everything inside it.
+- **Marker.** Where something is hidden, a thin marker sits between its visible neighbours (as in Excel). A hidden node's parent shows the count, for example `(3 hidden)`; in a filtered table the marker gives the two counts apart, for example `(3 hidden, 5 filtered)`.
+- **Unhiding.** The marker, and the context menu of the parent or array node, open a list of the hidden items with **Show** for each and **Show all**, which cancels only manual hiding. Rows hidden by a filter come back by clearing the filter.
+- **State.** Hidden state is view state. It is saved with the tab (in the overlay) but is not part of the data, is not undoable, and is not part of the trust hash. A hidden row or node stays hidden when it moves, for example after a sort, because the state is attached to the item and is saved by path. Hidden columns are recorded by field name.
+- **Copy and paste** include hidden items. A copied range is the whole logical rectangle between the selection's corners, so hidden rows (whether hidden by hand or by a filter) and hidden columns inside it are copied along with the visible ones. A paste is likewise cell for cell by logical position from the target cell, writing into hidden cells in the same way, so what is pasted matches what was copied. The same validation applies to every pasted cell, hidden or not.
 
 **Performance.** Both the table and the tree view only draw the rows that are on screen, so arrays of many thousands of items stay responsive. The table can be built on `egui_extras`' virtualised table support.
 
