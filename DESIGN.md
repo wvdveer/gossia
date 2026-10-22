@@ -23,11 +23,14 @@ Rules for tabs:
 - XML maps onto the same model: attributes become fields prefixed `@`, text becomes `#text`, repeated elements become arrays. A format adapter handles the round trip; the evaluator never sees XML or JSON.
 - Data format follows the schema language: JSON Schema gives JSON data, XSD gives XML data. The two meta-schemas (JSON Schema, XSD) are built in, so schema sheets get ordinary tree editing and validation (see Schema binding).
 
-**Notes and structure fidelity.** Round-tripping is lossy only for incidental formatting. What the user wrote deliberately is preserved.
+**Comments and structure fidelity.** Round-tripping is lossy only for incidental formatting. What the user wrote deliberately is preserved.
 - **Field order.** Object fields keep the order of the schema's declared properties (JSON) or sequence (XML), and array items keep their order. Export and save write them in that order. A schema's declared order is itself user-authored and preserved.
-- **Notes (comments).** Any node can carry a **note**, a free-text comment like an Excel cell comment, shown and edited in the UI. Notes are part of the node in memory, so they move with it when items are inserted, deleted, or sorted (unlike formulas, which belong to a location). When saved they are written keyed by path, in the overlay for JSON tabs.
-  - On XML tabs, notes are stored as real **XML comments** in `data.xml`, so they travel with the file. A comment immediately before an element or attribute becomes that node's note. Comments elsewhere (before the root, after the root, at the end of an element) become notes on the root or on the enclosing element, tagged with their position, and are written back in the same place.
-  - JSON has no comments, so JSON tabs keep their notes only in the overlay. A standalone JSON export drops them.
+- **Comments (XML tabs only).** A node on an **XML** tab can carry a **comment**: free text, like an Excel cell comment. **Comments are not available on JSON tabs**, because JSON has no comments. The comment commands do not appear on a JSON tab at all.
+  - **In the document.** Comments are stored as real **XML comments** in `data.xml`, so they travel with the file and are visible to any other XML tool. A comment immediately before an element or attribute is that node's comment; if several comments precede one node, they are joined with line breaks and written back as a single comment. Comments elsewhere (before the root, after the root, at the end of an element) belong to the root or to the enclosing element, tagged with their position, and are written back in the same place.
+  - **In memory** a comment is part of its node, so it moves with the node when items are inserted, deleted, or sorted (unlike formulas, which belong to a location).
+  - **In the UI** comments look and work as they do in Excel (see Comments in the UI below).
+  - **Not visible to Python.** Formulas cannot read or write comments; they are part of the document, not of the data.
+  - **XML restrictions.** The text of an XML comment cannot contain `--` or end with `-`. The comment editor refuses such text with a message saying why. Comments imported from a file are always valid.
 - **XML details preserved:** the XML declaration (version, encoding, standalone), namespace prefix and declarations, attribute order, element order.
 - **Not preserved (accepted):** indentation and other insignificant whitespace (regenerated on write), CDATA sections (become ordinary text), entity and character-reference spelling, attribute quote style, empty-element syntax (`<a/>` vs `<a></a>`), processing instructions, and DOCTYPE declarations (dropped with a warning; DTD entities are never expanded and external entities are never fetched). Text content inside an element is preserved exactly, including its whitespace.
 - **JSON details not preserved:** number spelling (`1e3` becomes `1000`, `1.0` stays a float), and indentation. Integers beyond the signed 64-bit range import as floating-point numbers, with a warning.
@@ -536,7 +539,7 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 
 **What is logged.** Every edit the user makes:
 - literal values, and structural changes (inserting, removing, moving, or sorting items and map entries);
-- formulas, and notes;
+- formulas, and comments (XML tabs);
 - tabs: adding, removing, renaming, reordering, and rebinding schemas;
 - Python modules, form designs, report designs, and data source definitions (not secrets and not grants);
 - schema sheet edits, which are ordinary tree edits;
@@ -566,6 +569,15 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 
 **Structure.** `cliotree-core` defines the primitive edit operations on the data tree and how to apply and invert them. The workbook-level log, which also covers the other kinds of edit above, lives in the layer above (`cliotree-calc`), and the UI only issues edits and requests undo and redo.
 
+## Comments in the UI
+
+Comments on XML tabs look and behave as they do in Excel.
+- **Indicator.** A cell with a comment shows a small coloured **triangle in its top-right corner**.
+- **Hover.** Resting the mouse pointer over the cell (after a short delay) shows the comment in a small popup beside the cell. It disappears when the pointer leaves. The comment can be read on any cell, including cells of computed nodes.
+- **Commands.** Right-clicking a cell offers **Insert Comment**, or **Edit Comment** and **Delete Comment** when it already has one. Insert and Edit open a small text box for the comment. Enter adds a line break, and committing is done by clicking away or with Ctrl+Enter; Esc cancels. The commands are absent on JSON tabs.
+- **Where.** The triangle is drawn on the node's cell in the tree grid and in the tabular view alike. For an object or array node it is on the node's own row (or on the array's header in the tabular view).
+- Inserting, editing, and deleting a comment are undoable entries in the edit log, and each is a change to the document, so it marks the workbook as modified.
+
 ## Tabular view of arrays
 
 An array whose items are objects can be shown as a table instead of as indented tree rows.
@@ -579,7 +591,7 @@ An array whose items are objects can be shown as a table instead of as indented 
 - A field that is an array or a map has a **summary cell** (for example `[5 items]`). Opening it drills into that value as an ordinary tree below the table, so tables do not nest.
 - Optional fields that are absent appear as empty cells that can be filled.
 
-**Cells are the same cells as in the tree.** A table cell is the node's cell, with all the same behaviour: literal editing with the type-aware editors, formulas, error values, the pending marker, the invalid-data outline, and notes. Selecting one shows its formula in the formula bar. Formulas refer to nodes by path as always (`Orders.items[2].price`); the table is a different way of drawing the tree, not different data.
+**Cells are the same cells as in the tree.** A table cell is the node's cell, with all the same behaviour: literal editing with the type-aware editors, formulas, error values, the pending marker, the invalid-data outline, and comments (on XML tabs). Selecting one shows its formula in the formula bar. Formulas refer to nodes by path as always (`Orders.items[2].price`); the table is a different way of drawing the tree, not different data.
 
 **Editing in the table**
 - Add a row at the end, insert above or below, delete rows, and move rows up or down. These are structural edits and are undoable.
@@ -625,9 +637,9 @@ An array whose items are objects can be shown as a table instead of as indented 
   - **Refused with a clear message:** mixed content (non-whitespace text next to child elements), and more than one namespace. These are outside the v1 XSD subset.
 
 **Exporting.** Any tree tab exports as a standalone file in its own format.
-- Everything the user gave the tab is written: field order, array order, XML attributes and elements as the schema maps them, XML comments (from notes), namespace prefix and XML declaration, and **unrecognised content** that was preserved on import. The result is what the tab shows, including the latest computed values. Errored nodes are absent (see Stored values).
+- Everything the user gave the tab is written: field order, array order, XML attributes and elements as the schema maps them, XML comments (the comments on nodes), namespace prefix and XML declaration, and **unrecognised content** that was preserved on import. The result is what the tab shows, including the latest computed values. Errored nodes are absent (see Stored values).
 - Dates are written in their XML lexical forms, floats with their shortest round-trip spelling, and JSON/XML indentation is two spaces by default with a compact option.
-- Formulas, notes in JSON, and tab settings are not part of a standalone export; the `.clio` is the format that keeps them.
+- Formulas and tab settings are not part of a standalone export; the `.clio` is the format that keeps them.
 - A schema sheet exports as a standalone `.json` or `.xsd`/`.xml` file in the same way, and the export dialog offers to include the schema alongside the data.
 - A tab whose root is an array of strings can also be exported as a plain text file, one string per line, mirroring text import.
 
@@ -650,7 +662,7 @@ settings.json                            workbook settings (see Settings and lim
 
 - **Tabs** are one directory each. Tab names are valid identifiers and unique ignoring case (see Names and reserved words), so they are safe as file names on every platform. A schema sheet is stored the same way as any tree sheet (JSON or XML data, according to its meta-schema).
 - **Data files** hold the plain data, including the latest computed values, exactly as other tools would expect (see Stored values). Errored nodes are absent from them.
-- **Overlay** holds, per node path: the formula text, and its status (ok, pending, or the error kind, message, and traceback). Entries are sorted by path. It also holds the tab's notes (for JSON tabs) and its view state, such as which arrays are shown as tables.
+- **Overlay** holds, per node path: the formula text, and its status (ok, pending, or the error kind, message, and traceback). Entries are sorted by path. It also holds the tab's view state, such as which arrays are shown as tables. Comments are not in the overlay: they are XML comments in `data.xml`.
 - **Reports and forms** are the design documents described in their sections, with the report or form name as the file name.
 - **Modules** are plain `.py` files, so they can be edited, diffed, and linted with ordinary tools.
 
