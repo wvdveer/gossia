@@ -2,11 +2,13 @@
 
 A spreadsheet-like desktop application (Rust + egui, later wasm) in which each sheet is a **tree defined by a schema** (JSON Schema or XSD) rather than a 2D grid. Cells at any node can hold a **Python expression** whose result must match the node's schema type.
 
+**Scope.** Version 1 is the desktop application. **Reports** and the **web (wasm) port** are deliberately deferred to a later version; their designs are kept in this document for planning and are marked as such (see Later versions).
+
 ## Core model
 
 **Workbook**: named Sheets (tabs), a trust flag, and embedded Python modules. Tabs come in two kinds:
 - **Tree sheets** (data sheets and schema sheets): hold a data tree bound to a schema, as described below.
-- **Reports**: read-only visual presentations of data from other tabs (see Reports).
+- **Reports** *(later version)*: read-only visual presentations of data from other tabs (see Reports).
 
 Forms are not tabs; see Forms.
 
@@ -293,6 +295,8 @@ Custom Python lives in **modules** stored in the workbook. The design follows Ex
 
 ## Reports
 
+> **Deferred to a later version.** Reports are not part of v1. This section records the intended design so that v1 does not rule it out. Other sections that mention reports (names, trust, evaluation, undo, file format) describe how they will fit in, and apply once reports exist.
+
 A **report** is a tab that takes data from other tabs and presents it visually: tables, text, and charts such as bar, line, pie, and scatter. A report holds no data of its own and is never the target of a formula or form.
 
 **Report design** specifies:
@@ -382,7 +386,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 
 **Limits.** Waiting for I/O does not count against the per-formula CPU budget, but every call has its own timeout (proposed default 30 seconds, configurable) and a maximum response size (proposed default 16 MB). A source failure (connection, authentication, SQL error, HTTP error status, timeout, oversize response) produces a new error kind, `#SOURCE!`, with the details in the message.
 
-**Web port.** Browsers cannot open raw database connections, so SQLite, PostgreSQL, and MariaDB sources are unavailable on the web in v1. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
+**Web port** *(later version)*. Browsers cannot open raw database connections, so SQLite, PostgreSQL, and MariaDB sources will be unavailable on the web. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
 
 ## Trust model
 
@@ -446,7 +450,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - Compiling each formula from source every time: **about 147 ms** for 10,000 (about 15 microseconds each). So **compiled code should be cached per formula**, but even uncached it is not a bottleneck.
 - Not measured: the real application reads data through proxy objects with lazy member access and dependency recording, which will be slower than plain dicts. This needs measuring when step 3 is built.
 
-**Web (wasm32)**
+**Web (wasm32)** *(later version; recorded for planning)*
 - RustPython's own `rustpython_wasm` crate **builds** for `wasm32-unknown-unknown`, which needs the `getrandom` `wasm_js` feature (the crate sets it).
 - The unoptimised output was **54.6 MB**. That build includes features we would not use (`ssl`, documentation strings) and was not passed through `wasm-opt` or compression. The achievable size is not yet known and must be measured with a minimal feature set.
 - Python was not run in a browser, so Web Worker termination remains untested.
@@ -455,7 +459,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 
 ## Evaluation and scheduling
 
-All Python evaluation (formulas, form button procedures, report expressions) runs on a **background evaluation thread**, never on the egui UI thread. On the web port the same role is played by a Web Worker, using the same message protocol.
+All Python evaluation (formulas, form button procedures, report expressions) runs on a **background evaluation thread**, never on the egui UI thread. On the later web port the same role would be played by a Web Worker, using the same message protocol.
 
 **The UI never waits.** Every cell is drawn from its **last calculated value**, the one stored in the tree (see Stored values). A cell whose evaluation is outstanding keeps showing that value, with a subtle pending marker, until a new result arrives. A cell that has a formula but has never been calculated shows empty with the pending marker. The same applies to reports: they render the last values and refresh as results arrive.
 
@@ -592,7 +596,7 @@ A workbook is saved as a **zip archive with the extension `.clio`**. It is an or
 manifest.json            first entry in the archive
 sheets/<Tab>/data.json   (or data.xml)   the tab's data tree, with stored values
 sheets/<Tab>/overlay.json                formulas and their status
-reports/<Report>.json                    report design
+reports/<Report>.json                    report design (later version; reserved)
 forms/<Form>.json                        form design
 modules/<name>.py                        Python modules
 datasources.json                         data source definitions, no secrets
@@ -609,7 +613,7 @@ datasources.json                         data source definitions, no secrets
 - The **workbook id** used by the trust model.
 - The **reserved-names version** (see Names and reserved words).
 - The **Python engine and its version**, so a file written against one RustPython release can be flagged when opened with another.
-- The list of tabs in tab order, each with its kind (`tree` or `report`) and, for tree sheets, its **schema binding**: `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
+- The list of tabs in tab order, each with its kind (`tree` in v1; `report` is reserved for the later version) and, for tree sheets, its **schema binding**: `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
 - The list of forms and modules, in display order.
 
 **Writing**
@@ -631,12 +635,12 @@ Cargo workspace:
 - `cliotree-core`: `Value`, `TypeSpec`, paths, schema lowering (JSON Schema, XSD), format adapters, validation. No UI, no Python.
 - `cliotree-calc`: formula storage, dependency graph, recalculation, error values, proxy objects, `PythonEngine` trait and RustPython implementation.
 - `cliotree-std`: built-in functions.
-- `cliotree-app`: egui frontend and file I/O. The only crate touching `eframe` or the filesystem, so the wasm port needs only a different `main` and storage layer.
+- `cliotree-app`: egui frontend and file I/O. The only crate touching `eframe` or the filesystem, so that a later wasm port needs only a different `main` and storage layer. Keeping these crates free of UI and filesystem code is a v1 design constraint for that reason.
 
 **Workbook file format**: a zip with the extension `.clio` (see File format).
 
 **UI**
-- Sheet tabs along the bottom; formula bar above a tree grid. A report tab shows the rendered report instead, with charts drawn through `egui_plot`.
+- Sheet tabs along the bottom; formula bar above a tree grid. (In a later version, a report tab will show the rendered report instead, with charts drawn through `egui_plot`.)
 - Tree grid columns: `Name | Type | Value | Formula`; expandable nodes, array items as indexed rows.
 - Type-aware editors: toggles for booleans, dropdowns for enums, numeric fields.
 - Schema violations get a red outline; computed cells get a distinct fill.
@@ -653,8 +657,19 @@ Cargo workspace:
 6. **XSD** subset and XML adapter.
 6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB.
 7. **Forms**: `builtin:form` schema, form-fill view with live read and write to the tab, button procedures, then the designer.
-8. **Reports**: `builtin:report` meta-schema, table and text blocks, then charts, then the designer.
-9. **wasm** port.
+
+Reports and the wasm port are **not part of v1**; see Later versions.
+
+## Later versions
+
+Deferred features, with what v1 does to keep them possible:
+
+- **Reports** (see Reports): `builtin:report` schema, table and text blocks, then charts, then the designer.
+  - The manifest's tab `kind` and the `reports/` directory name are reserved.
+  - A v1 build that opens a file containing reports keeps those entries unchanged on save (the unknown-entries rule in File format) and shows no report tabs.
+- **Web (wasm) port**: the same core in a browser.
+  - `cliotree-core` and `cliotree-calc` stay free of UI and filesystem code.
+  - Open points recorded for it: the binary size (54.6 MB unoptimised in the spike), running Python and terminating a Web Worker in a browser, file access, persistence of trust, credential storage, and database data sources being unavailable.
 
 ## Risks and open questions
 
