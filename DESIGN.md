@@ -647,8 +647,57 @@ Cargo workspace:
 - Side panels for the error list, and for modules and trust state.
 - A Forms menu that opens form-fill views, and a code area holding Python modules and form designs (see Forms).
 
+## Testing and CI
+
+The project has automated tests at several levels, and **all of them run in a CI pipeline on Linux** with no manual steps. A developer on Windows runs the same default tests locally. Tests that need extra services (databases) or a display are opt-in locally and always on in CI.
+
+**Principles**
+- **Test the real thing.** Application-level tests drive the actual application code, including the evaluation thread and the RustPython engine, not mocks. The Python engine is real in every test above the unit level.
+- **No sleeping.** The status bar's pending count is observable (see Evaluation and scheduling), and the application exposes "wait until idle" for tests. Tests wait for that condition with a timeout, never for a fixed delay.
+- **Deterministic.** The clock and random numbers are injected, so `NOW` and `RAND` can be fixed. Fonts used in rendered tests are bundled. Tests use temporary directories and never touch the network except to local servers they start.
+- **Every rule in this document gets a test**, and every fixed bug gets a regression test. Test names refer to the section of this document that they check.
+
+**Levels**
+
+1. **Unit tests** (`cargo test`, per crate). `cliotree-core`: `Value`, `TypeSpec`, JSON Schema and XSD lowering, validation, scalar-type checks, the XML mapping, inference, import and export. `cliotree-calc`: the dependency graph, evaluation order, cycle detection, error values and propagation, version tagging of results, the edit log, the trust hash.
+2. **Conformance and fixture tests.**
+   - *JSON Schema:* a selected part of the official JSON Schema Test Suite, vendored at a pinned version. Only cases for keywords in the v1 subset are run as pass/fail checks. For every excluded keyword there is a test that checks it is **rejected at load with an error naming it**, which is what this document requires.
+   - *XSD:* a curated corpus of schemas and instances covering the subset, and a test for each excluded construct. The built-in meta-schemas are validated by loading them through the normal path.
+   - *Workbooks:* `.clio` fixtures in the repository, one per file-format version, for upgrade tests, plus hostile files (zip paths with `..`, zip bombs, DTD entity expansion, very deep nesting, oversized input).
+3. **Data-driven formula tests.** A case file (schema, data, formulas, expected values or error kinds) is loaded and checked, in a table-driven format that is easy to add to. This covers the Python semantics table, error mapping, `IFERROR` and `ISERROR` in both forms, `CONCAT`, `VALID`, syntax errors, and literal references.
+4. **Property-based tests** (`proptest`).
+   - Data round-trips through JSON and XML, and through save and load.
+   - Saving twice gives identical bytes.
+   - A random sequence of edits followed by undoing all of them restores the original state, and redo restores the final one.
+   - A tree inferred from random data validates it, apart from the conflicts the inference reports.
+5. **Python engine tests.** The error mapping table; the propagation rules for `ErrorValue`; module loading, including import cycles, failed modules, and `#NAME!` results; timeouts, with a tight loop that is cancelled and a long builtin call that is abandoned; and the **sandbox probes from the spike** kept as permanent regression tests (no `os`, `socket`, or file access reachable, including through `BuiltinImporter`).
+6. **In-process UI tests.** The application's UI is written so that its top-level `update` function can be driven by `egui_kittest`, which runs egui headlessly and finds widgets through AccessKit, the way a screen reader would. This needs no display. Tests do what a user does: open a workbook, select a node, type `=...` into the formula bar and press Enter, wait until idle, and check the cell's text, error, and pending marker. Cases include the tabular view toggle from the context menu, undo and redo keys, the trust banner and untrusted mode, forms (field commits, button procedures), the code editor and the Immediate window, import and export dialogs, and the status bar. This is the main level for UI behaviour.
+7. **Visual snapshot tests** (`egui_kittest` with its `snapshot` and `wgpu` features). Key screens are rendered and compared with stored images with a small tolerance. On Linux CI the rendering uses a software Vulkan driver (Mesa lavapipe), so no GPU is needed. They run as a separate job and fail only on a clear difference; differences are uploaded as artifacts. Snapshots start as advisory and become a gate once they are stable.
+8. **End-to-end tests on the running application.** The real binary is started on Linux under a virtual display (`xvfb-run`) and driven through a **test control channel**: a loopback-only JSON command interface that exists only when the application is built with the `test-control` cargo feature, which release builds never enable. Commands include: open a workbook, select a node, enter text, press a key, read a cell's value, formula, error, and pending state, wait until idle, take a screenshot, and quit. Because the channel is compiled out of release builds, it adds no remote-control surface to the shipped product. A small number of tests, written as a Rust client against that channel, cover startup, open and save, edit-and-recalculate, and shutdown on the real windowing backend. Most behaviour is tested at level 6, which is faster and more stable.
+9. **Data source tests.** SQLite runs everywhere. PostgreSQL and MariaDB run in CI against service containers. HTTP uses a mock server started by the test on a local port. Cases include grants (an ungranted call gives `#UNTRUSTED!`), read versus read-write enforcement, `#SOURCE!` errors, timeouts, oversize responses, and a check that a saved `.clio` file contains no secrets. These are skipped locally unless the matching environment variable is set.
+10. **Security and robustness.** The hostile-file fixtures above; the sandbox probes; trust-hash tests (a change outside the application drops trust, a change inside keeps it); and **fuzzing** with `cargo-fuzz` on the parsers: JSON and XML import, zip reading, schema lowering, and formula parsing. Fuzzing runs on a nightly schedule and does not block merges; any crash found becomes a regression test.
+11. **Performance checks.** Benchmarks for the cases measured in the spike (a formula over 10,000 items, 10,000 separate formulas, loading and saving a large workbook) run on a schedule and report trends. They are not merge gates, because shared CI machines are noisy; a very generous threshold in an ordinary test catches only gross regressions.
+
+**Pipeline** (GitHub Actions, since the repository is on GitHub)
+
+| Job | Runs | Blocks merge |
+|---|---|---|
+| Lint | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny` (licences, advisories) | yes |
+| Test | `cargo test --workspace` on Linux: levels 1 to 6 | yes |
+| Services | level 9 with PostgreSQL and MariaDB containers | yes |
+| E2E | level 8 under `xvfb-run` | yes |
+| Snapshots | level 7 with software rendering | advisory at first |
+| Nightly | fuzzing, performance, `cargo audit` | no |
+
+- The Rust toolchain is pinned in `rust-toolchain.toml` (1.97 or newer, as RustPython requires) and the dependency set is locked, including the RustPython git revision and the `ruff` fork (see Python engine).
+- Build caching (for example `Swatinem/rust-cache`) keeps runs short, because RustPython takes several minutes to build from scratch.
+- On failure the job uploads logs, snapshot diffs, and screenshots as artifacts.
+- Coverage is reported with `cargo llvm-cov` for information, not as a gate.
+- Because development happens on Windows, a Windows job running levels 1 to 3 is added once the basic pipeline is stable. It exists to catch path, case-sensitivity, and line-ending differences, which this design has several rules about (tab names unique ignoring case, per-tab files).
+
 ## Build order
 
+0. **CI skeleton**: workspace, pinned toolchain, lint and test jobs running on Linux (see Testing and CI). Every later step adds its tests together with its code.
 1. **core**: `Value`, `TypeSpec`, JSON Schema lowering, validation, tests.
 2. **calc**: graph, evaluator, error values, with a trivial fake engine first.
 3. **RustPython** integration, proxies, `JSONPATH`.
