@@ -65,7 +65,7 @@ impl Book {
     }
 
     fn run(&mut self) -> usize {
-        self.calc.recalc()
+        self.calc.recalc(&self.engine)
     }
 
     fn get(&self, path: &str) -> Option<Value> {
@@ -240,6 +240,81 @@ fn tab_names_are_unique_ignoring_case() {
     let node = json::parse(DATA).unwrap().node;
     let err = b.calc.add_sheet("s", spec, node).unwrap_err();
     assert_eq!(err, EditError::DuplicateSheet("s".into()));
+}
+
+// ----------------------------------------------------- shallow reads
+
+/// Formulas, "Dependency graph": a read of only a node's structure does not
+/// depend on what is inside it, so a formula on one item can look at the
+/// array it is in without being circular with it.
+#[test]
+fn a_formula_on_an_item_can_count_the_items_around_it() {
+    let mut b = Book::new();
+    b.formula("list[0]", "LEN(S.list)");
+    b.run();
+    assert_eq!(b.get("list[0]"), Some(Value::Int(6)));
+}
+
+#[test]
+fn a_shallow_read_is_not_disturbed_by_edits_inside_but_follows_structure() {
+    let mut b = Book::new();
+    b.formula("a", "LEN(S.list)");
+    b.run();
+    let before = b.evaluations();
+
+    b.set("list[3]", Value::Int(40));
+    assert_eq!(b.calc.pending(), 0, "a value inside does not matter");
+
+    b.calc
+        .insert_item("S", &p("list"), 0, Value::Int(7))
+        .unwrap();
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(7)));
+    assert_eq!(b.evaluations() - before, 1);
+
+    b.calc.remove("S", &p("list[0]")).unwrap();
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(6)));
+}
+
+/// A shallow read still waits for a formula that computes the node itself,
+/// because that decides its structure.
+#[test]
+fn a_shallow_read_waits_for_the_formula_that_computes_the_node() {
+    let mut b = Book::new();
+    b.formula("a", "LEN(S.copy)");
+    b.formula("copy", "S.list");
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(6)));
+    b.calc
+        .insert_item("S", &p("list"), 0, Value::Int(7))
+        .unwrap();
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(7)));
+}
+
+#[test]
+fn a_shallow_result_overtaken_by_a_structural_edit_is_discarded() {
+    let mut b = Book::new();
+    b.formula("a", "LEN(S.list)");
+    b.run();
+    b.calc.recalc_all();
+    let evaluation = b.calc.snapshot().evaluate(&b.engine);
+    b.set("list[1]", Value::Int(9));
+    let applied = b.calc.apply(evaluation);
+    assert_eq!(
+        applied.applied.len(),
+        1,
+        "an edit inside does not overtake it"
+    );
+
+    b.calc.recalc_all();
+    let evaluation = b.calc.snapshot().evaluate(&b.engine);
+    b.calc
+        .insert_item("S", &p("list"), 0, Value::Int(9))
+        .unwrap();
+    let applied = b.calc.apply(evaluation);
+    assert_eq!(applied.discarded.len(), 1);
 }
 
 // -------------------------------------------------------------- cycles
@@ -692,7 +767,8 @@ fn an_index_past_the_end_is_a_ref_error() {
 /// creates the parent.
 #[test]
 fn a_result_creates_missing_parents() {
-    let mut calc = Calc::new(Arc::new(FakeEngine::new()));
+    let engine = FakeEngine::new();
+    let mut calc = Calc::new(Arc::new(engine.clone()));
     sheet(
         &mut calc,
         "T",
@@ -701,7 +777,7 @@ fn a_result_creates_missing_parents() {
         "{}",
     );
     calc.set_formula("T", &p("inner.n"), "5").unwrap();
-    calc.recalc();
+    calc.recalc(&engine);
     let n = calc.data("T").unwrap().get(&p("inner.n")).unwrap();
     assert_eq!(n.value(), &Value::Int(5));
 }
@@ -830,14 +906,14 @@ fn a_long_chain_does_not_overflow_the_stack_and_runs_each_formula_once_later() {
         .unwrap();
     }
     calc.set_formula("L", &p("total"), "SUM(L.list)").unwrap();
-    calc.recalc();
+    calc.recalc(&engine);
     let total = calc.data("L").unwrap().get(&p("total")).unwrap();
     assert_eq!(total.value(), &Value::Int((N * (N - 1) / 2) as i64));
 
     // Now that it knows what reads what, a change runs every formula once.
     let before = engine.evaluations();
     calc.set_value("L", &p("list[0]"), Value::Int(1)).unwrap();
-    calc.recalc();
+    calc.recalc(&engine);
     assert_eq!(engine.evaluations() - before, N);
     let total = calc.data("L").unwrap().get(&p("total")).unwrap();
     assert_eq!(total.value(), &Value::Int((N * (N - 1) / 2 + N) as i64));

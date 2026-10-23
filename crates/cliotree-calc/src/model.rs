@@ -39,6 +39,17 @@ impl fmt::Display for Loc {
     }
 }
 
+/// Something a formula read. A deep read is of the node and everything in it;
+/// a shallow read is only of the node's own structure: whether it exists, what
+/// kind it is, and how many items an array has. Moving through a proxy such as
+/// `Orders.items[2]` reads shallowly, so that a formula on one item can look at
+/// a sibling without depending on the whole array.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dep {
+    pub loc: Loc,
+    pub shallow: bool,
+}
+
 /// Whether one path is the other or lies inside it.
 pub(crate) fn overlaps(a: &Path, b: &Path) -> bool {
     a.segments().starts_with(b.segments()) || b.segments().starts_with(a.segments())
@@ -50,7 +61,7 @@ pub(crate) struct Formula {
     /// The expression, without the leading `=`.
     pub text: String,
     /// Everything it read the last time it ran, whether or not it found a node.
-    pub deps: Vec<Loc>,
+    pub deps: Vec<Dep>,
     /// The error the node holds, kept here too because a data file cannot hold
     /// one (DESIGN.md, "Stored values").
     pub error: Option<ErrorValue>,

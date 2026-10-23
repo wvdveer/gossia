@@ -9,7 +9,16 @@ repository.workspace = true
 
 [dependencies]
 cliotree-core.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 indexmap = "2.14.2"
+# The derive macros of RustPython name `rustpython_vm` in the code they write,
+# so the crate has to be a direct dependency as well as the one below.
+rustpython-vm = { path = "../../vendor/rustpython/crates/vm", default-features = false }
+rustpython = { path = "../../vendor/rustpython", default-features = false, features = ["freeze-stdlib"] }
+ruff_python_ast = { package = "rustpython-ruff_python_ast", path = "../../vendor/ruff/crates/ruff_python_ast" }
+ruff_python_parser = { package = "rustpython-ruff_python_parser", path = "../../vendor/ruff/crates/ruff_python_parser" }
+ruff_source_file = { package = "rustpython-ruff_source_file", path = "../../vendor/ruff/crates/ruff_source_file" }
+ruff_text_size = { package = "rustpython-ruff_text_size", path = "../../vendor/ruff/crates/ruff_text_size" }
 
 [dev-dependencies]
 proptest = "1.12.0"

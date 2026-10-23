@@ -30,6 +30,10 @@ pub struct Item {
     pub rev: String,
     #[serde(default)]
     pub sparse: Vec<String>,
+    /// A patch file, relative to the repository root, applied to the checkout
+    /// after it has been verified (see DESIGN.md, "Build and dependencies").
+    #[serde(default)]
+    pub patch: Option<String>,
 }
 
 /// Whether an item in `vendor/` matches its pin.
@@ -75,18 +79,32 @@ pub fn parse_lock(text: &str) -> Result<Lock, String> {
             return Err(format!("vendor.lock: item {name:?} has no url"));
         }
         for path in &item.sparse {
-            let p = Path::new(path);
-            let bad = p.is_absolute()
-                || p.components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir));
-            if path.is_empty() || bad {
+            if !is_inside(path) {
                 return Err(format!(
                     "vendor.lock: item {name:?}: invalid sparse path {path:?}"
                 ));
             }
         }
+        if let Some(path) = &item.patch
+            && !is_inside(path)
+        {
+            return Err(format!(
+                "vendor.lock: item {name:?}: invalid patch path {path:?}"
+            ));
+        }
     }
     Ok(lock)
+}
+
+/// A relative path that stays inside the directory it is relative to.
+fn is_inside(path: &str) -> bool {
+    let p = Path::new(path);
+    !path.is_empty()
+        && !path.starts_with(['/', '\\'])
+        && !p.is_absolute()
+        && !p
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 fn is_full_hash(rev: &str) -> bool {
@@ -111,25 +129,70 @@ pub fn vendor_dir(root: &Path) -> PathBuf {
     }
 }
 
+/// What the stamp of a complete item holds: the pinned commit, with a
+/// fingerprint of the sparse list and of the patch if the item has them, so that
+/// changing either fetches the item again. Line endings of the patch do not
+/// count, because a checkout of the patch file may have either.
+pub fn identity(item: &Item, root: &Path) -> Result<String, String> {
+    let mut id = item.rev.clone();
+    if !item.sparse.is_empty() {
+        id.push_str(&format!(
+            "+sparse-{:016x}",
+            fingerprint(
+                item.sparse
+                    .join(
+                        "
+"
+                    )
+                    .bytes()
+            )
+        ));
+    }
+    if let Some(patch) = &item.patch {
+        let bytes = fs::read(root.join(patch))
+            .map_err(|e| format!("{}: cannot read the patch {patch}: {e}", item.name))?;
+        id.push_str(&format!(
+            "+patch-{:016x}",
+            fingerprint(bytes.into_iter().filter(|b| *b != b'\r'))
+        ));
+    }
+    Ok(id)
+}
+
+/// FNV-1a. It only has to notice a change; it is not a security measure.
+fn fingerprint(bytes: impl Iterator<Item = u8>) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
 /// Compares an item's directory with its pin, without touching the network.
-pub fn state(item: &Item, vendor: &Path) -> State {
+/// `root` is the repository root, where patch files are found.
+pub fn state(item: &Item, vendor: &Path, root: &Path) -> State {
     let dir = vendor.join(&item.name);
     if !dir.is_dir() {
         return State::Missing;
     }
+    let wanted = match identity(item, root) {
+        Ok(id) => id,
+        Err(e) => return State::Stale(e),
+    };
     match fs::read_to_string(dir.join(STAMP)) {
         Err(_) => State::Incomplete,
-        Ok(text) if text.trim() == item.rev => State::Current,
+        Ok(text) if text.trim() == wanted => State::Current,
         Ok(text) => State::Stale(text.trim().to_owned()),
     }
 }
 
 /// Fetches every item that is not current. Returns how many were fetched.
-pub fn fetch_missing(lock: &Lock, vendor: &Path) -> Result<usize, String> {
+pub fn fetch_missing(lock: &Lock, vendor: &Path, root: &Path) -> Result<usize, String> {
     let mut fetched = 0;
     for item in &lock.items {
-        if state(item, vendor) != State::Current {
-            fetch_item(item, vendor)?;
+        if state(item, vendor, root) != State::Current {
+            fetch_item(item, vendor, root)?;
             fetched += 1;
         }
     }
@@ -137,7 +200,8 @@ pub fn fetch_missing(lock: &Lock, vendor: &Path) -> Result<usize, String> {
 }
 
 /// Fetches one item at its pinned commit, replacing whatever is there.
-pub fn fetch_item(item: &Item, vendor: &Path) -> Result<(), String> {
+pub fn fetch_item(item: &Item, vendor: &Path, root: &Path) -> Result<(), String> {
+    let identity = identity(item, root)?;
     let dir = vendor.join(&item.name);
     println!("vendor: fetching {} at {} ...", item.name, &item.rev[..12]);
     if dir.exists() {
@@ -150,6 +214,8 @@ pub fn fetch_item(item: &Item, vendor: &Path) -> Result<(), String> {
     // names that exceed the Windows limit when checked out in full).
     git(&dir, &["config", "core.longpaths", "true"])?;
     git(&dir, &["config", "advice.detachedHead", "false"])?;
+    // The same bytes on every platform, so that a patch applies the same way.
+    git(&dir, &["config", "core.autocrlf", "false"])?;
     git(&dir, &["remote", "add", "origin", &item.url])?;
     if !item.sparse.is_empty() {
         git(&dir, &["sparse-checkout", "init", "--cone"])?;
@@ -169,15 +235,21 @@ pub fn fetch_item(item: &Item, vendor: &Path) -> Result<(), String> {
             item.rev
         ));
     }
-    fs::write(dir.join(STAMP), format!("{}\n", item.rev))
+    if let Some(patch) = &item.patch {
+        let patch_file = root.join(patch);
+        let patch_file = patch_file.to_string_lossy();
+        git(&dir, &["apply", "--ignore-whitespace", &patch_file])
+            .map_err(|e| format!("{}: the patch does not apply: {e}", item.name))?;
+    }
+    fs::write(dir.join(STAMP), format!("{identity}\n"))
         .map_err(|e| format!("cannot write the stamp for {}: {e}", item.name))?;
     println!("vendor: {} is complete", item.name);
     Ok(())
 }
 
 /// Checks that an item is complete and that its checkout is at the pinned commit.
-pub fn verify_item(item: &Item, vendor: &Path) -> Result<(), String> {
-    match state(item, vendor) {
+pub fn verify_item(item: &Item, vendor: &Path, root: &Path) -> Result<(), String> {
+    match state(item, vendor, root) {
         State::Current => {}
         State::Missing => return Err(format!("{}: not fetched", item.name)),
         State::Incomplete => return Err(format!("{}: incomplete (no stamp)", item.name)),
@@ -196,6 +268,22 @@ pub fn verify_item(item: &Item, vendor: &Path) -> Result<(), String> {
             head.trim(),
             item.rev
         ));
+    }
+    if let Some(patch) = &item.patch {
+        // The patch is applied if it can be taken back out again.
+        let patch_file = root.join(patch);
+        let patch_file = patch_file.to_string_lossy();
+        git(
+            &vendor.join(&item.name),
+            &[
+                "apply",
+                "--ignore-whitespace",
+                "--reverse",
+                "--check",
+                &patch_file,
+            ],
+        )
+        .map_err(|e| format!("{}: the patch {patch} is not applied: {e}", item.name))?;
     }
     Ok(())
 }
@@ -246,8 +334,8 @@ pub fn ensure_required(root: &Path) -> Result<(), String> {
         let item = lock.items.iter().find(|i| &i.name == name).ok_or_else(|| {
             format!("Cargo.toml needs vendor item {name:?}, which is not in vendor.lock")
         })?;
-        if state(item, &vendor) != State::Current {
-            fetch_item(item, &vendor)?;
+        if state(item, &vendor, root) != State::Current {
+            fetch_item(item, &vendor, root)?;
         }
     }
     Ok(())
@@ -367,7 +455,7 @@ pub fn run_vendor_command(args: &[String]) -> Result<(), String> {
 
     match args.first().map(String::as_str) {
         Some("fetch") => {
-            let n = fetch_missing(&lock, &vendor)?;
+            let n = fetch_missing(&lock, &vendor, &root)?;
             if n == 0 {
                 println!("vendor: everything is already fetched");
             }
@@ -375,7 +463,7 @@ pub fn run_vendor_command(args: &[String]) -> Result<(), String> {
         }
         Some("status") => {
             for item in &lock.items {
-                let text = match state(item, &vendor) {
+                let text = match state(item, &vendor, &root) {
                     State::Current => "current".to_owned(),
                     State::Missing => "missing".to_owned(),
                     State::Incomplete => "incomplete".to_owned(),
@@ -388,7 +476,7 @@ pub fn run_vendor_command(args: &[String]) -> Result<(), String> {
         Some("verify") => {
             let mut failed = false;
             for item in &lock.items {
-                match verify_item(item, &vendor) {
+                match verify_item(item, &vendor, &root) {
                     Ok(()) => println!("{:<12} ok", item.name),
                     Err(e) => {
                         failed = true;
@@ -510,17 +598,147 @@ mod tests {
         let vendor = scratch("state");
         let lock = parse_lock(&lock_text()).unwrap();
         let item = &lock.items[0];
-        assert_eq!(state(item, &vendor), State::Missing);
+        assert_eq!(state(item, &vendor, &vendor), State::Missing);
 
         fs::create_dir_all(vendor.join("one")).unwrap();
-        assert_eq!(state(item, &vendor), State::Incomplete);
+        assert_eq!(state(item, &vendor, &vendor), State::Incomplete);
 
         fs::write(vendor.join("one").join(STAMP), format!("{REV_B}\n")).unwrap();
-        assert_eq!(state(item, &vendor), State::Stale(REV_B.to_owned()));
+        assert_eq!(
+            state(item, &vendor, &vendor),
+            State::Stale(REV_B.to_owned())
+        );
 
         fs::write(vendor.join("one").join(STAMP), format!("{REV_A}\n")).unwrap();
-        assert_eq!(state(item, &vendor), State::Current);
+        assert_eq!(state(item, &vendor, &vendor), State::Current);
         let _ = fs::remove_dir_all(&vendor);
+    }
+
+    #[test]
+    fn a_patch_path_must_stay_inside_the_repository() {
+        let ok = lock_text().replace(
+            "sparse = [\"crates/x\"]",
+            "patch = \"vendor-patches/two.patch\"",
+        );
+        assert_eq!(
+            parse_lock(&ok).unwrap().items[1].patch.as_deref(),
+            Some("vendor-patches/two.patch")
+        );
+        for bad in ["../two.patch", "/etc/passwd", ""] {
+            let text =
+                lock_text().replace("sparse = [\"crates/x\"]", &format!("patch = \"{bad}\""));
+            assert!(
+                parse_lock(&text).unwrap_err().contains("patch path"),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_identity_of_a_patched_item_follows_the_patch_and_ignores_line_endings() {
+        let root = scratch("identity");
+        let item = Item {
+            name: "one".into(),
+            url: "u".into(),
+            rev: REV_A.into(),
+            sparse: Vec::new(),
+            patch: Some("p.patch".into()),
+        };
+        assert!(identity(&item, &root).unwrap_err().contains("p.patch"));
+        fs::write(root.join("p.patch"), "a\nb\n").unwrap();
+        let lf = identity(&item, &root).unwrap();
+        assert!(lf.starts_with(&format!("{REV_A}+patch-")), "{lf}");
+        fs::write(root.join("p.patch"), "a\r\nb\r\n").unwrap();
+        assert_eq!(identity(&item, &root).unwrap(), lf);
+        fs::write(root.join("p.patch"), "a\nc\n").unwrap();
+        assert_ne!(identity(&item, &root).unwrap(), lf);
+        let plain = Item {
+            patch: None,
+            ..item
+        };
+        assert_eq!(identity(&plain, &root).unwrap(), REV_A);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        run_git(
+            dir,
+            &["-c", "user.name=t", "-c", "user.email=t@example.com"],
+            args,
+        )
+        .unwrap()
+    }
+
+    /// Fetches from a repository made on the spot, applies a patch, and checks
+    /// that the item is current, verifies, and goes stale when the patch changes.
+    #[test]
+    fn a_patched_item_is_fetched_patched_verified_and_refetched_when_the_patch_changes() {
+        let base = scratch("patched");
+        let origin = base.join("origin");
+        fs::create_dir_all(&origin).unwrap();
+        git_in(&origin, &["init", "-q"]);
+        fs::write(
+            origin.join("Cargo.toml"),
+            "dep = \"git\"
+other = 1
+",
+        )
+        .unwrap();
+        git_in(&origin, &["add", "."]);
+        git_in(&origin, &["commit", "-q", "-m", "first"]);
+        let rev = git_in(&origin, &["rev-parse", "HEAD"]).trim().to_owned();
+
+        let root = base.join("root");
+        fs::create_dir_all(root.join("patches")).unwrap();
+        let patch = "diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,2 +1,2 @@
+-dep = \"git\"
++dep = \"path\"
+ other = 1
+";
+        fs::write(root.join("patches/one.patch"), patch).unwrap();
+        let item = Item {
+            name: "one".into(),
+            url: origin.to_string_lossy().into_owned(),
+            rev,
+            sparse: Vec::new(),
+            patch: Some("patches/one.patch".into()),
+        };
+        let vendor = root.join("vendor");
+        assert_eq!(state(&item, &vendor, &root), State::Missing);
+        fetch_item(&item, &vendor, &root).unwrap();
+        assert_eq!(state(&item, &vendor, &root), State::Current);
+        let text = fs::read_to_string(vendor.join("one/Cargo.toml")).unwrap();
+        assert_eq!(
+            text,
+            "dep = \"path\"
+other = 1
+"
+        );
+        verify_item(&item, &vendor, &root).unwrap();
+
+        // A different patch is a different item.
+        fs::write(
+            root.join("patches/one.patch"),
+            format!(
+                "{patch}
+"
+            ),
+        )
+        .unwrap();
+        assert!(matches!(state(&item, &vendor, &root), State::Stale(_)));
+
+        // A patch that does not apply stops the fetch.
+        fs::write(
+            root.join("patches/one.patch"),
+            patch.replace("-dep = \"git\"", "-dep = \"nope\""),
+        )
+        .unwrap();
+        let err = fetch_item(&item, &vendor, &root).unwrap_err();
+        assert!(err.contains("does not apply"), "{err}");
+        let _ = remove_dir_all_force(&base);
     }
 
     #[test]

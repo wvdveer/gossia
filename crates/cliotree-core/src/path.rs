@@ -70,6 +70,13 @@ impl Path {
         self.0.pop()
     }
 
+    /// This path extended by a step.
+    pub fn child(&self, segment: Segment) -> Path {
+        let mut p = self.clone();
+        p.push(segment);
+        p
+    }
+
     /// This path extended by a key.
     pub fn key(&self, key: impl Into<String>) -> Path {
         let mut p = self.clone();

@@ -79,6 +79,46 @@ impl<T: Hash + Eq + Clone> PathTrie<T> {
         }
     }
 
+    /// Adds to `out` every item filed at `path` or above it.
+    pub fn at_or_above(&self, path: &[Segment], out: &mut Vec<T>) {
+        let mut node = self;
+        for segment in path {
+            out.extend(node.here.iter().cloned());
+            match node.children.get(segment) {
+                Some(child) => node = child,
+                None => return,
+            }
+        }
+        out.extend(node.here.iter().cloned());
+    }
+
+    /// Adds to `out` every item filed at `path` or below it.
+    pub fn at_or_below(&self, path: &[Segment], out: &mut Vec<T>) {
+        let mut node = self;
+        for segment in path {
+            match node.children.get(segment) {
+                Some(child) => node = child,
+                None => return,
+            }
+        }
+        node.collect_all(out);
+    }
+
+    /// Whether anything is filed at `path` or above it.
+    pub fn any_at_or_above(&self, path: &[Segment]) -> bool {
+        let mut node = self;
+        for segment in path {
+            if !node.here.is_empty() {
+                return true;
+            }
+            match node.children.get(segment) {
+                Some(child) => node = child,
+                None => return false,
+            }
+        }
+        !node.here.is_empty()
+    }
+
     /// Whether anything is filed at `path`, above it, or below it.
     pub fn any_related(&self, path: &[Segment]) -> bool {
         let mut node = self;

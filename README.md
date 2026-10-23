@@ -33,6 +33,7 @@ cargo xtask clean            # remove the build output AND vendor/
 
 - `vendor/` is kept between builds and is removed only by `cargo xtask clean`.
 - `cargo xtask lint`, `test` and `ci` fetch whatever the workspace needs before starting Cargo.
+- **The first build takes several minutes**, because it compiles RustPython (about 4.5 minutes in release on the development machine). Later builds reuse it. The `rustpython` item is fetched with a patch (`vendor-patches/rustpython.patch`) that makes its `ruff` dependencies point at `vendor/ruff`; see DESIGN.md, "Patching a vendored item".
 - **A plain `cargo build` cannot do that.** Cargo needs every path dependency to exist before it runs any build script, so on a fresh clone, once the workspace depends on `vendor/`, run `cargo xtask vendor fetch` first (once). Cargo's error in that case is `no matching package named ... found`, with the path under `vendor/`.
 - Set `CLIOTREE_VENDOR_DIR` to use a copy of the folder prepared elsewhere (for example when offline).
 

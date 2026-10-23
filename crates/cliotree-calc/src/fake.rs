@@ -4,16 +4,17 @@
 //! It reads a tiny expression language that looks like the start of a Python
 //! expression: numbers, strings, `True`, `False`, `None`, references such as
 //! `Orders.items[2].price`, the operators `+ - * /` and the comparisons, and
-//! the functions `SUM`, `IF`, `IFERROR` and `ISERROR`. It follows the design's
+//! the functions `SUM`, `LEN`, `IF`, `IFERROR` and `ISERROR`. It follows the design's
 //! rules for errors: reading an errored node passes the error along, and using
 //! its value raises it again with the same kind and origin.
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cliotree_core::{ErrorKind, Num, Path, Segment, Value};
 
-use crate::engine::{Context, Engine, Failure, Read, SyntaxError};
+use crate::engine::{Context, Depth, Engine, Failure, Read, Syntax, SyntaxError};
 
 /// The stand-in engine. Counts how many formulas it has run, so tests can tell
 /// whether a recalculation did more work than it needed to.
@@ -33,15 +34,17 @@ impl FakeEngine {
     }
 }
 
-impl Engine for FakeEngine {
+impl Syntax for FakeEngine {
     fn check(&self, formula: &str) -> Result<(), SyntaxError> {
         parse(formula).map(|_| ())
     }
+}
 
-    fn eval(&self, formula: &str, ctx: &mut dyn Context) -> Result<Value, Failure> {
+impl Engine for FakeEngine {
+    fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure> {
         self.evaluations.fetch_add(1, Ordering::SeqCst);
         let expr = parse(formula).map_err(|e| Failure::new(ErrorKind::Syntax, e.to_string()))?;
-        eval(&expr, ctx)
+        eval(&expr, &*ctx)
     }
 }
 
@@ -324,7 +327,7 @@ fn name_of(sheet: &str, path: &Path) -> String {
     }
 }
 
-fn eval(expr: &Expr, ctx: &mut dyn Context) -> Result<Value, Failure> {
+fn eval(expr: &Expr, ctx: &dyn Context) -> Result<Value, Failure> {
     match expr {
         Expr::Lit(v) => Ok(v.clone()),
         Expr::Ref { sheet, path } => read(ctx, sheet, path),
@@ -347,8 +350,8 @@ fn eval(expr: &Expr, ctx: &mut dyn Context) -> Result<Value, Failure> {
 
 /// Reading an errored node gives its error. Reading below one gives the same
 /// error, as the design says navigation does.
-fn read(ctx: &mut dyn Context, sheet: &str, path: &Path) -> Result<Value, Failure> {
-    match ctx.read(sheet, path) {
+fn read(ctx: &dyn Context, sheet: &str, path: &Path) -> Result<Value, Failure> {
+    match ctx.read(sheet, path, Depth::Deep) {
         Read::Node(node) => Ok(node.value().clone()),
         Read::NoSheet => Err(Failure::new(
             ErrorKind::Name,
@@ -359,7 +362,7 @@ fn read(ctx: &mut dyn Context, sheet: &str, path: &Path) -> Result<Value, Failur
             // depend on everything, so the search stops short of the root.
             let mut above = path.clone();
             while above.pop().is_some() && !above.is_root() {
-                match ctx.read(sheet, &above) {
+                match ctx.read(sheet, &above, Depth::Deep) {
                     Read::Node(node) => {
                         if let Value::Error(e) = node.value() {
                             return Ok(Value::Error(e.clone()));
@@ -484,7 +487,7 @@ fn compare(op: &str, l: &Value, r: &Value) -> Result<Value, Failure> {
     }))
 }
 
-fn call(name: &str, args: &[Expr], ctx: &mut dyn Context) -> Result<Value, Failure> {
+fn call(name: &str, args: &[Expr], ctx: &dyn Context) -> Result<Value, Failure> {
     match name {
         "SUM" => {
             let mut total = Value::Int(0);
@@ -517,6 +520,29 @@ fn call(name: &str, args: &[Expr], ctx: &mut dyn Context) -> Result<Value, Failu
             match eval(value, ctx) {
                 Ok(Value::Error(_)) | Err(_) => eval(fallback, ctx),
                 ok => ok,
+            }
+        }
+        "LEN" => {
+            // Looks only at the structure of what it is given, so it reads
+            // shallowly: the formula does not depend on what is inside.
+            let [Expr::Ref { sheet, path }] = args else {
+                return Err(Failure::new(ErrorKind::Type, "LEN takes one reference"));
+            };
+            match ctx.read(sheet, path, Depth::Shallow) {
+                Read::Node(node) => match node.value() {
+                    Value::Array(items) => Ok(Value::Int(items.len() as i64)),
+                    Value::Object(fields) => Ok(Value::Int(fields.len() as i64)),
+                    Value::Error(e) => Err(Failure::propagated(e)),
+                    other => Err(type_error("LEN", other)),
+                },
+                Read::Missing => Err(Failure::new(
+                    ErrorKind::Ref,
+                    format!("there is nothing at {}", name_of(sheet, path)),
+                )),
+                Read::NoSheet => Err(Failure::new(
+                    ErrorKind::Name,
+                    format!("there is no tab called {sheet}"),
+                )),
             }
         }
         "ISERROR" => {

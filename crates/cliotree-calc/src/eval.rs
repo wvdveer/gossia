@@ -19,15 +19,17 @@
 //! **Cycles.** A formula that reads a node it is still waiting to compute is
 //! in a cycle. Every formula on the cycle gets `#CIRCULAR!`.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use cliotree_core::{ErrorKind, ErrorValue, Node, Path, TypeSpec};
 use indexmap::IndexSet;
 
 use crate::check::{Computed, finish, store};
-use crate::engine::{Context, Engine, Read};
-use crate::model::{Formulas, Loc};
+use crate::engine::{Context, Depth, Engine, Read};
+use crate::model::{Dep, Formulas, Loc};
 
 /// One tab as the evaluator sees it.
 #[derive(Debug, Clone)]
@@ -53,7 +55,7 @@ pub struct Outcome {
     pub computed: Computed,
     pub traceback: Option<String>,
     /// Everything the formula read, found or not.
-    pub deps: Vec<Loc>,
+    pub deps: Vec<Dep>,
 }
 
 /// The results of one evaluation, in the order they were finished: a formula
@@ -129,7 +131,7 @@ struct Run<'a> {
     /// How many formulas are not yet `Done`.
     open: usize,
     /// What the latest, unfinished run of a formula read.
-    last_deps: HashMap<Loc, Vec<Loc>>,
+    last_deps: HashMap<Loc, Vec<Dep>>,
     outcomes: Vec<Outcome>,
 }
 
@@ -187,8 +189,10 @@ impl Run<'_> {
     }
 
     /// Formulas that are not yet done and whose result a read of `path` would
-    /// include: those at the path, above it, or below it.
-    fn open_related(&self, sheet: &str, path: &Path, out: &mut Vec<(Loc, St)>) {
+    /// include. A deep read includes those at the path, above it, or below it;
+    /// a shallow read only those at the path or above it, since what is below
+    /// does not change the node's structure.
+    fn open_related(&self, sheet: &str, path: &Path, depth: Depth, out: &mut Vec<(Loc, St)>) {
         if self.open == 0 {
             return;
         }
@@ -196,7 +200,10 @@ impl Run<'_> {
             return;
         };
         let mut paths = Vec::new();
-        snap.formulas.index.related(path.segments(), &mut paths);
+        match depth {
+            Depth::Deep => snap.formulas.index.related(path.segments(), &mut paths),
+            Depth::Shallow => snap.formulas.index.at_or_above(path.segments(), &mut paths),
+        }
         for p in paths {
             if let Some(st) = states.get(&p).copied().filter(|s| *s != St::Done) {
                 out.push((Loc::new(sheet, p), st));
@@ -241,7 +248,12 @@ impl Run<'_> {
         };
         let mut found = Vec::new();
         for dep in &formula.deps {
-            self.open_related(&dep.sheet, &dep.path, &mut found);
+            let depth = if dep.shallow {
+                Depth::Shallow
+            } else {
+                Depth::Deep
+            };
+            self.open_related(&dep.loc.sheet, &dep.loc.path, depth, &mut found);
         }
         let mut seen = HashSet::new();
         found
@@ -388,17 +400,58 @@ impl Run<'_> {
         };
         let text = formula.text.clone();
         let spec = Arc::clone(&snap.spec);
-        let engine = self.engine;
-        let mut ctx = EvalContext {
-            run: &*self,
-            loc,
-            deps: IndexSet::new(),
-            blockers: Vec::new(),
-            stale_seen: false,
-        };
-        let result = engine.eval(&text, &mut ctx);
-        let EvalContext { deps, blockers, .. } = ctx;
-        let deps: Vec<Loc> = deps.into_iter().collect();
+        let ctx = Rc::new(EvalContext {
+            loc: loc.clone(),
+            data: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), s.data.clone()))
+                .collect(),
+            specs: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), Arc::clone(&s.spec)))
+                .collect(),
+            names: self
+                .sheets
+                .keys()
+                .map(|name| (name.clone(), Rc::from(name.as_str())))
+                .collect(),
+            reads: RefCell::new(Vec::new()),
+        });
+        let result = self.engine.eval(&text, ctx.clone());
+        let reads = ctx.reads.take();
+        drop(ctx);
+
+        // What it read, in order, and which of that is still out of date. A
+        // read that finds something out of date is the last that is certain.
+        let mut deps: IndexSet<Dep> = IndexSet::new();
+        let mut blockers: Vec<Blocker> = Vec::new();
+        let mut stale_seen = false;
+        let mut seen: HashSet<(&str, &Path, Depth)> = HashSet::with_capacity(reads.len().min(64));
+        for (sheet, path, depth) in &reads {
+            if !seen.insert((sheet, path, *depth)) {
+                continue;
+            }
+            let dep = Dep {
+                loc: Loc::new(&**sheet, path.clone()),
+                shallow: *depth == Depth::Shallow,
+            };
+            let depth = *depth;
+            let mut waiting = Vec::new();
+            self.open_related(&dep.loc.sheet, &dep.loc.path, depth, &mut waiting);
+            if !waiting.is_empty() {
+                let certain = !stale_seen;
+                blockers.extend(
+                    waiting
+                        .into_iter()
+                        .map(|(loc, st)| Blocker { loc, st, certain }),
+                );
+                stale_seen = true;
+            }
+            deps.insert(dep);
+        }
+        let deps: Vec<Dep> = deps.into_iter().collect();
         if !blockers.is_empty() {
             self.last_deps.insert(loc.clone(), deps);
             let mut seen = HashSet::new();
@@ -420,7 +473,7 @@ impl Run<'_> {
         loc: &Loc,
         mut computed: Computed,
         traceback: Option<String>,
-        deps: Vec<Loc>,
+        deps: Vec<Dep>,
     ) {
         if let Some(snap) = self.sheets.get_mut(&loc.sheet)
             && let Err(message) = store(&snap.spec, &mut snap.data, &loc.path, &computed)
@@ -469,16 +522,29 @@ impl Run<'_> {
     }
 }
 
-struct EvalContext<'r, 'e> {
-    run: &'r Run<'e>,
-    loc: &'r Loc,
-    deps: IndexSet<Loc>,
-    blockers: Vec<Blocker>,
-    /// A value that is still out of date has been returned to the formula.
-    stale_seen: bool,
+/// What one run of one formula sees: the trees as they were when it started,
+/// and a log of what it read. The log is looked at afterwards, so the formula
+/// is not held up by the order of evaluation.
+struct EvalContext {
+    loc: Loc,
+    data: HashMap<String, Node>,
+    specs: HashMap<String, Arc<TypeSpec>>,
+    /// Tab names, shared, so that a read does not have to make a string.
+    names: HashMap<String, Rc<str>>,
+    reads: RefCell<Vec<(Rc<str>, Path, Depth)>>,
 }
 
-impl Context for EvalContext<'_, '_> {
+impl EvalContext {
+    fn log(&self, sheet: &str, path: &Path, depth: Depth) {
+        let name = match self.names.get(sheet) {
+            Some(name) => Rc::clone(name),
+            None => Rc::from(sheet),
+        };
+        self.reads.borrow_mut().push((name, path.clone(), depth));
+    }
+}
+
+impl Context for EvalContext {
     fn sheet(&self) -> &str {
         &self.loc.sheet
     }
@@ -487,27 +553,28 @@ impl Context for EvalContext<'_, '_> {
         &self.loc.path
     }
 
-    fn read(&mut self, sheet: &str, path: &Path) -> Read {
-        self.deps.insert(Loc::new(sheet, path.clone()));
-        let Some(snap) = self.run.sheets.get(sheet) else {
-            return Read::NoSheet;
-        };
-        // The old value is still returned, so that the formula runs on and
-        // reports everything else it needs; the run is discarded afterwards.
-        let mut waiting = Vec::new();
-        self.run.open_related(sheet, path, &mut waiting);
-        if !waiting.is_empty() {
-            let certain = !self.stale_seen;
-            self.blockers.extend(
-                waiting
-                    .into_iter()
-                    .map(|(loc, st)| Blocker { loc, st, certain }),
-            );
-            self.stale_seen = true;
+    fn read(&self, sheet: &str, path: &Path, depth: Depth) -> Read {
+        self.log(sheet, path, depth);
+        match self.data.get(sheet) {
+            None => Read::NoSheet,
+            Some(root) => match root.get(path) {
+                Some(node) => Read::Node(node.clone()),
+                None => Read::Missing,
+            },
         }
-        match snap.data.get(path) {
-            Some(node) => Read::Node(node.clone()),
-            None => Read::Missing,
-        }
+    }
+
+    fn record(&self, sheet: &str, path: &Path, depth: Depth) {
+        self.log(sheet, path, depth);
+    }
+
+    fn absent_ok(&self, sheet: &str, path: &Path) -> bool {
+        self.specs
+            .get(sheet)
+            .is_some_and(|spec| spec.is_optional_field(path))
+    }
+
+    fn sheets(&self) -> Vec<String> {
+        self.data.keys().cloned().collect()
     }
 }

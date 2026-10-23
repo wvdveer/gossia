@@ -16,9 +16,9 @@ use cliotree_core::{ErrorKind, ErrorValue, Node, Path, Segment, TypeSpec, Value}
 use indexmap::IndexSet;
 
 use crate::check::{Computed, store};
-use crate::engine::Engine;
+use crate::engine::{Engine, Syntax};
 use crate::eval::{Evaluation, SheetSnap, Snapshot};
-use crate::model::{Formula, Formulas, Loc, overlaps};
+use crate::model::{Dep, Formula, Formulas, Loc, overlaps};
 use crate::trie::PathTrie;
 
 /// How many recent edits are remembered for judging whether a result is stale.
@@ -105,11 +105,13 @@ pub struct Cell<'a> {
 }
 
 pub struct Calc {
-    engine: Arc<dyn Engine>,
+    syntax: Arc<dyn Syntax>,
     sheets: indexmap::IndexMap<String, Sheet>,
     /// Which formulas read which paths, by tab name (also for tabs that do not
     /// exist, so that adding the tab runs the formulas that were looking for it).
-    readers: HashMap<String, PathTrie<Loc>>,
+    deep_readers: HashMap<String, PathTrie<Loc>>,
+    /// Formulas that read only the structure of a node (see [`Dep`]).
+    shallow_readers: HashMap<String, PathTrie<Loc>>,
     dirty: IndexSet<Loc>,
     version: u64,
     log: VecDeque<(u64, Loc)>,
@@ -118,11 +120,13 @@ pub struct Calc {
 }
 
 impl Calc {
-    pub fn new(engine: Arc<dyn Engine>) -> Calc {
+    /// `syntax` checks formula text as it is entered.
+    pub fn new(syntax: Arc<dyn Syntax>) -> Calc {
         Calc {
-            engine,
+            syntax,
             sheets: indexmap::IndexMap::new(),
-            readers: HashMap::new(),
+            deep_readers: HashMap::new(),
+            shallow_readers: HashMap::new(),
             dirty: IndexSet::new(),
             version: 0,
             log: VecDeque::new(),
@@ -130,8 +134,8 @@ impl Calc {
         }
     }
 
-    pub fn engine(&self) -> &Arc<dyn Engine> {
-        &self.engine
+    pub fn syntax(&self) -> &Arc<dyn Syntax> {
+        &self.syntax
     }
 
     pub fn version(&self) -> u64 {
@@ -297,7 +301,7 @@ impl Calc {
         if let Some(formula) = s.formulas.below(path).into_iter().next() {
             return Err(EditError::ContainsFormulas { node: loc, formula });
         }
-        let syntax = self.engine.check(text);
+        let syntax = self.syntax.check(text);
         let s = self.sheet_mut(sheet)?;
         let mut formula = Formula {
             text: text.to_string(),
@@ -383,12 +387,17 @@ impl Calc {
         let mut dropped: HashMap<String, PathTrie<Loc>> = HashMap::new();
         for outcome in evaluation.outcomes {
             let loc = outcome.loc.clone();
-            let overtaken = self.edited_since(evaluation.base, &loc)
+            let overtaken = self.edited_since(evaluation.base, &loc, false)
                 || outcome.deps.iter().any(|dep| {
-                    self.edited_since(evaluation.base, dep)
-                        || dropped
-                            .get(&dep.sheet)
-                            .is_some_and(|t| t.any_related(dep.path.segments()))
+                    self.edited_since(evaluation.base, &dep.loc, dep.shallow)
+                        || dropped.get(&dep.loc.sheet).is_some_and(|t| {
+                            if dep.shallow {
+                                // A dropped result above the node changes its structure.
+                                t.any_at_or_above(dep.loc.path.segments())
+                            } else {
+                                t.any_related(dep.loc.path.segments())
+                            }
+                        })
                 })
                 || !self
                     .sheets
@@ -422,10 +431,10 @@ impl Calc {
 
     /// Evaluates everything that is out of date and applies the results, on
     /// this thread. Returns how many formulas were run.
-    pub fn recalc(&mut self) -> usize {
+    pub fn recalc(&mut self, engine: &dyn Engine) -> usize {
         let mut run = 0;
         while !self.dirty.is_empty() {
-            let evaluation = self.snapshot().evaluate(&*self.engine);
+            let evaluation = self.snapshot().evaluate(engine);
             run += evaluation.outcomes.len();
             if self.apply(evaluation).applied.is_empty() {
                 break;
@@ -473,19 +482,29 @@ impl Calc {
         true
     }
 
-    fn remember_deps(&mut self, formula: &Loc, deps: &[Loc]) {
+    fn remember_deps(&mut self, formula: &Loc, deps: &[Dep]) {
         for dep in deps {
-            self.readers
-                .entry(dep.sheet.clone())
+            let readers = if dep.shallow {
+                &mut self.shallow_readers
+            } else {
+                &mut self.deep_readers
+            };
+            readers
+                .entry(dep.loc.sheet.clone())
                 .or_default()
-                .insert(dep.path.segments(), formula.clone());
+                .insert(dep.loc.path.segments(), formula.clone());
         }
     }
 
-    fn forget_deps(&mut self, formula: &Loc, deps: &[Loc]) {
+    fn forget_deps(&mut self, formula: &Loc, deps: &[Dep]) {
         for dep in deps {
-            if let Some(trie) = self.readers.get_mut(&dep.sheet) {
-                trie.remove(dep.path.segments(), formula);
+            let readers = if dep.shallow {
+                &mut self.shallow_readers
+            } else {
+                &mut self.deep_readers
+            };
+            if let Some(trie) = readers.get_mut(&dep.loc.sheet) {
+                trie.remove(dep.loc.path.segments(), formula);
             }
         }
     }
@@ -503,7 +522,10 @@ impl Calc {
         self.mark_dirty_from(sheet, path);
     }
 
-    fn edited_since(&self, base: u64, loc: &Loc) -> bool {
+    /// Whether an edit made after `base` concerns a read of `loc`: for a deep
+    /// read, an edit at the node, above it, or below it; for a shallow read,
+    /// an edit at the node or above it.
+    fn edited_since(&self, base: u64, loc: &Loc, shallow: bool) -> bool {
         if base < self.log_floor {
             return true;
         }
@@ -511,7 +533,14 @@ impl Calc {
             .iter()
             .rev()
             .take_while(|(version, _)| *version > base)
-            .any(|(_, edit)| edit.sheet == loc.sheet && overlaps(&edit.path, &loc.path))
+            .any(|(_, edit)| {
+                edit.sheet == loc.sheet
+                    && if shallow {
+                        loc.path.segments().starts_with(edit.path.segments())
+                    } else {
+                        overlaps(&edit.path, &loc.path)
+                    }
+            })
     }
 
     /// Marks as out of date every formula that read something at or around
@@ -521,8 +550,11 @@ impl Calc {
         let mut queue = vec![Loc::new(sheet, path.clone())];
         while let Some(at) = queue.pop() {
             let mut found: Vec<Loc> = Vec::new();
-            if let Some(readers) = self.readers.get(&at.sheet) {
+            if let Some(readers) = self.deep_readers.get(&at.sheet) {
                 readers.related(at.path.segments(), &mut found);
+            }
+            if let Some(readers) = self.shallow_readers.get(&at.sheet) {
+                readers.at_or_below(at.path.segments(), &mut found);
             }
             if let Some(s) = self.sheets.get(&at.sheet) {
                 let mut located = Vec::new();

@@ -2,7 +2,7 @@
 members = ["crates/*"]
 # The helper tools are a separate workspace so that they build and run before
 # vendor/ has been fetched (see DESIGN.md, Build and dependencies).
-exclude = ["tools"]
+exclude = ["tools", "vendor"]
 resolver = "3"
 
 [workspace.package]
@@ -23,10 +23,20 @@ cliotree-std = { path = "crates/cliotree-std" }
 # these before it starts Cargo, because Cargo needs every path dependency to
 # exist before any build script can run. RustPython and ruff are added here by
 # build step 3.
-vendor = ["json-schema-test-suite"]
+vendor = ["rustpython", "ruff", "json-schema-test-suite"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# RustPython's evaluator keeps oversized native frames active when it is not
+# optimised, which overflows the stack during startup (DESIGN.md, "Python
+# engine"). Dependencies are therefore optimised in every profile, as RustPython
+# does in its own workspace.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test.package."*"]
+opt-level = 3

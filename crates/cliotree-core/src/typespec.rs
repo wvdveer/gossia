@@ -71,6 +71,23 @@ impl TypeSpec {
         Some(here)
     }
 
+    /// Whether `path` is a field of an object that the schema declares and
+    /// does not require. A node missing at such a path is simply absent, which
+    /// is different from a node the schema does not define.
+    pub fn is_optional_field(&self, path: &Path) -> bool {
+        let Some((Segment::Key(name), parent)) = path.segments().split_last() else {
+            return false;
+        };
+        let parent = Path::from(parent.to_vec());
+        let Some(here) = self.resolve(&parent) else {
+            return false;
+        };
+        match &self.get(here.ty).kind {
+            Kind::Object { fields } => fields.iter().any(|f| &f.name == name && !f.required),
+            _ => false,
+        }
+    }
+
     /// The number of types in the arena, including any that are not reachable.
     pub fn len(&self) -> usize {
         self.types.len()
@@ -242,6 +259,22 @@ mod tests {
             resolved(&spec, "address.zip"),
             Some(("string".into(), false))
         );
+    }
+
+    #[test]
+    fn an_optional_field_is_told_apart_from_an_undefined_one_and_from_a_map_key() {
+        let spec = lower_str(SCHEMA).unwrap();
+        let optional = |text: &str| spec.is_optional_field(&text.parse().unwrap());
+        assert!(optional("tags"));
+        assert!(optional("address.zip"));
+        assert!(!optional("name"), "required");
+        assert!(!optional("nothing"), "not defined");
+        assert!(
+            !optional("prices.rice"),
+            "a missing map key is a missing key"
+        );
+        assert!(!optional("tags[0]"));
+        assert!(!spec.is_optional_field(&Path::root()));
     }
 
     #[test]

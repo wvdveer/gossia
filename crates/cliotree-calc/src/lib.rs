@@ -12,13 +12,14 @@ mod engine;
 mod eval;
 pub mod fake;
 mod model;
+pub mod python;
 mod trie;
 
 pub use calc::{Applied, Calc, Cell, EditError};
 pub use check::Computed;
-pub use engine::{Context, Engine, Failure, Read, SyntaxError};
+pub use engine::{Context, Depth, Engine, Failure, Read, Syntax, SyntaxError};
 pub use eval::{Evaluation, Outcome, Snapshot};
-pub use model::Loc;
+pub use model::{Dep, Loc};
 
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -7,6 +7,10 @@ version = 1
 name = "rustpython"
 url  = "https://github.com/RustPython/RustPython"
 rev  = "e5554e23abfbaee85508c32fc22e5074f88aebdd"
+# Makes the four ruff crates path dependencies on the ruff item below, so that
+# Cargo never checks the ruff repository out (see DESIGN.md, "Build and
+# dependencies").
+patch = "vendor-patches/rustpython.patch"
 
 [[item]]
 name   = "ruff"
@@ -18,6 +22,8 @@ sparse = [
     "crates/ruff_python_trivia",
     "crates/ruff_source_file",
     "crates/ruff_text_size",
+    "crates/ruff_unicode_names2",
+    "crates/ruff_unicode_names2_generator",
 ]
 
 # Test-only: the official JSON Schema Test Suite (DESIGN.md, Testing and CI,

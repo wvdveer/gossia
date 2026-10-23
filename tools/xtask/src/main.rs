@@ -90,7 +90,8 @@ fn clean(root: &Path) -> Result<(), String> {
 }
 
 fn lint(root: &Path) -> Result<(), String> {
-    cargo(root, &["fmt", "--all", "--", "--check"])?;
+    // Not `--all`: that would also format the vendored path dependencies.
+    cargo(root, &["fmt", "--", "--check"])?;
     cargo(
         root,
         &[
