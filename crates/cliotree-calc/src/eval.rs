@@ -89,8 +89,15 @@ impl Snapshot {
 
     /// Runs every formula in the list, and those that depend on them.
     pub fn evaluate(&self, engine: &dyn Engine) -> Evaluation {
+        self.evaluate_with(engine, &mut NoHooks)
+    }
+
+    /// As [`Snapshot::evaluate`], telling `hooks` before each formula is run
+    /// and letting it stop the pass.
+    pub fn evaluate_with(&self, engine: &dyn Engine, hooks: &mut dyn Hooks) -> Evaluation {
         let mut run = Run {
             engine,
+            hooks,
             sheets: self.sheets.clone(),
             state: HashMap::new(),
             open: 0,
@@ -122,8 +129,24 @@ enum St {
     Done,
 }
 
+/// What an evaluation tells whoever is running it, and asks of them.
+pub trait Hooks {
+    /// A formula is about to be run. Returning false stops the pass: that
+    /// formula, and every one after it, gets `#TIMEOUT!` instead of being run.
+    fn before(&mut self, loc: &Loc) -> bool;
+}
+
+struct NoHooks;
+
+impl Hooks for NoHooks {
+    fn before(&mut self, _: &Loc) -> bool {
+        true
+    }
+}
+
 struct Run<'a> {
     engine: &'a dyn Engine,
+    hooks: &'a mut dyn Hooks,
     /// The tabs with the results so far written into their trees.
     sheets: HashMap<String, SheetSnap>,
     /// By tab, then path. A formula that is not here is up to date.
@@ -390,6 +413,15 @@ impl Run<'_> {
     /// out-of-date formula is still to compute, the run is thrown away and the
     /// formulas to wait for are returned.
     fn attempt(&mut self, loc: &Loc) -> Attempt {
+        if !self.hooks.before(loc) {
+            let error = ErrorValue {
+                kind: ErrorKind::Timeout,
+                message: "the recalculation ran out of time before this formula was run".to_owned(),
+                origin: Some(loc.path.clone()),
+            };
+            self.record(loc, Computed::Error(error), None, Vec::new());
+            return Attempt::Finished;
+        }
         let Some(snap) = self.sheets.get(&loc.sheet) else {
             self.set(loc, St::Done);
             return Attempt::Finished;

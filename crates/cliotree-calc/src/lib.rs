@@ -11,15 +11,18 @@ mod check;
 mod engine;
 mod eval;
 pub mod fake;
+mod history;
 mod model;
 pub mod python;
+mod session;
 mod trie;
 
 pub use calc::{Applied, Calc, Cell, EditError};
 pub use check::Computed;
 pub use engine::{Context, Depth, Engine, Failure, Read, Syntax, SyntaxError};
-pub use eval::{Evaluation, Outcome, Snapshot};
+pub use eval::{Evaluation, Hooks, Outcome, Snapshot};
 pub use model::{Dep, Loc};
+pub use session::{EngineFactory, EvalSettings, Evaluator, Session, Status};
 
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -37,3 +40,11 @@ mod tests {
         assert_eq!(VERSION, cliotree_core::VERSION);
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod history_tests;
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod session_tests;

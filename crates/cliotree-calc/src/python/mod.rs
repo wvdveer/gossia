@@ -31,6 +31,14 @@ use watchdog::Watchdog;
 
 pub use syntax::PythonSyntax;
 
+/// A factory for the evaluation thread: each call makes an engine with its
+/// own interpreter.
+pub fn factory(settings: PythonSettings) -> crate::EngineFactory {
+    std::sync::Arc::new(move || {
+        Box::new(PythonEngine::with_settings(settings.clone())) as Box<dyn Engine>
+    })
+}
+
 /// The Python source that defines `ErrorValue`, `IFERROR` and the rest.
 const PRELUDE: &str = include_str!("prelude.py");
 
@@ -294,6 +302,10 @@ impl Default for PythonEngine {
 }
 
 impl Engine for PythonEngine {
+    fn set_time_limit(&self, limit: Option<Duration>) {
+        PythonEngine::set_time_limit(self, limit);
+    }
+
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure> {
         self.evaluations.set(self.evaluations.get() + 1);
         let text = formula.trim();

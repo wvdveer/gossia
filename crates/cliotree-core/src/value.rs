@@ -311,6 +311,74 @@ impl Node {
         })
     }
 
+    /// Where the node at `path` sits among its parent's children: its index in
+    /// an array, or its place in the order of an object's fields. `None` for
+    /// the root and for a path that leads nowhere.
+    pub fn position_of(&self, path: &Path) -> Option<usize> {
+        let (last, parent_segments) = path.segments().split_last()?;
+        let parent = self.get(&Path::from(parent_segments.to_vec()))?;
+        match (parent.value(), last) {
+            (Value::Array(items), Segment::Index(i)) if *i < items.len() => Some(*i),
+            (Value::Object(fields), Segment::Key(k)) => fields.get_index_of(k),
+            _ => None,
+        }
+    }
+
+    /// Puts `node` in place of the existing node at `path`, keeping the new
+    /// node's own id, and returns the node it replaced. This is how an edit is
+    /// undone without losing the identity of what was there.
+    pub fn replace(&mut self, path: &Path, node: Node) -> Result<Node, PathError> {
+        let Some((last, parent_segments)) = path.segments().split_last() else {
+            return Ok(std::mem::replace(self, node));
+        };
+        let parent_path = Path::from(parent_segments.to_vec());
+        match self.get(path) {
+            Some(_) => {}
+            None => return Err(PathError::Missing(path.clone())),
+        }
+        let parent = self.get_mut(&parent_path).expect("the node has a parent");
+        Ok(match (parent.value_mut(), last) {
+            (Value::Object(fields), Segment::Key(k)) => {
+                std::mem::replace(fields.get_mut(k).expect("checked above"), node)
+            }
+            (Value::Array(items), Segment::Index(i)) => std::mem::replace(&mut items[*i], node),
+            _ => unreachable!("checked above"),
+        })
+    }
+
+    /// Inserts `node` as the child of the node at `parent` that `segment` names,
+    /// at `position` among the children: an array item is inserted there and
+    /// later items move up; an object field is placed there in the order of the
+    /// fields. The node keeps its own id.
+    pub fn insert_child(
+        &mut self,
+        parent: &Path,
+        position: usize,
+        segment: &Segment,
+        node: Node,
+    ) -> Result<(), PathError> {
+        let Some(target) = self.get_mut(parent) else {
+            return Err(PathError::Missing(parent.clone()));
+        };
+        match (target.value_mut(), segment) {
+            (Value::Array(items), Segment::Index(_)) => {
+                if position > items.len() {
+                    return Err(PathError::OutOfRange(parent.clone()));
+                }
+                items.insert(position, node);
+                Ok(())
+            }
+            (Value::Object(fields), Segment::Key(k)) => {
+                if position > fields.len() {
+                    return Err(PathError::OutOfRange(parent.clone()));
+                }
+                fields.shift_insert(position, k.clone(), node);
+                Ok(())
+            }
+            _ => Err(PathError::WrongKind(parent.clone())),
+        }
+    }
+
     /// Mutable access to the node at `path`, copying only the nodes on the way.
     fn get_mut(&mut self, path: &Path) -> Option<&mut Node> {
         let mut node = self;
@@ -340,6 +408,88 @@ impl From<Value> for Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn position_replace_and_insert_child_restore_what_remove_took_out() {
+        let mut root = Node::new(object(vec![
+            ("a", Value::Int(1)),
+            ("b", Value::Int(2)),
+            (
+                "list",
+                Value::Array(vec![Node::new(Value::Int(10)), Node::new(Value::Int(20))]),
+            ),
+        ]));
+        let b: Path = "b".parse().unwrap();
+        let item: Path = "list[0]".parse().unwrap();
+        // Take a field and an item out, remembering where they were, and the
+        // nodes themselves.
+        let b_at = root.position_of(&b).unwrap();
+        let b_node = root.remove(&b).unwrap();
+        let item_node = root.remove(&item).unwrap();
+        assert_eq!(b_at, 1);
+        // Put them back: same place, same ids.
+        root.insert_child(
+            &Path::root(),
+            b_at,
+            &Segment::Key("b".into()),
+            b_node.clone(),
+        )
+        .unwrap();
+        root.insert_child(
+            &"list".parse().unwrap(),
+            0,
+            &Segment::Index(0),
+            item_node.clone(),
+        )
+        .unwrap();
+        let keys: Vec<_> = root.value().as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, ["a", "b", "list"]);
+        assert_eq!(root.get(&b).unwrap().id(), b_node.id());
+        assert_eq!(root.get(&item).unwrap().id(), item_node.id());
+        assert_eq!(root.get(&item).unwrap().value(), &Value::Int(10));
+
+        // Replace gives back the node it replaced.
+        let old = root.replace(&b, Node::new(Value::Int(99))).unwrap();
+        assert_eq!(old.id(), b_node.id());
+        assert_eq!(root.get(&b).unwrap().value(), &Value::Int(99));
+        let again = root.replace(&b, old.clone()).unwrap();
+        assert_eq!(again.value(), &Value::Int(99));
+        assert_eq!(root.get(&b).unwrap().id(), b_node.id());
+    }
+
+    #[test]
+    fn position_replace_and_insert_child_refuse_what_does_not_fit() {
+        let mut root = Node::new(object(vec![("a", Value::Int(1))]));
+        let missing: Path = "zzz".parse().unwrap();
+        assert_eq!(root.position_of(&missing), None);
+        assert_eq!(root.position_of(&Path::root()), None);
+        assert!(matches!(
+            root.replace(&missing, Node::new(Value::Int(0))),
+            Err(PathError::Missing(_))
+        ));
+        assert!(matches!(
+            root.insert_child(
+                &Path::root(),
+                5,
+                &Segment::Key("k".into()),
+                Node::new(Value::Null)
+            ),
+            Err(PathError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            root.insert_child(&Path::root(), 0, &Segment::Index(0), Node::new(Value::Null)),
+            Err(PathError::WrongKind(_))
+        ));
+        assert!(matches!(
+            root.insert_child(
+                &"nope".parse().unwrap(),
+                0,
+                &Segment::Index(0),
+                Node::new(Value::Null)
+            ),
+            Err(PathError::Missing(_))
+        ));
+    }
 
     fn s(text: &str) -> Value {
         Value::Str(text.to_string())

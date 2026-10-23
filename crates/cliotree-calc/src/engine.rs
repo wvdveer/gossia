@@ -126,6 +126,10 @@ pub trait Syntax: Send + Sync {
 
 /// Runs formulas. Not required to be `Send`.
 pub trait Engine {
+    /// How long one formula may run before it is stopped with `#TIMEOUT!`.
+    /// Engines that cannot stop a formula ignore it.
+    fn set_time_limit(&self, _limit: Option<std::time::Duration>) {}
+
     /// Runs the formula. An engine reports a value, or a [`Failure`] that
     /// carries the error kind. A result that is an error value found in the
     /// data (a formula such as `=Orders.total` whose source has failed) is

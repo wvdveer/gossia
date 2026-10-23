@@ -18,6 +18,7 @@ use indexmap::IndexSet;
 use crate::check::{Computed, store};
 use crate::engine::{Engine, Syntax};
 use crate::eval::{Evaluation, SheetSnap, Snapshot};
+use crate::history::{Entry, History, MergeKey, Op};
 use crate::model::{Dep, Formula, Formulas, Loc, overlaps};
 use crate::trie::PathTrie;
 
@@ -117,6 +118,7 @@ pub struct Calc {
     log: VecDeque<(u64, Loc)>,
     /// The version of the newest edit dropped from the log.
     log_floor: u64,
+    history: History,
 }
 
 impl Calc {
@@ -131,6 +133,7 @@ impl Calc {
             version: 0,
             log: VecDeque::new(),
             log_floor: 0,
+            history: History::default(),
         }
     }
 
@@ -222,18 +225,78 @@ impl Calc {
     }
 
     // ---------------------------------------------------------- editing
+    //
+    // Every edit is an entry in the history unless several are being grouped
+    // (see [`Calc::begin_entry`]).
 
     /// Sets a literal. A formula at exactly this node is replaced by it
     /// (DESIGN.md, "Entering formulas"); a node inside a formula's result is
     /// refused.
     pub fn set_value(&mut self, sheet: &str, path: &Path, value: Value) -> Result<(), EditError> {
+        self.set_value_as(sheet, path, value, false)
+    }
+
+    /// Like [`Calc::set_value`], but an edit of this kind to the same cell
+    /// straight after another joins the same entry, so that typing in a cell
+    /// is one thing to undo. [`Calc::seal_history`] ends the run.
+    pub fn set_value_merging(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        value: Value,
+    ) -> Result<(), EditError> {
+        self.set_value_as(sheet, path, value, true)
+    }
+
+    fn set_value_as(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        value: Value,
+        merge: bool,
+    ) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, path)?;
+        let formula = self.formula_text(sheet, path);
         let s = self.sheet_mut(sheet)?;
+        let before = s.data.get(path).cloned();
         s.data
             .set(path, value)
             .map_err(|e| EditError::Path(e.to_string()))?;
+        let after = s.data.get(path).cloned().expect("it was just set");
+        let position = s.data.position_of(path).unwrap_or(0);
+        let mut ops = Vec::new();
+        if let Some(text) = formula {
+            ops.push(Op::Formula {
+                sheet: sheet.to_owned(),
+                path: path.clone(),
+                before: Some(text),
+                after: None,
+                value: None,
+            });
+        }
+        ops.push(match before {
+            Some(before) => Op::Replace {
+                sheet: sheet.to_owned(),
+                path: path.clone(),
+                before,
+                after,
+            },
+            None => Op::Add {
+                sheet: sheet.to_owned(),
+                path: path.clone(),
+                position,
+                node: after,
+                moved: Vec::new(),
+            },
+        });
         self.drop_formula(sheet, path);
         self.changed(sheet, path);
+        let key = merge.then(|| MergeKey {
+            sheet: sheet.to_owned(),
+            path: path.clone(),
+        });
+        self.history
+            .record(format!("Set {}", Loc::new(sheet, path.clone())), ops, key);
         Ok(())
     }
 
@@ -242,17 +305,46 @@ impl Calc {
     /// "References are literal").
     pub fn remove(&mut self, sheet: &str, path: &Path) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, path)?;
+        let formula = self.formula_text(sheet, path);
         let s = self.sheet_mut(sheet)?;
-        s.data
+        let position = s
+            .data
+            .position_of(path)
+            .ok_or_else(|| EditError::Path(format!("there is no node at {path} to remove")))?;
+        let node = s
+            .data
             .remove(path)
             .map_err(|e| EditError::Path(e.to_string()))?;
+        let mut ops = Vec::new();
+        if let Some(text) = formula {
+            ops.push(Op::Formula {
+                sheet: sheet.to_owned(),
+                path: path.clone(),
+                before: Some(text),
+                after: None,
+                value: None,
+            });
+        }
         self.drop_formula(sheet, path);
-        // Removing an array item moves the items after it.
-        let changed = match path.segments().last() {
-            Some(Segment::Index(_)) => path.parent().unwrap_or_default(),
-            _ => path.clone(),
+        let moved = match path.segments().last() {
+            Some(Segment::Index(i)) => {
+                self.moved_by(sheet, &path.parent().unwrap_or_default(), *i, 1)
+            }
+            _ => Vec::new(),
         };
-        self.changed(sheet, &changed);
+        ops.push(Op::Remove {
+            sheet: sheet.to_owned(),
+            path: path.clone(),
+            position,
+            node,
+            moved,
+        });
+        self.changed_by_structure(sheet, path);
+        self.history.record(
+            format!("Remove {}", Loc::new(sheet, path.clone())),
+            ops,
+            None,
+        );
         Ok(())
     }
 
@@ -265,22 +357,25 @@ impl Calc {
         value: Value,
     ) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, &array.index(index))?;
+        let node = Node::new(value);
         let s = self.sheet_mut(sheet)?;
-        let mut items = match s.data.get(array).map(Node::value) {
-            Some(Value::Array(items)) => items.clone(),
-            _ => return Err(EditError::Path(format!("there is no array at {array}"))),
-        };
-        if index > items.len() {
-            return Err(EditError::Path(format!(
-                "cannot insert at {index} in an array of {}",
-                items.len()
-            )));
-        }
-        items.insert(index, Node::new(value));
         s.data
-            .set(array, Value::Array(items))
+            .insert_child(array, index, &Segment::Index(index), node.clone())
             .map_err(|e| EditError::Path(e.to_string()))?;
         self.changed(sheet, array);
+        let path = array.index(index);
+        let moved = self.moved_by(sheet, array, index + 1, -1);
+        self.history.record(
+            format!("Insert {}", Loc::new(sheet, path.clone())),
+            vec![Op::Add {
+                sheet: sheet.to_owned(),
+                path,
+                position: index,
+                node,
+                moved,
+            }],
+            None,
+        );
         Ok(())
     }
 
@@ -301,8 +396,36 @@ impl Calc {
         if let Some(formula) = s.formulas.below(path).into_iter().next() {
             return Err(EditError::ContainsFormulas { node: loc, formula });
         }
-        let syntax = self.syntax.check(text);
+        let before = self.formula_text(sheet, path);
         let s = self.sheet_mut(sheet)?;
+        let value = s
+            .data
+            .get(path)
+            .cloned()
+            .map(|node| (node, s.data.position_of(path).unwrap_or(0)));
+        self.install_formula(sheet, path, text);
+        self.history.record(
+            format!("Set formula at {loc}"),
+            vec![Op::Formula {
+                sheet: sheet.to_owned(),
+                path: path.clone(),
+                before,
+                after: Some(text.to_owned()),
+                value: Some(value),
+            }],
+            None,
+        );
+        Ok(())
+    }
+
+    /// Puts a formula on a node (replacing one that is there) and marks it out
+    /// of date. Nothing is checked and nothing is recorded: the callers do that.
+    fn install_formula(&mut self, sheet: &str, path: &Path, text: &str) {
+        let loc = Loc::new(sheet, path.clone());
+        let syntax = self.syntax.check(text);
+        let Some(s) = self.sheets.get_mut(sheet) else {
+            return;
+        };
         let mut formula = Formula {
             text: text.to_string(),
             deps: Vec::new(),
@@ -327,18 +450,328 @@ impl Calc {
         }
         self.dirty.swap_remove(&loc);
         self.changed(sheet, path);
-        Ok(())
+    }
+
+    /// The text of the formula at a node.
+    pub fn formula_text(&self, sheet: &str, path: &Path) -> Option<String> {
+        self.sheets
+            .get(sheet)?
+            .formulas
+            .by_path
+            .get(path)
+            .map(|f| f.text.clone())
     }
 
     /// Removes the formula at a node and leaves the node's value as it is.
     /// Returns whether there was one.
     pub fn remove_formula(&mut self, sheet: &str, path: &Path) -> Result<bool, EditError> {
         self.sheet_mut(sheet)?;
-        let existed = self.drop_formula(sheet, path);
-        if existed {
-            self.changed(sheet, path);
+        let Some(text) = self.formula_text(sheet, path) else {
+            return Ok(false);
+        };
+        self.drop_formula(sheet, path);
+        self.changed(sheet, path);
+        self.history.record(
+            format!("Clear formula at {}", Loc::new(sheet, path.clone())),
+            vec![Op::Formula {
+                sheet: sheet.to_owned(),
+                path: path.clone(),
+                before: Some(text),
+                after: None,
+                value: None,
+            }],
+            None,
+        );
+        Ok(true)
+    }
+
+    // ------------------------------------------------- undo and redo
+
+    /// Starts an entry that several edits make up: a paste, the writes of a
+    /// button procedure. Calls nest; the entry ends with the matching
+    /// [`Calc::end_entry`].
+    pub fn begin_entry(&mut self, description: &str) {
+        self.history.begin(description);
+    }
+
+    pub fn end_entry(&mut self) {
+        self.history.end();
+    }
+
+    /// Ends the run of edits that [`Calc::set_value_merging`] joins together.
+    pub fn seal_history(&mut self) {
+        self.history.seal();
+    }
+
+    /// Undoes the last entry. Returns what it was called, or `None` if there
+    /// is nothing to undo.
+    pub fn undo(&mut self) -> Result<Option<String>, EditError> {
+        self.refuse_history_while_grouping()?;
+        let Some(entry) = self.history.pop_undo() else {
+            return Ok(None);
+        };
+        self.run_entry(&entry, false)?;
+        let description = entry.description.clone();
+        self.history.finish_undo(entry);
+        Ok(Some(description))
+    }
+
+    /// Does again what was undone.
+    pub fn redo(&mut self) -> Result<Option<String>, EditError> {
+        self.refuse_history_while_grouping()?;
+        let Some(entry) = self.history.pop_redo() else {
+            return Ok(None);
+        };
+        self.run_entry(&entry, true)?;
+        let description = entry.description.clone();
+        self.history.finish_redo(entry);
+        Ok(Some(description))
+    }
+
+    fn refuse_history_while_grouping(&self) -> Result<(), EditError> {
+        if self.history.is_grouping() {
+            Err(EditError::Path(
+                "an edit is in progress; finish it before undoing".to_owned(),
+            ))
+        } else {
+            Ok(())
         }
-        Ok(existed)
+    }
+
+    /// Runs the operations of an entry forwards, or backwards in reverse order.
+    /// If one fails the history can no longer be trusted and is cleared.
+    fn run_entry(&mut self, entry: &Entry, forward: bool) -> Result<(), EditError> {
+        let result = if forward {
+            entry.ops.iter().try_for_each(|op| self.run_op(op, true))
+        } else {
+            entry
+                .ops
+                .iter()
+                .rev()
+                .try_for_each(|op| self.run_op(op, false))
+        };
+        if result.is_err() {
+            self.history.clear();
+        }
+        result
+    }
+
+    fn run_op(&mut self, op: &Op, forward: bool) -> Result<(), EditError> {
+        let path_error = |e: cliotree_core::PathError| EditError::Path(e.to_string());
+        match op {
+            Op::Replace {
+                sheet,
+                path,
+                before,
+                after,
+            } => {
+                let node = if forward { after } else { before }.clone();
+                self.sheet_mut(sheet)?
+                    .data
+                    .replace(path, node)
+                    .map_err(path_error)?;
+                self.changed(sheet, path);
+            }
+            Op::Add {
+                sheet,
+                path,
+                position,
+                node,
+                moved,
+            }
+            | Op::Remove {
+                sheet,
+                path,
+                position,
+                node,
+                moved,
+            } => {
+                let adding = matches!(op, Op::Add { .. }) == forward;
+                if adding {
+                    self.insert_node(sheet, path, *position, node.clone())?;
+                } else {
+                    self.sheet_mut(sheet)?
+                        .data
+                        .remove(path)
+                        .map_err(path_error)?;
+                    self.changed_by_structure(sheet, path);
+                }
+                if !forward {
+                    // Items that formulas overwrote after they moved.
+                    for (at, original) in moved {
+                        if self.sheet_mut(sheet)?.data.get(at).is_some() {
+                            self.sheet_mut(sheet)?
+                                .data
+                                .replace(at, original.clone())
+                                .map_err(path_error)?;
+                            self.changed(sheet, at);
+                        }
+                    }
+                }
+            }
+            Op::Formula {
+                sheet,
+                path,
+                before,
+                after,
+                value,
+            } => {
+                self.sheet_mut(sheet)?;
+                let target = if forward { after } else { before };
+                match target {
+                    Some(text) => self.install_formula(sheet, path, text),
+                    None => {
+                        if self.drop_formula(sheet, path) {
+                            self.changed(sheet, path);
+                        }
+                    }
+                }
+                if !forward && let Some(value) = value {
+                    self.restore_value(sheet, path, value.clone())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_node(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        position: usize,
+        node: Node,
+    ) -> Result<(), EditError> {
+        let Some(segment) = path.segments().last().cloned() else {
+            return Err(EditError::Path("the root cannot be inserted".to_owned()));
+        };
+        let parent = path.parent().unwrap_or_default();
+        self.sheet_mut(sheet)?
+            .data
+            .insert_child(&parent, position, &segment, node)
+            .map_err(|e| EditError::Path(e.to_string()))?;
+        self.changed_by_structure(sheet, path);
+        Ok(())
+    }
+
+    /// Puts back what a node held before a formula was put on it.
+    fn restore_value(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        value: Option<(Node, usize)>,
+    ) -> Result<(), EditError> {
+        let s = self.sheet_mut(sheet)?;
+        match value {
+            Some((node, position)) => {
+                if s.data.get(path).is_some() {
+                    s.data
+                        .replace(path, node)
+                        .map_err(|e| EditError::Path(e.to_string()))?;
+                    self.changed(sheet, path);
+                } else {
+                    self.insert_node(sheet, path, position, node)?;
+                }
+            }
+            None => {
+                if s.data.remove(path).is_ok() {
+                    self.changed_by_structure(sheet, path);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The items of `array` that, after an edit moved them, sit where a formula
+    /// is, together with the place each had before the edit. A formula belongs
+    /// to a location, so the item that moves there is overwritten by its
+    /// result; undoing the edit has to put the item back as it was.
+    /// `first` is the first index in the new layout that holds a moved item, and
+    /// `before` is how far the old index of such an item is from the new one.
+    fn moved_by(
+        &self,
+        sheet: &str,
+        array: &Path,
+        first: usize,
+        before: isize,
+    ) -> Vec<(Path, Node)> {
+        let Some(s) = self.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        let depth = array.len();
+        let mut indexes: Vec<usize> = s
+            .formulas
+            .below(array)
+            .iter()
+            .filter_map(|p| match p.segments().get(depth) {
+                Some(Segment::Index(k)) => Some(*k),
+                _ => None,
+            })
+            .filter(|k| *k >= first)
+            .collect();
+        indexes.sort_unstable();
+        indexes.dedup();
+        indexes
+            .into_iter()
+            .filter_map(|k| {
+                let node = s.data.get(&array.index(k))?.clone();
+                let old = usize::try_from(k as isize + before).ok()?;
+                Some((array.index(old), node))
+            })
+            .collect()
+    }
+
+    /// An edit that adds or removes a node: when it is an array item, the items
+    /// after it move, so the array is what changed.
+    fn changed_by_structure(&mut self, sheet: &str, path: &Path) {
+        let changed = match path.segments().last() {
+            Some(Segment::Index(_)) => path.parent().unwrap_or_default(),
+            _ => path.clone(),
+        };
+        self.changed(sheet, &changed);
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.history.undo_label().is_some()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.history.redo_label().is_some()
+    }
+
+    /// What `undo` would undo, for the Edit menu.
+    pub fn undo_label(&self) -> Option<&str> {
+        self.history.undo_label()
+    }
+
+    pub fn redo_label(&self) -> Option<&str> {
+        self.history.redo_label()
+    }
+
+    /// How many entries can be undone and redone.
+    pub fn history_len(&self) -> (usize, usize) {
+        self.history.len()
+    }
+
+    /// Bounds the history: the most entries, and a rough measure of how much
+    /// they hold. The oldest entries are dropped first.
+    pub fn set_history_limits(&mut self, max_entries: usize, max_weight: usize) {
+        self.history.set_limits(max_entries, max_weight);
+    }
+
+    /// Forgets all history, for example when a workbook is closed.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// Notes that the workbook has just been saved.
+    pub fn mark_saved(&mut self) {
+        self.history.mark_saved();
+    }
+
+    /// Whether the workbook differs from the last saved state. Undoing back to
+    /// that state clears it.
+    pub fn is_modified(&self) -> bool {
+        self.history.is_modified()
     }
 
     /// Marks every formula as out of date, as F9 does and as opening a trusted

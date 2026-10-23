@@ -3,7 +3,7 @@
 //! tree.
 
 use cliotree_core::validate::validate_at;
-use cliotree_core::{ErrorKind, ErrorValue, Kind, Node, Path, TypeSpec, Value};
+use cliotree_core::{ErrorKind, ErrorValue, Kind, Node, Path, Segment, TypeSpec, Value};
 use indexmap::IndexMap;
 
 use crate::engine::Failure;
@@ -85,8 +85,8 @@ pub(crate) fn finish(
 
 /// Writes a computed result into a tree. Objects and arrays on the way that do
 /// not exist yet are created empty, so that a formula on an optional node
-/// inside an absent optional parent can create both. An array item can only be
-/// added at the end.
+/// inside an absent optional parent can create both. An array item that does
+/// not exist is not created: a formula on it gives `#REF!`.
 pub(crate) fn store(
     spec: &TypeSpec,
     data: &mut Node,
@@ -102,6 +102,18 @@ pub(crate) fn store(
         Computed::Value(v) => v.clone(),
         Computed::Error(e) => Value::Error(e.clone()),
     };
+    // A formula puts its result in a node; it does not add items to an array.
+    // The item has to be there, at the end of the path and on the way to it.
+    for depth in 1..=path.len() {
+        let prefix = Path::from(path.segments()[..depth].to_vec());
+        if data.get(&prefix).is_none()
+            && matches!(prefix.segments().last(), Some(Segment::Index(_)))
+        {
+            return Err(format!(
+                "there is no item at {prefix}; a formula does not add items to an array"
+            ));
+        }
+    }
     for depth in 1..path.len() {
         let prefix = Path::from(path.segments()[..depth].to_vec());
         if data.get(&prefix).is_some() {
