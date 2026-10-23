@@ -4,6 +4,8 @@ A spreadsheet-like desktop application (Rust + egui, later wasm) in which each s
 
 **Scope.** Version 1 is the desktop application. **Reports** and the **web (wasm) port** are deliberately deferred to a later version; their designs are kept in this document for planning and are marked as such (see Later versions).
 
+**Status.** The design for v1 is complete. Every question raised during design review has been decided, and the decisions are in the sections below. What remains is implementation, in the order given under Build order, plus the risks listed at the end that can only be settled by building and measuring.
+
 ## Core model
 
 **Workbook**: named Sheets (tabs), a trust flag, and embedded Python modules. Tabs come in two kinds:
@@ -122,7 +124,8 @@ A formula is a Python expression string attached to a node **location** (its pat
 - Parsing only reads the text and never runs it, so the syntax check also happens in an untrusted workbook.
 - A formula rejected by the double-underscore attribute check (see Python engine) is reported the same way, as `#SYNTAX!` with a message saying that double-underscore access is not allowed.
 - While the author types, the bar shows a non-blocking syntax hint. It never prevents committing.
-- There is no autocomplete in v1.
+- **Insert Function.** An *fx* button beside the formula bar opens a dialog, as in Excel, listing the functions a formula can call: the built-in functions (for example `SUM`, `IFERROR`), the public functions of the workbook's modules, and the allowed standard library modules. It groups them, has a search box, and shows each one's signature and a one-line description. For module functions the signature is read from the source and the description is the first line of the function's docstring. *Insert* writes the name with its brackets into the formula bar at the cursor.
+- **Name completion.** While typing in the formula bar, a cell editor, or the code editor, a popup offers completions for the names a formula can use: tab names, module names and their functions, data source names, built-in functions, and the allowed Python builtins. After a tab name and a dot (`Orders.`) it offers the **fields of that node, taken from the schema**, and it keeps doing so through the path (`Orders.items[0].`). Tab or Enter accepts, and Esc dismisses. Completion for arbitrary Python objects is not attempted.
 
 **Stored values.** A formula's result is written into the data tree at its node and saved with the sheet, so the data file is complete and valid JSON / XML on its own. Other tools can read it without running any Python. The formula text and its status live only in the overlay.
 - On save, the tree holds the latest computed values and the overlay holds the formulas. Readers that ignore the overlay see plain data.
@@ -299,6 +302,8 @@ Custom Python lives in **modules** stored in the workbook. The design follows Ex
 
 **Dependencies and recalculation.** When a formula uses a name that a module provides, it records a dependency on that module. Editing a module reloads it and recalculates exactly the formulas that depend on it, which show the pending marker until the results arrive.
 
+**Reloading while evaluation is running.** A reload is queued as a task for the evaluation thread, and runs **between evaluations, never during one**, because the interpreter runs one thing at a time. The evaluation in progress finishes first (or is cancelled by the normal budget). Each module has a **generation number** that goes up with every reload, and it is part of the input version of every result (see Evaluation and scheduling). A result computed under an older generation of a module it used is discarded and its formula is queued again. If a reload fails (syntax error, import error, cycle), the module is marked failed and its names are removed from the namespace, so formulas that use it show `#NAME!` until the module is fixed.
+
 **How the namespaces work.** This mechanism was prototyped in RustPython in a second spike, and the points below were observed to work.
 - **One live workbook namespace** (a Python `dict`) holds everything formulas can name: tab proxies, data sources, module objects, and the public functions of modules. It is the globals dictionary of every formula evaluation.
 - **Each module has its own globals** (a real module object), so its top-level names are private to it. A name that a module does not define is not found in the module's own globals and falls through to the **builtins**, and the module's builtins dictionary *is* the live workbook namespace. So a module function that mentions `Orders` finds the tab proxy **when it is called**, even if the tab was added after the module loaded, and the read is recorded as a dependency of the running formula. Looking up a workbook name this way was as fast as looking up the module's own globals (58 ms against 57 ms for 500,000 reads).
@@ -307,7 +312,7 @@ Custom Python lives in **modules** stored in the workbook. The design follows Ex
 - **Builtins are restricted explicitly.** The namespace must be given as the formula's builtins too. When it was not, Python silently supplied the real builtins and `open` and `eval` stayed reachable. With it set, `open`, `eval`, `exec`, and `compile` are plain `NameError`.
 - **Reloading.** A reloaded module is re-run **in place** inside the same module object. Importers that hold the module (`import Tax`) see the new code at once. Importers that copied a function (`from Tax import vat`) keep the **old code** if the function body changed. So a reload always **reloads the modules that import it too, in dependency order**, before the formulas that depend on them are recalculated.
 - **Per-evaluation names.** `this`, `parent`, and `root` change for each formula. They are set in the workbook namespace immediately before each evaluation, which is safe because evaluation is sequential. They must not be passed as evaluation locals: a comprehension sees locals but a `lambda` does not (`NameError`).
-- **Assignment expressions.** A walrus (`(x := 5)`) in a formula would otherwise create a name in the shared namespace. Each evaluation therefore gets a fresh, empty locals dictionary, which absorbs such assignments.
+- **Assignment expressions.** A walrus (`(x := 5)`) in a formula would otherwise create a name in the shared namespace. Each evaluation therefore gets a fresh, empty locals dictionary, which absorbs such assignments. Users are **not notified**: the assignment is harmless, and the name simply does not outlive the evaluation.
 - **The loader is native.** In the spike the loader was written in Python, so `__globals__` on a module function reached the loader's own state. In the application the loader and the replacement `__import__` are Rust functions with no Python globals to reach, and the double-underscore check (see Python engine) blocks `__globals__` access in the first place.
 - **Cost.** In the Python prototype a proxy attribute read took about 1.9 microseconds. This is only a baseline: proxy reads in the application go through Rust and are measured in build step 3.
 
@@ -403,7 +408,9 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - **Saving** stores the non-secret part in the workbook and the secret in the operating system's credential store. It does not grant access. The user then grants the specification, choosing read or read-write, as a separate explicit step (see Explicit grants), which the panel offers straight after a successful save.
 - **Secrets are tied to the target.** A stored secret is filed with a hash of the specification's target and user name. If either changes, the stored secret is no longer used and the specification returns to *credentials needed*, so a saved password is never sent to a different server or account without being entered again. The form can offer to keep it after showing the new target.
 - **Rename, copy, and delete.** Renaming a specification moves its secret to the new name. Copying one copies the non-secret settings only; the copy needs its own credentials. Deleting one asks for confirmation and removes its secret.
-- **No credential store available** (for example a headless Linux session): the form says so, and the secret is held in memory for the current session only, not persisted. It must be entered again in each session.
+- **Credential store.** Secrets are kept through a `CredentialStore` interface with two implementations. The first uses the operating system's store through the `keyring` crate (Windows Credential Manager, macOS Keychain, and the Secret Service on Linux). The second keeps secrets **in memory for the current session only**.
+- **No credential store available** (for example a headless Linux session): the form says so, and the in-memory implementation is used. The secret is not persisted and must be entered again in each session.
+- **Testing.** Tests use the in-memory implementation, so they run unchanged on Linux CI. The `keyring` integration is covered by a small test that runs only where an OS store exists (the Windows job, or a developer's machine) and is skipped elsewhere.
 - **Credentials needed.** A specification without stored credentials on this computer is shown with a *credentials needed* badge in the panel. Nothing prompts when a workbook opens and nothing prompts during evaluation. Calls to such a source fail with `#SOURCE!` and a message saying that credentials have not been entered on this computer. Declining to enter them simply leaves that source unavailable; the rest of the workbook works.
 
 **Names.** A source name is a Python identifier in the shared formula namespace, so it follows the rules in Names and reserved words and is available in formulas, button procedures, and report expressions as a global object.
@@ -503,7 +510,12 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - One formula over a 10,000-item list of objects (`sum(o['price'] * o['qty'] for o in items)`): **about 3.6 ms** per evaluation.
 - 10,000 separate formulas, each precompiled and run in a fresh scope: **about 20 ms in total** (about 2 microseconds each).
 - Compiling each formula from source every time: **about 147 ms** for 10,000 (about 15 microseconds each). So **compiled code should be cached per formula**, but even uncached it is not a bottleneck.
-- Not measured: the real application reads data through proxy objects with lazy member access and dependency recording, which will be slower than plain dicts. This needs measuring when step 3 is built.
+- Not measured: the real application reads data through proxy objects with lazy member access and dependency recording, which will be slower than plain dicts. This is measured when step 3 is built, against these **budgets**:
+  - a proxy attribute or index read: **5 microseconds or less** (the Python prototype took about 1.9);
+  - 10,000 separate formulas, each reading a few nodes, including result checking: **250 milliseconds or less** in total (plain evaluation took 20);
+  - one aggregate formula over 10,000 items read through proxies: **50 milliseconds or less** (plain evaluation took 3.6).
+
+  The nightly performance job reports these figures and fails when a budget is exceeded. They are targets set before measurement and are revised, with the reason recorded here, if the first measurements show they were wrong. If a budget cannot be met, the mitigations are caching converted children, and native fast paths for common aggregations such as summing one field.
 
 **Web (wasm32)** *(later version; recorded for planning)*
 - RustPython's own `rustpython_wasm` crate **builds** for `wasm32-unknown-unknown`, which needs the `getrandom` `wasm_js` feature (the crate sets it).
@@ -599,7 +611,7 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 - **Live preview.** Appearance options (theme, scale, fonts, density, indentation) preview immediately while the dialog is open, and revert if the dialog is cancelled.
 - **Display of values.** There are no regional or number-format options. Values are shown in their canonical Python form (dates and datetimes in ISO 8601), the same as formulas see them.
 - **Long comments.** A comment popup wraps its text at the maximum width and, past the maximum height, scrolls. This settles how long comments are shown.
-- **Immediate window.** Its history is kept per user, not per workbook, and a result larger than the output limit is cut off with a notice saying how much was left out.
+- **Immediate window.** Its history is kept per user, not per workbook, in a separate file (`immediate-history.json`) in the same configuration directory, not in the preferences file, and holds at most the number of entries set on the Code editor page. The Code editor page has a *Clear history* button. A result larger than the output limit is cut off with a notice saying how much was left out.
 
 **Ceilings.** The Trust and security page holds one ceiling for each workbook setting. A workbook's value is used only up to its ceiling. The defaults below are starting points and are all adjustable:
 
@@ -687,6 +699,13 @@ More involved changes (changing a type, adding constraints, adding nested types)
 - Because the log is a single linear history, a later edit to the schema sheet (made directly on its tab) is a later entry. It must be undone first, so an entry can never be undone against a schema that has since been changed in some other way.
 - Because auto-update allows only one user of the schema, a command never changes any tab other than the one it is issued from and the schema sheet.
 
+**Details**
+- **Attributes and elements (XML).** *Add field* on an XML tab asks whether the new field is an **element** or an **attribute** (attributes can only have simple types). Reordering is among elements and among attributes separately. An attribute cannot be dragged among the elements, because XSD keeps them apart.
+- **Maps.** A `Map` has no declared fields (its keys are data, not schema), so the field commands are not offered on a map node. Map entries are added, renamed, and removed as data.
+- **Shared types.** If the object type is a named type (`$defs` with `$ref`, or a named `xs:complexType`) that the schema uses in several places, a command changes the type, and so **every place it is used**. The confirmation lists those places (for example *also used at Orders.billing and Orders.shipping*), and the data change applies at each. Renaming a global `xs:element` rewrites every `xs:element ref` to it in the same schema.
+- **The item type itself.** Renaming or deleting a type is not a command of the data tab. It is done on the schema sheet, as ordinary tree editing, and references to it are not rewritten (an unresolved reference is a schema error shown on the sheet).
+- **The schema sheet is also open.** The schema sheet and the data tab are two views of the same workbook state, so the schema sheet's grid simply updates. If the schema sheet has a cell edit in progress that is not yet committed, the command is refused with a message to finish or cancel that edit first.
+
 ## Tabular view of arrays
 
 An array whose items are objects can be shown as a table instead of as indented tree rows.
@@ -722,7 +741,7 @@ An array whose items are objects can be shown as a table instead of as indented 
 
 *Sorting changes the data.* Clicking a column header sorts the array's items by that column, ascending, then descending on the next click. The sort is a real reorder of the array, so it is logical and not just visual: after sorting `Data.items`, the reference `Data.items[2]` points at whatever item is now third. References are literal (see Formulas), so nothing is adjusted.
 - **It is permanent.** A sort is an edit of the data, like any other. The table holds no sort state and shows no sort indicator, and the only way back is the **Undo** command (it is one undoable entry).
-- **Python's ordering, in every case.** Items are compared with Python's own ordering of the column's values (numbers numerically, strings by code point, dates chronologically). There is no special handling of absent values or error values: if the ordering raises an exception, for example comparing a string with a number, or comparing an absent value with a number, or reading an error value, **the sort does not happen**. Nothing is changed, and a message gives Python's error and the rows involved. A column with absent or error cells therefore cannot be sorted until they are filled or fixed.
+- **Python's ordering, in every case.** Items are compared with Python's own ordering of the column's values (numbers numerically, strings by code point, dates chronologically). There is no special handling of absent values or error values: if the ordering raises an exception, for example comparing a string with a number, or comparing an absent value with a number, or reading an error value, **the sort does not happen**. Nothing is changed, and a message gives Python's error and the rows involved. A column with absent or error cells therefore cannot be sorted until they are filled or fixed. To help, the message has a **Show these rows** button, which applies a filter that shows only the offending rows, so they can be fixed and the sort tried again.
 - **Stable.** Items with equal values keep their existing relative order (a descending sort is also stable). This is what makes a multi-column sort work with no extra feature: sort by the least important column first, and then by each more important one, so that **each new sort becomes the first key and the earlier sorts remain as the tie-breakers** among equal values.
 - **All items are sorted, hidden ones included.** Hidden rows, whether hidden by hand or by a filter, still exist logically, so a sort reorders the whole array. The visible rows come out in the new order and the hidden ones are placed by the same rule.
 - Formulas belong to their location, not to an item. A sort therefore moves the literal values, comments, and children of each item, but a formula stays at its position and is recalculated against the item that is now there.
@@ -880,6 +899,27 @@ The project has automated tests at several levels, and **all of them run in a CI
 10. **Security and robustness.** The hostile-file fixtures above; the sandbox probes; trust-hash tests (a change outside the application drops trust, a change inside keeps it); and **fuzzing** with `cargo-fuzz` on the parsers: JSON and XML import, zip reading, schema lowering, and formula parsing. Fuzzing runs on a nightly schedule and does not block merges; any crash found becomes a regression test.
 11. **Performance checks.** Benchmarks for the cases measured in the spike (a formula over 10,000 items, 10,000 separate formulas, loading and saving a large workbook) run on a schedule and report trends. They are not merge gates, because shared CI machines are noisy; a very generous threshold in an ordinary test catches only gross regressions.
 
+**The test-control protocol.** The channel used by level 8 listens on a loopback port chosen by the operating system, which the application writes to a file named by `CLIOTREE_TEST_PORT_FILE`, and it requires the token in `CLIOTREE_TEST_TOKEN` in every request. It speaks **JSON lines**: one request per line, `{"id": 1, "cmd": "...", "args": {...}}`, and one response per request, `{"id": 1, "ok": true, "result": ...}` or `{"id": 1, "ok": false, "error": "..."}`. A first `hello` request returns the protocol version.
+
+| Command | Purpose |
+|---|---|
+| `open_workbook`, `new_workbook`, `save`, `save_as`, `close` | File operations. |
+| `select` (a path) | Select a node, in the grid or the table. |
+| `enter` (text), `key` (a chord), `menu` (a menu path), `context_menu` (a path and an item) | What a user types and clicks. |
+| `cell` (a path) | Returns the value, formula text, error, pending state, comment, hidden or filtered state, and validity. |
+| `tree` (a path and a depth) | Returns a snapshot of a subtree. |
+| `status` | Returns the status bar text, the pending count, and the abandoned-thread count. |
+| `wait_idle` (a timeout) | Waits until nothing is pending. |
+| `set_option`, `grant`, `trust` | Preferences, data source grants, and the trust decision, so tests can set up state without driving dialogs. |
+| `screenshot` (a path) | Saves an image of the window. |
+| `quit` | Exits cleanly. |
+
+The same command set is implemented over the in-process harness used by level 6, so a scenario can be written once and run at either level.
+
+**Selecting JSON Schema Test Suite cases.** The suite is vendored at a pinned commit, recorded in `vendor.lock` as a further item (a test-only one) when the suite is first added. A checked-in selection file lists the allowed keywords: `type`, `properties`, `required`, `items`, `minItems`, `maxItems`, `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `enum`, local `$ref` and `$defs`, schema-valued `additionalProperties`, and `format` for `date` and `date-time`. A test group is run as pass or fail only if its schema, searched recursively, uses nothing outside that list. Every other group is run as a **must-reject** test: loading its schema has to fail with an error that names the excluded keyword. A group that is neither is listed in the selection file with the reason, so that nothing is skipped silently.
+
+**Tests for auto-update and schema editing.** Switching on with zero, one, and two users; refusing a second binding while it is on; a file that breaks the rule opening with it treated as off; each of the four commands with its effect on the data and on formulas; shared-type confirmations; undo and redo of each as one entry; a later direct edit of the schema sheet having to be undone first; and the refusal while a schema-sheet cell edit is in progress.
+
 **Pipeline** (GitHub Actions, since the repository is on GitHub)
 
 | Job | Runs | Blocks merge |
@@ -911,11 +951,47 @@ The project has automated tests at several levels, and **all of them run in a CI
 - **Fetched on demand.** The build script checks that every required vendor item exists under `vendor/`. If one is missing, it calls a separate **fetch script**, which downloads the item and does any build steps it needs, and then the build carries on.
 
 **What is pinned.** A committed file, `vendor.lock`, lists each vendor item with its source URL and **exact commit hash**. The content is not committed, but its identity is, so every developer and CI build gets the same code.
-- Items at first: RustPython at the revision chosen after the spike, and the `ruff` fork at the revision that RustPython's own lock file names.
+- Items at first:
+  - **RustPython** at commit `e5554e23abfbaee85508c32fc22e5074f88aebdd`, the revision the spike built and tested (version 0.6.1).
+  - The **`ruff` fork** (`https://github.com/RustPython/ruff.git`) at commit `9290a8849542134d83f77e9360e7f0b93897fd93`, the revision that RustPython's own lock file names, with a sparse checkout of the crates it needs.
 - The fetch script checks out that exact commit and verifies it against `vendor.lock`. A mismatch is an error.
 - Each item gets a stamp file (`.complete`) holding the pinned hash. It is written only after the download and any build steps succeed, so an interrupted fetch is detected and redone. If `vendor.lock` changes, the stamp no longer matches and the item is fetched again.
 - To upgrade, a developer runs `cargo xtask vendor update <item> <commit>`, which edits `vendor.lock` for review in the usual way.
 - The URL in `vendor.lock` can point at a mirror if an upstream repository disappears.
+
+**The format of `vendor.lock`.** A TOML file, one table per item:
+
+```toml
+version = 1
+
+[[item]]
+name   = "rustpython"
+url    = "https://github.com/RustPython/RustPython"
+rev    = "e5554e23abfbaee85508c32fc22e5074f88aebdd"   # full 40-character commit hash
+
+[[item]]
+name   = "ruff"
+url    = "https://github.com/RustPython/ruff.git"
+rev    = "9290a8849542134d83f77e9360e7f0b93897fd93"
+sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_python_trivia",
+          "crates/ruff_source_file", "crates/ruff_text_size"]
+```
+
+`name` is the directory under `vendor/`, `rev` must be a full commit hash (a branch or tag is rejected), and `sparse` is optional. The fetch script fails if the checked-out commit differs from `rev`.
+
+**The `cargo xtask` commands.** The project's helper commands, all cross-platform:
+
+| Command | Does |
+|---|---|
+| `cargo xtask clean` | Removes the build output and `vendor/`. |
+| `cargo xtask vendor fetch` | Fetches any missing or out-of-date vendor item, as the build script does. |
+| `cargo xtask vendor status` | Lists each item, its pinned revision, and whether `vendor/` matches it. |
+| `cargo xtask vendor verify` | Checks every checked-out item against `vendor.lock`. |
+| `cargo xtask vendor update <item> <rev>` | Changes a pin in `vendor.lock`, for review. |
+| `cargo xtask lint` | Formatting, clippy, and `cargo deny`: the Lint job. |
+| `cargo xtask test` | The default test levels: the Test job. |
+| `cargo xtask e2e` | The end-to-end tests under a virtual display (Linux). |
+| `cargo xtask ci` | Everything the blocking CI jobs run, in order. |
 
 **The fetch script is cross-platform.** It is a small Rust program in its own package (`tools/fetch-vendor`), so it runs the same on Windows, Linux, and in CI, with no shell scripting. The build script runs it with a separate target directory, to avoid deadlocking on Cargo's lock on the main one.
 
@@ -935,7 +1011,7 @@ The project has automated tests at several levels, and **all of them run in a CI
 1. **core**: `Value`, `TypeSpec`, JSON Schema lowering, validation, tests.
 2. **calc**: graph, evaluator, error values, with a trivial fake engine first.
 3. **RustPython** integration, proxies, `JSONPATH`, and measuring the proxy layer's overhead against the spike's plain-dict figures.
-4. **app**: tree grid, formula bar, tabs, the edit log with undo and redo, then the tabular view of arrays.
+4. **app**: tree grid, formula bar with Insert Function and name completion, tabs, the edit log with undo and redo, then the tabular view of arrays, and schema auto-update with the schema-editing commands.
 5. **std** functions, workbook modules, trust.
 6. **XSD** subset and XML adapter.
 6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB.
@@ -954,12 +1030,17 @@ Deferred features, with what v1 does to keep them possible:
   - `cliotree-core` and `cliotree-calc` stay free of UI and filesystem code.
   - Open points recorded for it: the binary size (54.6 MB unoptimised in the spike), running Python and terminating a Web Worker in a browser, file access, persistence of trust, credential storage, and database data sources being unavailable.
 
-## Risks and open questions
+## Decisions for implementation, and risks
 
-- **RustPython speed**: per-element formulas over large arrays may be slow. Mitigations: vectorise common functions in Rust, cache bytecode per formula.
-- **Cheap data snapshots**: letting the evaluation thread read a consistent snapshot while the UI keeps editing implies a data tree with cheap snapshots (for example reference-counted nodes with copy-on-write), or a message-based ownership model. This should be settled in step 1 when `Value` is defined.
-- **Dependency granularity**: reading `Orders.items` is coarse. If too coarse, add path-prefix subscriptions.
-- **Forms and XML**: XML schemas need the `@attr` / `#text` mapping to be reflected in form field paths. The designer should hide this and show attribute and element names.
-- **Report rendering and export**: charts are drawn live in egui, so producing the same output as an image or PDF needs a second rendering path. That is deferred, and the layout model should stay renderer-neutral to allow it.
-- **Button procedure power**: whether procedures should be able to write to other sheets (e.g. update a counter) is deliberately left out of v1.
-- **Computed children**: the rule for formulas on array items inside computed arrays needs validating against real use.
+**Decisions made now so that step 1 can start**
+- **Snapshots.** The data tree uses reference-counted nodes with copy-on-write (`Arc`-based), so the evaluation thread takes a consistent snapshot by cloning the root, and the UI thread copies only the path it edits. This is settled in step 1 when `Value` is defined.
+- **Dependency granularity.** Version 1 records dependencies at the node level (a read of an array or object depends on its structure and children). Path-prefix subscriptions are added only if the step 3 measurements show recalculation doing too much work.
+- **Computed children.** An array item may carry its own formula only when the array itself is not computed, as specified under Formulas. Nothing more is needed unless real use shows otherwise.
+- **Forms and XML.** Form field paths use element and attribute names. The `@attr` and `#text` mapping stays inside the XML adapter and is not shown to the user.
+- **Button procedure power.** Procedures may write to other tabs through `ctx`, atomically, as specified under Forms. Writes to databases and HTTP endpoints are immediate and are not undone.
+
+**Risks that only building and measuring can settle**
+- **RustPython.** It is young and not production-ready by its own account, it builds only from a pinned git revision, and the single long builtin call cannot be interrupted. Mitigations: the `PythonEngine` trait, the pinned and vendored build, the abandoned-thread backstop, and the test-suite probes.
+- **Proxy layer speed.** The budgets are under Python engine. A miss is addressed by the mitigations listed there.
+- **Schema inference and conformance.** Inference over real-world files and the selected conformance cases will turn up cases not yet foreseen. The corpus and the must-reject tests are the way to find them.
+- **Report rendering and export** (later version). Charts are drawn live in egui, so producing the same output as an image or PDF needs a second rendering path. The layout model should stay renderer-neutral to allow it.
