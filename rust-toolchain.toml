@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned deliberately and raised by hand. The minimum the project builds with is
+# `rust-version` in Cargo.toml (1.97, required by RustPython).
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

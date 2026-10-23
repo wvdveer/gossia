@@ -1,0 +1,20 @@
+[package]
+name = "cliotree-app"
+description = "The ClioTree desktop application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cliotree"
+path = "src/main.rs"
+
+[dependencies]
+cliotree-core.workspace = true
+cliotree-calc.workspace = true
+cliotree-std.workspace = true
+
+[lints]
+workspace = true

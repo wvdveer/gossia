@@ -1,0 +1,4 @@
+[alias]
+# The helper tools live in their own workspace (tools/), so this works even when
+# vendor/ has not been fetched yet.
+xtask = "run --quiet --manifest-path tools/Cargo.toml -p xtask --"

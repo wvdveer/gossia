@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+description = "Project helper commands: cargo xtask <clean|vendor|lint|test|e2e|ci>."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fetch-vendor = { path = "../fetch-vendor" }
+
+[lints]
+workspace = true

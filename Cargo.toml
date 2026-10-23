@@ -1,0 +1,32 @@
+[workspace]
+members = ["crates/*"]
+# The helper tools are a separate workspace so that they build and run before
+# vendor/ has been fetched (see DESIGN.md, Build and dependencies).
+exclude = ["tools"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Required by RustPython and its ruff fork; see DESIGN.md, Build and dependencies.
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/wvdveer/cliotree"
+
+[workspace.dependencies]
+cliotree-core = { path = "crates/cliotree-core" }
+cliotree-calc = { path = "crates/cliotree-calc" }
+cliotree-std = { path = "crates/cliotree-std" }
+
+[workspace.metadata.cliotree]
+# Vendor items (see vendor.lock) that the workspace needs. `cargo xtask` fetches
+# these before it starts Cargo, because Cargo needs every path dependency to
+# exist before any build script can run. RustPython and ruff are added here by
+# build step 3.
+vendor = []
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

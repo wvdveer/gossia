@@ -1,0 +1,21 @@
+# Pins for the dependencies that are fetched into vendor/ (see DESIGN.md,
+# "Build and dependencies"). vendor/ itself is not committed.
+# `rev` must be a full 40-character commit hash.
+version = 1
+
+[[item]]
+name = "rustpython"
+url  = "https://github.com/RustPython/RustPython"
+rev  = "e5554e23abfbaee85508c32fc22e5074f88aebdd"
+
+[[item]]
+name   = "ruff"
+url    = "https://github.com/RustPython/ruff.git"
+rev    = "9290a8849542134d83f77e9360e7f0b93897fd93"
+sparse = [
+    "crates/ruff_python_ast",
+    "crates/ruff_python_parser",
+    "crates/ruff_python_trivia",
+    "crates/ruff_source_file",
+    "crates/ruff_text_size",
+]

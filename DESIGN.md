@@ -924,7 +924,8 @@ The same command set is implemented over the in-process harness used by level 6,
 
 | Job | Runs | Blocks merge |
 |---|---|---|
-| Lint | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny` (licences, advisories) | yes |
+| Lint | `cargo fmt --check`, `cargo clippy -D warnings`, and `cargo deny` (licences, advisories) once its configuration is verified | yes |
+| Vendor | `cargo xtask vendor fetch` and `verify` on Linux | yes |
 | Test | `cargo test --workspace` on Linux: levels 1 to 6 | yes |
 | Services | level 9 with PostgreSQL and MariaDB containers | yes |
 | E2E | level 8 under `xvfb-run` | yes |
@@ -948,7 +949,8 @@ The same command set is implemented over the in-process harness used by level 6,
 - **Not committed.** `vendor/` is in `.gitignore`. Its contents are downloaded, never stored in the repository.
 - **Not cleared between builds.** An ordinary build, rebuild, or `cargo clean` leaves it alone, so a build does not download anything again.
 - **Cleared by the project's `clean`.** The project's own clean command (`cargo xtask clean`) removes `vendor/` as well as the build output. After it, the next build fetches everything again.
-- **Fetched on demand.** The build script checks that every required vendor item exists under `vendor/`. If one is missing, it calls a separate **fetch script**, which downloads the item and does any build steps it needs, and then the build carries on.
+- **Fetched on demand, before Cargo starts.** The workspace declares which vendor items it needs (`[workspace.metadata.cliotree] vendor = [...]` in the root `Cargo.toml`). Before `cargo xtask lint`, `test`, or `ci` runs Cargo, it checks that each of those items exists under `vendor/` and matches `vendor.lock`, and calls the **fetch script** for any that is missing or out of date.
+- **Why not a build script.** The first design had a build script do the fetching. That cannot work: Cargo needs the manifest of every path dependency to exist before it runs any build script, so a build script can never create a path dependency of its own workspace. (This was confirmed by experiment: Cargo stops with `no matching package named ... found` before the build script starts.) The fetch therefore happens in `cargo xtask`, which is in a separate workspace and so runs on a fresh clone. A plain `cargo build` on a fresh clone, once the workspace depends on `vendor/`, needs one `cargo xtask vendor fetch` first, and the README says so.
 
 **What is pinned.** A committed file, `vendor.lock`, lists each vendor item with its source URL and **exact commit hash**. The content is not committed, but its identity is, so every developer and CI build gets the same code.
 - Items at first:
@@ -984,16 +986,16 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
 | Command | Does |
 |---|---|
 | `cargo xtask clean` | Removes the build output and `vendor/`. |
-| `cargo xtask vendor fetch` | Fetches any missing or out-of-date vendor item, as the build script does. |
+| `cargo xtask vendor fetch` | Fetches any missing or out-of-date vendor item. |
 | `cargo xtask vendor status` | Lists each item, its pinned revision, and whether `vendor/` matches it. |
 | `cargo xtask vendor verify` | Checks every checked-out item against `vendor.lock`. |
 | `cargo xtask vendor update <item> <rev>` | Changes a pin in `vendor.lock`, for review. |
-| `cargo xtask lint` | Formatting, clippy, and `cargo deny`: the Lint job. |
+| `cargo xtask lint` | Formatting and clippy (and `cargo deny` once its configuration is verified): the Lint job. |
 | `cargo xtask test` | The default test levels: the Test job. |
 | `cargo xtask e2e` | The end-to-end tests under a virtual display (Linux). |
 | `cargo xtask ci` | Everything the blocking CI jobs run, in order. |
 
-**The fetch script is cross-platform.** It is a small Rust program in its own package (`tools/fetch-vendor`), so it runs the same on Windows, Linux, and in CI, with no shell scripting. The build script runs it with a separate target directory, to avoid deadlocking on Cargo's lock on the main one.
+**The fetch script is cross-platform.** It is a small Rust program in its own package (`tools/fetch-vendor`), so it runs the same on Windows, Linux, and in CI, with no shell scripting. It lives in its own workspace (`tools/`) with `cargo xtask`, which is what lets it run before `vendor/` exists, and the same code is available as a standalone `fetch-vendor` binary.
 
 **Windows long paths.** The spike found that checking out the whole `ruff` repository fails on Windows because of very long test file names. The fetch script avoids the problem by **sparse checkout**: it fetches only the crates RustPython needs and none of the rest, and it sets git's `core.longpaths` as well. Nothing else about the layout depends on the platform.
 
@@ -1001,7 +1003,7 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
 
 **Offline and failure.** If a fetch fails, for example without network access, the build stops with a message that names the item, the URL, and the directory. The environment variable `CLIOTREE_VENDOR_DIR` can point at a copy of the vendor folder prepared elsewhere.
 
-**CI.** The pipeline uses the same build script, so there is no separate CI procedure. The `vendor/` folder is cached, keyed by the hash of `vendor.lock`, and a cache miss simply fetches again (see Testing and CI).
+**CI.** The pipeline uses the same `cargo xtask` commands, so there is no separate CI procedure, and a separate *Vendor* job fetches and verifies every pinned item on Linux. The `vendor/` folder is cached, keyed by the hash of `vendor.lock`, and a cache miss simply fetches again (see Testing and CI).
 
 **Security.** Fetching does not run anything from the downloaded repositories. Cargo does run the build scripts of dependencies when it builds them, as it does for any crate, which is why the pins are exact commits and changes to `vendor.lock` are reviewed.
 
