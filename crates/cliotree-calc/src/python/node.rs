@@ -58,6 +58,15 @@ pub(super) mod _cliotree {
 
     #[pyclass(with(GetAttr, AsMapping, Iterable, Representable))]
     impl NodeProxy {
+        /// `"array"` or `"object"`, for the functions that take arrays.
+        #[pymethod]
+        fn __kind__(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<&'static str> {
+            Ok(match super::resolve(zelf, vm)?.value() {
+                Value::Array(_) => "array",
+                _ => "object",
+            })
+        }
+
         /// The whole node as plain lists, dicts and values (`PLAIN(x)`).
         #[pymethod]
         fn __plain__(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult {

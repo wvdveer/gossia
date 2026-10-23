@@ -262,6 +262,15 @@ fn the_insert_function_dialog_writes_a_function_at_the_cursor() {
     harness.get_by_label("fx").click();
     harness.run();
     harness.get_by_label("Insert Function");
+    // The list is long, so the function is found by searching for it.
+    harness.get_by_label("Search functions").click();
+    harness.run();
+    harness.get_by_label("Search functions").focus();
+    harness.run();
+    harness
+        .get_by_label("Search functions")
+        .type_text("IFERROR");
+    harness.run();
     harness.get_by_label("IFERROR").click();
     harness.run();
     harness.get_by_label("IFERROR(value, fallback)");
@@ -272,6 +281,28 @@ fn the_insert_function_dialog_writes_a_function_at_the_cursor() {
         harness.query_by_label("Insert Function").is_none(),
         "closed"
     );
+}
+
+#[test]
+fn the_excel_named_functions_are_listed_by_group_and_found_by_search() {
+    let mut harness = window();
+    click(&mut harness, "0.21");
+    harness.get_by_label("fx").click();
+    harness.run();
+    harness.get_by_label("Math");
+    harness.get_by_label("SUM");
+    harness.get_by_label("Lookup and lists");
+    harness.get_by_label("Search functions").click();
+    harness.run();
+    harness.get_by_label("Search functions").focus();
+    harness.run();
+    harness
+        .get_by_label("Search functions")
+        .type_text("vlookup");
+    harness.run();
+    harness.get_by_label("VLOOKUP").click();
+    harness.run();
+    harness.get_by_label("VLOOKUP(key, items, key_field, result_field)");
 }
 
 #[test]

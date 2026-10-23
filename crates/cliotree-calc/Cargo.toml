@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 cliotree-core.workspace = true
+cliotree-std.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 indexmap = "2.14.2"
 # The derive macros of RustPython name `rustpython_vm` in the code they write,

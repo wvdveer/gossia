@@ -1061,7 +1061,10 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
    - **4c. The tabular view of arrays** *(done, apart from copy and paste of ranges, hiding of tree nodes, and saving the view state, which wait as listed in the decisions below)*: the table, filters, sorting, hiding, and the row commands.
    - **4d. Schema auto-update** and the schema-editing commands *(done for JSON Schema; the XML element and attribute forms wait for step 6, and the manifest for the workbook layer, as listed in the decisions below)*.
    - **4e. The in-process UI tests** with `egui_kittest`, the visual snapshot tests, and the end-to-end test control channel *(done; the commands that need the workbook layer wait for it, and the two new CI jobs are advisory until the runner is known to suit them, as listed in the decisions below)*.
-5. **std** functions, workbook modules, trust.
+5. **std**, **modules**, and **trust**, in three parts:
+   - **5a. The Excel-named functions** *(done, apart from `XMLPATH`, which waits for the XML adapter of step 6)*: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `VLOOKUP`, `FILTER`, `SORT`, `UNIQUE`, `CONCAT`, `TEXTJOIN`, `TEXT` and `NA`, in `cliotree-std`.
+   - **5b. Workbook modules**: loading, the namespaces, publishing, reloading, generations, the reserved names and the clash checks.
+   - **5c. Trust**: the trust hash, untrusted mode, the banner, and the recorded decisions.
 6. **XSD** subset and XML adapter.
 6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB.
 7. **Views and forms**: the view selector and the remembered view of each tab, the `builtin:form` schema, the generated Default form with live read and write to the tab, then named forms and in-place customising (layout mode, property page), then button procedures.
@@ -1194,6 +1197,19 @@ Deferred features, with what v1 does to keep them possible:
 - **New window tests** (27 run in the window tests now, plus the ignored `picture`): Escape gives up an edit, the issues panel lists errors and clicking one selects the cell, a column is hidden and shown again, a filter is set in the dialog and cleared from the menu, Collapse all. They found one real defect, which is fixed: the combo boxes of the filter dialog and of the Add field dialog had no accessible name (`egui_kittest` checks this on every frame); both now use `ComboBox::from_label`.
 - **Seen in the snapshots, not changed:** a dialog opens at the top left of the window, over the formula bar, because it has no anchor. It should open near what it is about, or centred.
 - **Not done in this step, and why.** Dragging a column header is still tested only through `move_field`; a drag needs a sequence of pointer events over several frames, which was not tried yet. The commands for files and options wait for the workbook layer and step 5 (trust, grants).
+
+**Decisions made while building step 5a** (the Excel-named functions)
+- **`cliotree-std` owns them.** It holds the Python source (`functions.py`, run by the engine in the namespace of its prelude, so it can use `ErrorValue`, `Node` and `PLAIN`), the list of names, and the description of each for the Insert Function dialog and for name completion. `Function` and `Group` moved there from `cliotree-calc`, which re-exports them and adds its own entries after these. The groups are Math, Logic, Lookup and lists, Text, Errors, Data, Python and Standard library modules.
+- **Nothing is turned into another kind, and nothing is skipped.** The functions follow the rules of the semantics table. `SUM` and `AVERAGE` of text are `#TYPE!`; `AVERAGE` of nothing is `#DIV/0!`; `MIN` and `MAX` of nothing are `#VALUE!` unless `default=` is given; and an `ErrorValue` among the elements is raised by every aggregate, `COUNT` included, so that no function hides a bad item.
+- **Arguments are flattened one level.** A list, a tuple or an array is opened; text, a dict and any other value count as one element. So `SUM(Orders.items.price, 5, [1, 2])` works. An object is not opened (`SUM(Orders.by_name)` is an error, not the sum of its keys).
+- **`COUNT` counts the elements that are not `None`**, which is how an absent optional field counts as nothing; it is not Excel's count of numbers.
+- **`IF(condition, then, otherwise=None)`** works out both branches before the call. The plain `a if c else b` works out one; the description says so.
+- **`VLOOKUP(key, items, key_field, result_field)`** takes field names, and raises `KeyError` (`#REF!`) when no item matches. **`FILTER(items, condition)`** takes a function of one item or a list of flags of the same length (`#VALUE!` if the lengths differ). **`SORT(items, key=None, reverse=False)`** takes a function or the name of a field. **`UNIQUE(items)`** keeps the first of each, and compares objects and lists by what is in them. All four return lists.
+- **`CONCAT(*arrays)`** is list concatenation, as specified: lists, tuples and array proxies, and `#TYPE!` for anything else, an object included. Array proxies tell what they are through a new `__kind__()` method.
+- **`TEXTJOIN(delimiter, *values)`** joins text only; a number among the values is `#TYPE!` (use `TEXT` or an f-string). **`TEXT(value, spec='')`** is `format()`, a Python format spec, not an Excel format code.
+- **`NA()`** is the only source of `#N/A`: it raises `NotAvailable`, which the engine maps to the new kind. `IFERROR` catches it like any other error.
+- **Not done in this part, and why.** `XMLPATH` needs XML data, which comes with step 6. The reserved-names checks (a tab or a function that clashes with these names) come with the modules, in 5b.
+- **Tests.** 15 in `cliotree-calc` (`python/tests_std.rs`: each function, its error cases, and that an error among the items is raised by every aggregate), 3 in `cliotree-std`, and one more window test for the Insert Function dialog (the list is long now, so the existing test searches for its function).
 
 **Risks that only building and measuring can settle**
 - **RustPython.** It is young and not production-ready by its own account, it builds only from a pinned git revision, and the single long builtin call cannot be interrupted. Mitigations: the `PythonEngine` trait, the pinned and vendored build, the abandoned-thread backstop, and the test-suite probes.

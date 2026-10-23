@@ -338,12 +338,16 @@ fn set_up(
     prelude.set_item("_max_range", vm.ctx.new_int(settings.max_range).into(), vm)?;
     let scope = Scope::with_builtins(None, prelude.clone(), vm);
     vm.run_string(scope, PRELUDE, "<cliotree prelude>")?;
+    // The Excel-named functions run in the same namespace.
+    let scope = Scope::with_builtins(None, prelude.clone(), vm);
+    vm.run_string(scope, cliotree_std::PYTHON, "<cliotree std>")?;
 
     let datetime = vm.import("datetime", 0)?;
     shared.set_classes(Classes {
         error_value: prelude.get_item("ErrorValue", vm)?,
         propagated: prelude.get_item("PropagatedError", vm)?,
         timeout: prelude.get_item("FormulaTimeout", vm)?,
+        not_available: prelude.get_item(cliotree_std::NOT_AVAILABLE, vm)?,
         date: datetime.get_attr("date", vm)?,
         datetime: datetime.get_attr("datetime", vm)?,
         timezone: datetime.get_attr("timezone", vm)?,
@@ -373,8 +377,11 @@ fn set_up(
         "PLAIN",
         "JSONPATH",
         "range",
-    ] {
-        globals.set_item(name, prelude.get_item(name, vm)?, vm)?;
+    ]
+    .iter()
+    .chain(cliotree_std::NAMES)
+    {
+        globals.set_item(*name, prelude.get_item(*name, vm)?, vm)?;
     }
     for name in MODULES {
         globals.set_item(*name, vm.import(*name, 0)?, vm)?;
@@ -393,3 +400,7 @@ mod tests_more;
 #[cfg(test)]
 #[path = "tests_budget.rs"]
 mod tests_budget;
+
+#[cfg(test)]
+#[path = "tests_std.rs"]
+mod tests_std;

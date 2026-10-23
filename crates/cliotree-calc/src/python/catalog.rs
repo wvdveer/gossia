@@ -1,41 +1,9 @@
 //! The names a formula can use, for the Insert Function dialog and for name
 //! completion (DESIGN.md, "Formulas", "Insert Function" and "Name
-//! completion"). The Excel-named functions arrive with step 5; the workbook's
-//! own modules with them.
+//! completion"). The Excel-named functions are described in `cliotree-std`;
+//! the rest are here.
 
-/// One name a formula can use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Function {
-    pub name: &'static str,
-    /// What is written into the formula bar: the name with its brackets, or
-    /// the module name and a dot.
-    pub insert: &'static str,
-    pub signature: &'static str,
-    /// One line.
-    pub description: &'static str,
-    pub group: Group,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Group {
-    Errors,
-    Data,
-    Python,
-    Modules,
-}
-
-impl Group {
-    pub fn title(self) -> &'static str {
-        match self {
-            Group::Errors => "Errors",
-            Group::Data => "Data",
-            Group::Python => "Python",
-            Group::Modules => "Standard library modules",
-        }
-    }
-
-    pub const ALL: [Group; 4] = [Group::Errors, Group::Data, Group::Python, Group::Modules];
-}
+pub use cliotree_std::{Function, Group};
 
 const fn f(
     name: &'static str,
@@ -53,8 +21,19 @@ const fn f(
     }
 }
 
-/// Everything a formula can call or use by name, without a workbook module.
+/// Everything a formula can call or use by name, without a workbook module:
+/// the Excel-named functions first, then the rest.
 pub fn catalog() -> &'static [Function] {
+    use std::sync::OnceLock;
+    static ALL: OnceLock<Vec<Function>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        let mut all = cliotree_std::functions().to_vec();
+        all.extend_from_slice(others());
+        all
+    })
+}
+
+fn others() -> &'static [Function] {
     use Group::*;
     const ALL: &[Function] = &[
         f(

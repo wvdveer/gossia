@@ -386,6 +386,19 @@ pub(super) fn failure(
             traceback: Some(traceback),
         };
     }
+    if object
+        .is_instance(&classes.not_available, vm)
+        .unwrap_or(false)
+    {
+        return Failure {
+            error: ErrorValue {
+                kind: ErrorKind::Na,
+                message: "not available".to_owned(),
+                origin: None,
+            },
+            traceback: Some(traceback),
+        };
+    }
     if object.is_instance(&classes.timeout, vm).unwrap_or(false) {
         return Failure {
             error: ErrorValue {

@@ -13,6 +13,8 @@ pub(super) struct Classes {
     pub error_value: PyObjectRef,
     pub propagated: PyObjectRef,
     pub timeout: PyObjectRef,
+    /// What `NA()` raises.
+    pub not_available: PyObjectRef,
     pub date: PyObjectRef,
     pub datetime: PyObjectRef,
     pub timezone: PyObjectRef,
