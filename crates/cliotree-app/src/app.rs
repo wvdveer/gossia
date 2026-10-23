@@ -12,6 +12,7 @@ use cliotree_core::validate::validate;
 use cliotree_core::{Node, Path, Value};
 
 use crate::rows::{self, Row};
+use crate::tables::Tables;
 
 /// What is being typed into a cell, in the formula bar or in the cell itself.
 /// They are two views of the same text (DESIGN.md, "Entering formulas").
@@ -81,6 +82,8 @@ pub struct ClioApp {
     pub insert_function: Option<InsertFunction>,
     pub summary: Summary,
     pub show_issues: bool,
+    /// The tabular view of arrays: which arrays, and the view state of each.
+    pub tables: Tables,
     /// Scroll the grid so that this row is in view.
     pub scroll_to: Option<usize>,
 }
@@ -125,6 +128,7 @@ impl ClioApp {
             insert_function: None,
             summary: Summary::default(),
             show_issues: false,
+            tables: Tables::default(),
             scroll_to: None,
         }
     }
@@ -151,12 +155,13 @@ impl ClioApp {
         if self.rows_key.as_ref() == Some(&key) {
             return;
         }
+        let tabular = self.tabular_paths();
         let calc = self.session.calc();
         self.rows = match (calc.spec(&self.sheet), calc.data(&self.sheet)) {
             (Some(spec), Some(data)) => {
                 let none = HashSet::new();
                 let open = self.expanded.get(&self.sheet).unwrap_or(&none);
-                rows::build(spec, &self.sheet, data, open)
+                rows::build(spec, &self.sheet, data, open, &tabular)
             }
             _ => Vec::new(),
         };

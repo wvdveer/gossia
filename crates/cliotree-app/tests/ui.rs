@@ -285,6 +285,126 @@ fn typing_a_tab_name_and_a_dot_offers_its_fields_from_the_schema() {
     harness.get_by_label("tax_rate    number");
 }
 
+/// The window with the order's items shown as a table.
+fn table_window() -> Harness<'static, ClioApp> {
+    let mut harness = window();
+    harness
+        .state_mut()
+        .set_tabular(&"items".parse().unwrap(), true);
+    harness.run();
+    settle(&mut harness);
+    harness
+}
+
+fn skus(harness: &Harness<'_, ClioApp>) -> Vec<String> {
+    (0..3)
+        .map(|i| {
+            harness
+                .state()
+                .calc()
+                .data("Orders")
+                .unwrap()
+                .get(&format!("items[{i}].sku").parse().unwrap())
+                .unwrap()
+                .value()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn an_array_of_objects_is_drawn_as_a_table_under_the_tree() {
+    let harness = table_window();
+    harness.get_by_label("Orders.items");
+    harness.get_by_label("3 rows");
+    for header in ["sku", "qty", "price", "note"] {
+        harness.get_by_label(header);
+    }
+    // `total` is a column of the table and a field of the order above it.
+    assert_eq!(harness.query_all_by_label("total").count(), 2);
+    for sku in ["A-100", "B-220", "C-310"] {
+        harness.get_by_label(sku);
+    }
+    harness.get_by_label("gift wrap");
+    harness.get_by_label("[2]");
+    // The tree above still has the rest of the order.
+    harness.get_by_label("customer");
+}
+
+#[test]
+fn clicking_a_header_sorts_and_clicking_it_again_reverses() {
+    let mut harness = table_window();
+    click(&mut harness, "qty");
+    settle(&mut harness);
+    assert_eq!(skus(&harness), ["B-220", "A-100", "C-310"]);
+    click(&mut harness, "qty");
+    settle(&mut harness);
+    assert_eq!(skus(&harness), ["C-310", "A-100", "B-220"]);
+    click(&mut harness, "Reverse row order");
+    settle(&mut harness);
+    assert_eq!(skus(&harness), ["B-220", "A-100", "C-310"]);
+    // Undo with the key, once nothing is being typed.
+    click(&mut harness, "customer");
+    ctrl(&mut harness, Key::Z);
+    settle(&mut harness);
+    assert_eq!(skus(&harness), ["C-310", "A-100", "B-220"]);
+}
+
+#[test]
+fn a_column_that_cannot_be_sorted_says_why_and_offers_the_rows() {
+    let mut harness = table_window();
+    click(&mut harness, "note");
+    harness.run();
+    assert_eq!(skus(&harness), ["A-100", "B-220", "C-310"], "unchanged");
+    assert!(
+        harness
+            .query_all_by_label_contains("not supported between")
+            .next()
+            .is_some()
+    );
+    click(&mut harness, "Show these rows");
+    settle(&mut harness);
+    harness.get_by_label("2 of 3 rows (0 hidden, 1 filtered)");
+    assert!(harness.query_by_label("B-220").is_none(), "filtered out");
+}
+
+#[test]
+fn a_cell_of_the_table_is_typed_into_and_the_arrows_move_among_cells() {
+    let mut harness = table_window();
+    click(&mut harness, "12");
+    assert_eq!(bar(&harness), "12");
+    press(&mut harness, Key::ArrowLeft);
+    assert_eq!(
+        harness.state().selection.as_ref().unwrap().to_string(),
+        "items[2].sku"
+    );
+    press(&mut harness, Key::ArrowRight);
+    type_into_selected_cell(&mut harness, "3");
+    press(&mut harness, Key::Enter);
+    settle(&mut harness);
+    // 3 * 0.75.
+    harness.get_by_label("2.25");
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(
+        harness.state().selection.as_ref().unwrap().to_string(),
+        "items[1].qty"
+    );
+}
+
+#[test]
+fn rows_are_added_and_the_table_is_closed_from_its_toolbar() {
+    let mut harness = table_window();
+    click(&mut harness, "Add row");
+    settle(&mut harness);
+    harness.get_by_label("4 rows");
+    click(&mut harness, "Close table");
+    settle(&mut harness);
+    assert!(harness.query_by_label("Close table").is_none());
+    assert!(harness.state().layout().is_none());
+}
+
 #[test]
 #[ignore = "writes a picture of the window, needs a graphics adapter"]
 fn picture() {

@@ -524,3 +524,72 @@ proptest! {
         prop_assert_eq!(state(&book), final_state);
     }
 }
+
+// ---------------------------------------------------------------- reorder
+
+#[test]
+fn reordering_is_one_entry_that_keeps_the_items_and_can_be_undone() {
+    let mut b = Book::new();
+    let (id0, id3) = (b.id("list[0]"), b.id("list[3]"));
+    let before = b.json();
+    b.calc
+        .reorder("S", &p("list"), &[3, 2, 1, 0], "Reverse")
+        .unwrap();
+    assert_eq!(b.calc.undo_label(), Some("Reverse S.list"));
+    assert_eq!(b.get("list[0]"), Some(Value::Int(40)));
+    assert_eq!(b.id("list[0]"), id3, "the items keep their identity");
+    assert_eq!(b.id("list[3]"), id0);
+    assert_eq!(b.calc.history_len(), (1, 0));
+    b.undo();
+    assert_eq!(b.json(), before);
+    b.redo();
+    assert_eq!(b.get("list[1]"), Some(Value::Int(30)));
+}
+
+#[test]
+fn an_order_that_is_not_a_permutation_is_refused_and_the_identity_is_no_edit() {
+    let mut b = Book::new();
+    for bad in [&[0, 1, 2][..], &[0, 1, 2, 2], &[0, 1, 2, 9]] {
+        b.calc.reorder("S", &p("list"), bad, "Sort").unwrap_err();
+    }
+    b.calc.reorder("S", &p("a"), &[0], "Sort").unwrap_err();
+    b.calc
+        .reorder("S", &p("list"), &[0, 1, 2, 3], "Sort")
+        .unwrap();
+    assert_eq!(b.calc.history_len(), (0, 0));
+}
+
+/// A formula stays at its place and is calculated against the item now there;
+/// undoing puts every item back, including the one the formula overwrote.
+#[test]
+fn a_formula_inside_an_item_stays_put_when_the_array_is_reordered() {
+    let mut b = Book::new();
+    b.calc.set_formula("S", &p("list[1]"), "S.a * 100").unwrap();
+    b.run();
+    assert_eq!(b.get("list[1]"), Some(Value::Int(100)));
+    let before = b.json();
+    b.calc
+        .reorder("S", &p("list"), &[3, 2, 1, 0], "Reverse")
+        .unwrap();
+    b.run();
+    assert_eq!(b.get("list[1]"), Some(Value::Int(100)), "recalculated");
+    assert_eq!(
+        b.calc.cell("S", &p("list[1]")).unwrap().formula,
+        Some("S.a * 100")
+    );
+    assert_eq!(b.get("list[2]"), Some(Value::Int(100)), "the moved result");
+    b.undo();
+    assert_eq!(b.json(), before);
+}
+
+#[test]
+fn a_computed_array_cannot_be_reordered() {
+    let mut b = Book::new();
+    b.calc.set_formula("S", &p("list"), "[3, 2, 1]").unwrap();
+    b.run();
+    let e = b
+        .calc
+        .reorder("S", &p("list"), &[2, 1, 0], "Sort")
+        .unwrap_err();
+    assert!(e.to_string().contains("computed"), "{e}");
+}

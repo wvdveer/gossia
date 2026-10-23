@@ -113,6 +113,7 @@ impl ClioApp {
             Ok(()) => {
                 self.notice = None;
                 self.completion = CompletionUi::default();
+                self.pin_row_of(&editing.path);
                 self.session.tick();
                 true
             }
@@ -131,6 +132,7 @@ impl ClioApp {
         match entry::enter(self.session.calc_mut(), &sheet, path, text, false) {
             Ok(()) => {
                 self.notice = None;
+                self.pin_row_of(path);
                 self.session.tick();
             }
             Err(e) => self.notice = Some(e.to_string()),
@@ -146,6 +148,7 @@ impl ClioApp {
             return false;
         }
         self.selection = Some(path.clone());
+        self.note_selection_in_table(path);
         if self.editing.is_none() {
             self.notice = None;
         }

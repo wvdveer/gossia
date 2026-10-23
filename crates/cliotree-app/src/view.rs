@@ -12,15 +12,15 @@ use crate::app::{ClioApp, Editing, Focus};
 use crate::rows::{Row, RowKind, display};
 use crate::status::{evaluation_text, problems_text};
 
-const ROW_HEIGHT: f32 = 22.0;
+pub(crate) const ROW_HEIGHT: f32 = 22.0;
 const INDENT: f32 = 16.0;
 
 /// Gives a text field a name that a screen reader (and a test) can find it by.
-fn named(response: &egui::Response, name: &'static str) {
+pub(crate) fn named(response: &egui::Response, name: &'static str) {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, name));
 }
 
-fn error_color(ui: &egui::Ui) -> Color32 {
+pub(crate) fn error_color(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
         Color32::from_rgb(255, 120, 110)
     } else {
@@ -38,7 +38,7 @@ fn computed_fill(ui: &egui::Ui) -> Color32 {
 
 /// Something a row asked for while it was being drawn. They are applied after
 /// the table, because drawing borrows the workbook.
-enum Action {
+pub(crate) enum Action {
     Select(Path),
     Toggle(Path),
     BeginEdit(Path),
@@ -48,6 +48,25 @@ enum Action {
     Delete(Path),
     Commit,
     Cancel,
+    // The tabular view.
+    Reveal(Path),
+    ToggleTabular(Path, bool),
+    Reverse(Path),
+    SortBy(Path, String, Option<bool>),
+    HideColumn(Path, String),
+    ShowColumn(Path, String),
+    FilterDialog(Path, String),
+    ClearFilter(Path, String),
+    ClearAllFilters(Path),
+    ReapplyFilters(Path),
+    AddRow(Path, Option<usize>),
+    DeleteRow(Path, usize),
+    MoveRow(Path, usize, bool),
+    HideRow(Path, usize),
+    ShowRow(Path, cliotree_core::NodeId),
+    ShowAllHidden(Path),
+    ShowRefusedRows,
+    DismissRefusal,
 }
 
 impl ClioApp {
@@ -71,8 +90,16 @@ impl ClioApp {
                 .show(ui, |ui| self.issues_panel(ui));
         }
         self.refresh_rows();
+        self.refresh_table();
+        if self.layout().is_some() {
+            egui::Panel::bottom("table")
+                .resizable(true)
+                .default_size(280.0)
+                .show(ui, |ui| self.table_pane(ui));
+        }
         egui::CentralPanel::default().show(ui, |ui| self.grid(ui));
         self.insert_function_window(ui.ctx());
+        self.filter_window(ui.ctx());
     }
 
     // ------------------------------------------------------------- keys
@@ -96,51 +123,60 @@ impl ClioApp {
         }
         let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
         let up = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
-        if down {
-            self.move_selection(1);
-        }
-        if up {
-            self.move_selection(-1);
-        }
         let right = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowRight));
         let left = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowLeft));
-        if let Some(row) = self.selected_row().cloned() {
-            if right && ClioApp::is_container(&row) {
-                self.set_open(&row.path, true);
+        if self.table_cell_selected() {
+            // In a table the arrows move among the cells that are shown.
+            let dx = isize::from(right) - isize::from(left);
+            let dy = isize::from(down) - isize::from(up);
+            if dx != 0 || dy != 0 {
+                self.table_move_selection(dx, dy);
             }
-            if left {
-                if row.expanded {
-                    self.set_open(&row.path, false);
-                } else if let Some(parent) = row.path.parent()
-                    && self.select(&parent)
-                {
-                    self.scroll_to = self.row_index(&parent);
-                }
+        } else {
+            if down {
+                self.move_selection(1);
             }
-            if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) {
-                let path = row.path.clone();
-                self.begin_editing(&path, true, None);
-            } else if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete)) {
-                let path = row.path.clone();
-                if self.can_edit(&path) {
-                    self.enter_directly(&path, "");
+            if up {
+                self.move_selection(-1);
+            }
+            if let Some(row) = self.selected_row().cloned() {
+                if right && ClioApp::is_container(&row) {
+                    self.set_open(&row.path, true);
                 }
-            } else {
-                // Typing on a selected cell starts editing it with what was typed.
-                let typed: Option<String> = ui.input(|i| {
-                    i.events.iter().find_map(|e| match e {
-                        egui::Event::Text(t) if !t.chars().all(char::is_control) => Some(t.clone()),
-                        _ => None,
-                    })
-                });
-                if let Some(text) = typed {
-                    let path = row.path.clone();
-                    if self.begin_editing(&path, true, Some(text)) {
-                        ui.input_mut(|i| {
-                            i.events.retain(|e| !matches!(e, egui::Event::Text(_)));
-                        });
+                if left {
+                    if row.expanded {
+                        self.set_open(&row.path, false);
+                    } else if let Some(parent) = row.path.parent()
+                        && self.select(&parent)
+                    {
+                        self.scroll_to = self.row_index(&parent);
                     }
                 }
+            }
+        }
+        let Some(path) = self.selection.clone() else {
+            return;
+        };
+        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) {
+            self.begin_editing(&path, true, None);
+        } else if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete)) {
+            if self.can_edit(&path) {
+                self.enter_directly(&path, "");
+            }
+        } else {
+            // Typing on a selected cell starts editing it with what was typed.
+            let typed: Option<String> = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Text(t) if !t.chars().all(char::is_control) => Some(t.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(text) = typed
+                && self.begin_editing(&path, true, Some(text))
+            {
+                ui.input_mut(|i| {
+                    i.events.retain(|e| !matches!(e, egui::Event::Text(_)));
+                });
             }
         }
     }
@@ -415,7 +451,7 @@ impl ClioApp {
         }
     }
 
-    fn apply(&mut self, action: Action) {
+    pub(crate) fn apply(&mut self, action: Action) {
         match action {
             Action::Select(path) => {
                 self.select(&path);
@@ -446,6 +482,26 @@ impl ClioApp {
                 self.commit_editing();
             }
             Action::Cancel => self.cancel_editing(),
+            Action::Reveal(path) => self.reveal(&path),
+            Action::ToggleTabular(array, on) => self.set_tabular(&array, on),
+            Action::Reverse(array) => self.reverse_rows(&array),
+            Action::SortBy(array, column, descending) => {
+                self.sort_table(&array, &column, descending);
+            }
+            Action::HideColumn(array, column) => self.hide_column(&array, &column),
+            Action::ShowColumn(array, column) => self.show_column(&array, &column),
+            Action::FilterDialog(array, column) => self.open_filter_dialog(&array, &column),
+            Action::ClearFilter(array, column) => self.set_filter(&array, &column, None),
+            Action::ClearAllFilters(array) => self.clear_all_filters(&array),
+            Action::ReapplyFilters(array) => self.reapply_filters(&array),
+            Action::AddRow(array, at) => self.add_row(&array, at),
+            Action::DeleteRow(array, index) => self.delete_row(&array, index),
+            Action::MoveRow(array, index, up) => self.move_row(&array, index, up),
+            Action::HideRow(array, index) => self.hide_row(&array, index),
+            Action::ShowRow(array, id) => self.show_row(&array, id),
+            Action::ShowAllHidden(array) => self.show_all_hidden(&array),
+            Action::ShowRefusedRows => self.show_refused_rows(),
+            Action::DismissRefusal => self.tables.refused = None,
         }
     }
 
@@ -461,20 +517,7 @@ impl ClioApp {
         let cell = calc.cell(&self.sheet, &row.path);
         let formula = cell.as_ref().and_then(|c| c.formula);
         let formula_error = cell.as_ref().and_then(|c| c.error);
-        let pending = cell.as_ref().is_some_and(|c| c.pending);
         let computed_by = cell.as_ref().and_then(|c| c.computed_by.clone());
-        let value = row.node.as_ref().map(|n| n.value());
-        let is_error = matches!(value, Some(Value::Error(_)));
-        let editable = !row.unrecognised && computed_by.is_none();
-
-        // What is wrong with the data, for the outline.
-        let invalid = match (&row.node, row.ty, calc.spec(&self.sheet)) {
-            (Some(node), Some(ty), Some(spec)) if row.kind == RowKind::Scalar && !is_error => {
-                !cliotree_core::validate::validate_at(spec, ty, node, &row.path).is_empty()
-            }
-            _ => false,
-        };
-        let missing = row.node.is_none() && row.required && !row.unrecognised;
 
         // The name.
         let mut name_response = None;
@@ -522,42 +565,7 @@ impl ClioApp {
         });
 
         // The value.
-        table_row.col(|ui| {
-            if computed_by.is_some() || formula.is_some() {
-                ui.painter()
-                    .rect_filled(ui.max_rect(), 0.0, computed_fill(ui));
-            }
-            if invalid || missing {
-                // Invalid data is kept and outlined, not refused.
-                ui.painter().rect_stroke(
-                    ui.max_rect().shrink(1.0),
-                    2.0,
-                    Stroke::new(1.5, Color32::from_rgb(220, 60, 60)),
-                    StrokeKind::Inside,
-                );
-            }
-            let editing_here = editing
-                .as_ref()
-                .is_some_and(|e| e.path == row.path && e.in_cell && e.sheet == self.sheet);
-            if editing_here {
-                self.cell_editor(ui, editing, actions);
-                return;
-            }
-            self.value_cell(
-                ui,
-                row,
-                value,
-                formula,
-                formula_error,
-                editable,
-                selected,
-                actions,
-            );
-            if pending {
-                ui.label(RichText::new("…").weak())
-                    .on_hover_text("Waiting to be calculated");
-            }
-        });
+        table_row.col(|ui| self.value_column(ui, row, selected, editing, actions));
 
         // The formula.
         table_row.col(|ui| {
@@ -585,6 +593,72 @@ impl ClioApp {
         // Right click.
         if let Some(response) = name_response {
             response.context_menu(|ui| self.row_menu(ui, row, actions));
+        }
+    }
+
+    /// The value of a node, with the marks a cell can have: the tint of a
+    /// computed value, the outline of invalid data, the editor while it is
+    /// being typed into, and the marker of a calculation that is waiting.
+    pub(crate) fn value_column(
+        &self,
+        ui: &mut egui::Ui,
+        row: &Row,
+        selected: bool,
+        editing: &mut Option<Editing>,
+        actions: &mut Vec<Action>,
+    ) {
+        let calc = self.calc();
+        let cell = calc.cell(&self.sheet, &row.path);
+        let formula = cell.as_ref().and_then(|c| c.formula);
+        let formula_error = cell.as_ref().and_then(|c| c.error);
+        let pending = cell.as_ref().is_some_and(|c| c.pending);
+        let computed_by = cell.as_ref().and_then(|c| c.computed_by.clone());
+        let value = row.node.as_ref().map(|n| n.value());
+        let is_error = matches!(value, Some(Value::Error(_)));
+        let editable = !row.unrecognised && computed_by.is_none();
+
+        // What is wrong with the data, for the outline.
+        let invalid = match (&row.node, row.ty, calc.spec(&self.sheet)) {
+            (Some(node), Some(ty), Some(spec)) if row.kind == RowKind::Scalar && !is_error => {
+                !cliotree_core::validate::validate_at(spec, ty, node, &row.path).is_empty()
+            }
+            _ => false,
+        };
+        let missing = row.node.is_none() && row.required && !row.unrecognised;
+
+        if computed_by.is_some() || formula.is_some() {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, computed_fill(ui));
+        }
+        if invalid || missing {
+            // Invalid data is kept and outlined, not refused.
+            ui.painter().rect_stroke(
+                ui.max_rect().shrink(1.0),
+                2.0,
+                Stroke::new(1.5, Color32::from_rgb(220, 60, 60)),
+                StrokeKind::Inside,
+            );
+        }
+        let editing_here = editing
+            .as_ref()
+            .is_some_and(|e| e.path == row.path && e.in_cell && e.sheet == self.sheet);
+        if editing_here {
+            self.cell_editor(ui, editing, actions);
+            return;
+        }
+        self.value_cell(
+            ui,
+            row,
+            value,
+            formula,
+            formula_error,
+            editable,
+            selected,
+            actions,
+        );
+        if pending {
+            ui.label(RichText::new("…").weak())
+                .on_hover_text("Waiting to be calculated");
         }
     }
 
@@ -640,6 +714,9 @@ impl ClioApp {
                 }
                 if response.double_clicked() && editable && row.kind == RowKind::Scalar {
                     actions.push(Action::BeginEdit(row.path.clone()));
+                }
+                if response.double_clicked() && row.kind != RowKind::Scalar && !row.tabular {
+                    actions.push(Action::Reveal(row.path.clone()));
                 }
                 if let Value::Error(error) = value {
                     let trace = self
@@ -727,6 +804,25 @@ impl ClioApp {
         if row.kind == RowKind::Array && ui.button("Add item").clicked() {
             actions.push(Action::AddItem(path.clone()));
             ui.close();
+        }
+        if row.kind == RowKind::Array {
+            if self.can_tabulate(path) {
+                let label = if row.tabular {
+                    "Tabular view (on)"
+                } else {
+                    "Tabular view"
+                };
+                if ui.button(label).clicked() {
+                    actions.push(Action::ToggleTabular(path.clone(), !row.tabular));
+                    ui.close();
+                }
+            }
+            let reorderable = self.can_reorder(path);
+            let reverse = ui.add_enabled(reorderable, egui::Button::new("Reverse row order"));
+            if reverse.clicked() {
+                actions.push(Action::Reverse(path.clone()));
+                ui.close();
+            }
         }
         match path.segments().last() {
             Some(Segment::Index(_)) => {

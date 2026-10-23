@@ -389,6 +389,66 @@ impl Calc {
         Ok(())
     }
 
+    /// Puts the items of the array at `array` in a new order: place `i` gets
+    /// the item that was at `order[i]`. One entry in the history, labelled
+    /// `what` (for example "Sort"). Formulas belong to a place, so they stay
+    /// where they are and are calculated again against the item now there.
+    pub fn reorder(
+        &mut self,
+        sheet: &str,
+        array: &Path,
+        order: &[usize],
+        what: &str,
+    ) -> Result<(), EditError> {
+        self.refuse_inside_computed(sheet, array)?;
+        if self.formula_text(sheet, array).is_some() {
+            return Err(EditError::Path(format!(
+                "{} is computed by a formula, so its order cannot be changed",
+                Loc::new(sheet, array.clone())
+            )));
+        }
+        let s = self.sheet_mut(sheet)?;
+        let before = s
+            .data
+            .get(array)
+            .cloned()
+            .ok_or_else(|| EditError::Path(format!("there is no node at {array}")))?;
+        let Value::Array(items) = before.value() else {
+            return Err(EditError::Path(format!("{array} is not an array")));
+        };
+        let mut seen = vec![false; items.len()];
+        let valid = order.len() == items.len()
+            && order
+                .iter()
+                .all(|&i| i < seen.len() && !std::mem::replace(&mut seen[i], true));
+        if !valid {
+            return Err(EditError::Path(
+                "the new order must name every item once".to_owned(),
+            ));
+        }
+        if order.iter().enumerate().all(|(place, &i)| place == i) {
+            return Ok(());
+        }
+        let moved: Vec<Node> = order.iter().map(|&i| items[i].clone()).collect();
+        let mut after = before.clone();
+        *after.value_mut() = Value::Array(moved);
+        s.data
+            .replace(array, after.clone())
+            .map_err(|e| EditError::Path(e.to_string()))?;
+        self.changed(sheet, array);
+        self.history.record(
+            format!("{what} {}", Loc::new(sheet, array.clone())),
+            vec![Op::Replace {
+                sheet: sheet.to_owned(),
+                path: array.clone(),
+                before,
+                after,
+            }],
+            None,
+        );
+        Ok(())
+    }
+
     /// Attaches a formula to a node, or replaces the one there. `text` is the
     /// expression without the leading `=`.
     ///

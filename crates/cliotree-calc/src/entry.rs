@@ -89,7 +89,8 @@ pub fn classify(spec: &TypeSpec, path: &Path, text: &str) -> Result<Entered, Ent
     Ok(Entered::Literal(value))
 }
 
-fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
+/// Reads `text` as a value of the given kind, without checking constraints.
+pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
     let invalid = |what: &str| EntryError::Invalid(format!("{what} is expected here"));
     match kind {
         Kind::String(_) | Kind::Enum { .. } => Ok(Value::Str(text.to_owned())),

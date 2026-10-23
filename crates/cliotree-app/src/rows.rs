@@ -7,7 +7,7 @@
 //! schema does not define is shown greyed and read-only after the declared
 //! fields. Only the rows of expanded nodes are made.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use cliotree_core::{Kind, Node, Path, Segment, TypeId, TypeSpec, Value};
 
@@ -36,18 +36,29 @@ pub struct Row {
     pub expanded: bool,
     /// Content in the data that the schema does not define.
     pub unrecognised: bool,
+    /// An array shown as a table: its items are in the table, and only an
+    /// item that was opened from the table (a drill-in) has rows here.
+    pub tabular: bool,
 }
 
 impl Row {
     /// Whether the row has rows of its own below it.
     pub fn expandable(&self) -> bool {
-        self.kind != RowKind::Scalar && !self.unrecognised
+        self.kind != RowKind::Scalar && !self.unrecognised && !self.tabular
     }
 }
 
-/// The rows of a tab. `expanded` holds the paths of the nodes that are open.
-pub fn build(spec: &TypeSpec, tab: &str, root: &Node, expanded: &HashSet<Path>) -> Vec<Row> {
+/// The rows of a tab. `expanded` holds the paths of the nodes that are open,
+/// and `tabular` those of the arrays that are shown as tables.
+pub fn build(
+    spec: &TypeSpec,
+    tab: &str,
+    root: &Node,
+    expanded: &HashSet<Path>,
+    tabular: &HashSet<Path>,
+) -> Vec<Row> {
     let mut out = Vec::new();
+    let open = Open { expanded, tabular };
     walk(
         spec,
         spec.root(),
@@ -56,10 +67,29 @@ pub fn build(spec: &TypeSpec, tab: &str, root: &Node, expanded: &HashSet<Path>) 
         Some(root),
         true,
         0,
-        expanded,
+        &open,
         &mut out,
     );
     out
+}
+
+struct Open<'a> {
+    expanded: &'a HashSet<Path>,
+    tabular: &'a HashSet<Path>,
+}
+
+impl Open<'_> {
+    /// The items of the table at `array` that have something open inside them.
+    fn drilled(&self, array: &Path) -> BTreeSet<usize> {
+        self.expanded
+            .iter()
+            .filter(|p| p.len() > array.len() && p.segments().starts_with(array.segments()))
+            .filter_map(|p| match p.segments()[array.len()] {
+                Segment::Index(i) => Some(i),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -71,16 +101,24 @@ fn walk(
     node: Option<&Node>,
     required: bool,
     depth: usize,
-    expanded: &HashSet<Path>,
+    open_state: &Open<'_>,
     out: &mut Vec<Row>,
 ) {
+    let expanded = open_state.expanded;
     let kind = match &spec.get(ty).kind {
         Kind::Object { .. } => RowKind::Object,
         Kind::Array { .. } => RowKind::Array,
         Kind::Map { .. } => RowKind::Map,
         _ => RowKind::Scalar,
     };
-    let open = kind != RowKind::Scalar && expanded.contains(&path);
+    let tabular = kind == RowKind::Array && open_state.tabular.contains(&path);
+    let drilled = if tabular {
+        open_state.drilled(&path)
+    } else {
+        BTreeSet::new()
+    };
+    let open =
+        kind != RowKind::Scalar && expanded.contains(&path) && (!tabular || !drilled.is_empty());
     out.push(Row {
         path: path.clone(),
         depth,
@@ -92,6 +130,7 @@ fn walk(
         required,
         expanded: open,
         unrecognised: false,
+        tabular,
     });
     if !open {
         return;
@@ -108,7 +147,7 @@ fn walk(
                     child,
                     field.required,
                     depth + 1,
-                    expanded,
+                    open_state,
                     out,
                 );
             }
@@ -128,6 +167,7 @@ fn walk(
                         required: false,
                         expanded: false,
                         unrecognised: true,
+                        tabular: false,
                     });
                 }
             }
@@ -135,6 +175,9 @@ fn walk(
         Kind::Array { items, .. } => {
             if let Some(Value::Array(present)) = node.map(Node::value) {
                 for (i, child) in present.iter().enumerate() {
+                    if tabular && !drilled.contains(&i) {
+                        continue;
+                    }
                     walk(
                         spec,
                         *items,
@@ -143,7 +186,7 @@ fn walk(
                         Some(child),
                         true,
                         depth + 1,
-                        expanded,
+                        open_state,
                         out,
                     );
                 }
@@ -160,7 +203,7 @@ fn walk(
                         Some(child),
                         true,
                         depth + 1,
-                        expanded,
+                        open_state,
                         out,
                     );
                 }
@@ -239,7 +282,7 @@ mod tests {
                 }
             })
             .collect();
-        build(&spec, "T", &root, &expanded)
+        build(&spec, "T", &root, &expanded, &HashSet::new())
     }
 
     fn names(rows: &[Row]) -> Vec<String> {
@@ -317,7 +360,7 @@ mod tests {
         .unwrap();
         let root = json::parse("{}").unwrap().node;
         let open: HashSet<Path> = [Path::root(), "o".parse().unwrap()].into();
-        let r = build(&spec, "T", &root, &open);
+        let r = build(&spec, "T", &root, &open, &HashSet::new());
         assert_eq!(names(&r), ["T", "  o", "    n"]);
         assert!(r[1].node.is_none() && r[2].node.is_none());
     }
@@ -333,9 +376,34 @@ mod tests {
             .unwrap()
             .node;
         let closed: HashSet<Path> = [Path::root()].into();
-        assert_eq!(build(&spec, "T", &root, &closed).len(), 2);
+        assert_eq!(build(&spec, "T", &root, &closed, &HashSet::new()).len(), 2);
         let open: HashSet<Path> = [Path::root(), "big".parse().unwrap()].into();
-        assert_eq!(build(&spec, "T", &root, &open).len(), 50_002);
+        assert_eq!(
+            build(&spec, "T", &root, &open, &HashSet::new()).len(),
+            50_002
+        );
+    }
+
+    /// An array shown as a table has no rows for its items, except the items
+    /// that something was opened in.
+    #[test]
+    fn a_tabular_array_shows_only_the_items_opened_from_its_table() {
+        let spec = jsonschema::lower_str(
+            r#"{"type":"object","properties":{"o":{"type":"array","items":{"type":"object","properties":{"n":{"type":"integer"}}}}}}"#,
+        )
+        .unwrap();
+        let root = json::parse(r#"{"o": [{"n": 1}, {"n": 2}, {"n": 3}]}"#)
+            .unwrap()
+            .node;
+        let tabular: HashSet<Path> = ["o".parse().unwrap()].into();
+        let mut open: HashSet<Path> = [Path::root(), "o".parse().unwrap()].into();
+        let r = build(&spec, "T", &root, &open, &tabular);
+        assert_eq!(names(&r), ["T", "  o"]);
+        assert!(r[1].tabular && !r[1].expandable() && !r[1].expanded);
+        open.insert("o[1]".parse().unwrap());
+        let r = build(&spec, "T", &root, &open, &tabular);
+        assert_eq!(names(&r), ["T", "  o", "    [1]", "      n"]);
+        assert!(r[1].expanded);
     }
 
     /// Values are shown in Python's canonical form.
