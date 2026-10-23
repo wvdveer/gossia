@@ -51,6 +51,12 @@ Rules:
 - The built-ins are bundled in the binary, read-only, and are not workbook sheets. They are referenced by identifier (e.g. `builtin:jsonschema`, `builtin:xsd`), never by sheet name.
 - A sheet reference must resolve to a schema sheet in the same workbook. A missing sheet, a non-schema sheet, or a cycle in the chain is a load-time error shown on the sheet.
 - When a schema sheet is edited, every sheet bound to it is re-lowered to `TypeSpec` and revalidated, and dependent formula results are rechecked.
+- **Auto-update.** A schema sheet has an **auto-update** checkbox, off by default, shown in a bar above its tree together with a line saying which tab uses it (for example *Used by: Orders*).
+  - **When it is on, the tab that uses the schema can edit the schema** from its own tree grid or tabular view (see Editing the schema from a data tab). When it is off, those commands are unavailable, and the tab's own tooltip says which schema sheet to switch on.
+  - **It can be switched on only while exactly one tab uses the schema.** With no users or with two or more it is disabled, and the tooltip says why. A single user means a schema edit can only ever change that one tab, so it can never silently change another.
+  - **While it is on, no second tab may be bound to the schema sheet.** Creating, importing, or rebinding a tab to it is refused with a message that names the checkbox.
+  - A file that breaks these rules (auto-update on with two users) still opens, as with other rule breaches: auto-update is treated as off and flagged until the user resolves it.
+  - The setting is stored with the schema sheet in the manifest. Toggling it is an undoable edit and not executable content, so it does not affect trust.
 - A schema sheet must be valid against its meta-schema, and also lowerable to `TypeSpec` (so it may use only the supported subset of its language).
 - Neither bundled meta-schema is the official one (the W3C `XMLSchema.xsd` or the JSON Schema 2020-12 meta-schema). Each is our own schema that describes exactly the supported v1 subset, written using only that subset, and lowered through the normal path like any other schema. The two are kept parallel: the same concepts, the same restrictions, and the same exclusions. Widening a subset means updating its meta-schema in the same change.
 - **Meta-schema** means a schema that describes schema documents, and only these two are meta-schemas. The application also bundles ordinary built-in schemas for its own design documents: `builtin:form` (form designs) and, in a later version, `builtin:report` (report designs). These describe designs, not schemas, are not meta-schemas, and are never the binding of a tab. They exist only to validate those documents, which are written in the same subset and lowered through the same path.
@@ -620,7 +626,7 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 - formulas, and comments (XML tabs);
 - tabs: adding, removing, renaming, reordering, and rebinding schemas;
 - Python modules, form designs, report designs, and data source definitions (not secrets and not grants);
-- schema sheet edits, which are ordinary tree edits;
+- schema sheet edits, which are ordinary tree edits, and schema edits made from the data tab that uses the schema (see Editing the schema from a data tab), each together with the data changes it causes, as one entry;
 - the table-wide edits made by paste, import, and button procedures.
 
 **What is not logged.**
@@ -655,6 +661,31 @@ Comments on XML tabs look and behave as they do in Excel.
 - **Commands.** Right-clicking a cell offers **Insert Comment**, or **Edit Comment** and **Delete Comment** when it already has one. Insert and Edit open a small text box for the comment. Enter adds a line break, and committing is done by clicking away or with Ctrl+Enter; Esc cancels. The commands are absent on JSON tabs.
 - **Where.** The triangle is drawn on the node's cell in the tree grid and in the tabular view alike. For an object or array node it is on the node's own row (or on the array's header in the tabular view).
 - Inserting, editing, and deleting a comment are undoable entries in the edit log, and each is a change to the document, so it marks the workbook as modified.
+
+## Editing the schema from a data tab
+
+When the schema sheet's **auto-update** is on (see Schema binding), the single tab that uses the schema can change the schema from its own grid, instead of switching to the schema sheet. The commands are in the context menu of an object or array node (and, for fields, on a column header in the tabular view).
+
+**Commands in v1**
+- **Reorder fields** (dragging a column header).
+- **Add field**: adds a property (JSON Schema) or element or attribute (XSD) to the object type, with a name and a simple type chosen in a small dialog, and whether it is required.
+- **Rename field.**
+- **Delete field.**
+
+More involved changes (changing a type, adding constraints, adding nested types) are made by editing the schema sheet directly, which is always possible.
+
+**What each command does to the data**, so that the tab never ends up out of step with its schema:
+
+| Command | Schema | Data |
+|---|---|---|
+| Reorder fields | Declared order changes. | Items are written in the new field order. No values change. |
+| Add field | New optional or required field. | Existing items get no value for it: an optional field is simply absent, and a required one is shown as a missing required value (flagged, per the invalid-data rules). |
+| Rename field | The field has the new name. | The key is renamed in every item, with its value, comment, and hidden or filter state. **Formulas are not rewritten**, as with any rename (see Renames do not rewrite formulas): formulas that use the old name show `#REF!`. A formula on the field stays at its location, which now has the new name. |
+| Delete field | The field is removed. | The values are **removed from every item**. Because this is destructive, a confirmation states how many values will be removed. Formulas that use the field show `#REF!`. |
+
+**One undo entry.** A command, together with its data changes, is **one entry** in the workbook's edit log, described in the Edit menu by what it did (for example *Undo Rename field "qty" to "quantity"*). Undo restores the schema, the field order, and any removed values together.
+- Because the log is a single linear history, a later edit to the schema sheet (made directly on its tab) is a later entry. It must be undone first, so an entry can never be undone against a schema that has since been changed in some other way.
+- Because auto-update allows only one user of the schema, a command never changes any tab other than the one it is issued from and the schema sheet.
 
 ## Tabular view of arrays
 
@@ -699,9 +730,8 @@ An array whose items are objects can be shown as a table instead of as indented 
 
 *Reversing the order.* The array's context menu and the table's toolbar have **Reverse row order**, which reverses the whole array without naming any column. It is a permanent edit like a sort, applies to hidden items too, and is unavailable on a computed array. It can be reversed in either of two ways: with the **Undo** command, or by **executing Reverse row order again**, since reversing twice restores the original order exactly. Executing it again is a new edit of its own, so it adds another entry to the history rather than removing one, and Redo is not available afterwards.
 
-*Column order changes the field order.* Dragging a column header to a new position reorders the **fields** of the item type, and so the field order of every item. This is a real change to the schema's declared order (the `properties` order for JSON Schema, the `xs:sequence` order for XSD), made on the schema sheet that the tab is bound to, as one undoable entry.
+*Column order changes the field order.* With auto-update on for the tab's schema, dragging a column header to a new position reorders the **fields** of the item type, and so the field order of every item (see Editing the schema from a data tab). Without auto-update the columns cannot be dragged, and the tooltip explains why.
 - The field order is what Python sees when it iterates an object's fields, and what files are written with. For XSD it is also the order of elements in the XML.
-- The change applies to everything bound to that schema. If other tabs use the same schema sheet, their field order changes with it, and the confirmation says so.
 - Dotted columns (fields of a nested object) can be reordered only among the fields of the same parent. A column cannot be dragged to a different parent.
 
 *Hiding.* Columns, rows, and any other data value can be **hidden**, and any hidden value can be **unhidden**.
