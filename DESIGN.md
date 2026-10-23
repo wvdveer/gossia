@@ -673,6 +673,7 @@ An array whose items are objects can be shown as a table instead of as indented 
 
 **Editing in the table**
 - Add a row at the end, insert above or below, delete rows, and move rows up or down. These are structural edits and are undoable.
+- **Moving a row up or down swaps it with the next visible row.** The two rows exchange positions in the array, and any hidden rows in between stay where they are. Move up is unavailable on the first visible row, and move down on the last.
 - A formula on the array node itself makes the whole array computed, so the table is read-only.
 - Cell ranges copy and paste as tab-separated text. A paste validates each cell and is applied as one undoable entry; cells that don't validate are rejected with a message and nothing is written.
 
@@ -689,10 +690,14 @@ An array whose items are objects can be shown as a table instead of as indented 
 - **State.** Filters are view state, saved with the tab in the overlay (by field name), not part of the data, and not part of the trust hash.
 
 *Sorting changes the data.* Clicking a column header sorts the array's items by that column, ascending, then descending on the next click. The sort is a real reorder of the array, so it is logical and not just visual: after sorting `Data.items`, the reference `Data.items[2]` points at whatever item is now third. References are literal (see Formulas), so nothing is adjusted.
-- A sort is one undoable entry. It is stable, so items with equal keys keep their relative order.
-- Values are ordered by Python's comparison for their type (numbers numerically, strings by code point, dates chronologically). Absent values and error values sort last in either direction.
+- **It is permanent.** A sort is an edit of the data, like any other. The table holds no sort state and shows no sort indicator, and the only way back is the **Undo** command (it is one undoable entry).
+- **Python's ordering, in every case.** Items are compared with Python's own ordering of the column's values (numbers numerically, strings by code point, dates chronologically). There is no special handling of absent values or error values: if the ordering raises an exception, for example comparing a string with a number, or comparing an absent value with a number, or reading an error value, **the sort does not happen**. Nothing is changed, and a message gives Python's error and the rows involved. A column with absent or error cells therefore cannot be sorted until they are filled or fixed.
+- **Stable.** Items with equal values keep their existing relative order (a descending sort is also stable). This is what makes a multi-column sort work with no extra feature: sort by the least important column first, and then by each more important one, so that **each new sort becomes the first key and the earlier sorts remain as the tie-breakers** among equal values.
+- **All items are sorted, hidden ones included.** Hidden rows, whether hidden by hand or by a filter, still exist logically, so a sort reorders the whole array. The visible rows come out in the new order and the hidden ones are placed by the same rule.
 - Formulas belong to their location, not to an item. A sort therefore moves the literal values, comments, and children of each item, but a formula stays at its position and is recalculated against the item that is now there.
 - A computed (formula-driven) array is read-only and cannot be sorted. The header click explains why, and a formula can use `SORT` instead.
+
+*Reversing the order.* The array's context menu and the table's toolbar have **Reverse row order**, which reverses the whole array without naming any column. It is a permanent edit like a sort, applies to hidden items too, and is unavailable on a computed array. It can be reversed in either of two ways: with the **Undo** command, or by **executing Reverse row order again**, since reversing twice restores the original order exactly. Executing it again is a new edit of its own, so it adds another entry to the history rather than removing one, and Redo is not available afterwards.
 
 *Column order changes the field order.* Dragging a column header to a new position reorders the **fields** of the item type, and so the field order of every item. This is a real change to the schema's declared order (the `properties` order for JSON Schema, the `xs:sequence` order for XSD), made on the schema sheet that the tab is bound to, as one undoable entry.
 - The field order is what Python sees when it iterates an object's fields, and what files are written with. For XSD it is also the order of elements in the XML.
@@ -705,6 +710,7 @@ An array whose items are objects can be shown as a table instead of as indented 
 - **Marker.** Where something is hidden, a thin marker sits between its visible neighbours (as in Excel). A hidden node's parent shows the count, for example `(3 hidden)`; in a filtered table the marker gives the two counts apart, for example `(3 hidden, 5 filtered)`.
 - **Unhiding.** The marker, and the context menu of the parent or array node, open a list of the hidden items with **Show** for each and **Show all**, which cancels only manual hiding. Rows hidden by a filter come back by clearing the filter.
 - **State.** Hidden state is view state. It is saved with the tab (in the overlay) but is not part of the data, is not undoable, and is not part of the trust hash. A hidden row or node stays hidden when it moves, for example after a sort, because the state is attached to the item and is saved by path. Hidden columns are recorded by field name.
+- **Keyboard navigation skips hidden items.** The arrow keys, Tab, Home and End, and Page Up and Down move only among items that are shown, in both the table and the tree view. If the selected item becomes hidden, because the user hid it or a filter changed, the selection moves to the nearest shown item.
 - **Copy and paste** include hidden items. A copied range is the whole logical rectangle between the selection's corners, so hidden rows (whether hidden by hand or by a filter) and hidden columns inside it are copied along with the visible ones. A paste is likewise cell for cell by logical position from the target cell, writing into hidden cells in the same way, so what is pasted matches what was copied. The same validation applies to every pasted cell, hidden or not.
 
 **Performance.** Both the table and the tree view only draw the rows that are on screen, so arrays of many thousands of items stay responsive. The table can be built on `egui_extras`' virtualised table support.
