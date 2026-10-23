@@ -419,8 +419,7 @@ impl ClioApp {
                         }
                     });
                 ui.separator();
-                ui.label("Condition");
-                egui::ComboBox::from_id_salt("filter_condition")
+                egui::ComboBox::from_label("Condition")
                     .selected_text(dialog.choice.label())
                     .show_ui(ui, |ui| {
                         for choice in Choice::ALL {

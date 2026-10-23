@@ -30,3 +30,8 @@ rustc-ice-*.txt
 
 # Dependencies fetched by `cargo xtask vendor fetch` (pinned in vendor.lock)
 /vendor/
+
+# What a failing snapshot test leaves beside the stored image
+crates/cliotree-app/tests/snapshots/**/*.new.png
+crates/cliotree-app/tests/snapshots/**/*.diff.png
+crates/cliotree-app/tests/snapshots/**/*.old.png

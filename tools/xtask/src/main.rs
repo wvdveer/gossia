@@ -16,7 +16,8 @@ cargo xtask <command>
   vendor update <item> <rev>     change a pin in vendor.lock (for review)
   lint                           formatting and clippy
   test                           the default test levels
-  e2e                            end-to-end tests under a virtual display
+  e2e                            end-to-end tests on the running application (under xvfb-run on Linux without a display)
+  snapshots                      visual snapshot tests (needs a graphics adapter)
   ci                             everything the blocking CI jobs run: lint, test, e2e
 ";
 
@@ -41,12 +42,19 @@ fn run(args: &[String]) -> Result<(), String> {
             fetch_vendor::ensure_required(&root)?;
             test(&root)
         }
-        Some("e2e") => e2e(),
+        Some("e2e") => {
+            fetch_vendor::ensure_required(&root)?;
+            e2e(&root)
+        }
+        Some("snapshots") => {
+            fetch_vendor::ensure_required(&root)?;
+            snapshots(&root)
+        }
         Some("ci") => {
             fetch_vendor::ensure_required(&root)?;
             lint(&root)?;
             test(&root)?;
-            e2e()
+            e2e(&root)
         }
         _ => {
             print!("{HELP}");
@@ -103,6 +111,21 @@ fn lint(root: &Path) -> Result<(), String> {
             "warnings",
         ],
     )?;
+    // The test control channel is compiled only with its feature.
+    cargo(
+        root,
+        &[
+            "clippy",
+            "-p",
+            "cliotree-app",
+            "--all-targets",
+            "--features",
+            "test-control",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
     cargo(
         root,
         &[
@@ -137,9 +160,67 @@ fn test(root: &Path) -> Result<(), String> {
     )
 }
 
-fn e2e() -> Result<(), String> {
-    println!(
-        "e2e: there are no end-to-end tests yet (they arrive with the application, build step 4)"
-    );
-    Ok(())
+/// The tests that start the real application, which needs a display. On Linux
+/// without one they run under `xvfb-run`.
+fn e2e(root: &Path) -> Result<(), String> {
+    let args = [
+        "test",
+        "-p",
+        "cliotree-app",
+        "--features",
+        "test-control",
+        "--test",
+        "e2e",
+    ];
+    let headless = cfg!(target_os = "linux")
+        && std::env::var_os("DISPLAY").is_none_or(|d| d.is_empty())
+        && std::env::var_os("WAYLAND_DISPLAY").is_none_or(|d| d.is_empty());
+    if !headless {
+        return cargo(root, &args);
+    }
+    // Build first, so that the virtual display is not up while compiling.
+    cargo(
+        root,
+        &[
+            "test",
+            "--no-run",
+            "-p",
+            "cliotree-app",
+            "--features",
+            "test-control",
+        ],
+    )?;
+    let program = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    println!("+ xvfb-run -a cargo {}", args.join(" "));
+    let status = Command::new("xvfb-run")
+        .arg("-a")
+        .arg(program)
+        .args(args)
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("cannot run xvfb-run (is it installed?): {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("the end-to-end tests failed".to_owned())
+    }
+}
+
+/// The screenshot comparisons. They render with wgpu, so they need a graphics
+/// adapter (on Linux CI, Mesa's software Vulkan driver, lavapipe).
+fn snapshots(root: &Path) -> Result<(), String> {
+    let program = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let args = ["test", "-p", "cliotree-app", "--test", "snapshots"];
+    println!("+ CLIOTREE_SNAPSHOTS=1 cargo {}", args.join(" "));
+    let status = Command::new(program)
+        .args(args)
+        .env("CLIOTREE_SNAPSHOTS", "1")
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("the snapshot tests failed".to_owned())
+    }
 }

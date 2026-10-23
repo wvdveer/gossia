@@ -10,9 +10,20 @@ fn main() -> eframe::Result {
             .with_min_inner_size([640.0, 400.0]),
         ..Default::default()
     };
-    eframe::run_native(
-        "ClioTree",
-        options,
-        Box::new(|_cc| Ok(Box::new(ClioApp::sample()))),
-    )
+    eframe::run_native("ClioTree", options, creator())
+}
+
+#[cfg(not(feature = "test-control"))]
+fn creator() -> eframe::AppCreator<'static> {
+    Box::new(|_cc| Ok(Box::new(ClioApp::sample())))
+}
+
+/// With the `test-control` feature the window also listens for the tests.
+#[cfg(feature = "test-control")]
+fn creator() -> eframe::AppCreator<'static> {
+    use cliotree_app::control_server::Controlled;
+    Box::new(|cc| {
+        let app = Controlled::start(ClioApp::sample(), cc.egui_ctx.clone())?;
+        Ok(Box::new(app))
+    })
 }

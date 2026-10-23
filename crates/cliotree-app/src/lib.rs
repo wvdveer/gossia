@@ -2,6 +2,9 @@
 //! can be driven by tests.
 
 pub mod app;
+pub mod control;
+#[cfg(feature = "test-control")]
+pub mod control_server;
 pub mod edit;
 #[cfg(test)]
 mod edit_tests;

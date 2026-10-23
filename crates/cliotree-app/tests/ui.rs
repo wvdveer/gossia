@@ -487,3 +487,111 @@ fn picture() {
         .save(std::env::var("CLIOTREE_PICTURE").unwrap_or("window.png".into()))
         .expect("saved");
 }
+
+#[test]
+fn escape_gives_up_an_edit_and_the_cell_keeps_its_content() {
+    let mut harness = window();
+    click(&mut harness, "0.21");
+    type_into_selected_cell(&mut harness, "=5");
+    assert_eq!(bar(&harness), "=5");
+    press(&mut harness, Key::Escape);
+    assert_eq!(bar(&harness), "0.21");
+    harness.get_by_label("0.21");
+    assert!(harness.state().editing.is_none());
+}
+
+#[test]
+fn the_issues_panel_lists_what_is_wrong_and_clicking_an_issue_selects_it() {
+    let mut harness = window();
+    click(&mut harness, "View");
+    click(&mut harness, "Issues panel");
+    harness.get_by_label("Issues");
+    harness.get_by_label("No errors, no invalid data.");
+
+    click(&mut harness, "0.21");
+    type_into_selected_cell(&mut harness, "=1 / 0");
+    press(&mut harness, Key::Enter);
+    settle(&mut harness);
+    assert!(
+        harness
+            .query_by_label("No errors, no invalid data.")
+            .is_none(),
+        "the panel was not drawn again"
+    );
+    let issue = harness
+        .query_all_by_label_contains("Orders.tax  ")
+        .next()
+        .expect("an issue for tax");
+    issue.click();
+    harness.run();
+    assert_eq!(
+        harness.state().selection,
+        Some("tax".parse().unwrap()),
+        "clicking the issue selects the cell"
+    );
+}
+
+#[test]
+fn a_column_is_hidden_from_its_menu_and_shown_again() {
+    let mut harness = table_window();
+    harness.get_by_label("note").click_secondary();
+    harness.run();
+    click(&mut harness, "Hide column");
+    assert!(harness.query_by_label("note").is_none());
+    assert!(harness.query_by_label("gift wrap").is_none());
+    click(&mut harness, "Hidden (1)");
+    click(&mut harness, "Show all");
+    harness.get_by_label("note");
+    harness.get_by_label("gift wrap");
+}
+
+#[test]
+fn a_filter_chosen_in_the_dialog_hides_rows_and_is_cleared_from_the_menu() {
+    let mut harness = table_window();
+    harness.get_by_label("sku").click_secondary();
+    harness.run();
+    click(&mut harness, "Filter...");
+    harness.get_by_label("Search values");
+    click(&mut harness, "Select none");
+    click(&mut harness, "Apply");
+    settle(&mut harness);
+    assert_eq!(harness.query_all_by_label("A-100").count(), 0);
+    assert_eq!(harness.query_all_by_label("B-220").count(), 0);
+    assert!(harness.state().tables.dialog.is_none(), "the dialog closed");
+
+    harness.get_by_label("sku").click_secondary();
+    harness.run();
+    click(&mut harness, "Clear filter");
+    settle(&mut harness);
+    harness.get_by_label("A-100");
+    harness.get_by_label("C-310");
+}
+
+#[test]
+fn collapse_all_closes_the_tree_down_to_its_top_level() {
+    let mut harness = window();
+    harness
+        .state_mut()
+        .set_open(&"customer".parse().unwrap(), true);
+    harness.run();
+    harness.get_by_label("Acme Ltd");
+    click(&mut harness, "View");
+    click(&mut harness, "Collapse all");
+    assert!(harness.query_by_label("Acme Ltd").is_none());
+    harness.get_by_label("customer");
+    harness.get_by_label("subtotal");
+}
+
+mod common;
+
+/// The scenario of the control protocol, run through the harness.
+#[test]
+fn the_control_commands_drive_the_window_in_process() {
+    let mut harness = window();
+    common::edit_and_recalculate(&mut |cmd, args| {
+        let result = cliotree_app::control::run(harness.state_mut(), cmd, &args);
+        harness.run();
+        result
+    });
+    assert!(has(&harness, "Ready"));
+}

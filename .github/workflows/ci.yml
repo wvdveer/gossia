@@ -57,3 +57,39 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - run: cargo xtask vendor fetch
       - run: cargo xtask vendor verify
+
+  # The real application, driven through its test control channel under a
+  # virtual display. Advisory until the runner is known to provide xvfb-run and
+  # an OpenGL driver (Mesa); then it becomes a required check.
+  e2e:
+    name: E2E
+    runs-on: [self-hosted, cliotree]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo xtask e2e
+
+  # Screenshots of key screens against stored images. Advisory (DESIGN.md,
+  # "Testing and CI"): the images for Linux are made by this job, from the
+  # artifact it uploads when they differ or are missing.
+  snapshots:
+    name: Snapshots
+    runs-on: [self-hosted, cliotree]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo xtask snapshots
+      - name: Keep the images that differ
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-differences
+          path: crates/cliotree-app/tests/snapshots/linux/

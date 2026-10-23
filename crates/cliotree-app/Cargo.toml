@@ -23,9 +23,20 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"
 egui_extras = "0.37.0"
+serde_json = "1.0.154"
+image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
+
+[features]
+# The loopback test control channel of the running application (DESIGN.md,
+# "The test-control protocol"). Release builds never enable it.
+test-control = ["dep:image"]
 
 [dev-dependencies]
-egui_kittest = { version = "0.37.0", features = ["wgpu"] }
+egui_kittest = { version = "0.37.0", features = ["wgpu", "snapshot"] }
+
+[[test]]
+name = "e2e"
+required-features = ["test-control"]
 
 [lints]
 workspace = true
