@@ -31,7 +31,31 @@ struct Sheet {
     spec: Arc<TypeSpec>,
     data: Node,
     formulas: Arc<Formulas>,
+    /// How the tab is tied to a schema (see the `schema` module).
+    schema: SchemaRole,
 }
+
+/// What a tab is to the schema machinery.
+#[derive(Debug, Clone, Default)]
+enum SchemaRole {
+    /// An ordinary tab, bound to nothing: its type was handed over directly.
+    #[default]
+    Free,
+    /// A tab whose data is a schema document, described by the bundled
+    /// meta-schema.
+    Document {
+        /// Whether tabs that use it may change it (DESIGN.md, "Schema binding").
+        auto_update: bool,
+        /// Why the document cannot be lowered now, if it cannot.
+        error: Option<String>,
+    },
+    /// A tab bound to the schema tab of that name.
+    Bound(String),
+}
+
+#[path = "schema.rs"]
+mod schema;
+pub use schema::{FieldKind, FieldPlaces};
 
 /// Why an edit was refused.
 #[derive(Debug, Clone, PartialEq)]
@@ -177,6 +201,7 @@ impl Calc {
                 spec: Arc::new(spec),
                 data,
                 formulas: Arc::default(),
+                schema: SchemaRole::Free,
             },
         );
         self.changed(&name, &Path::root());
@@ -679,6 +704,13 @@ impl Calc {
                     }
                 }
             }
+            Op::AutoUpdate {
+                sheet,
+                before,
+                after,
+            } => {
+                self.store_auto_update(sheet, if forward { *after } else { *before })?;
+            }
             Op::Formula {
                 sheet,
                 path,
@@ -1017,6 +1049,7 @@ impl Calc {
 
     /// Records an edit and marks what depends on it as out of date.
     fn changed(&mut self, sheet: &str, path: &Path) {
+        self.relower_if_schema(sheet);
         self.version += 1;
         self.revision += 1;
         self.log

@@ -8,6 +8,7 @@ use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::{ClioApp, Editing};
 use crate::rows::{Row, RowKind};
+use crate::schema_view::ColumnDrag;
 use crate::table::Column;
 use crate::tables::{Choice, Layout};
 use crate::view::{Action, ROW_HEIGHT, error_color, named};
@@ -258,9 +259,40 @@ impl ClioApp {
             };
             let response = ui.add(
                 egui::Label::new(RichText::new(text).strong())
-                    .sense(Sense::CLICK)
+                    .sense(Sense::click_and_drag())
                     .truncate(),
             );
+            let owner = self.column_owner(array, column);
+            let movable = owner
+                .as_ref()
+                .is_some_and(|(object, _)| self.schema_edit_allowed(object).is_ok());
+            if let (true, Some((object, field))) = (movable, &owner) {
+                response.dnd_set_drag_payload(ColumnDrag {
+                    object: object.clone(),
+                    field: field.clone(),
+                });
+                let here = |p: &ColumnDrag| &p.object == object && &p.field != field;
+                if let Some(dragged) = response.dnd_release_payload::<ColumnDrag>()
+                    && here(&dragged)
+                {
+                    actions.push(Action::ReorderFields(
+                        object.clone(),
+                        dragged.field.clone(),
+                        field.clone(),
+                    ));
+                }
+                if response
+                    .dnd_hover_payload::<ColumnDrag>()
+                    .is_some_and(|p| here(&p))
+                {
+                    let rect = response.rect;
+                    ui.painter().vline(
+                        rect.left(),
+                        rect.y_range(),
+                        Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                    );
+                }
+            }
             if filtered {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
                 let c = rect.center();
@@ -277,8 +309,17 @@ impl ClioApp {
             if response.clicked() && sortable {
                 actions.push(Action::SortBy(array.clone(), column.name.clone(), None));
             }
+            let drag_note = match (&owner, movable) {
+                (_, true) => " Drag to move the field.".to_owned(),
+                (Some((object, _)), false) => self
+                    .schema_edit_allowed(object)
+                    .err()
+                    .map(|why| format!(" To drag the field: {why}."))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
             let response = if sortable {
-                response.on_hover_text("Click to sort. Right-click for more.")
+                response.on_hover_text(format!("Click to sort. Right-click for more.{drag_note}"))
             } else {
                 response
             };
@@ -325,6 +366,7 @@ impl ClioApp {
                     actions.push(Action::HideColumn(array.clone(), column.name.clone()));
                     ui.close();
                 }
+                self.field_menu_items(ui, Some(&array.index(0)), owner.as_ref(), actions);
             });
         });
     }

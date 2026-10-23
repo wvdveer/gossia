@@ -406,6 +406,73 @@ fn rows_are_added_and_the_table_is_closed_from_its_toolbar() {
 }
 
 #[test]
+fn a_schema_tab_has_a_switch_for_auto_update_and_says_which_tab_uses_it() {
+    let mut harness = window();
+    click(&mut harness, "Orders schema");
+    harness.get_by_label("Used by: Orders");
+    assert!(!harness.state().calc().auto_update("Orders schema"));
+    click(&mut harness, "Auto-update");
+    assert!(harness.state().calc().auto_update("Orders schema"));
+    click(&mut harness, "Auto-update");
+    assert!(!harness.state().calc().auto_update("Orders schema"));
+    // The schema tab is an ordinary tree of the schema document.
+    harness.get_by_label("properties");
+}
+
+#[test]
+fn the_field_commands_are_unavailable_until_auto_update_is_on() {
+    let mut harness = table_window();
+    harness.get_by_label("qty").click_secondary();
+    harness.run();
+    click(&mut harness, "Rename field...");
+    assert!(harness.state().schema_dialog.is_none());
+    harness.state_mut().set_auto_update("Orders schema", true);
+    harness.run();
+    harness.get_by_label("qty").click_secondary();
+    harness.run();
+    click(&mut harness, "Rename field...");
+    harness.get_by_label("Rename field qty");
+}
+
+#[test]
+fn a_field_is_renamed_from_the_menu_of_its_column_and_the_table_follows() {
+    let mut harness = table_window();
+    harness.state_mut().set_auto_update("Orders schema", true);
+    harness.run();
+    harness.get_by_label("qty").click_secondary();
+    harness.run();
+    click(&mut harness, "Rename field...");
+    harness.get_by_label("New field name").click();
+    harness.run();
+    harness.get_by_label("New field name").focus();
+    harness.run();
+    select_all(&mut harness);
+    harness.get_by_label("New field name").type_text("quantity");
+    harness.run();
+    click(&mut harness, "Rename");
+    settle(&mut harness);
+    harness.get_by_label("quantity");
+    assert!(harness.query_by_label("qty").is_none());
+    assert!(harness.state().schema_dialog.is_none());
+    ctrl(&mut harness, Key::Z);
+}
+
+#[test]
+fn deleting_a_field_asks_first_and_says_how_much_goes() {
+    let mut harness = table_window();
+    harness.state_mut().set_auto_update("Orders schema", true);
+    harness.run();
+    harness.get_by_label("note").click_secondary();
+    harness.run();
+    click(&mut harness, "Delete field...");
+    harness.get_by_label_contains("1 value will be removed");
+    assert!(harness.query_by_label("note").is_some(), "nothing yet");
+    click(&mut harness, "Delete");
+    settle(&mut harness);
+    assert!(harness.query_by_label("gift wrap").is_none());
+}
+
+#[test]
 #[ignore = "writes a picture of the window, needs a graphics adapter"]
 fn picture() {
     let mut harness = Harness::builder()

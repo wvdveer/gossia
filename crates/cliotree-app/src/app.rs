@@ -12,6 +12,7 @@ use cliotree_core::validate::validate;
 use cliotree_core::{Node, Path, Value};
 
 use crate::rows::{self, Row};
+use crate::schema::SchemaDialog;
 use crate::tables::Tables;
 
 /// What is being typed into a cell, in the formula bar or in the cell itself.
@@ -84,6 +85,8 @@ pub struct ClioApp {
     pub show_issues: bool,
     /// The tabular view of arrays: which arrays, and the view state of each.
     pub tables: Tables,
+    /// A field command waiting for a name or a confirmation.
+    pub schema_dialog: Option<SchemaDialog>,
     /// Scroll the grid so that this row is in view.
     pub scroll_to: Option<usize>,
 }
@@ -129,6 +132,7 @@ impl ClioApp {
             summary: Summary::default(),
             show_issues: false,
             tables: Tables::default(),
+            schema_dialog: None,
             scroll_to: None,
         }
     }

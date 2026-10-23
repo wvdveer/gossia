@@ -18,7 +18,7 @@ pub mod python;
 mod session;
 mod trie;
 
-pub use calc::{Applied, Calc, Cell, EditError};
+pub use calc::{Applied, Calc, Cell, EditError, FieldKind, FieldPlaces};
 pub use check::Computed;
 pub use engine::{Context, Depth, Engine, Failure, Read, Syntax, SyntaxError};
 pub use eval::{Evaluation, Hooks, Outcome, Snapshot};
@@ -49,3 +49,7 @@ mod history_tests;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod schema_tests;

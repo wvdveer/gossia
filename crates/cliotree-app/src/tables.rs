@@ -256,7 +256,7 @@ impl ClioApp {
             .as_array()
     }
 
-    fn columns_of(&self, array: &Path) -> Vec<Column> {
+    pub(crate) fn columns_of(&self, array: &Path) -> Vec<Column> {
         let calc = self.calc();
         calc.spec(&self.sheet)
             .and_then(|spec| Some(table::columns(spec, item_type(spec, array)?)))

@@ -42,6 +42,12 @@ pub(crate) enum Op {
         /// As for [`Op::Add`].
         moved: Vec<(Path, Node)>,
     },
+    /// The auto-update switch of a schema tab is turned on or off.
+    AutoUpdate {
+        sheet: String,
+        before: bool,
+        after: bool,
+    },
     /// The formula at `path` changes. `value` is what the node held before a
     /// formula was put on it, with its position (`Some(None)` for no node),
     /// which running this backwards puts back, because the formula's results
@@ -71,6 +77,7 @@ impl Op {
             Op::Add { node, moved, .. } | Op::Remove { node, moved, .. } => {
                 size(node) + moved.iter().map(|(_, n)| size(n)).sum::<usize>()
             }
+            Op::AutoUpdate { .. } => 1,
             Op::Formula { value, .. } => {
                 1 + value
                     .as_ref()

@@ -1,5 +1,5 @@
 //! The workbook the application opens with, until it can open files: two tabs
-//! with a few formulas, enough to try everything the window does.
+//! and the schema tab of each, with a few formulas, enough to try everything the window does.
 
 use std::sync::Arc;
 
@@ -82,6 +82,18 @@ pub fn workbook() -> Calc {
             json::parse(data).expect("the sample data is JSON").node,
         )
         .expect("the sample tabs have different names");
+    }
+    // Each tab's type is written on a schema tab of its own, which is where
+    // the tab's fields can be changed once auto-update is switched on.
+    for (tab, schema) in [("Orders", ORDERS_SCHEMA), ("Prices", PRICES_SCHEMA)] {
+        let name = format!("{tab} schema");
+        calc.add_schema_sheet(
+            &name,
+            json::parse(schema).expect("the sample schema is JSON").node,
+        )
+        .expect("the sample tabs have different names");
+        calc.bind_schema(tab, &name)
+            .expect("the sample schema can be used");
     }
     let p = |text: &str| -> Path { text.parse().expect("a path") };
     for i in 0..3 {

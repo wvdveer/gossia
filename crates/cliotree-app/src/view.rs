@@ -67,6 +67,11 @@ pub(crate) enum Action {
     ShowAllHidden(Path),
     ShowRefusedRows,
     DismissRefusal,
+    // Changing the schema from this tab.
+    AddField(Path),
+    RenameField(Path, String),
+    DeleteField(Path, String),
+    ReorderFields(Path, String, String),
 }
 
 impl ClioApp {
@@ -82,6 +87,9 @@ impl ClioApp {
 
         egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
         egui::Panel::top("formula_bar").show(ui, |ui| self.formula_bar(ui));
+        if self.calc().is_schema_sheet(&self.sheet) {
+            egui::Panel::top("schema_bar").show(ui, |ui| self.schema_bar(ui));
+        }
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::bottom("tabs").show(ui, |ui| self.tab_bar(ui));
         if self.show_issues {
@@ -100,6 +108,7 @@ impl ClioApp {
         egui::CentralPanel::default().show(ui, |ui| self.grid(ui));
         self.insert_function_window(ui.ctx());
         self.filter_window(ui.ctx());
+        self.schema_window(ui.ctx());
     }
 
     // ------------------------------------------------------------- keys
@@ -502,6 +511,10 @@ impl ClioApp {
             Action::ShowAllHidden(array) => self.show_all_hidden(&array),
             Action::ShowRefusedRows => self.show_refused_rows(),
             Action::DismissRefusal => self.tables.refused = None,
+            Action::AddField(..)
+            | Action::RenameField(..)
+            | Action::DeleteField(..)
+            | Action::ReorderFields(..) => self.begin_field_command(action),
         }
     }
 
@@ -848,6 +861,11 @@ impl ClioApp {
             }
             _ => {}
         }
+        let add_to = match row.kind {
+            RowKind::Object | RowKind::Array => self.object_of_row(path),
+            _ => None,
+        };
+        self.field_menu_items(ui, add_to.as_ref(), self.field_of(path).as_ref(), actions);
     }
 
     // ------------------------------------------------- tabs and status

@@ -6,6 +6,7 @@
 
 pub mod json;
 pub mod jsonschema;
+pub mod metaschema;
 mod num;
 mod path;
 mod typespec;

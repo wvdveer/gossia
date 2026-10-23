@@ -7,6 +7,10 @@ pub mod edit;
 mod edit_tests;
 pub mod rows;
 pub mod sample;
+pub mod schema;
+#[cfg(test)]
+mod schema_tests;
+pub mod schema_view;
 pub mod status;
 pub mod table;
 pub mod table_view;
