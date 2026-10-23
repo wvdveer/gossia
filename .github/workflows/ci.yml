@@ -13,10 +13,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
+# Jobs run on a self-hosted GitHub Actions runner on the acer server, registered
+# for this repository with the label `cliotree` (see README, "CI runner").
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cliotree]
     steps:
       - uses: actions/checkout@v4
       # rustup reads rust-toolchain.toml and installs the pinned toolchain.
@@ -35,7 +37,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cliotree]
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
@@ -55,7 +57,7 @@ jobs:
   # checked against vendor.lock, whether or not the workspace uses it yet.
   vendor:
     name: Vendor
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cliotree]
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain

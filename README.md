@@ -36,6 +36,18 @@ cargo xtask clean            # remove the build output AND vendor/
 - **A plain `cargo build` cannot do that.** Cargo needs every path dependency to exist before it runs any build script, so on a fresh clone, once the workspace depends on `vendor/`, run `cargo xtask vendor fetch` first (once). Cargo's error in that case is `no matching package named ... found`, with the path under `vendor/`.
 - Set `CLIOTREE_VENDOR_DIR` to use a copy of the folder prepared elsewhere (for example when offline).
 
+## CI runner
+
+CI (`.github/workflows/ci.yml`) runs on a self-hosted GitHub Actions runner on the `acer` server, not on GitHub's hosted runners. Every job uses `runs-on: [self-hosted, cliotree]`.
+
+To register it (once, as the user that owns the other runners on `acer`):
+
+1. On GitHub: repository **Settings, Actions, Runners, New self-hosted runner**, choose Linux, and follow the download and `./config.sh --url ... --token ...` commands. Give it the label `cliotree` (`--labels cliotree`).
+2. Start it with `./run.sh` (for example `nohup ./run.sh > runner.log 2> runner.err &`), or install it as a service with `sudo ./svc.sh install && sudo ./svc.sh start`.
+3. The machine needs `git`, `curl`, a C compiler and linker (`build-essential` or equivalent), and `rustup`. The workflow installs the toolchain pinned in `rust-toolchain.toml` through `rustup`, so nothing else has to be provisioned.
+
+This is the real GitHub runner agent, not the Gitea `act_runner` on the same machine.
+
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE).

@@ -922,6 +922,8 @@ The same command set is implemented over the in-process harness used by level 6,
 
 **Pipeline** (GitHub Actions, since the repository is on GitHub)
 
+The jobs run on a self-hosted GitHub Actions runner on the `acer` server (label `cliotree`; see the README, "CI runner"), not on GitHub-hosted runners. That keeps the cost off GitHub's minutes allowance and keeps the cache local. It also means that the runner's machine must provide `git`, a C toolchain and `rustup`, and that later jobs needing a display (the snapshot tests) or containers (level 9) depend on what `acer` offers.
+
 | Job | Runs | Blocks merge |
 |---|---|---|
 | Lint | `cargo fmt --check`, `cargo clippy -D warnings`, and `cargo deny` (licences, advisories) once its configuration is verified | yes |
