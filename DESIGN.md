@@ -273,7 +273,7 @@ Custom Python lives in **modules** stored in the workbook. The design follows Ex
 - **Procedure box** above the editor, like the VBE's: a drop-down listing the module's top-level functions, which jumps to the one chosen.
 - **Insert > Module** creates a module, and rename and delete are in the explorer's context menu. **Export** and **Import** write and read a module as a plain `.py` file, the way Excel exports a `.bas`.
 - **Compile** checks the open module and lists problems (syntax errors, import cycles) with line and column, each clickable.
-- **Immediate window** at the bottom, like the VBE's: type a Python expression, press Enter, and see its result or error. It runs against the live workbook on the evaluation thread, under the same budgets, and needs the workbook to be trusted.
+- **Immediate window** at the bottom, like the VBE's: type a Python expression, press Enter, and see its result or error. It runs against the live workbook on the evaluation thread, under the same budgets, and needs the workbook to be trusted. Its history and output size are limited by options on the Code editor page (see The Options dialog).
 - There is no debugger (breakpoints, stepping) in v1.
 
 **Modules are loaded for every formula.** The formula context behaves as though it had imported all of the workbook's modules.
@@ -571,21 +571,29 @@ More settings can be added in the same way, with a default and a ceiling each.
 
 All settings are edited in one **ClioTree Options** dialog, laid out like Excel's Options dialog. It opens from **File > Options**.
 - A **list of categories** runs down the left, the chosen category's settings fill the right, and **OK** and **Cancel** sit at the bottom. Enter is OK and Esc is Cancel. Nothing takes effect until OK, and Cancel discards every change in the dialog.
-- Each page says in its heading **what it applies to**: *This workbook* (stored in the workbook) or *All workbooks* (stored for the user). If no workbook is open, the workbook pages are hidden.
+- Each page says in its heading **what it applies to** (and is divided into sections, see below): *This workbook* (stored in the workbook) or *All workbooks* (stored for the user). If no workbook is open, the workbook pages are hidden.
 - Each setting shows its default, rejects out-of-range input inline, and has a **Reset to default** button. A workbook value that a ceiling is holding down shows the effective value beside it and says why.
-- **OK applies the workbook settings as one undoable entry.** Application preferences take effect at once and are not part of the undo history, because they are not part of the workbook.
+- **OK applies the workbook settings as one undoable entry.** Application preferences take effect on OK and are not part of the undo history, because they are not part of the workbook.
 - Other parts of the application link straight to a page: for example the status bar's *Evaluation suspended* message opens the Evaluation page.
 
-**Pages**
+**Pages and sections.** Each page is divided into titled **sections** (group boxes), as in Excel, so related options sit together. The defaults are in brackets.
 
-| Page | Applies to | Contents |
+| Page | Applies to | Sections and their options |
 |---|---|---|
-| Evaluation | This workbook | Formula time limit, recalculation time limit, cancel grace period, maximum abandoned threads, maximum range length. Shows how many threads are currently abandoned, and the *Save and restart* button. |
-| Data sources | This workbook | Call timeout and maximum response size. A *Manage data sources...* button opens the Data sources panel where specifications are created, edited, tested, and granted. |
-| Trust and security | All workbooks | The list of trusted workbooks, each with *Revoke*; the list of data source grants, each with *Revoke*; and the **ceilings** for the workbook settings above (see below). |
-| Files and import | All workbooks | The limits applied while reading a file or importing: maximum zip entries, maximum total uncompressed size, maximum import file size, and maximum nesting depth. |
-| Editing | All workbooks | Undo history bounds: the maximum number of entries and the memory budget. |
-| About the engine | All workbooks | Read-only: the application version and the Python engine and its version. |
+| General | All workbooks | *Appearance*: theme (Light, Dark, or Follow system) [Follow system]; interface scale, 50% to 300% [100%]. *Fonts*: data font size, used by the tree grid, tabular view, and formula bar [14 pt]. |
+| Display | All workbooks | *Tree grid*: indentation per level [16 px]; row density (Compact, Normal, Comfortable) [Normal]; show the Type column [on]; show the Formula column [on]. *Tabular view*: default column width [120 px]. *Comments*: hover delay before the popup appears [500 ms]; maximum popup width [360 px] and height [240 px]. |
+| Editing | All workbooks | *Undo history*: maximum number of entries and the memory budget. *Formula bar*: the most lines it grows to before it scrolls [6]. |
+| Code editor | All workbooks | *Editor*: font family (any monospace font) and size [13 pt]; indent width, 2 to 8 spaces [4]; show line numbers [on]; syntax highlighting [on]; wrap long lines [off]. *Immediate window*: history entries kept [100]; maximum output size of one result [64 KB]. |
+| Evaluation | This workbook | *Time limits*: formula time limit, recalculation time limit. *Cancellation*: cancel grace period; maximum abandoned threads, the number currently abandoned, and the *Save and restart* button. *Guards*: maximum range length. |
+| Data sources | This workbook | *Limits*: call timeout and maximum response size. *Specifications*: a *Manage data sources...* button that opens the Data sources panel, where specifications are created, edited, tested, and granted. |
+| Trust and security | All workbooks | *Trusted workbooks*: the list, each with *Revoke*. *Data source grants*: the list, each with *Revoke*. *Ceilings*: the maximum for each workbook setting (see below). |
+| Files and import | All workbooks | *Reading files*: maximum zip entries, maximum total uncompressed size, maximum nesting depth. *Import*: maximum import file size. |
+| About the engine | All workbooks | *Versions*: read-only application version and the Python engine and its version. |
+
+- **Live preview.** Appearance options (theme, scale, fonts, density, indentation) preview immediately while the dialog is open, and revert if the dialog is cancelled.
+- **Display of values.** There are no regional or number-format options. Values are shown in their canonical Python form (dates and datetimes in ISO 8601), the same as formulas see them.
+- **Long comments.** A comment popup wraps its text at the maximum width and, past the maximum height, scrolls. This settles how long comments are shown.
+- **Immediate window.** Its history is kept per user, not per workbook, and a result larger than the output limit is cut off with a notice saying how much was left out.
 
 **Ceilings.** The Trust and security page holds one ceiling for each workbook setting. A workbook's value is used only up to its ceiling. The defaults below are starting points and are all adjustable:
 
@@ -599,7 +607,7 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 | Data source call timeout | 30 s | 300 s |
 | Maximum response size | 16 MB | 256 MB |
 
-**Where preferences live.** Application preferences are stored with the trust records and data source grants in one per-user configuration directory (the operating system's usual location for application settings), as a JSON file.
+**Where preferences live.** Application preferences are stored with the trust records and data source grants in one per-user configuration directory (the operating system's usual location for application settings), as a JSON file. The file carries a version number. Settings the application does not know (from a newer version) are kept unchanged when the file is saved, settings that are missing take their defaults, and a file from an older version is upgraded on load, so adding or removing a setting never loses the user's other settings.
 
 **Changing a limit while something is running.** A new value applies to evaluations that start after OK. An evaluation already running keeps the deadline it started with. Lowering *Maximum abandoned threads* below the number currently abandoned simply suspends new evaluations until enough of them return.
 
@@ -643,7 +651,7 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 
 Comments on XML tabs look and behave as they do in Excel.
 - **Indicator.** A cell with a comment shows a small coloured **triangle in its top-right corner**.
-- **Hover.** Resting the mouse pointer over the cell (after a short delay) shows the comment in a small popup beside the cell. It disappears when the pointer leaves. The comment can be read on any cell, including cells of computed nodes.
+- **Hover.** Resting the mouse pointer over the cell (after a short delay) shows the comment in a small popup beside the cell. The delay, and the popup's maximum size (long text wraps, then scrolls), are options on the Display page. It disappears when the pointer leaves. The comment can be read on any cell, including cells of computed nodes.
 - **Commands.** Right-clicking a cell offers **Insert Comment**, or **Edit Comment** and **Delete Comment** when it already has one. Insert and Edit open a small text box for the comment. Enter adds a line break, and committing is done by clicking away or with Ctrl+Enter; Esc cancels. The commands are absent on JSON tabs.
 - **Where.** The triangle is drawn on the node's cell in the tree grid and in the tabular view alike. For an object or array node it is on the node's own row (or on the array's header in the tabular view).
 - Inserting, editing, and deleting a comment are undoable entries in the edit log, and each is a change to the document, so it marks the workbook as modified.
