@@ -9,6 +9,7 @@
 mod calc;
 mod check;
 mod engine;
+pub mod entry;
 mod eval;
 pub mod fake;
 mod history;

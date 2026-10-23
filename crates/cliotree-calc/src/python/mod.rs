@@ -5,6 +5,8 @@
 //! the network. Removing builtins and rejecting double-underscore access catch
 //! mistakes; they are not described as security.
 
+pub mod catalog;
+pub mod completion;
 mod convert;
 mod jsonpath;
 mod node;

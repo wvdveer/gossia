@@ -115,6 +115,9 @@ pub struct Calc {
     shallow_readers: HashMap<String, PathTrie<Loc>>,
     dirty: IndexSet<Loc>,
     version: u64,
+    /// Counts every change to what the tabs hold: edits, and results that were
+    /// taken. (`version` counts only edits, because a result is not an edit.)
+    revision: u64,
     log: VecDeque<(u64, Loc)>,
     /// The version of the newest edit dropped from the log.
     log_floor: u64,
@@ -131,6 +134,7 @@ impl Calc {
             shallow_readers: HashMap::new(),
             dirty: IndexSet::new(),
             version: 0,
+            revision: 0,
             log: VecDeque::new(),
             log_floor: 0,
             history: History::default(),
@@ -143,6 +147,12 @@ impl Calc {
 
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Changes whenever anything in the tabs changes, results included, so a
+    /// view of the data knows when to draw it again.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     // ----------------------------------------------------------- tabs
@@ -859,6 +869,9 @@ impl Calc {
             self.dirty.swap_remove(&loc);
             applied.applied.push(loc);
         }
+        if !applied.applied.is_empty() {
+            self.revision += 1;
+        }
         applied
     }
 
@@ -945,6 +958,7 @@ impl Calc {
     /// Records an edit and marks what depends on it as out of date.
     fn changed(&mut self, sheet: &str, path: &Path) {
         self.version += 1;
+        self.revision += 1;
         self.log
             .push_back((self.version, Loc::new(sheet, path.clone())));
         while self.log.len() > LOG_LIMIT {

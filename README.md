@@ -52,3 +52,7 @@ This is the real GitHub runner agent, not the Gitea `act_runner` on the same mac
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Trying the window
+
+`cargo run -p cliotree-app` opens a sample workbook (an order with formulas, and a price list) so that the grid, the formula bar, undo and the rest can be tried. Opening and saving files comes later in the build.

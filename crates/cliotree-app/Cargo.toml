@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "cliotree_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cliotree"
 path = "src/main.rs"
@@ -15,6 +19,13 @@ path = "src/main.rs"
 cliotree-core.workspace = true
 cliotree-calc.workspace = true
 cliotree-std.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+egui = "0.37.0"
+eframe = "0.37.0"
+egui_extras = "0.37.0"
+
+[dev-dependencies]
+egui_kittest = { version = "0.37.0", features = ["wgpu"] }
 
 [lints]
 workspace = true

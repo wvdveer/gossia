@@ -88,6 +88,27 @@ impl TypeSpec {
         }
     }
 
+    /// A short name for a type, for display: `integer`, `array of object`,
+    /// `map of number`, or the name a type was declared with.
+    pub fn describe(&self, ty: TypeId) -> String {
+        let def = self.get(ty);
+        if let Some(name) = &def.name {
+            return name.clone();
+        }
+        match &def.kind {
+            Kind::String(_) => "string".to_owned(),
+            Kind::Integer(_) => "integer".to_owned(),
+            Kind::Number(_) => "number".to_owned(),
+            Kind::Bool => "boolean".to_owned(),
+            Kind::Date => "date".to_owned(),
+            Kind::DateTime => "dateTime".to_owned(),
+            Kind::Enum { .. } => "string (choice)".to_owned(),
+            Kind::Object { .. } => "object".to_owned(),
+            Kind::Array { items, .. } => format!("array of {}", self.describe(*items)),
+            Kind::Map { value } => format!("map of {}", self.describe(*value)),
+        }
+    }
+
     /// The number of types in the arena, including any that are not reachable.
     pub fn len(&self) -> usize {
         self.types.len()
@@ -275,6 +296,23 @@ mod tests {
         );
         assert!(!optional("tags[0]"));
         assert!(!spec.is_optional_field(&Path::root()));
+    }
+
+    #[test]
+    fn describe_gives_a_short_name_for_display() {
+        let spec = lower_str(SCHEMA).unwrap();
+        let at = |text: &str| -> String {
+            let path: Path = if text.is_empty() {
+                Path::root()
+            } else {
+                text.parse().unwrap()
+            };
+            spec.describe(spec.resolve(&path).unwrap().ty)
+        };
+        assert_eq!(at(""), "object");
+        assert_eq!(at("name"), "string");
+        assert_eq!(at("tags"), "array of string");
+        assert_eq!(at("prices"), "map of number");
     }
 
     #[test]
