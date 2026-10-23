@@ -526,10 +526,10 @@ All Python evaluation (formulas, form button procedures, report expressions) run
 
 Limits are not hard-coded. The user sets them, with defaults, in two places.
 
-- **Workbook settings** are stored in the workbook (`settings.json`) and edited in a *Workbook settings* panel. They govern how that workbook's Python and data sources run.
+- **Workbook settings** are stored in the workbook (`settings.json`) and edited in the *ClioTree Options* dialog (see The Options dialog). They govern how that workbook's Python and data sources run.
 - **Application preferences** belong to the user, not to any file. They hold the limits that apply *before* a workbook is open or trusted (reading a file, importing), and a **ceiling** for each workbook setting.
 
-**A workbook cannot raise its own limits past the user's ceilings.** A file is untrusted input, so a hostile workbook that asks for a one-hour time limit gets the ceiling instead. The panel shows each value with its default and ceiling, rejects out-of-range input, and shows the effective value when a ceiling applies. Workbook settings are part of the executable content covered by trust, since they govern execution (see Trust model); editing them inside the application keeps trust, and a change made outside it drops trust. Changes are undoable edits.
+**A workbook cannot raise its own limits past the user's ceilings.** A file is untrusted input, so a hostile workbook that asks for a one-hour time limit gets the ceiling instead. The dialog shows each value with its default and ceiling, rejects out-of-range input, and shows the effective value when a ceiling applies. Workbook settings are part of the executable content covered by trust, since they govern execution (see Trust model); editing them inside the application keeps trust, and a change made outside it drops trust. Changes are undoable edits.
 
 **Workbook settings**
 
@@ -550,10 +550,46 @@ More settings can be added in the same way, with a default and a ceiling each.
 **Abandoned threads.** A formula that does not stop after a cancel signal and the grace period (for example one long builtin call, which cannot be interrupted; see Python engine) is **abandoned**: its result is discarded, its node gets `#TIMEOUT!`, and a fresh interpreter takes over so evaluation continues. The abandoned thread keeps running until its call returns, and then it is released. The number of such threads still running is limited by *Maximum abandoned threads*.
 - The count appears in the status bar when it is above zero (for example `2 abandoned`).
 - **At the limit, evaluation is suspended.** No new evaluation starts, pending cells keep their pending marker, and the status bar shows `Evaluation suspended: 20 abandoned threads still running`. It resumes by itself when the count drops below the limit.
-- The panel offers **Save and restart**, which saves the workbook (without waiting for evaluation, flagging pending cells as for any save) and restarts the application, since a thread that never returns can only be cleared that way.
+- The Evaluation page of the Options dialog offers **Save and restart**, which saves the workbook (without waiting for evaluation, flagging pending cells as for any save) and restarts the application, since a thread that never returns can only be cleared that way.
 - Raising the limit takes effect immediately, up to the user's ceiling.
 
 **Guards on builtins.** The `range` builtin is replaced by a version that refuses a length above *Maximum range length*, raising `ValueError` (shown as `#VALUE!`) with a message naming the setting. This catches the accidental case such as `sum(range(10**10))` before it starts. Guards are **best effort**, not a security boundary: they cover the wrapped builtins and obvious literals, not every way to build a huge value. The abandoned-thread limit is the real backstop, and a memory limit is not promised in v1.
+
+### The Options dialog
+
+All settings are edited in one **ClioTree Options** dialog, laid out like Excel's Options dialog. It opens from **File > Options**.
+- A **list of categories** runs down the left, the chosen category's settings fill the right, and **OK** and **Cancel** sit at the bottom. Enter is OK and Esc is Cancel. Nothing takes effect until OK, and Cancel discards every change in the dialog.
+- Each page says in its heading **what it applies to**: *This workbook* (stored in the workbook) or *All workbooks* (stored for the user). If no workbook is open, the workbook pages are hidden.
+- Each setting shows its default, rejects out-of-range input inline, and has a **Reset to default** button. A workbook value that a ceiling is holding down shows the effective value beside it and says why.
+- **OK applies the workbook settings as one undoable entry.** Application preferences take effect at once and are not part of the undo history, because they are not part of the workbook.
+- Other parts of the application link straight to a page: for example the status bar's *Evaluation suspended* message opens the Evaluation page.
+
+**Pages**
+
+| Page | Applies to | Contents |
+|---|---|---|
+| Evaluation | This workbook | Formula time limit, recalculation time limit, cancel grace period, maximum abandoned threads, maximum range length. Shows how many threads are currently abandoned, and the *Save and restart* button. |
+| Data sources | This workbook | Call timeout and maximum response size. A *Manage data sources...* button opens the Data sources panel where specifications are created, edited, tested, and granted. |
+| Trust and security | All workbooks | The list of trusted workbooks, each with *Revoke*; the list of data source grants, each with *Revoke*; and the **ceilings** for the workbook settings above (see below). |
+| Files and import | All workbooks | The limits applied while reading a file or importing: maximum zip entries, maximum total uncompressed size, maximum import file size, and maximum nesting depth. |
+| Editing | All workbooks | Undo history bounds: the maximum number of entries and the memory budget. |
+| About the engine | All workbooks | Read-only: the application version and the Python engine and its version. |
+
+**Ceilings.** The Trust and security page holds one ceiling for each workbook setting. A workbook's value is used only up to its ceiling. The defaults below are starting points and are all adjustable:
+
+| Workbook setting | Default | Default ceiling |
+|---|---|---|
+| Formula time limit | 1 s | 60 s |
+| Recalculation time limit | 10 s | 600 s |
+| Cancel grace period | 500 ms | 10 s |
+| Maximum abandoned threads | 20 | 100 |
+| Maximum range length | 10,000,000 | 100,000,000 |
+| Data source call timeout | 30 s | 300 s |
+| Maximum response size | 16 MB | 256 MB |
+
+**Where preferences live.** Application preferences are stored with the trust records and data source grants in one per-user configuration directory (the operating system's usual location for application settings), as a JSON file.
+
+**Changing a limit while something is running.** A new value applies to evaluations that start after OK. An evaluation already running keeps the deadline it started with. Lowering *Maximum abandoned threads* below the number currently abandoned simply suspends new evaluations until enough of them return.
 
 ## Undo and redo
 
