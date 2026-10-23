@@ -15,7 +15,8 @@ mod value;
 pub use num::Num;
 pub use path::{ParsePathError, Path, Segment};
 pub use typespec::{
-    Field, Kind, Pattern, Range, StringConstraints, StringFormat, TypeDef, TypeId, TypeSpec,
+    Field, Kind, Pattern, Range, Resolved, StringConstraints, StringFormat, TypeDef, TypeId,
+    TypeSpec,
 };
 pub use value::{DateTimeValue, ErrorKind, ErrorValue, Node, NodeId, PathError, Value};
 

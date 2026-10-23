@@ -118,6 +118,8 @@ name = "cliotree-calc"
 version = "0.1.0"
 dependencies = [
  "cliotree-core",
+ "indexmap",
+ "proptest",
 ]
 
 [[package]]

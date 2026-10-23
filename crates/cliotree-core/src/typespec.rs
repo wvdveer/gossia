@@ -6,6 +6,14 @@
 use regex::Regex;
 
 use crate::num::Num;
+use crate::path::{Path, Segment};
+
+/// Where a path leads in a schema: see [`TypeSpec::resolve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resolved {
+    pub ty: TypeId,
+    pub required: bool,
+}
 
 /// The id of a type within one [`TypeSpec`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,6 +37,38 @@ impl TypeSpec {
 
     pub fn get(&self, id: TypeId) -> &TypeDef {
         &self.types[id.0 as usize]
+    }
+
+    /// The type of the node at `path`, and whether the schema requires that
+    /// node to exist. `None` if the schema defines no node there (an unknown
+    /// field, or an index into something that is not an array). The root is
+    /// required. An array item is required, since it exists once it is added.
+    pub fn resolve(&self, path: &Path) -> Option<Resolved> {
+        let mut here = Resolved {
+            ty: self.root,
+            required: true,
+        };
+        for segment in path.segments() {
+            here = match (&self.get(here.ty).kind, segment) {
+                (Kind::Object { fields }, Segment::Key(name)) => {
+                    let field = fields.iter().find(|f| &f.name == name)?;
+                    Resolved {
+                        ty: field.ty,
+                        required: field.required,
+                    }
+                }
+                (Kind::Map { value }, Segment::Key(_)) => Resolved {
+                    ty: *value,
+                    required: true,
+                },
+                (Kind::Array { items, .. }, Segment::Index(_)) => Resolved {
+                    ty: *items,
+                    required: true,
+                },
+                _ => return None,
+            };
+        }
+        Some(here)
     }
 
     /// The number of types in the arena, including any that are not reachable.
@@ -149,5 +189,68 @@ impl Pattern {
 impl PartialEq for Pattern {
     fn eq(&self, other: &Pattern) -> bool {
         self.source == other.source
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jsonschema::lower_str;
+
+    const SCHEMA: &str = r##"{
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "prices": {"type": "object", "additionalProperties": {"type": "number"}},
+        "address": {"type": "object", "properties": {"zip": {"type": "string"}}}
+      },
+      "required": ["name"]
+    }"##;
+
+    fn resolved(spec: &TypeSpec, path: &str) -> Option<(String, bool)> {
+        let path: Path = if path.is_empty() {
+            Path::root()
+        } else {
+            path.parse().unwrap()
+        };
+        spec.resolve(&path).map(|r| {
+            let kind = match &spec.get(r.ty).kind {
+                Kind::String(_) => "string",
+                Kind::Number(_) => "number",
+                Kind::Array { .. } => "array",
+                Kind::Object { .. } => "object",
+                Kind::Map { .. } => "map",
+                _ => "other",
+            };
+            (kind.to_string(), r.required)
+        })
+    }
+
+    #[test]
+    fn resolve_follows_a_path_through_the_schema() {
+        let spec = lower_str(SCHEMA).unwrap();
+        assert_eq!(resolved(&spec, ""), Some(("object".into(), true)));
+        assert_eq!(resolved(&spec, "name"), Some(("string".into(), true)));
+        assert_eq!(resolved(&spec, "tags"), Some(("array".into(), false)));
+        assert_eq!(resolved(&spec, "tags[7]"), Some(("string".into(), true)));
+        assert_eq!(
+            resolved(&spec, "prices.rice"),
+            Some(("number".into(), true))
+        );
+        assert_eq!(
+            resolved(&spec, "address.zip"),
+            Some(("string".into(), false))
+        );
+    }
+
+    #[test]
+    fn resolve_finds_nothing_where_the_schema_defines_no_node() {
+        let spec = lower_str(SCHEMA).unwrap();
+        assert_eq!(resolved(&spec, "nothing"), None);
+        assert_eq!(resolved(&spec, "name.first"), None);
+        assert_eq!(resolved(&spec, "name[0]"), None);
+        assert_eq!(resolved(&spec, "tags.first"), None);
+        assert_eq!(resolved(&spec, "address[0]"), None);
     }
 }

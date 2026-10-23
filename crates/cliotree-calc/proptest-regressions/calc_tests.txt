@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 026f5bc5cbf7180f2a0a1bfb9f3a00231dc1add3edb6621bc8b925d6dd89b65f # shrinks to ops = [Formula(2, "IF(S.list[2] > 1, S.list[0], S.list[2])"), Formula(2, "SUM(S.list) + S.list[3] * 2"), Formula(5, "S.list[2] + -3"), Formula(0, "IF(S.list[4] > 1, S.list[4], S.list[1])"), Literal(3, -2), Formula(2, "S.list[0] / S.list[0]"), Formula(1, "IF(S.list[1] > 1, S.list[2], S.list[0])"), Formula(3, "IF(S.list[1] > 1, S.list[3], S.list[1])"), Formula(5, "SUM(S.list) + S.list[4] * 2"), Literal(3, -3), Literal(1, 3), Formula(5, "IFERROR(S.list[0] + 1, S.list[1])"), Formula(1, "S.list[3] * S.list[2]"), Formula(0, "S.list[2] / S.list[0]"), Formula(0, "SUM(S.list) + S.list[0] * 3"), Formula(2, "IFERROR(S.list[3] + 1, S.list[1])")]
