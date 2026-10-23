@@ -935,7 +935,7 @@ The jobs run on a self-hosted GitHub Actions runner on the `acer` server (label 
 | Nightly | fuzzing, performance, `cargo audit` | no |
 
 - The Rust toolchain is pinned in `rust-toolchain.toml` (1.97 or newer is required, as RustPython requires) and the dependency set is locked, including the RustPython git revision and the `ruff` fork (see Build and dependencies).
-- Build caching (for example `Swatinem/rust-cache`) keeps runs short, because RustPython takes several minutes to build from scratch.
+- Runs stay short because the runner is persistent: `target/` and `vendor/` stay in its workspace (the checkout is told not to clean them), and RustPython takes several minutes to build only the first time. `Swatinem/rust-cache` is not used, because its cleanup deletes `rustup` from `~/.cargo/bin` on a shared machine. A job on a throwaway runner would need a cache.
 - On failure the job uploads logs, snapshot diffs, and screenshots as artifacts.
 - Coverage is reported with `cargo llvm-cov` for information, not as a gate.
 - Because development happens on Windows, a Windows job running levels 1 to 3 is added once the basic pipeline is stable. It exists to catch path, case-sensitivity, and line-ending differences, which this design has several rules about (tab names unique ignoring case, per-tab files).
@@ -1005,14 +1005,14 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
 
 **Offline and failure.** If a fetch fails, for example without network access, the build stops with a message that names the item, the URL, and the directory. The environment variable `CLIOTREE_VENDOR_DIR` can point at a copy of the vendor folder prepared elsewhere.
 
-**CI.** The pipeline uses the same `cargo xtask` commands, so there is no separate CI procedure, and a separate *Vendor* job fetches and verifies every pinned item on Linux. The `vendor/` folder is cached, keyed by the hash of `vendor.lock`, and a cache miss simply fetches again (see Testing and CI).
+**CI.** The pipeline uses the same `cargo xtask` commands, so there is no separate CI procedure, and a separate *Vendor* job fetches and verifies every pinned item on Linux. On the persistent runner the `vendor/` folder simply stays in the workspace between runs, and a change to `vendor.lock` makes the next run fetch the item again (see Testing and CI).
 
 **Security.** Fetching does not run anything from the downloaded repositories. Cargo does run the build scripts of dependencies when it builds them, as it does for any crate, which is why the pins are exact commits and changes to `vendor.lock` are reviewed.
 
 ## Build order
 
-0. **CI skeleton**: workspace, `rust-version` and pinned toolchain, the `vendor/` folder with its fetch script and `vendor.lock`, lint and test jobs running on Linux (see Build and dependencies, and Testing and CI). Every later step adds its tests together with its code.
-1. **core**: `Value`, `TypeSpec`, JSON Schema lowering, validation, tests.
+0. **CI skeleton** *(done)*: workspace, `rust-version` and pinned toolchain, the `vendor/` folder with its fetch script and `vendor.lock`, lint and test jobs running on Linux (see Build and dependencies, and Testing and CI). Every later step adds its tests together with its code.
+1. **core** *(done)*: `Value`, `TypeSpec`, JSON Schema lowering, validation, the JSON adapter, tests. The bundled meta-schemas come with the schema sheets in step 4, and XSD with step 6.
 2. **calc**: graph, evaluator, error values, with a trivial fake engine first.
 3. **RustPython** integration, proxies, `JSONPATH`, and measuring the proxy layer's overhead against the spike's plain-dict figures.
 4. **app**: tree grid, formula bar with Insert Function and name completion, tabs, the edit log with undo and redo, then the tabular view of arrays, and schema auto-update with the schema-editing commands.
@@ -1042,6 +1042,22 @@ Deferred features, with what v1 does to keep them possible:
 - **Computed children.** An array item may carry its own formula only when the array itself is not computed, as specified under Formulas. Nothing more is needed unless real use shows otherwise.
 - **Forms and XML.** Form field paths use element and attribute names. The `@attr` and `#text` mapping stays inside the XML adapter and is not shown to the user.
 - **Button procedure power.** Procedures may write to other tabs through `ctx`, atomically, as specified under Forms. Writes to databases and HTTP endpoints are immediate and are not undone.
+
+**Decisions made while building step 1** (JSON Schema lowering and validation; they refine the subset above and do not widen it)
+- **`type` is required**, except on a schema that is only a `$ref` or only an `enum` (which is a string enumeration). In JSON Schema a keyword without a type applies to some instances and is ignored for others (`{"minimum": 1}` accepts the string `"x"`), which a typed tree cannot express. This is why most keyword-only groups of the JSON Schema Test Suite are listed as skipped, with that reason.
+- **A keyword that does not apply to the schema's type is an error** (`minimum` on a string, `items` on an object), as are unknown keywords.
+- **Excluded keywords are reported first.** Lowering scans the whole document for keywords outside the subset before it looks at structure, so `oneOf` is reported as `oneOf`, not as a missing `type` beside it.
+- **`additionalProperties: false` is accepted**, as the explicit form of what objects already are. `true` is open content and is refused. A schema-valued `additionalProperties` makes a map and cannot sit beside `properties` or `required`.
+- **`{"type": "object"}` with no `properties` is refused**: in JSON Schema it means any object, which the closed model cannot express. An empty record is written `"properties": {}` or `"additionalProperties": false`.
+- **References.** `$ref` is `#` or `#/$defs/Name` (JSON pointer escapes apply); `$defs` is read at the root only. A `$ref` may carry `title` and `description` and nothing else. A chain of plain aliases resolves to the final type; aliases that only point at each other are an error. Every definition is lowered, used or not, so mistakes in it surface.
+- **Root `$schema`** may be given if it names draft 2020-12, and nowhere else. `$comment`, `default`, `examples`, `deprecated`, and the other annotations are refused (only `title` and `description` are accepted), as are `$id` and `$anchor`.
+- **Whole-number counts.** `minItems`, `maxLength` and the like accept `3` or `3.0`, never `-1` or `1.5`.
+- **Patterns** are compiled by the `regex` crate, so look-ahead, look-behind and back-references are refused at load with an error naming `pattern`. JSON Schema specifies ECMA 262 regular expressions, so a schema from elsewhere may use features that are not available.
+- **An integer field holds only integers.** Loaded data that has `3.0` in an `integer` field is flagged as invalid (kept, red outline), consistent with Scalar types; the suite's case "a float with zero fractional part is an integer" is skipped for that reason.
+- **Validation** reports four kinds of problem (wrong kind, missing required field, undeclared field, broken constraint), each with the path of the node, and skips nodes that hold an error value. Closed objects mean that a suite case expecting extra properties to be valid passes when the only complaint is about undeclared fields; the test counts these separately.
+- **Node ids** come from a process-wide counter and are never saved.
+- **Floats** must be parsed with `serde_json`'s `float_roundtrip` feature, or a value changes in its last digit on a save and reload. The property test for JSON round trips found this.
+- **Conformance** at this revision of the suite: 10 groups (55 cases) run as pass or fail, 308 groups are checked to be refused by name, and 66 groups plus one case are skipped with a stated reason each. The selection file fails the test if an entry is stale or a reason is unused.
 
 **Risks that only building and measuring can settle**
 - **RustPython.** It is young and not production-ready by its own account, it builds only from a pinned git revision, and the single long builtin call cannot be interrupted. Mitigations: the `PythonEngine` trait, the pinned and vendored build, the abandoned-thread backstop, and the test-suite probes.

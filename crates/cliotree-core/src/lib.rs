@@ -4,6 +4,21 @@
 //! This crate has no UI and no Python, so that it can be tested headlessly and
 //! reused by a later web port (see DESIGN.md, Application structure).
 
+pub mod json;
+pub mod jsonschema;
+mod num;
+mod path;
+mod typespec;
+pub mod validate;
+mod value;
+
+pub use num::Num;
+pub use path::{ParsePathError, Path, Segment};
+pub use typespec::{
+    Field, Kind, Pattern, Range, StringConstraints, StringFormat, TypeDef, TypeId, TypeSpec,
+};
+pub use value::{DateTimeValue, ErrorKind, ErrorValue, Node, NodeId, PathError, Value};
+
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

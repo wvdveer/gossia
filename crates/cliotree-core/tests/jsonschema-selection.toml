@@ -1,0 +1,94 @@
+version = 1
+
+# Keywords a test group may use and still run as pass or fail
+# (DESIGN.md, Testing and CI). `title`, `description`, `$schema` and `$defs`
+# never change what a schema accepts and are always allowed.
+allowed = [
+    "type", "properties", "required", "items", "minItems", "maxItems",
+    "minimum", "maximum", "minLength", "maxLength", "pattern", "enum",
+    "$ref", "additionalProperties", "format",
+]
+
+# Groups that use only allowed keywords but cannot run as pass or fail.
+skip = [
+    { file = "additionalProperties.json", group = "additionalProperties are allowed by default", why = "no-type" },
+    { file = "additionalProperties.json", group = "additionalProperties can exist by itself", why = "no-type" },
+    { file = "additionalProperties.json", group = "additionalProperties with schema", why = "no-type" },
+    { file = "defs.json", group = "validate definition against metaschema", why = "ref-pointer" },
+    { file = "dynamicRef.json", group = "$ref to $dynamicRef finds detached $dynamicAnchor", why = "ref-pointer" },
+    { file = "enum.json", group = "empty enum", why = "empty-enum" },
+    { file = "format.json", group = "date format", why = "no-type" },
+    { file = "format.json", group = "date-time format", why = "no-type" },
+    { file = "format.json", group = "duration format", why = "no-type" },
+    { file = "format.json", group = "email format", why = "no-type" },
+    { file = "format.json", group = "hostname format", why = "no-type" },
+    { file = "format.json", group = "idn-email format", why = "no-type" },
+    { file = "format.json", group = "idn-hostname format", why = "no-type" },
+    { file = "format.json", group = "ipv4 format", why = "no-type" },
+    { file = "format.json", group = "ipv6 format", why = "no-type" },
+    { file = "format.json", group = "iri format", why = "no-type" },
+    { file = "format.json", group = "iri-reference format", why = "no-type" },
+    { file = "format.json", group = "json-pointer format", why = "no-type" },
+    { file = "format.json", group = "regex format", why = "no-type" },
+    { file = "format.json", group = "relative-json-pointer format", why = "no-type" },
+    { file = "format.json", group = "time format", why = "no-type" },
+    { file = "format.json", group = "uri format", why = "no-type" },
+    { file = "format.json", group = "uri-reference format", why = "no-type" },
+    { file = "format.json", group = "uri-template format", why = "no-type" },
+    { file = "format.json", group = "uuid format", why = "no-type" },
+    { file = "items.json", group = "a schema given for items", why = "no-type" },
+    { file = "maxItems.json", group = "maxItems validation", why = "no-type" },
+    { file = "maxItems.json", group = "maxItems validation with a decimal", why = "no-type" },
+    { file = "maxLength.json", group = "maxLength validation", why = "no-type" },
+    { file = "maxLength.json", group = "maxLength validation with a decimal", why = "no-type" },
+    { file = "maximum.json", group = "maximum validation", why = "no-type" },
+    { file = "maximum.json", group = "maximum validation with unsigned integer", why = "no-type" },
+    { file = "minItems.json", group = "minItems validation", why = "no-type" },
+    { file = "minItems.json", group = "minItems validation with a decimal", why = "no-type" },
+    { file = "minLength.json", group = "minLength validation", why = "no-type" },
+    { file = "minLength.json", group = "minLength validation with a decimal", why = "no-type" },
+    { file = "minimum.json", group = "minimum validation", why = "no-type" },
+    { file = "minimum.json", group = "minimum validation with signed integer", why = "no-type" },
+    { file = "pattern.json", group = "pattern is not anchored", why = "no-type" },
+    { file = "pattern.json", group = "pattern validation", why = "no-type" },
+    { file = "properties.json", group = "object properties validation", why = "no-type" },
+    { file = "properties.json", group = "properties whose names are Javascript object property names", why = "no-type" },
+    { file = "properties.json", group = "properties with escaped characters", why = "no-type" },
+    { file = "ref.json", group = "escaped pointer ref", why = "no-type" },
+    { file = "ref.json", group = "property named $ref that is not a reference", why = "no-type" },
+    { file = "ref.json", group = "property named $ref, containing an actual $ref", why = "no-type" },
+    { file = "ref.json", group = "ref applies alongside sibling keywords", why = "no-type" },
+    { file = "ref.json", group = "refs with quote", why = "no-type" },
+    { file = "ref.json", group = "relative pointer ref to object", why = "no-type" },
+    { file = "ref.json", group = "remote ref, containing refs itself", why = "ref-pointer" },
+    { file = "refRemote.json", group = "$ref to $ref finds detached $anchor", why = "ref-pointer" },
+    { file = "refRemote.json", group = "Location-independent identifier in remote ref", why = "ref-pointer" },
+    { file = "refRemote.json", group = "anchor within remote ref", why = "ref-pointer" },
+    { file = "refRemote.json", group = "fragment within remote ref", why = "ref-pointer" },
+    { file = "refRemote.json", group = "ref within remote ref", why = "ref-pointer" },
+    { file = "refRemote.json", group = "remote HTTP ref with different $id", why = "ref-pointer" },
+    { file = "refRemote.json", group = "remote HTTP ref with different URN $id", why = "ref-pointer" },
+    { file = "refRemote.json", group = "remote HTTP ref with nested absolute ref", why = "ref-pointer" },
+    { file = "refRemote.json", group = "remote ref", why = "ref-pointer" },
+    { file = "required.json", group = "required default validation", why = "no-type" },
+    { file = "required.json", group = "required properties whose names are Javascript object property names", why = "no-type" },
+    { file = "required.json", group = "required validation", why = "no-type" },
+    { file = "required.json", group = "required with empty array", why = "no-type" },
+    { file = "required.json", group = "required with escaped characters", why = "no-type" },
+    { file = "type.json", group = "array type matches arrays", why = "array-without-items" },
+    { file = "type.json", group = "object type matches objects", why = "object-without-properties" },
+]
+
+# Single cases where the subset differs from the suite on purpose.
+skip_test = [
+    { file = "type.json", group = "integer type matches integers", test = "a float with zero fractional part is an integer", why = "float-integer" },
+]
+
+# Why a group or case is skipped, by short name.
+[reasons]
+no-type = """The schema has no `type`. The subset requires one (except on a `$ref` or an `enum`), because a keyword such as `minimum` without a type applies to some instances and not to others, and a typed tree cannot express that."""
+ref-pointer = """`$ref` to a JSON pointer other than `#` or `#/$defs/Name`, to a URL, or to an anchor is not supported (DESIGN.md, Schema subsets: references are local and to `$defs`)."""
+empty-enum = """An `enum` with no values is refused: nothing could ever match it."""
+object-without-properties = """`{"type": "object"}` with no `properties` would be open content in JSON Schema; objects are closed, so a schema must list the properties (or give a schema-valued `additionalProperties`)."""
+array-without-items = """`{"type": "array"}` with no `items` has no element type; the subset requires one."""
+float-integer = """A float with a zero fractional part is not an integer: `1.0` stays a float (DESIGN.md, Scalar types), so it is invalid for an `integer` node."""

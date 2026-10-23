@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 150d515157ea6e37ab1a57949b4beb810d261ce3e8250221ab55935ab89c8582 # shrinks to node = Node(NodeData { id: NodeId(675), value: Array([Node(NodeData { id: NodeId(673), value: Float(-5.015378270350473e-231) })]) })
+cc f3042e3dbb2be0aa1dcbbd209596dc2f9ba16ac33f6c4861b2478f539a6666fc # shrinks to node = Node(NodeData { id: NodeId(899), value: Object({"": Node(NodeData { id: NodeId(898), value: Float(5.181969628006658e-172) })}) })

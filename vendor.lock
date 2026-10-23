@@ -19,3 +19,11 @@ sparse = [
     "crates/ruff_source_file",
     "crates/ruff_text_size",
 ]
+
+# Test-only: the official JSON Schema Test Suite (DESIGN.md, Testing and CI,
+# "Selecting JSON Schema Test Suite cases"). Only the 2020-12 cases are used.
+[[item]]
+name   = "json-schema-test-suite"
+url    = "https://github.com/json-schema-org/JSON-Schema-Test-Suite.git"
+rev    = "89e83a74014617ffbe79a56d83d14d054cd11417"
+sparse = ["tests/draft2020-12"]
