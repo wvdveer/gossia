@@ -9,14 +9,14 @@ A spreadsheet-like desktop application (Rust + egui, later wasm) in which each s
 ## Core model
 
 **Workbook**: named Sheets (tabs), a trust flag, and embedded Python modules. Tabs come in two kinds:
-- **Tree sheets** (data sheets and schema sheets): hold a data tree bound to a schema, as described below.
-- **Reports** *(later version)*: read-only visual presentations of data from other tabs (see Reports).
+- **Data Tabs** (including schema tabs): hold a data tree bound to a schema, as described below. A Data Tab can be shown in several **views**: the Data tree and its forms (see Forms).
+- **Report Tabs** *(later version)*: read-only visual presentations of data from other tabs (see Reports).
 
-Forms are not tabs; see Forms.
+Forms are views of a Data Tab, not tabs.
 
 Rules for tabs:
 - Tab names must be valid Python identifiers, must not be reserved words, and must be unique ignoring case (enforced on create and rename; see Names and reserved words).
-- Each tree sheet has a schema reference, a data tree, and formula overlays.
+- Each Data Tab has a schema reference, a data tree, and formula overlays.
 
 **Data tree**: one format-neutral `Value` enum serves JSON and XML:
 `Null | Bool | Int(i64) | Float(f64) | Str | Date | DateTime | Array(Vec<Node>) | Object(IndexMap<String, Node>) | Error(ErrorValue)`.
@@ -45,7 +45,7 @@ Rules for tabs:
 - `OneOf` is reserved for a later version and is not produced in v1 (both subsets exclude unions).
 - A source map points each `TypeSpec` back to its schema location for error messages.
 
-**Schema binding**: every tree sheet declares its schema in exactly one of two ways:
+**Schema binding**: every Data Tab declares its schema in exactly one of two ways:
 - **Built-in meta-schema**: the sheet is itself a schema document. The application bundles a JSON Schema for JSON Schema and an XML Schema for XML Schema, each describing exactly the supported subset of its language (see below). Choosing one fixes the sheet's format (JSON or XML), and the sheet is edited, validated, and given formulas like any other tree.
 - **Sheet reference**: the sheet names another workbook sheet that contains its schema. That sheet must itself be a schema sheet (bound to a built-in meta-schema). The referenced sheet's schema language determines the data format: JSON Schema gives JSON data, XSD gives XML data.
 
@@ -252,7 +252,7 @@ Most built-ins are one-line Python over the stdlib. Only the tree-aware pieces (
 
 ## Names and reserved words
 
-Formulas, form button procedures, and report expressions share one flat namespace per workbook. It holds tab names (tree sheets and reports), data source names, module-level functions, built-in functions, Python builtins, the special names `this`, `parent`, `root`, `ErrorValue`, and `PropagatedError`, workbook module names, and the exposed stdlib modules (`math`, `datetime`, ...). Every name in it must be unique and mean the same thing everywhere. **Shadowing is not permitted**, with one exception (below).
+Formulas, form button procedures, and report expressions share one flat namespace per workbook. It holds tab names (Data Tabs and Report Tabs), data source names, module-level functions, built-in functions, Python builtins, the special names `this`, `parent`, `root`, `ErrorValue`, and `PropagatedError`, workbook module names, and the exposed stdlib modules (`math`, `datetime`, ...). Every name in it must be unique and mean the same thing everywhere. **Shadowing is not permitted**, with one exception (below).
 
 **Reserved names.** These cannot be used as tab names, report names, data source names, or module-level function names:
 - Python keywords (`keyword.iskeyword`). `class` passes `isidentifier()` but is not usable.
@@ -276,8 +276,8 @@ Formulas, form button procedures, and report expressions share one flat namespac
 
 Custom Python lives in **modules** stored in the workbook. The design follows Excel and its Visual Basic modules: a separate code editor with a project tree, one module per code window, and public functions that cells can call by name.
 
-**The code editor** (opened from the menu or with Alt+F11, as in Excel) is the code area that also holds form designs.
-- **Project explorer** on the left: a tree with a *Modules* branch listing the workbook's modules, and a *Forms* branch listing form designs (see Forms). Double-click opens an item in the editor.
+**The code editor** (opened from the menu or with Alt+F11, as in Excel) is the code area that also holds the raw text of form designs.
+- **Project explorer** on the left: a tree with a *Modules* branch listing the workbook's modules, and a *Forms* branch listing the customised form designs by tab (see Forms), opened as raw text. Double-click opens an item in the editor.
 - **Editor panes** on the right, one tab per open module: a monospace editor with line numbers, syntax highlighting, and automatic indentation.
 - **Procedure box** above the editor, like the VBE's: a drop-down listing the module's top-level functions, which jumps to the one chosen.
 - **Insert > Module** creates a module, and rename and delete are in the explorer's context menu. **Export** and **Import** write and read a module as a plain `.py` file, the way Excel exports a `.bas`.
@@ -327,7 +327,7 @@ Custom Python lives in **modules** stored in the workbook. The design follows Ex
 A **report** is a tab that takes data from other tabs and presents it visually: tables, text, and charts such as bar, line, pie, and scatter. A report holds no data of its own and is never the target of a formula or form.
 
 **Report design** specifies:
-- **Sources**: one or more tree sheets the report reads. Each source is exposed to the report's expressions under its sheet name, through the same proxies formulas use.
+- **Sources**: one or more Data Tabs the report reads. Each source is exposed to the report's expressions under its sheet name, through the same proxies formulas use.
 - **Layout**: a vertical flow of blocks (optionally in rows or columns). Block kinds:
   - `text`: static text or an f-string-style template filled from expressions.
   - `table`: rows from an array (or any list) with chosen columns, each column an expression over the row.
@@ -347,20 +347,34 @@ The design is stored as a JSON document validated against a built-in schema (`bu
 
 ## Forms
 
-A **form** is a user-designed data-entry screen over one tab. It is not a tab itself: it has no tree grid and holds no data of its own. It is a different view of the data in the tab it is bound to.
+A Data Tab can be shown in more than one way. Each way is a **view** of the tab. A view holds no data of its own: every view reads and edits the same tab, through the same entry path, so an edit made in one view is an ordinary tab edit that appears in the others.
 
-**Form design** specifies:
-- **Bound tab**: the name of a tree sheet. The form has the same schema as that tab, so there is no separate output schema. The binding is by name and is literal, like a formula reference: renaming or removing the tab leaves the form unbound and showing an error naming the missing tab (see Renames do not rewrite formulas). **A tab can have at most one form.** Creating a form, or changing a form's bound tab, is refused if that tab already has one, and the message names the existing form. A file that breaks the rule still opens (as with name clashes): the first form in the manifest order keeps the binding and any other form bound to the same tab is shown as unbound with an error naming the conflict. A tab can still be edited directly while its form is open, since both are views of the same data and every edit is an ordinary tab edit.
-- **Layout**: a tree of widgets (fields, groups, repeaters, labels). Each field widget binds to a path in the bound tab's schema and takes its editor from the `TypeSpec` (toggle, dropdown, numeric, text, date). Repeaters bind to array nodes, groups to objects. A field may have a label and help text.
-- **Buttons**: zero or more. Each has a label, an optional enable condition, and a Python procedure (the name of a function in a workbook module). Different buttons can name different procedures, and several buttons may share one.
+**Views of a Data Tab**
+- **Data tree** is the grid described under Core model and Formulas. Every Data Tab has it, and it cannot be renamed, deleted, or customised.
+- **Forms** are named data-entry screens over the tab. Every Data Tab has a form called **Default**, which cannot be renamed or deleted and starts out as the **generated form** (below). The user can create more named forms (*New form...*, or *Duplicate* of an existing one). Form names follow the rules for tab names, and are unique within the tab ignoring case.
+- A **view selector** beside the tab (Data tree, Default, and the other forms by name) chooses the view that the tab shows. The choice is remembered per tab in the workbook.
+- **Views belong to the tab.** A form has no binding by name: it is a view of the tab it was made on, and has the tab's schema, so there is no separate output schema and no unbound-form error. Renaming the tab keeps its views, and deleting the tab deletes them.
+- **What the views share.** The selection, the undo history, the pending markers, and the status bar. Switching view first enters any edit in progress (as selecting another cell does; a refused entry keeps the user where they were). Selecting a node and switching view moves to the control bound to that node, or the nearest control above it, and the other way round.
+- A **Report Tab** is a different kind of tab, not a view (see Reports). Reports read Data Tabs; they do not add views to them.
 
-**Where forms live in the UI**
-- Forms are opened from a **Forms** menu, which lists the workbook's forms. Opening one shows the fill-in view.
-- Forms are **designed in the same area as the custom Python modules**: a code area that holds modules and form designs side by side, each with its own editor. The form designer is a visual editor over the design document, and the area also offers the raw document for direct editing.
-- The design is stored as a JSON document validated against a built-in schema (`builtin:form`), so it is diff-friendly and versioned with the workbook. A design is valid only if its field paths all exist in the bound tab's schema.
+**The generated form.** A form that has not been customised is not stored. It is drawn from the tab's schema each time, so it follows every change to the schema, including a field added, renamed, or deleted from a data tab (see Editing the schema from a data tab).
+- An object becomes a group titled by its field name (or the schema's `title`), fields in declared order. A scalar becomes a labelled field whose editor comes from its `TypeSpec`: a toggle for booleans, a dropdown for enums, a numeric field, a date picker for dates, a text field otherwise (multi-line when the schema allows long strings). A schema `description` becomes the field's help text, and a required field is marked.
+- An array becomes a **repeater**. Items of scalars, or of flat objects, are drawn as the table of the tabular view of arrays (sorting, filters, hiding, and row commands included). Other items are stacked, with a stepper (previous, next, *New*, *Delete*, "3 of 17") so that records can be entered one at a time. A map becomes a list of key and value pairs.
+- An optional node that is absent shows an empty control, and a value entered creates the node. Computed nodes are read-only with the computed styling.
+- The generated form has no buttons: buttons are part of customising.
 
-**Data flow: forms read and write the tab directly**
-- **Retrieve.** When a form is opened, and whenever the tab's data changes, the form shows the tab's current values. It always reflects the last calculated values (see Evaluation and scheduling).
+**Customising a form, in place.** Any form has an *Edit form* switch that puts the view into layout mode, where the form is edited on the form itself. The first change to a generated form **materialises** it: the generated layout is saved in the workbook as a design and then edited. From then on that form no longer follows schema changes by itself.
+- **Layout.** A design is a tree of controls: *field*, *group*, *repeater*, *label*, *button*, *separator*. Groups arrange their children vertically or in a number of columns, and wrap with the window; there are no pixel positions. The order in the document is the tab order. In layout mode a control is selected by clicking it, moved by dragging, added from a palette, and deleted from its menu.
+- **Property page.** Selecting a control shows its properties: its label and help text; for a field, the path it binds to (chosen from the tab's schema), the editor to use, and read-only; for a repeater, table or stacked, and which columns; for a button, its label and the procedure it runs. Any control can have a *visible when* and an *enabled when* expression (bare Python expressions, without `=`).
+- **Formulas appear only here.** The form view has no formula bar. A computed field shows a small *fx* marker. The property page of a field shows the formula of the node it is bound to, which can be edited there; it is the same entry as in the formula bar of the Data tree view, an undoable edit of the tab.
+- **Paths are literal**, like formula references. A control whose path no longer exists in the schema (after a rename or delete) is drawn as a placeholder naming the missing path, and the rest of the form works. Layout mode lists **fields not on the form**, each with an *Add* button, and **broken controls**, each with *Re-bind* and *Remove*. *Reset to default* (on Default) and *Delete* (on the others) discard a design; Default then goes back to being generated.
+- **Edits to a design** are not in the workbook's undo history in version 1, like module edits and tab operations (see Undo and redo). Layout mode has its own Undo and Redo, which last for the session in layout mode.
+- **Stored** as a JSON document validated against a built-in schema (`builtin:form`), so it is diff-friendly and versioned with the workbook (see File format). The code area offers the same document as raw text in an editor pane, for direct editing and for review. A design is valid only if its field paths exist in the tab's schema; one that is not is still opened, with the broken controls as above.
+
+**Expressions on controls** (*visible when*, *enabled when*) are executable content. They are evaluated by the same machinery as formulas: dependencies are recorded, they run on the evaluation thread, never on the UI thread, and the result is kept in memory, not written to the data. While one is out of date the control keeps its last state, with the pending marker. An expression that is an error leaves the control visible and disabled, and says why in a tooltip. In an untrusted workbook they do not run (see Trust model): a control stays visible, and a control with an *enabled when* is disabled.
+
+**Data flow: a form reads and writes the tab directly**
+- **Retrieve.** When a form is shown, and whenever the tab's data changes, it shows the tab's current values. It always reflects the last calculated values (see Evaluation and scheduling).
 - **Replace on change.** When the user commits a change in a field (on Enter, or when the field loses focus), the new value **replaces** the corresponding node's data in the tab. The edit is an ordinary tab edit: it is undoable and triggers normal recalculation. A form does not hold a draft or a submit step.
 - **Validation.** A field validates against its `TypeSpec` as the user types. An invalid value stays in the field with its error and is **not** written; the tab keeps the previous value.
 - **Computed nodes are read-only.** A field bound to a node carrying a formula, or inside a computed subtree, is shown read-only with the computed styling. Edits cannot overwrite a formula result.
@@ -369,14 +383,16 @@ A **form** is a user-designed data-entry screen over one tab. It is not a tab it
 **Button procedures**
 
 A button runs a Python function `def my_procedure(form, ctx): ...` defined in a workbook module.
-- `form` is a view of the bound tab's data. Reading it gives the current values. Changes made to it are collected during the call.
-- `ctx` offers read access to the whole workbook through the same sheet proxies that formulas use, and it reports which button was clicked (`ctx.button`), so one function can serve several buttons.
-- Procedures **obtain and send data to and from wherever needed**: they can read other tabs and `form`, and they can write to the bound tab through `form` or to other tabs through `ctx`. They can also use named data sources the user has granted (see Data sources). Writes to tabs are collected during the call and applied **atomically** when it returns.
+- `form` is a view of the tab's data. Reading it gives the current values. Changes made to it are collected during the call.
+- `ctx` offers read access to the whole workbook through the same sheet proxies that formulas use, and it reports which form and which button were used (`ctx.form`, `ctx.button`), so one function can serve several buttons.
+- Procedures **obtain and send data to and from wherever needed**: they can read other tabs and `form`, and they can write to the form's tab through `form` or to other tabs through `ctx`. They can also use named data sources the user has granted (see Data sources). Writes to tabs are collected during the call and applied **atomically** when it returns.
 - Every written value is validated against the schema of the tab it targets. If any write is invalid, or the procedure raises an exception, **none** of the writes are applied, the message is shown to the user, and the data is unchanged. Writing into a computed (formula-driven) node is refused in the same way.
 - The applied writes form one undoable edit and trigger normal recalculation.
 - Return values are ignored.
-- Buttons run one at a time on the evaluation thread. While one runs, all buttons on the form are disabled and the status bar shows it.
-- Procedures run under the same trust rules and resource limits as formulas. In an untrusted workbook buttons are disabled; fields still edit the tab directly, since that runs no Python.
+- **A click first enters the field being edited**, so the procedure sees what is on the screen; a refused entry stops the click and shows why. The procedure then waits its turn on the evaluation thread and reads the tab as it is when it starts, after any evaluation ahead of it has been applied.
+- **A conflicting edit refuses the writes.** If the user edits a node after the procedure started, and the procedure wrote that node, none of the writes are applied and the message names the node. This is the rule for an evaluation that an edit overtook. Fields stay editable while a procedure runs.
+- Buttons run one at a time on the evaluation thread. While one runs, all buttons of the workbook are disabled and the status bar shows it.
+- Procedures run under the same trust rules as formulas, with their own time limit, the **button procedure time limit** (see Settings and limits), because a procedure that loops over a large array or waits on a data source can reasonably run longer than a formula. In an untrusted workbook buttons are disabled; fields still edit the tab directly, since that runs no Python.
 
 ## Data sources
 
@@ -452,7 +468,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 
 ## Trust model
 
-**What trust covers.** Trust applies to all **executable content**: formulas, module sources, form button procedure names, and report expressions. The trust hash is a digest of a canonical serialisation of exactly that content. Data edits do not affect it.
+**What trust covers.** Trust applies to all **executable content**: formulas, module sources, form button procedure names, the expressions of form controls, and report expressions. The trust hash is a digest of a canonical serialisation of exactly that content. Data edits do not affect it.
 
 **Recording trust.** User config stores, per workbook, a random **workbook id** (also stored in the file) and the **content hash** at the time of trust.
 - **Edits made inside the app** to executable content (typing a formula, editing a module, pasting) update the stored hash while the workbook is trusted. No re-prompt.
@@ -580,7 +596,8 @@ Limits are not hard-coded. The user sets them, with defaults, in two places.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Formula time limit | 1 s | Longest a single formula, button procedure, or module load step may run (CPU time, not I/O waits) before `#TIMEOUT!`. |
+| Formula time limit | 1 s | Longest a single formula or module load step may run (CPU time, not I/O waits) before `#TIMEOUT!`. |
+| Button procedure time limit | 10 s | Longest a form button procedure may run (CPU time, not I/O waits) before its writes are dropped and the message shown. |
 | Recalculation time limit | 10 s | Longest one recalculation pass may run. |
 | Cancel grace period | 500 ms | After a cancel signal, how long to wait for the evaluation to stop before abandoning it. |
 | **Maximum abandoned threads** | **20** | How many abandoned evaluations (see below) may still be running at once. |
@@ -617,7 +634,7 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 | Display | All workbooks | *Tree grid*: indentation per level [16 px]; row density (Compact, Normal, Comfortable) [Normal]; show the Type column [on]; show the Formula column [on]. *Tabular view*: default column width [120 px]. *Comments*: hover delay before the popup appears [500 ms]; maximum popup width [360 px] and height [240 px]. |
 | Editing | All workbooks | *Undo history*: maximum number of entries and the memory budget. *Formula bar*: the most lines it grows to before it scrolls [6]. |
 | Code editor | All workbooks | *Editor*: font family (any monospace font) and size [13 pt]; indent width, 2 to 8 spaces [4]; show line numbers [on]; syntax highlighting [on]; wrap long lines [off]. *Immediate window*: history entries kept [100]; maximum output size of one result [64 KB]. |
-| Evaluation | This workbook | *Time limits*: formula time limit, recalculation time limit. *Cancellation*: cancel grace period; maximum abandoned threads, the number currently abandoned, and the *Save and restart* button. *Guards*: maximum range length. |
+| Evaluation | This workbook | *Time limits*: formula time limit, button procedure time limit, recalculation time limit. *Cancellation*: cancel grace period; maximum abandoned threads, the number currently abandoned, and the *Save and restart* button. *Guards*: maximum range length. |
 | Data sources | This workbook | *Limits*: call timeout and maximum response size. *Specifications*: a *Manage data sources...* button that opens the Data sources panel, where specifications are created, edited, tested, and granted. |
 | Trust and security | All workbooks | *Trusted workbooks*: the list, each with *Revoke*. *Data source grants*: the list, each with *Revoke*. *Ceilings*: the maximum for each workbook setting (see below). |
 | Files and import | All workbooks | *Reading files*: maximum zip entries, maximum total uncompressed size, maximum nesting depth. *Import*: maximum import file size. |
@@ -633,6 +650,7 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 | Workbook setting | Default | Default ceiling |
 |---|---|---|
 | Formula time limit | 1 s | 60 s |
+| Button procedure time limit | 10 s | 300 s |
 | Recalculation time limit | 10 s | 600 s |
 | Cancel grace period | 500 ms | 10 s |
 | Maximum abandoned threads | 20 | 100 |
@@ -831,8 +849,8 @@ A workbook is saved as a **zip archive with the extension `.clio`**. It is an or
 manifest.json            first entry in the archive
 sheets/<Tab>/data.json   (or data.xml)   the tab's data tree, with stored values
 sheets/<Tab>/overlay.json                formulas and their status
+sheets/<Tab>/forms/<Form>.json           a customised form design of the tab
 reports/<Report>.json                    report design (later version; reserved)
-forms/<Form>.json                        form design
 modules/<name>.py                        Python modules
 datasources.json                         data source definitions, no secrets
 settings.json                            workbook settings (see Settings and limits)
@@ -840,8 +858,8 @@ settings.json                            workbook settings (see Settings and lim
 
 - **Tabs** are one directory each. Tab names are valid identifiers and unique ignoring case (see Names and reserved words), so they are safe as file names on every platform. A schema sheet is stored the same way as any tree sheet (JSON or XML data, according to its meta-schema).
 - **Data files** hold the plain data, including the latest computed values, exactly as other tools would expect (see Stored values). Errored nodes are absent from them.
-- **Overlay** holds, per node path: the formula text, and its status (ok, pending, or the error kind, message, and traceback). Entries are sorted by path. It also holds the tab's view state, such as which arrays are shown as tables. Comments are not in the overlay: they are XML comments in `data.xml`.
-- **Reports and forms** are the design documents described in their sections, with the report or form name as the file name.
+- **Overlay** holds, per node path: the formula text, and its status (ok, pending, or the error kind, message, and traceback). Entries are sorted by path. It also holds the tab's view state, such as which view is current and which arrays are shown as tables. Comments are not in the overlay: they are XML comments in `data.xml`.
+- **Reports** are the design documents described in their section, with the report name as the file name. **Forms** are stored under the tab they are views of: `sheets/<Tab>/forms/<Form>.json`. A form that has not been customised has no file, so the generated Default form is never stored.
 - **Modules** are plain `.py` files, so they can be edited, diffed, and linted with ordinary tools.
 
 **Manifest** (`manifest.json`) records:
@@ -849,8 +867,8 @@ settings.json                            workbook settings (see Settings and lim
 - The **workbook id** used by the trust model.
 - The **reserved-names version** (see Names and reserved words).
 - The **Python engine and its version**, so a file written against one RustPython release can be flagged when opened with another.
-- The list of tabs in tab order, each with its kind (`tree` in v1; `report` is reserved for the later version) and, for tree sheets, its **schema binding**: `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
-- The list of forms and modules, in display order.
+- The list of tabs in tab order, each with its kind (`data` in v1; `report` is reserved for the later version) and, for tree sheets, its **schema binding**: `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
+- The list of modules in display order, and for each Data Tab the customised forms in display order.
 
 **Writing**
 - Text is UTF-8 with LF line endings. JSON is pretty-printed with a stable key order; data keeps the schema's declared field order.
@@ -881,7 +899,7 @@ Cargo workspace:
 - Type-aware editors: toggles for booleans, dropdowns for enums, numeric fields.
 - Schema violations get a red outline; computed cells get a distinct fill.
 - Side panels for the error list, and for modules and trust state.
-- A Forms menu that opens form-fill views, and a code area holding Python modules and form designs (see Forms).
+- A view selector for each Data Tab (the Data tree and its forms), and a code area holding Python modules and the raw text of form designs (see Forms).
 
 ## Testing and CI
 
@@ -921,6 +939,7 @@ The project has automated tests at several levels, and **all of them run in a CI
 | `open_workbook`, `new_workbook`, `save`, `save_as`, `close` | File operations. |
 | `select` (a path) | Select a node, in the grid or the table. |
 | `enter` (text), `key` (a chord), `menu` (a menu path), `context_menu` (a path and an item) | What a user types and clicks. |
+| `view` (a name), `set_field` (a path and text), `click_button` (a label) | Switch the tab to the Data tree or a form, and do what a user does on a form. |
 | `cell` (a path) | Returns the value, formula text, error, pending state, comment, hidden or filtered state, and validity. |
 | `tree` (a path and a depth) | Returns a snapshot of a subtree. |
 | `status` | Returns the status bar text, the pending count, and the abandoned-thread count. |
@@ -1045,7 +1064,7 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
 5. **std** functions, workbook modules, trust.
 6. **XSD** subset and XML adapter.
 6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB.
-7. **Forms**: `builtin:form` schema, form-fill view with live read and write to the tab, button procedures, then the designer.
+7. **Views and forms**: the view selector and the remembered view of each tab, the `builtin:form` schema, the generated Default form with live read and write to the tab, then named forms and in-place customising (layout mode, property page), then button procedures.
 
 Reports and the wasm port are **not part of v1**; see Later versions.
 
@@ -1066,6 +1085,7 @@ Deferred features, with what v1 does to keep them possible:
 - **Snapshots.** The data tree uses reference-counted nodes with copy-on-write (`Arc`-based), so the evaluation thread takes a consistent snapshot by cloning the root, and the UI thread copies only the path it edits. This is settled in step 1 when `Value` is defined.
 - **Dependency granularity.** Version 1 records dependencies at the node level (a read of an array or object depends on its structure and children). Path-prefix subscriptions are added only if the step 3 measurements show recalculation doing too much work.
 - **Computed children.** An array item may carry its own formula only when the array itself is not computed, as specified under Formulas. Nothing more is needed unless real use shows otherwise.
+- **Views and forms (design review of 2026-10-24).** A Data Tab has views: the Data tree, and named forms, of which Default always exists and is generated until customised. Customising is in place and copy-on-write. The form view has no formula bar; formulas appear on the property page of a control. Views belong to the tab, so there is no binding by name. A Report Tab is a different kind of tab.
 - **Forms and XML.** Form field paths use element and attribute names. The `@attr` and `#text` mapping stays inside the XML adapter and is not shown to the user.
 - **Button procedure power.** Procedures may write to other tabs through `ctx`, atomically, as specified under Forms. Writes to databases and HTTP endpoints are immediate and are not undone.
 
