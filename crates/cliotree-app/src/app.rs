@@ -11,6 +11,7 @@ use cliotree_calc::{Calc, EvalSettings, Evaluator, Session, python};
 use cliotree_core::validate::validate;
 use cliotree_core::{Node, Path, Value};
 
+use crate::form::{FormState, View};
 use crate::rows::{self, Row};
 use crate::schema::SchemaDialog;
 use crate::tables::Tables;
@@ -91,6 +92,10 @@ pub struct ClioApp {
     pub scroll_to: Option<usize>,
     /// What the trust banner shows while the workbook is not trusted.
     pub trust: crate::trust_ui::TrustBanner,
+    /// The view each tab shows. A tab not in the map shows its data tree.
+    pub views: HashMap<String, View>,
+    /// What the form views keep between frames.
+    pub form: FormState,
 }
 
 impl ClioApp {
@@ -137,6 +142,8 @@ impl ClioApp {
             schema_dialog: None,
             scroll_to: None,
             trust: crate::trust_ui::TrustBanner::default(),
+            views: HashMap::new(),
+            form: FormState::default(),
         }
     }
 

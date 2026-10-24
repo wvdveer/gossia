@@ -28,7 +28,7 @@ pub(crate) fn error_color(ui: &egui::Ui) -> Color32 {
     }
 }
 
-fn computed_fill(ui: &egui::Ui) -> Color32 {
+pub(crate) fn computed_fill(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
         Color32::from_rgba_unmultiplied(70, 110, 160, 40)
     } else {
@@ -89,8 +89,12 @@ impl ClioApp {
         if self.banner_shown() {
             egui::Panel::top("trust_banner").show(ui, |ui| self.trust_banner(ui));
         }
-        egui::Panel::top("formula_bar").show(ui, |ui| self.formula_bar(ui));
-        if self.calc().is_schema_sheet(&self.sheet) {
+        // A form has no formula bar: formulas are edited in the data tree.
+        let form = self.in_form();
+        if !form {
+            egui::Panel::top("formula_bar").show(ui, |ui| self.formula_bar(ui));
+        }
+        if !form && self.calc().is_schema_sheet(&self.sheet) {
             egui::Panel::top("schema_bar").show(ui, |ui| self.schema_bar(ui));
         }
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
@@ -100,15 +104,19 @@ impl ClioApp {
                 .default_size(300.0)
                 .show(ui, |ui| self.issues_panel(ui));
         }
-        self.refresh_rows();
-        self.refresh_table();
-        if self.layout().is_some() {
-            egui::Panel::bottom("table")
-                .resizable(true)
-                .default_size(280.0)
-                .show(ui, |ui| self.table_pane(ui));
+        if form {
+            egui::CentralPanel::default().show(ui, |ui| self.form_view(ui));
+        } else {
+            self.refresh_rows();
+            self.refresh_table();
+            if self.layout().is_some() {
+                egui::Panel::bottom("table")
+                    .resizable(true)
+                    .default_size(280.0)
+                    .show(ui, |ui| self.table_pane(ui));
+            }
+            egui::CentralPanel::default().show(ui, |ui| self.grid(ui));
         }
-        egui::CentralPanel::default().show(ui, |ui| self.grid(ui));
         self.insert_function_window(ui.ctx());
         self.filter_window(ui.ctx());
         self.schema_window(ui.ctx());
@@ -130,7 +138,7 @@ impl ClioApp {
                 self.undo();
             }
         }
-        if typing_somewhere || self.editing.is_some() {
+        if typing_somewhere || self.editing.is_some() || self.in_form() {
             return;
         }
         let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
@@ -900,6 +908,15 @@ impl ClioApp {
                 let selected = name == self.sheet;
                 if ui.selectable_label(selected, &name).clicked() {
                     self.switch_to(&name);
+                }
+            }
+            // The view of the current tab.
+            ui.separator();
+            ui.weak("Show as");
+            for view in self.view_names() {
+                let chosen = self.current_view() == &view;
+                if ui.selectable_label(chosen, view.label()).clicked() {
+                    self.set_view(view);
                 }
             }
         });

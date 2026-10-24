@@ -452,7 +452,7 @@ impl ClioApp {
         self.reorder(array, &order, if up { "Move up" } else { "Move down" });
     }
 
-    fn reorder(&mut self, array: &Path, order: &[usize], what: &str) {
+    pub(crate) fn reorder(&mut self, array: &Path, order: &[usize], what: &str) {
         let sheet = self.sheet.clone();
         match self.session.calc_mut().reorder(&sheet, array, order, what) {
             Ok(()) => {

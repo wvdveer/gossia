@@ -67,12 +67,31 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                     .unwrap_or_else(|| format!("cannot select {path}")))
             }
         }
+        // Shows a view of the current tab: `Data tree`, or a form by name.
+        "view" => {
+            let name = text_arg(args, "name")?;
+            let view = app
+                .view_names()
+                .into_iter()
+                .find(|v| v.label().eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("there is no view called {name}"))?;
+            if app.set_view(view) {
+                app.refresh_rows();
+                Ok(Json::Null)
+            } else {
+                Err(app.notice.clone().unwrap_or_default())
+            }
+        }
         "enter" => {
             let text = text_arg(args, "text")?;
             let path = app
                 .selection
                 .clone()
                 .ok_or("nothing is selected, so there is nowhere to enter the text")?;
+            if app.in_form() {
+                // What the user types into a field of the form, then leaves it.
+                return app.enter_in_form(&path, text).map(|()| Json::Null);
+            }
             // What the user types into a cell: begin, replace, then Enter.
             if !app.begin_editing(&path, true, Some(text.to_owned())) {
                 return Err(app.notice.clone().unwrap_or_default());
@@ -124,6 +143,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 "stale": app.calc().stale(),
                 "notice": app.notice,
                 "tab": app.sheet,
+                "view": app.current_view().label(),
                 "selection": app.selection.as_ref().map(ToString::to_string),
             }))
         }

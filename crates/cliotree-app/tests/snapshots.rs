@@ -149,3 +149,18 @@ fn a_schema_tab_and_its_field_dialog() {
     click(&mut harness, "Add field...");
     check(&mut harness, "add_field_dialog", &mut results);
 }
+
+#[test]
+fn the_default_form() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    click(&mut harness, "Default");
+    check(&mut harness, "default_form_orders", &mut results);
+
+    click(&mut harness, "Prices");
+    click(&mut harness, "Default");
+    check(&mut harness, "default_form_prices", &mut results);
+}
