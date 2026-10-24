@@ -9,6 +9,8 @@ pub mod edit;
 #[cfg(test)]
 mod edit_tests;
 pub mod form;
+pub mod icons;
+pub mod raw;
 pub mod rows;
 pub mod sample;
 pub mod schema;

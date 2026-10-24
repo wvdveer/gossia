@@ -77,6 +77,7 @@ pub(crate) enum Action {
 impl ClioApp {
     /// One frame of the window.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        crate::icons::prepare(ui.ctx());
         self.session.tick();
         if !self.session.is_idle() {
             ui.ctx().request_repaint_after(Duration::from_millis(30));
@@ -90,7 +91,7 @@ impl ClioApp {
             egui::Panel::top("trust_banner").show(ui, |ui| self.trust_banner(ui));
         }
         // A form has no formula bar: formulas are edited in the data tree.
-        let form = self.in_form();
+        let form = !self.in_tree();
         if !form {
             egui::Panel::top("formula_bar").show(ui, |ui| self.formula_bar(ui));
         }
@@ -105,7 +106,13 @@ impl ClioApp {
                 .show(ui, |ui| self.issues_panel(ui));
         }
         if form {
-            egui::CentralPanel::default().show(ui, |ui| self.form_view(ui));
+            egui::CentralPanel::default().show(ui, |ui| {
+                if self.in_form() {
+                    self.form_view(ui);
+                } else {
+                    self.raw_view(ui);
+                }
+            });
         } else {
             self.refresh_rows();
             self.refresh_table();
@@ -138,7 +145,7 @@ impl ClioApp {
                 self.undo();
             }
         }
-        if typing_somewhere || self.editing.is_some() || self.in_form() {
+        if typing_somewhere || self.editing.is_some() || !self.in_tree() {
             return;
         }
         let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
@@ -244,6 +251,17 @@ impl ClioApp {
                 }
             });
             ui.menu_button("View", |ui| {
+                // How the current tab is shown.
+                ui.menu_button("Show as", |ui| {
+                    for view in self.view_names() {
+                        let chosen = self.current_view() == &view;
+                        if ui.radio(chosen, view.label()).clicked() {
+                            self.set_view(view);
+                            ui.close();
+                        }
+                    }
+                });
+                ui.separator();
                 if ui.checkbox(&mut self.show_issues, "Issues panel").clicked() {
                     ui.close();
                 }
@@ -908,15 +926,6 @@ impl ClioApp {
                 let selected = name == self.sheet;
                 if ui.selectable_label(selected, &name).clicked() {
                     self.switch_to(&name);
-                }
-            }
-            // The view of the current tab.
-            ui.separator();
-            ui.weak("Show as");
-            for view in self.view_names() {
-                let chosen = self.current_view() == &view;
-                if ui.selectable_label(chosen, view.label()).clicked() {
-                    self.set_view(view);
                 }
             }
         });

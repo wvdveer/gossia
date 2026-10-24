@@ -1,0 +1,166 @@
+//! The Raw view of a Data Tab: the tab's data as the pretty-printed JSON or
+//! XML document it is stored as. The text can be selected and copied, and a
+//! whole document can be pasted over it. A paste is checked against the
+//! tab's schema first, and refused with the reason if the document does not
+//! conform: nothing is changed then.
+
+use cliotree_core::validate::validate;
+use cliotree_core::{Path, json, xml};
+
+use crate::app::ClioApp;
+use crate::view::error_color;
+
+/// How many problems of a refused paste are listed.
+const LISTED: usize = 6;
+
+/// What the Raw view keeps between frames.
+#[derive(Debug, Default)]
+pub struct RawState {
+    /// The text shown, and the tab and revision it was made for.
+    pub text: String,
+    pub key: Option<(String, u64)>,
+    /// Why the last paste was refused.
+    pub error: Option<String>,
+}
+
+impl ClioApp {
+    /// Whether the tab holds XML (an XSD is its schema) rather than JSON.
+    fn raw_is_xml(&self) -> bool {
+        self.calc()
+            .spec(&self.sheet)
+            .is_some_and(|spec| spec.xml().is_some())
+    }
+
+    /// The text of the tab's document, made again only when the data changed.
+    pub fn raw_text(&mut self) -> &str {
+        let key = (self.sheet.clone(), self.calc().revision());
+        if self.raw.key.as_ref() != Some(&key) {
+            let calc = self.calc();
+            let text = match (calc.spec(&self.sheet), calc.data(&self.sheet)) {
+                (Some(spec), Some(data)) => match (spec.xml(), calc.xml_document(&self.sheet)) {
+                    (Some(_), Some(document)) => {
+                        xml::to_string(data, spec, document, true).map_err(|e| e.to_string())
+                    }
+                    (Some(_), None) => {
+                        xml::to_string(data, spec, &xml::XmlDocument::default(), true)
+                            .map_err(|e| e.to_string())
+                    }
+                    (None, _) => json::to_string(data, true).map_err(|e| e.to_string()),
+                },
+                _ => Ok(String::new()),
+            };
+            self.raw.text = text.unwrap_or_else(|e| format!("The document cannot be written: {e}"));
+            self.raw.key = Some(key);
+        }
+        &self.raw.text
+    }
+
+    /// Replaces the document of the tab with `text`, if it is a document that
+    /// conforms to the schema. On refusal nothing changes and the reason is
+    /// returned, and shown in the view.
+    pub fn paste_document(&mut self, text: &str) -> Result<(), String> {
+        let result = self.try_paste_document(text);
+        self.raw.error = result.as_ref().err().cloned();
+        result
+    }
+
+    fn try_paste_document(&mut self, text: &str) -> Result<(), String> {
+        let sheet = self.sheet.clone();
+        let (node, document) = {
+            let Some(spec) = self.calc().spec(&sheet) else {
+                return Err("there is no such tab".to_owned());
+            };
+            let (node, document) = if spec.xml().is_some() {
+                let parsed = xml::parse(text, spec)
+                    .map_err(|e| format!("Not pasted: it is not XML of this schema: {e}"))?;
+                (parsed.node, Some(parsed.document))
+            } else {
+                let parsed = json::parse(text)
+                    .map_err(|e| format!("Not pasted: it is not valid JSON: {e}"))?;
+                (parsed.node, None)
+            };
+            let issues = validate(spec, &node);
+            if !issues.is_empty() {
+                let mut message = format!(
+                    "Not pasted: the document does not conform to the schema of {sheet} ({} problem{}):",
+                    issues.len(),
+                    if issues.len() == 1 { "" } else { "s" }
+                );
+                for issue in issues.iter().take(LISTED) {
+                    let at = if issue.path.is_root() {
+                        sheet.clone()
+                    } else {
+                        format!("{sheet}.{}", issue.path)
+                    };
+                    message.push_str(&format!("\n{at}: {}", issue.message));
+                }
+                if issues.len() > LISTED {
+                    message.push_str(&format!("\nand {} more", issues.len() - LISTED));
+                }
+                return Err(message);
+            }
+            (node, document)
+        };
+        self.session
+            .calc_mut()
+            .set_value(&sheet, &Path::root(), node.value().clone())
+            .map_err(|e| format!("Not pasted: {e}"))?;
+        if let Some(document) = document {
+            let _ = self.session.calc_mut().set_xml_document(&sheet, document);
+        }
+        self.notice = None;
+        self.session.tick();
+        Ok(())
+    }
+
+    /// The Raw view, filling the central panel.
+    pub(crate) fn raw_view(&mut self, ui: &mut egui::Ui) {
+        // A paste over the view is a paste of the whole document.
+        let pasted = ui.input_mut(|i| {
+            let mut found = None;
+            i.events.retain(|e| match e {
+                egui::Event::Paste(text) => {
+                    found = Some(text.clone());
+                    false
+                }
+                _ => true,
+            });
+            found
+        });
+        if let Some(text) = pasted {
+            let _ = self.paste_document(&text);
+        }
+        let format = if self.raw_is_xml() { "XML" } else { "JSON" };
+        let text = self.raw_text().to_owned();
+        ui.horizontal(|ui| {
+            ui.strong(format);
+            if ui
+                .button("Copy")
+                .on_hover_text("Copy the whole document")
+                .clicked()
+            {
+                ui.ctx().copy_text(text.clone());
+            }
+            ui.weak("Press Ctrl+V to replace the document with the clipboard.");
+        });
+        if let Some(error) = &self.raw.error {
+            let color = error_color(ui);
+            ui.colored_label(color, error);
+        }
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // A shared reference is a text buffer that cannot be edited,
+                // which can still be selected and copied.
+                let mut shown = text.as_str();
+                let response = ui.add(
+                    egui::TextEdit::multiline(&mut shown)
+                        .code_editor()
+                        .desired_width(f32::INFINITY),
+                );
+                let name = "Raw document";
+                response
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, name));
+            });
+    }
+}

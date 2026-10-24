@@ -48,6 +48,16 @@ fn click(harness: &mut Harness<'_, ClioApp>, label: &str) {
     harness.run();
 }
 
+/// Chooses a view of the current tab: View, Show as, the view.
+fn show_as(harness: &mut Harness<'_, ClioApp>, view: &str) {
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Show as").click();
+    harness.run();
+    harness.get_by_label(view).click();
+    harness.run();
+}
+
 fn options() -> SnapshotOptions {
     let directory = format!("tests/snapshots/{}", std::env::consts::OS);
     // A few pixels may differ between drivers; a moved or missing widget differs
@@ -157,10 +167,21 @@ fn the_default_form() {
     }
     let mut results = SnapshotResults::new();
     let mut harness = window();
-    click(&mut harness, "Default");
+    show_as(&mut harness, "Default");
     check(&mut harness, "default_form_orders", &mut results);
 
     click(&mut harness, "Prices");
-    click(&mut harness, "Default");
+    show_as(&mut harness, "Default");
     check(&mut harness, "default_form_prices", &mut results);
+}
+
+#[test]
+fn the_raw_view() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    show_as(&mut harness, "Raw");
+    check(&mut harness, "raw_view_orders", &mut results);
 }

@@ -82,6 +82,14 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 Err(app.notice.clone().unwrap_or_default())
             }
         }
+        // Pastes a whole document in the Raw view.
+        "paste" => {
+            let text = text_arg(args, "text")?;
+            if app.current_view().label() != "Raw" {
+                return Err("paste needs the Raw view".to_owned());
+            }
+            app.paste_document(text).map(|()| Json::Null)
+        }
         "enter" => {
             let text = text_arg(args, "text")?;
             let path = app

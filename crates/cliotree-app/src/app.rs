@@ -12,6 +12,7 @@ use cliotree_core::validate::validate;
 use cliotree_core::{Node, Path, Value};
 
 use crate::form::{FormState, View};
+use crate::raw::RawState;
 use crate::rows::{self, Row};
 use crate::schema::SchemaDialog;
 use crate::tables::Tables;
@@ -96,6 +97,8 @@ pub struct ClioApp {
     pub views: HashMap<String, View>,
     /// What the form views keep between frames.
     pub form: FormState,
+    /// What the Raw view keeps between frames.
+    pub raw: RawState,
 }
 
 impl ClioApp {
@@ -144,6 +147,7 @@ impl ClioApp {
             trust: crate::trust_ui::TrustBanner::default(),
             views: HashMap::new(),
             form: FormState::default(),
+            raw: RawState::default(),
         }
     }
 

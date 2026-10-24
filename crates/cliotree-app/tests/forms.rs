@@ -35,6 +35,16 @@ fn click(harness: &mut Harness<'_, ClioApp>, label: &str) {
     harness.run();
 }
 
+/// Chooses a view of the current tab: View, Show as, the view.
+fn show_as(harness: &mut Harness<'_, ClioApp>, view: &str) {
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Show as").click();
+    harness.run();
+    harness.get_by_label(view).click();
+    harness.run();
+}
+
 fn has(harness: &Harness<'_, ClioApp>, label: &str) -> bool {
     harness.query_by_label(label).is_some()
 }
@@ -66,7 +76,7 @@ fn type_into(harness: &mut Harness<'_, ClioApp>, field: &str, text: &str) {
 
 fn form() -> Harness<'static, ClioApp> {
     let mut harness = window();
-    click(&mut harness, "Default");
+    show_as(&mut harness, "Default");
     settle(&mut harness);
     harness
 }
@@ -76,12 +86,12 @@ fn the_view_selector_switches_between_the_tree_and_the_default_form() {
     let mut harness = window();
     assert!(harness.state().current_view() == &View::Tree);
     assert!(has(&harness, "Formula bar"));
-    click(&mut harness, "Default");
+    show_as(&mut harness, "Default");
     assert!(harness.state().in_form());
     // A form has no formula bar, and shows the fields with their values.
     assert!(!has(&harness, "Formula bar"));
     harness.get_by_label("Orders.customer.name");
-    click(&mut harness, "Data tree");
+    show_as(&mut harness, "Data tree");
     assert!(!harness.state().in_form());
     assert!(has(&harness, "Formula bar"));
 }
@@ -89,7 +99,7 @@ fn the_view_selector_switches_between_the_tree_and_the_default_form() {
 #[test]
 fn each_tab_remembers_its_view() {
     let mut harness = window();
-    click(&mut harness, "Default");
+    show_as(&mut harness, "Default");
     click(&mut harness, "Prices");
     // The other tab is still the tree.
     assert!(harness.state().current_view() == &View::Tree);
@@ -136,8 +146,7 @@ fn a_value_that_does_not_fit_stays_in_the_field_and_is_not_written() {
         "the reason is shown"
     );
     // The view cannot be left with an entry that is refused.
-    harness.get_by_label("Data tree").click();
-    harness.run();
+    show_as(&mut harness, "Data tree");
     assert!(harness.state().in_form());
     // Correcting it lets the value in, and the view can change.
     type_into(&mut harness, "Orders.tax_rate", "0.5");
@@ -146,7 +155,7 @@ fn a_value_that_does_not_fit_stays_in_the_field_and_is_not_written() {
         value(&harness, "Orders", "tax_rate"),
         Some(Value::Float(0.5))
     );
-    click(&mut harness, "Data tree");
+    show_as(&mut harness, "Data tree");
     assert!(!harness.state().in_form());
 }
 
@@ -236,7 +245,11 @@ fn the_items_of_an_array_are_a_table_with_row_commands() {
     );
     harness.get_by_label("Orders.items[3].sku");
     // A row is deleted from its own buttons.
-    harness.get_all_by_label("×").nth(3).unwrap().click();
+    harness
+        .get_all_by_label("Delete row")
+        .nth(3)
+        .unwrap()
+        .click();
     harness.run();
     settle(&mut harness);
     assert_eq!(
@@ -254,7 +267,11 @@ fn the_items_of_an_array_are_a_table_with_row_commands() {
         3
     );
     // Moving a row down swaps it with the next.
-    harness.get_all_by_label("v").next().unwrap().click();
+    harness
+        .get_all_by_label("Move down")
+        .next()
+        .unwrap()
+        .click();
     harness.run();
     settle(&mut harness);
     assert_eq!(
@@ -287,7 +304,7 @@ fn the_columns_of_a_table_sort_the_array() {
 fn a_map_is_a_list_of_entries_that_can_be_added_to_and_removed_from() {
     let mut harness = window();
     click(&mut harness, "Prices");
-    click(&mut harness, "Default");
+    show_as(&mut harness, "Default");
     harness.get_by_label("Prices.list[\"A-100\"]");
     harness.get_by_label("New key of Prices.list").click();
     harness
@@ -297,7 +314,11 @@ fn a_map_is_a_list_of_entries_that_can_be_added_to_and_removed_from() {
     click(&mut harness, "Add entry");
     settle(&mut harness);
     assert!(value(&harness, "Prices", "list[\"E-500\"]").is_some());
-    harness.get_all_by_label("×").next().unwrap().click();
+    harness
+        .get_all_by_label("Delete entry")
+        .next()
+        .unwrap()
+        .click();
     harness.run();
     settle(&mut harness);
     assert!(value(&harness, "Prices", "list[\"A-100\"]").is_none());
@@ -309,7 +330,7 @@ fn switching_back_to_the_tree_selects_the_node_that_had_the_focus() {
     harness.get_by_label("Orders.customer.city").click();
     harness.run();
     assert_eq!(harness.state().selection, Some(p("customer.city")));
-    click(&mut harness, "Data tree");
+    show_as(&mut harness, "Data tree");
     assert_eq!(harness.state().selection, Some(p("customer.city")));
     harness.get_by_label("Orders.customer.city");
 }
@@ -333,5 +354,132 @@ fn the_control_channel_shows_a_view_and_enters_into_a_field() {
     assert_eq!(
         value(&harness, "Orders", "customer.city"),
         Some(Value::Str("Delft".into()))
+    );
+}
+
+#[test]
+fn the_raw_view_shows_the_document_and_a_paste_replaces_it() {
+    let mut harness = window();
+    show_as(&mut harness, "Raw");
+    assert!(!has(&harness, "Formula bar"));
+    let shown = harness
+        .get_by_label("Raw document")
+        .value()
+        .unwrap_or_default();
+    // The pretty-printed JSON of the tab, with its calculated values.
+    assert!(shown.contains("\"name\": \"Acme Ltd\""), "{shown}");
+    assert!(shown.contains("\"total\": 62.92"), "{shown}");
+    assert!(shown.contains('\n'));
+    // A document that conforms is accepted, as one undoable edit.
+    let mut doc = shown.replace("Acme Ltd", "Globex");
+    doc = doc.replace("\"tax_rate\": 0.21", "\"tax_rate\": 0.5");
+    harness.event(egui::Event::Paste(doc));
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(
+        value(&harness, "Orders", "customer.name"),
+        Some(Value::Str("Globex".into()))
+    );
+    assert_eq!(value(&harness, "Orders", "total"), Some(Value::Float(78.0)));
+    assert_eq!(harness.state().calc().history_len().0, 1);
+    harness.state_mut().undo();
+    settle(&mut harness);
+    assert_eq!(
+        value(&harness, "Orders", "customer.name"),
+        Some(Value::Str("Acme Ltd".into()))
+    );
+}
+
+#[test]
+fn a_paste_that_does_not_conform_is_refused_with_the_reasons() {
+    let mut harness = window();
+    show_as(&mut harness, "Raw");
+    let before = harness
+        .get_by_label("Raw document")
+        .value()
+        .unwrap_or_default();
+    // Valid JSON, but the tax rate is above its maximum and `items` is gone.
+    harness.event(egui::Event::Paste(
+        r#"{"customer": {"name": "X", "status": "paid"}, "tax_rate": 7}"#.to_owned(),
+    ));
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label_contains("does not conform")
+            .next()
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_all_by_label_contains("maximum")
+            .next()
+            .is_some()
+    );
+    // Text that is not JSON at all.
+    harness.event(egui::Event::Paste("{not json".to_owned()));
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label_contains("not valid JSON")
+            .next()
+            .is_some()
+    );
+    // Nothing changed.
+    assert_eq!(harness.state().calc().history_len().0, 0);
+    assert_eq!(
+        harness
+            .get_by_label("Raw document")
+            .value()
+            .unwrap_or_default(),
+        before
+    );
+}
+
+#[test]
+fn the_raw_view_of_an_xml_tab_is_xml_and_a_paste_is_checked_against_the_xsd() {
+    use cliotree_core::{metaschema, xml, xsd};
+    const XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="order"><xs:complexType><xs:sequence>
+    <xs:element name="customer" type="xs:string"/>
+    <xs:element name="qty" type="xs:integer"/>
+  </xs:sequence></xs:complexType></xs:element></xs:schema>"#;
+    let mut calc =
+        cliotree_calc::Calc::new(std::sync::Arc::new(cliotree_calc::python::PythonSyntax));
+    let schema = xml::parse(XSD, metaschema::xsd_meta()).unwrap();
+    calc.add_xsd_sheet("S", schema.node, schema.document)
+        .unwrap();
+    let spec = xsd::lower_str(XSD).unwrap();
+    let data = xml::parse(
+        "<order><customer>Acme</customer><qty>2</qty></order>",
+        &spec,
+    )
+    .unwrap();
+    calc.add_sheet("Order", spec, data.node).unwrap();
+    calc.set_xml_document("Order", data.document).unwrap();
+    calc.bind_schema("Order", "S").unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), ClioApp::new(calc));
+    settle(&mut harness);
+    click(&mut harness, "Order");
+    show_as(&mut harness, "Raw");
+    let shown = harness
+        .get_by_label("Raw document")
+        .value()
+        .unwrap_or_default();
+    assert!(shown.contains("<customer>Acme</customer>"), "{shown}");
+    let app = harness.state_mut();
+    let why = app
+        .paste_document("<order><customer>X</customer><qty>two</qty></order>")
+        .unwrap_err();
+    assert!(
+        why.contains("does not conform") && why.contains("qty"),
+        "{why}"
+    );
+    app.paste_document("<order><customer>Globex</customer><qty>5</qty></order>")
+        .unwrap();
+    assert_eq!(
+        value(&harness, "Order", "customer"),
+        Some(Value::Str("Globex".into()))
     );
 }

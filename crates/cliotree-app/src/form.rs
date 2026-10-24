@@ -16,6 +16,7 @@ use egui::{Align, Color32, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
+use crate::icons;
 use crate::rows::display;
 use crate::table::{self, Column};
 use crate::view::{ROW_HEIGHT, computed_fill, error_color};
@@ -34,6 +35,8 @@ pub enum View {
     Tree,
     /// A form of the tab, by name.
     Form(String),
+    /// The document as JSON or XML text.
+    Raw,
 }
 
 impl View {
@@ -41,6 +44,7 @@ impl View {
         match self {
             View::Tree => "Data tree",
             View::Form(name) => name,
+            View::Raw => "Raw",
         }
     }
 }
@@ -94,13 +98,17 @@ impl ClioApp {
         self.views.get(&self.sheet).unwrap_or(&View::Tree)
     }
 
+    pub fn in_tree(&self) -> bool {
+        self.current_view() == &View::Tree
+    }
+
     pub fn in_form(&self) -> bool {
         matches!(self.current_view(), View::Form(_))
     }
 
     /// The names of the views of the current tab, the data tree first.
     pub fn view_names(&self) -> Vec<View> {
-        vec![View::Tree, View::Form(DEFAULT_FORM.to_owned())]
+        vec![View::Tree, View::Form(DEFAULT_FORM.to_owned()), View::Raw]
     }
 
     /// Shows `view` in the current tab. What is being typed is entered first,
@@ -121,6 +129,7 @@ impl ClioApp {
                 self.reveal(&path);
             }
         } else {
+            self.raw.error = None;
             self.views.insert(self.sheet.clone(), view);
             self.form.scroll_to = selection;
         }
@@ -653,8 +662,15 @@ impl Painter<'_> {
                 } else {
                     egui::TextEdit::singleline(&mut text)
                 };
+                // Numbers line up on the right.
+                let align = if matches!(kind, Kind::Integer(_) | Kind::Number(_)) {
+                    egui::Align2::RIGHT_CENTER
+                } else {
+                    egui::Align2::LEFT_CENTER
+                };
                 let r = ui.add(
                     edit.desired_width(width)
+                        .align(align)
                         .hint_text(hint(kind))
                         .interactive(!read_only),
                 );
@@ -825,30 +841,25 @@ impl Painter<'_> {
                     let index = row.index();
                     row.col(|ui| {
                         ui.label(RichText::new(format!("[{index}]")).weak());
-                        if ui
-                            .add_enabled(editable && index > 0, egui::Button::new("^").small())
-                            .on_hover_text("Move up")
+                        if icons::button(ui, editable && index > 0, icons::ARROW_UP, "^", "Move up")
                             .clicked()
                         {
                             self.actions
                                 .push(FormAction::Move(array.clone(), index, true));
                         }
-                        if ui
-                            .add_enabled(
-                                editable && index + 1 < len,
-                                egui::Button::new("v").small(),
-                            )
-                            .on_hover_text("Move down")
-                            .clicked()
+                        if icons::button(
+                            ui,
+                            editable && index + 1 < len,
+                            icons::ARROW_DOWN,
+                            "v",
+                            "Move down",
+                        )
+                        .clicked()
                         {
                             self.actions
                                 .push(FormAction::Move(array.clone(), index, false));
                         }
-                        if ui
-                            .add_enabled(editable, egui::Button::new("×").small())
-                            .on_hover_text("Delete this row")
-                            .clicked()
-                        {
+                        if icons::button(ui, editable, icons::X, "x", "Delete row").clicked() {
                             self.actions.push(FormAction::Delete(array.clone(), index));
                         }
                     });
@@ -877,14 +888,11 @@ impl Painter<'_> {
             .min(len - 1);
         let editable = self.app.can_reorder(array);
         ui.horizontal(|ui| {
-            if ui.add_enabled(at > 0, egui::Button::new("<")).clicked() {
+            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", "Previous item").clicked() {
                 self.actions.push(FormAction::Step(array.clone(), at - 1));
             }
             ui.label(format!("{} of {len}", at + 1));
-            if ui
-                .add_enabled(at + 1 < len, egui::Button::new(">"))
-                .clicked()
-            {
+            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", "Next item").clicked() {
                 self.actions.push(FormAction::Step(array.clone(), at + 1));
             }
             if ui
@@ -930,11 +938,7 @@ impl Painter<'_> {
                         },
                     );
                     self.editor(ui, &path.key(key.as_str()), value_ty, true, false);
-                    if ui
-                        .add_enabled(editable, egui::Button::new("×").small())
-                        .on_hover_text("Delete this entry")
-                        .clicked()
-                    {
+                    if icons::button(ui, editable, icons::X, "x", "Delete entry").clicked() {
                         self.actions
                             .push(FormAction::DeleteEntry(path.clone(), key.clone()));
                     }
