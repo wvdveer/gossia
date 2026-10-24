@@ -20,6 +20,7 @@ pub mod table_view;
 pub mod tables;
 #[cfg(test)]
 mod tables_tests;
+pub mod trust_ui;
 pub mod view;
 
 pub use app::ClioApp;

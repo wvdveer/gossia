@@ -32,7 +32,6 @@ const WAIT_FOR_WORKBOOKS: &[&str] = &[
     "context_menu",
     "set_option",
     "grant",
-    "trust",
 ];
 
 /// Does one command. `args` is the `args` object of the request (or `null`).
@@ -86,6 +85,20 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 Err(why)
             }
         }
+        // The decision of trust, so that a test need not drive the banner:
+        // `{"trusted": false}` withholds it, as opening an unknown file does.
+        "trust" => {
+            let trusted = args
+                .get("trusted")
+                .and_then(Json::as_bool)
+                .ok_or("the argument trusted (true or false) is missing")?;
+            if trusted {
+                app.trust_workbook();
+            } else {
+                app.withhold_trust(Vec::new());
+            }
+            Ok(Json::Null)
+        }
         "key" => key(app, &text_arg(args, "chord")?.to_ascii_lowercase()),
         "cell" => cell(app, &path_arg(args, "path")?),
         "tree" => {
@@ -107,6 +120,8 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 "problems": problems_text(app.summary.errors, app.summary.invalid),
                 "pending": status.pending,
                 "abandoned": status.abandoned,
+                "trusted": app.calc().is_trusted(),
+                "stale": app.calc().stale(),
                 "notice": app.notice,
                 "tab": app.sheet,
                 "selection": app.selection.as_ref().map(ToString::to_string),
@@ -194,6 +209,8 @@ fn cell(app: &ClioApp, path: &Path) -> Result<Json, String> {
         "formula": cell.formula.map(|f| format!("={f}")),
         "error": cell.error.map(|e| json!({ "code": e.kind.code(), "message": e.message })),
         "pending": cell.pending,
+        "untrusted": cell.untrusted,
+        "stale": cell.stale,
         "computed_by": cell.computed_by.map(|p| p.to_string()),
         "edit_text": app.cell_text(path),
     }))

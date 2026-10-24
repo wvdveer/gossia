@@ -114,6 +114,7 @@ impl ClioApp {
                 self.notice = None;
                 self.completion = CompletionUi::default();
                 self.pin_row_of(&editing.path);
+                self.note_unevaluated_formula(&editing.text);
                 self.session.tick();
                 true
             }

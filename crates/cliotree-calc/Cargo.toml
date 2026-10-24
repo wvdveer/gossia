@@ -20,6 +20,7 @@ ruff_python_ast = { package = "rustpython-ruff_python_ast", path = "../../vendor
 ruff_python_parser = { package = "rustpython-ruff_python_parser", path = "../../vendor/ruff/crates/ruff_python_parser" }
 ruff_source_file = { package = "rustpython-ruff_source_file", path = "../../vendor/ruff/crates/ruff_source_file" }
 ruff_text_size = { package = "rustpython-ruff_text_size", path = "../../vendor/ruff/crates/ruff_text_size" }
+sha2 = "0.11.1"
 
 [dev-dependencies]
 proptest = "1.12.0"

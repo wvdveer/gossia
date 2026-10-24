@@ -62,6 +62,10 @@ mod modules;
 use modules::Module;
 pub use modules::ModuleStatus;
 
+#[path = "trust.rs"]
+mod trust;
+pub use trust::{Change, ChangeKind, Decision, Fingerprint, TrustStore};
+
 /// Why an edit was refused.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditError {
@@ -135,6 +139,12 @@ pub struct Cell<'a> {
     pub traceback: Option<&'a str>,
     /// An evaluation is outstanding: the node shows its last value.
     pub pending: bool,
+    /// The node has a formula that is not evaluated because the workbook is
+    /// not trusted: the node shows the value it was stored with.
+    pub untrusted: bool,
+    /// The formula is out of date and, because the workbook is not trusted,
+    /// cannot be brought up to date.
+    pub stale: bool,
     /// The formula whose result contains this node, so the node is read-only.
     pub computed_by: Option<Path>,
 }
@@ -161,6 +171,8 @@ pub struct Calc {
     /// Counts the changes to modules, so that every one has a generation of
     /// its own.
     module_generation: u64,
+    /// Whether Python may run (see [`Calc::set_trusted`]).
+    trusted: bool,
 }
 
 impl Calc {
@@ -179,6 +191,7 @@ impl Calc {
             history: History::default(),
             modules: indexmap::IndexMap::new(),
             module_generation: 0,
+            trusted: true,
         }
     }
 
@@ -257,7 +270,7 @@ impl Calc {
         let s = self.sheets.get(sheet)?;
         let formula = s.formulas.by_path.get(path);
         let computed_by = s.formulas.computed_by(path);
-        let pending = self.dirty.contains(&Loc::new(sheet, path.clone()))
+        let waiting = self.dirty.contains(&Loc::new(sheet, path.clone()))
             || computed_by
                 .as_ref()
                 .is_some_and(|p| self.dirty.contains(&Loc::new(sheet, p.clone())));
@@ -266,14 +279,17 @@ impl Calc {
             formula: formula.map(|f| f.text.as_str()),
             error: formula.and_then(|f| f.error.as_ref()),
             traceback: formula.and_then(|f| f.traceback.as_deref()),
-            pending,
+            pending: waiting && self.trusted,
+            untrusted: !self.trusted && (formula.is_some() || computed_by.is_some()),
+            stale: waiting && !self.trusted,
             computed_by,
         })
     }
 
-    /// How many formulas are out of date.
+    /// How many formulas are out of date and will be evaluated. None while the
+    /// workbook is not trusted (see [`Calc::stale`]).
     pub fn pending(&self) -> usize {
-        self.dirty.len()
+        if self.trusted { self.dirty.len() } else { 0 }
     }
 
     // ---------------------------------------------------------- editing
@@ -917,9 +933,16 @@ impl Calc {
     /// A consistent view to evaluate. Take it, evaluate it anywhere, and hand
     /// the result to [`Calc::apply`].
     pub fn snapshot(&self) -> Snapshot {
+        // Nothing is to be run in a workbook that is not trusted, and no module
+        // loaded.
+        let trusted = self.trusted;
         Snapshot {
             version: self.version,
-            modules: self.module_specs(),
+            modules: if trusted {
+                self.module_specs()
+            } else {
+                Arc::default()
+            },
             sheets: self
                 .sheets
                 .iter()
@@ -934,7 +957,11 @@ impl Calc {
                     )
                 })
                 .collect(),
-            dirty: self.dirty.iter().cloned().collect(),
+            dirty: if trusted {
+                self.dirty.iter().cloned().collect()
+            } else {
+                Vec::new()
+            },
         }
     }
 

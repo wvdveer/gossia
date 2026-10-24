@@ -648,3 +648,83 @@ fn a_module_that_failed_is_counted_in_the_status_bar_and_listed_in_the_issues_pa
             .is_some()
     );
 }
+
+/// Runs a control command in the window and draws what it did.
+fn control(harness: &mut Harness<'_, ClioApp>, cmd: &str, args: serde_json::Value) {
+    cliotree_app::control::run(harness.state_mut(), cmd, &args).unwrap();
+    harness.run();
+}
+
+/// Trust model: an untrusted workbook says so, shows the stored values with a
+/// badge, and trusting it from the banner calculates it again.
+#[test]
+fn an_untrusted_workbook_shows_the_banner_and_the_badges_until_it_is_trusted() {
+    let mut harness = window();
+    harness.get_by_label("52.0");
+    control(&mut harness, "trust", serde_json::json!({"trusted": false}));
+    harness.get_by_label_contains("has not been trusted");
+    harness.get_by_label("Trust this version");
+    harness.get_by_label("Continue read-only");
+    harness.get_by_label("Not trusted");
+    assert_eq!(harness.query_all_by_label("#UNTRUSTED!").count(), 3);
+    // The value that was stored is still shown.
+    harness.get_by_label("52.0");
+
+    click(&mut harness, "Trust this version");
+    settle(&mut harness);
+    assert!(!has(&harness, "Trust this version"));
+    assert!(!has(&harness, "Not trusted"));
+    assert!(!has(&harness, "#UNTRUSTED!"));
+    harness.get_by_label("Ready");
+}
+
+#[test]
+fn continuing_read_only_puts_the_banner_away_but_the_status_bar_still_says_so() {
+    let mut harness = window();
+    control(&mut harness, "trust", serde_json::json!({"trusted": false}));
+    click(&mut harness, "Continue read-only");
+    assert!(!has(&harness, "Trust this version"));
+    harness.get_by_label("Not trusted");
+    assert_eq!(harness.query_all_by_label("#UNTRUSTED!").count(), 3);
+}
+
+/// Trust model, "Untrusted mode": data can still be edited, and what depends on
+/// it is shown as stale, since it cannot recalculate.
+#[test]
+fn editing_data_in_an_untrusted_workbook_leaves_what_depends_on_it_stale() {
+    let mut harness = window();
+    control(&mut harness, "trust", serde_json::json!({"trusted": false}));
+    control(
+        &mut harness,
+        "select",
+        serde_json::json!({"path": "items[0].qty"}),
+    );
+    control(&mut harness, "enter", serde_json::json!({"text": "5"}));
+    settle(&mut harness);
+    // The edit was taken; the totals were not recalculated.
+    harness.get_by_label("52.0");
+    assert!(
+        harness
+            .query_all_by_label_contains("Not trusted, ")
+            .next()
+            .is_some()
+    );
+}
+
+/// Trust model: entering a formula in an untrusted workbook keeps the text
+/// unevaluated and asks for trust again.
+#[test]
+fn a_formula_entered_in_an_untrusted_workbook_waits_and_brings_the_banner_back() {
+    let mut harness = window();
+    control(&mut harness, "trust", serde_json::json!({"trusted": false}));
+    click(&mut harness, "Continue read-only");
+    assert!(!has(&harness, "Trust this version"));
+    control(
+        &mut harness,
+        "select",
+        serde_json::json!({"path": "customer.name"}),
+    );
+    control(&mut harness, "enter", serde_json::json!({"text": "=1 + 1"}));
+    harness.get_by_label("Trust this version");
+    harness.get_by_label_contains("stored but not calculated");
+}

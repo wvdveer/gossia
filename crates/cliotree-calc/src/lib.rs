@@ -19,7 +19,10 @@ pub mod python;
 mod session;
 mod trie;
 
-pub use calc::{Applied, Calc, Cell, EditError, FieldKind, FieldPlaces, ModuleStatus};
+pub use calc::{
+    Applied, Calc, Cell, Change, ChangeKind, Decision, EditError, FieldKind, FieldPlaces,
+    Fingerprint, ModuleStatus, TrustStore,
+};
 pub use check::Computed;
 pub use engine::{
     Context, Depth, Engine, Failure, ModuleInfo, ModuleReport, ModuleSpec, Read, Syntax,

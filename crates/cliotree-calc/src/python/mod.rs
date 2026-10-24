@@ -450,3 +450,7 @@ mod tests_std;
 #[cfg(test)]
 #[path = "tests_modules.rs"]
 mod tests_modules;
+
+#[cfg(test)]
+#[path = "tests_trust.rs"]
+mod tests_trust;

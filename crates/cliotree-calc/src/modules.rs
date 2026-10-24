@@ -30,6 +30,8 @@ pub enum ModuleStatus {
     Loaded,
     /// It could not be loaded; the message says why.
     Failed(String),
+    /// It is not loaded because the workbook is not trusted.
+    Untrusted,
 }
 
 #[derive(Debug, Clone)]
@@ -79,7 +81,13 @@ impl Calc {
     }
 
     pub fn module_status(&self, name: &str) -> Option<&ModuleStatus> {
-        self.modules.get(name).map(|m| &m.status)
+        static UNTRUSTED: ModuleStatus = ModuleStatus::Untrusted;
+        let module = self.modules.get(name)?;
+        Some(if self.trusted {
+            &module.status
+        } else {
+            &UNTRUSTED
+        })
     }
 
     /// The generation of a module: one more for each change of its source.
@@ -99,6 +107,7 @@ impl Calc {
     pub fn module_issues(&self) -> Vec<(String, String)> {
         self.modules
             .iter()
+            .filter(|_| self.trusted)
             .filter_map(|(name, m)| match (&m.info, &m.status) {
                 (Err(e), _) => Some((name.clone(), format!("syntax error: {e}"))),
                 (_, ModuleStatus::Failed(why)) => Some((name.clone(), why.clone())),
@@ -109,6 +118,9 @@ impl Calc {
 
     /// How many modules have a source that is not loaded yet.
     pub fn pending_modules(&self) -> usize {
+        if !self.trusted {
+            return 0;
+        }
         self.modules
             .values()
             .filter(|m| m.status == ModuleStatus::Pending)

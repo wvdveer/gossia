@@ -89,6 +89,8 @@ pub struct ClioApp {
     pub schema_dialog: Option<SchemaDialog>,
     /// Scroll the grid so that this row is in view.
     pub scroll_to: Option<usize>,
+    /// What the trust banner shows while the workbook is not trusted.
+    pub trust: crate::trust_ui::TrustBanner,
 }
 
 impl ClioApp {
@@ -134,6 +136,7 @@ impl ClioApp {
             tables: Tables::default(),
             schema_dialog: None,
             scroll_to: None,
+            trust: crate::trust_ui::TrustBanner::default(),
         }
     }
 

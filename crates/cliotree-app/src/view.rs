@@ -86,6 +86,9 @@ impl ClioApp {
         self.handle_keys(ui);
 
         egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
+        if self.banner_shown() {
+            egui::Panel::top("trust_banner").show(ui, |ui| self.trust_banner(ui));
+        }
         egui::Panel::top("formula_bar").show(ui, |ui| self.formula_bar(ui));
         if self.calc().is_schema_sheet(&self.sheet) {
             egui::Panel::top("schema_bar").show(ui, |ui| self.schema_bar(ui));
@@ -625,6 +628,8 @@ impl ClioApp {
         let formula = cell.as_ref().and_then(|c| c.formula);
         let formula_error = cell.as_ref().and_then(|c| c.error);
         let pending = cell.as_ref().is_some_and(|c| c.pending);
+        let untrusted = cell.as_ref().is_some_and(|c| c.untrusted);
+        let stale = cell.as_ref().is_some_and(|c| c.stale);
         let computed_by = cell.as_ref().and_then(|c| c.computed_by.clone());
         let value = row.node.as_ref().map(|n| n.value());
         let is_error = matches!(value, Some(Value::Error(_)));
@@ -659,16 +664,34 @@ impl ClioApp {
             self.cell_editor(ui, editing, actions);
             return;
         }
-        self.value_cell(
-            ui,
-            row,
-            value,
-            formula,
-            formula_error,
-            editable,
-            selected,
-            actions,
-        );
+        // Not trusted: the value is the one that was stored, greyed when what
+        // it came from has changed since.
+        ui.scope(|ui| {
+            if stale {
+                let weak = ui.visuals().weak_text_color();
+                ui.visuals_mut().override_text_color = Some(weak);
+            }
+            self.value_cell(
+                ui,
+                row,
+                value,
+                formula,
+                formula_error,
+                editable,
+                selected,
+                actions,
+            );
+        });
+        if untrusted && formula.is_some() {
+            ui.label(RichText::new("#UNTRUSTED!").color(error_color(ui)).small())
+                .on_hover_text(if stale {
+                    "This workbook is not trusted, so the formula was not run. The value is \
+                     out of date: something it uses has changed."
+                } else {
+                    "This workbook is not trusted, so the formula was not run. The value is \
+                     the one that was stored."
+                });
+        }
         if pending {
             ui.label(RichText::new("…").weak())
                 .on_hover_text("Waiting to be calculated");
@@ -887,6 +910,16 @@ impl ClioApp {
             ui.label(evaluation_text(&self.session.status()));
             ui.separator();
             ui.label(problems_text(self.summary.errors, self.summary.invalid));
+            if !self.calc().is_trusted() {
+                ui.separator();
+                let stale = self.calc().stale();
+                let text = if stale == 0 {
+                    "Not trusted".to_owned()
+                } else {
+                    format!("Not trusted, {stale} stale")
+                };
+                ui.colored_label(error_color(ui), text);
+            }
             let failed = self.calc().module_issues().len();
             if failed > 0 {
                 ui.separator();
