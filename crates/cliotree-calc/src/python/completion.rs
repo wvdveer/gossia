@@ -69,9 +69,14 @@ pub fn complete(calc: &Calc, sheet: &str, here: &Path, text: &str, cursor: usize
         Some(dot) => {
             let head = &chain[..dot];
             let prefix = &chain[dot + 1..];
+            let items = if calc.module_names().any(|m| m == head) {
+                module_functions(calc, head, prefix)
+            } else {
+                fields(calc, sheet, here, head, prefix)
+            };
             Completions {
                 start: chain_start + dot + 1,
-                items: fields(calc, sheet, here, head, prefix),
+                items,
             }
         }
     }
@@ -139,6 +144,20 @@ fn starts_with_ignoring_case(word: &str, prefix: &str) -> bool {
     word.to_lowercase().starts_with(&prefix.to_lowercase())
 }
 
+/// The functions of a workbook module, after `Tax.`.
+fn module_functions(calc: &Calc, module: &str, prefix: &str) -> Vec<Completion> {
+    calc.module_functions(module)
+        .into_iter()
+        .filter(|f| starts_with_ignoring_case(f, prefix))
+        .map(|function| Completion {
+            insert: format!("{function}("),
+            label: function,
+            kind: CompletionKind::Function,
+            detail: format!("function in module {module}"),
+        })
+        .collect()
+}
+
 fn names(calc: &Calc, prefix: &str) -> Vec<Completion> {
     let mut out = Vec::new();
     for tab in calc.sheet_names() {
@@ -149,6 +168,26 @@ fn names(calc: &Calc, prefix: &str) -> Vec<Completion> {
                 kind: CompletionKind::Tab,
                 detail: "tab".to_owned(),
             });
+        }
+    }
+    for module in calc.module_names() {
+        if starts_with_ignoring_case(module, prefix) {
+            out.push(Completion {
+                label: module.to_owned(),
+                insert: format!("{module}."),
+                kind: CompletionKind::Module,
+                detail: "workbook module".to_owned(),
+            });
+        }
+        for function in calc.module_functions(module) {
+            if starts_with_ignoring_case(&function, prefix) {
+                out.push(Completion {
+                    insert: format!("{function}("),
+                    label: function,
+                    kind: CompletionKind::Function,
+                    detail: format!("function in module {module}"),
+                });
+            }
         }
     }
     for (name, detail) in [

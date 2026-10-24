@@ -21,6 +21,14 @@ pub(super) struct Classes {
     pub timedelta: PyObjectRef,
 }
 
+/// A workbook module as the importer serves it.
+pub(super) struct ModuleSlot {
+    /// The module object, once it has loaded.
+    pub object: Option<PyObjectRef>,
+    /// Why it failed to load.
+    pub failed: Option<String>,
+}
+
 /// What the proxies reach through: the context of the formula that is running,
 /// and the classes. One per engine.
 pub(super) struct Shared {
@@ -29,6 +37,11 @@ pub(super) struct Shared {
     /// not use a node it read during an earlier one.
     epoch: Cell<u64>,
     classes: RefCell<Option<Rc<Classes>>>,
+    /// The workbook's modules, for `import` inside a module.
+    pub modules: RefCell<std::collections::HashMap<String, ModuleSlot>>,
+    /// The standard library modules a module may import, which are already
+    /// loaded. (`vm.import` would ask the replacement `__import__` itself.)
+    pub stdlib: RefCell<std::collections::HashMap<String, PyObjectRef>>,
 }
 
 impl fmt::Debug for Shared {
@@ -45,6 +58,8 @@ impl Shared {
             ctx: RefCell::new(None),
             epoch: Cell::new(0),
             classes: RefCell::new(None),
+            modules: RefCell::new(std::collections::HashMap::new()),
+            stdlib: RefCell::new(std::collections::HashMap::new()),
         })
     }
 

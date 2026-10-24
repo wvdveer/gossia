@@ -14,13 +14,17 @@ mod eval;
 pub mod fake;
 mod history;
 mod model;
+pub mod names;
 pub mod python;
 mod session;
 mod trie;
 
-pub use calc::{Applied, Calc, Cell, EditError, FieldKind, FieldPlaces};
+pub use calc::{Applied, Calc, Cell, EditError, FieldKind, FieldPlaces, ModuleStatus};
 pub use check::Computed;
-pub use engine::{Context, Depth, Engine, Failure, Read, Syntax, SyntaxError};
+pub use engine::{
+    Context, Depth, Engine, Failure, ModuleInfo, ModuleReport, ModuleSpec, Read, Syntax,
+    SyntaxError,
+};
 pub use eval::{Evaluation, Hooks, Outcome, Snapshot};
 pub use model::{Dep, Loc};
 pub use session::{EngineFactory, EvalSettings, Evaluator, Session, Status};

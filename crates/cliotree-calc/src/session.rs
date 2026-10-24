@@ -246,6 +246,7 @@ impl Evaluator {
                 traceback: None,
                 deps: Vec::new(),
             }],
+            modules: Vec::new(),
         });
     }
 
@@ -344,7 +345,8 @@ impl Session {
             let applied = self.calc.apply(evaluation);
             changed |= !applied.applied.is_empty() || !applied.discarded.is_empty();
         }
-        if !self.evaluator.is_running() && self.calc.pending() > 0 && !self.evaluator.suspended() {
+        let work = self.calc.pending() > 0 || self.calc.pending_modules() > 0;
+        if !self.evaluator.is_running() && work && !self.evaluator.suspended() {
             let _ = self.evaluator.submit(self.calc.snapshot());
         }
         changed
@@ -361,7 +363,7 @@ impl Session {
 
     /// Nothing is out of date and nothing is running.
     pub fn is_idle(&self) -> bool {
-        self.calc.pending() == 0 && !self.evaluator.is_running()
+        self.calc.pending() == 0 && self.calc.pending_modules() == 0 && !self.evaluator.is_running()
     }
 
     /// Waits until the workbook is idle, for tests and for saving. Returns

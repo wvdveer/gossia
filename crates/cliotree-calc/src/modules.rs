@@ -1,0 +1,378 @@
+//! The workbook's Python modules, as the calculation layer keeps them
+//! (DESIGN.md, "Python modules"): their sources, the number of each reload (its
+//! generation), what loading each came to, and how a change to one reaches the
+//! formulas that use it. Loading itself is the engine's, on the evaluation
+//! thread, between evaluations.
+//!
+//! **How a change reaches formulas.** A module is treated as a tab that has no
+//! data: a formula that uses the module, or a function it defines, has read the
+//! "tab" of the module's name, and editing the module is an edit of it. So the
+//! edit log and the index of readers do the work: exactly the formulas that
+//! used the module are out of date, and a result computed from an older
+//! generation is dropped like one that an edit overtook. A module and a tab
+//! never share a name, so the names cannot be confused.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use cliotree_core::Path;
+
+use super::{Calc, EditError};
+use crate::engine::{ModuleInfo, ModuleReport, ModuleSpec, SyntaxError};
+use crate::history::Op;
+use crate::names::{self, Subject, identifiers};
+
+/// What loading a module has come to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModuleStatus {
+    /// The latest source has not been loaded yet.
+    Pending,
+    Loaded,
+    /// It could not be loaded; the message says why.
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct Module {
+    pub source: Arc<str>,
+    /// Goes up with every change of the source, and is part of what a result
+    /// depends on.
+    pub generation: u64,
+    /// What the source says about itself, or why it does not parse.
+    pub info: Result<ModuleInfo, SyntaxError>,
+    pub status: ModuleStatus,
+}
+
+impl Module {
+    fn new(source: &str, generation: u64, calc: &Calc) -> Module {
+        Module {
+            source: Arc::from(source),
+            generation,
+            info: calc.syntax.module_info(source),
+            status: ModuleStatus::Pending,
+        }
+    }
+
+    /// The functions a formula can call by bare name: top-level, not private.
+    pub fn public_functions(&self) -> Vec<String> {
+        match &self.info {
+            Ok(info) => info
+                .functions
+                .iter()
+                .filter(|f| !f.starts_with('_'))
+                .cloned()
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+impl Calc {
+    // ------------------------------------------------------------ reading
+
+    pub fn module_names(&self) -> impl Iterator<Item = &str> {
+        self.modules.keys().map(String::as_str)
+    }
+
+    pub fn module_source(&self, name: &str) -> Option<&str> {
+        self.modules.get(name).map(|m| &*m.source)
+    }
+
+    pub fn module_status(&self, name: &str) -> Option<&ModuleStatus> {
+        self.modules.get(name).map(|m| &m.status)
+    }
+
+    /// The generation of a module: one more for each change of its source.
+    pub fn module_generation(&self, name: &str) -> Option<u64> {
+        self.modules.get(name).map(|m| m.generation)
+    }
+
+    /// The functions a module defines that formulas can call by bare name.
+    pub fn module_functions(&self, name: &str) -> Vec<String> {
+        self.modules
+            .get(name)
+            .map(Module::public_functions)
+            .unwrap_or_default()
+    }
+
+    /// Each module that has failed, and why, for the list of problems.
+    pub fn module_issues(&self) -> Vec<(String, String)> {
+        self.modules
+            .iter()
+            .filter_map(|(name, m)| match (&m.info, &m.status) {
+                (Err(e), _) => Some((name.clone(), format!("syntax error: {e}"))),
+                (_, ModuleStatus::Failed(why)) => Some((name.clone(), why.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// How many modules have a source that is not loaded yet.
+    pub fn pending_modules(&self) -> usize {
+        self.modules
+            .values()
+            .filter(|m| m.status == ModuleStatus::Pending)
+            .count()
+    }
+
+    // ------------------------------------------------------------ editing
+
+    /// Adds a module. Its name must be valid, not reserved, and different from
+    /// every module and tab, ignoring case.
+    pub fn add_module(&mut self, name: &str, source: &str) -> Result<(), EditError> {
+        self.check_module_name(name, None)?;
+        self.module_generation += 1;
+        let module = Module::new(source, self.module_generation, self);
+        self.modules.insert(name.to_owned(), module);
+        self.module_changed(name, &[]);
+        Ok(())
+    }
+
+    /// Replaces the source of a module. One entry in the history.
+    pub fn set_module_source(&mut self, name: &str, source: &str) -> Result<(), EditError> {
+        let before = self
+            .module_source(name)
+            .ok_or_else(|| EditError::NoModule(name.to_owned()))?
+            .to_owned();
+        if before == source {
+            return Ok(());
+        }
+        self.store_module_source(name, source)?;
+        self.history.record(
+            format!("Edit module {name}"),
+            vec![Op::ModuleSource {
+                name: name.to_owned(),
+                before,
+                after: source.to_owned(),
+            }],
+            None,
+        );
+        Ok(())
+    }
+
+    /// Takes a module away. Formulas that used it show `#NAME!`. Not undoable,
+    /// like removing a tab.
+    pub fn remove_module(&mut self, name: &str) -> Result<(), EditError> {
+        let Some(module) = self.modules.shift_remove(name) else {
+            return Err(EditError::NoModule(name.to_owned()));
+        };
+        let old = module.public_functions();
+        self.module_changed(name, &old);
+        Ok(())
+    }
+
+    /// Gives a module another name. Formulas that used the old name show
+    /// `#NAME!`; names in formulas are never rewritten.
+    pub fn rename_module(&mut self, from: &str, to: &str) -> Result<(), EditError> {
+        if !self.modules.contains_key(from) {
+            return Err(EditError::NoModule(from.to_owned()));
+        }
+        self.check_module_name(to, Some(from))?;
+        let position = self.modules.get_index_of(from).unwrap_or(0);
+        let mut module = self.modules.shift_remove(from).expect("checked above");
+        let old = module.public_functions();
+        self.module_changed(from, &old);
+        self.module_generation += 1;
+        module.generation = self.module_generation;
+        module.status = ModuleStatus::Pending;
+        self.modules.insert(to.to_owned(), module);
+        let last = self.modules.len() - 1;
+        self.modules.move_index(last, position);
+        self.module_changed(to, &[]);
+        Ok(())
+    }
+
+    fn check_module_name(&self, name: &str, renaming: Option<&str>) -> Result<(), EditError> {
+        if let Some(why) = names::problem(name, Subject::Module) {
+            return Err(EditError::BadName(why));
+        }
+        let lower = name.to_lowercase();
+        if self
+            .modules
+            .keys()
+            .any(|m| Some(m.as_str()) != renaming && m.to_lowercase() == lower)
+        {
+            return Err(EditError::BadName(format!(
+                "a module called {name} exists already (names ignore case)"
+            )));
+        }
+        if self.sheets.keys().any(|s| s.to_lowercase() == lower) {
+            return Err(EditError::BadName(format!(
+                "{name} is the name of a tab, and a module cannot share it"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Changes the source of a module, for an edit and for undoing and
+    /// redoing one.
+    pub(super) fn store_module_source(
+        &mut self,
+        name: &str,
+        source: &str,
+    ) -> Result<(), EditError> {
+        let old_functions = self
+            .modules
+            .get(name)
+            .ok_or_else(|| EditError::NoModule(name.to_owned()))?
+            .public_functions();
+        self.module_generation += 1;
+        let module = Module::new(source, self.module_generation, self);
+        self.modules.insert(name.to_owned(), module);
+        self.module_changed(name, &old_functions);
+        Ok(())
+    }
+
+    // ------------------------------------------------------- consequences
+
+    /// Records the change of a module, so that the formulas that used it, and
+    /// the modules that use it, and what uses those, are out of date.
+    fn module_changed(&mut self, name: &str, old_functions: &[String]) {
+        let mut touched: Vec<String> = vec![name.to_owned()];
+        touched.extend(old_functions.iter().cloned());
+        if let Some(module) = self.modules.get(name) {
+            touched.extend(module.public_functions());
+        }
+        for user in self.module_users(name) {
+            // A module that uses it has to be loaded again too.
+            if let Some(module) = self.modules.get_mut(&user) {
+                self.module_generation += 1;
+                module.generation = self.module_generation;
+                module.status = ModuleStatus::Pending;
+                touched.push(user.clone());
+                touched.extend(module.public_functions());
+            }
+        }
+        touched.sort();
+        touched.dedup();
+        for name in touched {
+            self.changed(&name, &Path::root());
+        }
+    }
+
+    /// The modules that use `name`, directly or through others: they import
+    /// it, or mention it or one of its functions.
+    fn module_users(&self, name: &str) -> Vec<String> {
+        let mut provides: HashMap<&str, Vec<String>> = HashMap::new();
+        for (m, module) in &self.modules {
+            let mut names = module.public_functions();
+            names.push(m.clone());
+            provides.insert(m.as_str(), names);
+        }
+        let uses = |user: &str, used: &str| -> bool {
+            let Some(module) = self.modules.get(user) else {
+                return false;
+            };
+            let idents = identifiers(&module.source);
+            let imports = module
+                .info
+                .as_ref()
+                .is_ok_and(|i| i.imports.iter().any(|x| x == used));
+            imports
+                || provides
+                    .get(used)
+                    .is_some_and(|names| names.iter().any(|n| idents.contains(n.as_str())))
+        };
+        let mut found: Vec<String> = Vec::new();
+        let mut frontier = vec![name.to_owned()];
+        while let Some(used) = frontier.pop() {
+            for user in self.modules.keys() {
+                if *user != used && user != name && !found.contains(user) && uses(user, &used) {
+                    found.push(user.clone());
+                    frontier.push(user.clone());
+                }
+            }
+        }
+        found
+    }
+
+    // ------------------------------------------------- for the evaluation
+
+    /// The modules as the engine is asked to have them loaded.
+    pub(super) fn module_specs(&self) -> Arc<Vec<ModuleSpec>> {
+        let cycles = self.import_cycles();
+        Arc::new(
+            self.modules
+                .iter()
+                .map(|(name, m)| {
+                    let refused = match &m.info {
+                        Err(e) => Some(format!("syntax error: {e}")),
+                        Ok(_) => cycles.get(name).cloned(),
+                    };
+                    ModuleSpec {
+                        name: name.clone(),
+                        source: Arc::clone(&m.source),
+                        generation: m.generation,
+                        info: m.info.clone().unwrap_or_default(),
+                        refused,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// For each module on a cycle of imports, the message that names the
+    /// cycle (`A -> B -> A`). None of the modules on it is loaded.
+    fn import_cycles(&self) -> HashMap<String, String> {
+        let edges = |name: &str| -> Vec<&str> {
+            self.modules
+                .get(name)
+                .and_then(|m| m.info.as_ref().ok())
+                .map(|i| {
+                    i.imports
+                        .iter()
+                        .filter(|x| self.modules.contains_key(x.as_str()))
+                        .map(String::as_str)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut found: HashMap<String, String> = HashMap::new();
+        for start in self.modules.keys() {
+            // A path that leads back to `start`: depth first, remembering the way.
+            let mut stack: Vec<(&str, Vec<&str>)> = vec![(start.as_str(), vec![start.as_str()])];
+            let mut seen: HashSet<&str> = HashSet::new();
+            while let Some((at, way)) = stack.pop() {
+                for next in edges(at) {
+                    if next == start {
+                        let mut named = way.clone();
+                        named.push(next);
+                        found
+                            .entry(start.clone())
+                            .or_insert_with(|| format!("import cycle: {}", named.join(" -> ")));
+                    } else if seen.insert(next) {
+                        let mut longer = way.clone();
+                        longer.push(next);
+                        stack.push((next, longer));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// Takes what the engine found out about loading the modules. A report for
+    /// a generation that has been replaced is ignored.
+    pub(super) fn apply_module_reports(&mut self, reports: Vec<ModuleReport>) {
+        let mut any = false;
+        for report in reports {
+            let Some(module) = self.modules.get_mut(&report.name) else {
+                continue;
+            };
+            if module.generation != report.generation {
+                continue;
+            }
+            let status = match report.result {
+                Ok(()) => ModuleStatus::Loaded,
+                Err(why) => ModuleStatus::Failed(why),
+            };
+            if module.status != status {
+                module.status = status;
+                any = true;
+            }
+        }
+        if any {
+            self.revision += 1;
+        }
+    }
+}

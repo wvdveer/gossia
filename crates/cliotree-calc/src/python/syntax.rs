@@ -8,12 +8,12 @@
 //! catches mistakes; it is not a security boundary.
 
 use ruff_python_ast::visitor::{Visitor, walk_expr};
-use ruff_python_ast::{Expr, ExprAttribute, ExprName};
-use ruff_python_parser::parse_expression;
+use ruff_python_ast::{Expr, ExprAttribute, ExprName, Stmt};
+use ruff_python_parser::{parse_expression, parse_module};
 use ruff_source_file::LineIndex;
 use ruff_text_size::{Ranged, TextSize};
 
-use crate::engine::{Syntax, SyntaxError};
+use crate::engine::{ModuleInfo, Syntax, SyntaxError};
 
 /// The syntax check for Python formulas.
 #[derive(Debug, Default, Clone, Copy)]
@@ -41,6 +41,52 @@ impl Syntax for PythonSyntax {
                 format!("double-underscore access is not allowed: `{name}`"),
             )),
         }
+    }
+
+    fn module_info(&self, source: &str) -> Result<ModuleInfo, SyntaxError> {
+        PythonSyntax::read_module(source)
+    }
+}
+
+impl PythonSyntax {
+    /// Reads a module: it must parse and must not use double-underscore
+    /// access, and what it imports and defines at the top level is listed.
+    fn read_module(source: &str) -> Result<ModuleInfo, SyntaxError> {
+        let parsed = parse_module(source)
+            .map_err(|e| error_at(source, e.location.start(), e.error.to_string()))?;
+        let body = &parsed.syntax().body;
+        let mut scan = DunderScan { found: None };
+        for stmt in body {
+            scan.visit_stmt(stmt);
+        }
+        if let Some((offset, name)) = scan.found {
+            return Err(error_at(
+                source,
+                offset,
+                format!("double-underscore access is not allowed: `{name}`"),
+            ));
+        }
+        let first = |name: &str| name.split('.').next().unwrap_or_default().to_owned();
+        let mut info = ModuleInfo::default();
+        for stmt in body {
+            match stmt {
+                Stmt::Import(import) => {
+                    for alias in &import.names {
+                        info.imports.push(first(alias.name.as_str()));
+                    }
+                }
+                Stmt::ImportFrom(import) if import.level == 0 => {
+                    if let Some(module) = &import.module {
+                        info.imports.push(first(module.as_str()));
+                    }
+                }
+                Stmt::FunctionDef(function) => {
+                    info.functions.push(function.name.as_str().to_owned());
+                }
+                _ => {}
+            }
+        }
+        Ok(info)
     }
 }
 
@@ -122,6 +168,27 @@ mod tests {
         assert!(check("import os").is_err());
         assert!(check("1; 2").is_err());
         assert!(check("def f(): pass").is_err());
+    }
+
+    #[test]
+    fn a_module_is_read_for_its_imports_and_functions_and_must_parse() {
+        let info = PythonSyntax
+            .module_info(
+                "import math\nimport Tax.rates as r\nfrom Base import helper\n\n\
+                 def vat(x):\n    return x * 0.21\n\ndef _private():\n    pass\n\
+                 class C:\n    def method(self):\n        pass\n",
+            )
+            .unwrap();
+        assert_eq!(info.imports, ["math", "Tax", "Base"]);
+        assert_eq!(info.functions, ["vat", "_private"]);
+
+        let e = PythonSyntax.module_info("def f(:\n  pass\n").unwrap_err();
+        assert_eq!(e.line, 1, "{e}");
+        let e = PythonSyntax
+            .module_info("def f(x):\n    return x.__class__\n")
+            .unwrap_err();
+        assert!(e.message.contains("double-underscore"), "{e}");
+        assert_eq!(PythonSyntax.module_info(""), Ok(ModuleInfo::default()));
     }
 
     /// Python engine: double-underscore access is rejected when a formula is

@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod completion;
 mod convert;
 mod jsonpath;
+mod modules;
 mod node;
 mod shared;
 mod syntax;
@@ -25,7 +26,7 @@ use rustpython::vm::builtins::{PyCode, PyDictRef};
 use rustpython::vm::compiler::Mode;
 use rustpython::vm::function::ArgMapping;
 use rustpython::vm::scope::Scope;
-use rustpython::vm::{AsObject, Interpreter, PyRef, PyResult, Settings, VirtualMachine};
+use rustpython::vm::{AsObject, Interpreter, PyPayload, PyRef, PyResult, Settings, VirtualMachine};
 
 use crate::engine::{Context, Depth, Engine, Failure};
 use shared::{Classes, Shared};
@@ -46,7 +47,7 @@ const PRELUDE: &str = include_str!("prelude.py");
 
 /// Standard library modules formulas can use by name, without importing them
 /// (DESIGN.md, "Python engine", "Modules that work").
-const MODULES: &[&str] = &[
+pub(crate) const MODULES: &[&str] = &[
     "math",
     "datetime",
     "re",
@@ -110,6 +111,13 @@ pub struct PythonEngine {
     prelude: PyDictRef,
     code: RefCell<HashMap<String, PyRef<PyCode>>>,
     sheets: RefCell<Vec<String>>,
+    /// The workbook modules that are loaded, or have failed to.
+    modules: RefCell<HashMap<String, modules::Loaded>>,
+    /// Which module defines each name a module provides: its own name and its
+    /// public functions, those of a failed module too.
+    provided: RefCell<HashMap<String, String>>,
+    /// The names of the tabs, as of the last time the modules were loaded.
+    tabs: RefCell<Vec<String>>,
     evaluations: Cell<usize>,
     watchdog: Watchdog,
     time_limit: Cell<Option<Duration>>,
@@ -144,6 +152,9 @@ impl PythonEngine {
             prelude,
             code: RefCell::new(HashMap::new()),
             sheets: RefCell::new(Vec::new()),
+            modules: RefCell::new(HashMap::new()),
+            provided: RefCell::new(HashMap::new()),
+            tabs: RefCell::new(Vec::new()),
             evaluations: Cell::new(0),
             watchdog: Watchdog::new(signals),
             time_limit: Cell::new(None),
@@ -222,6 +233,11 @@ impl PythonEngine {
             let _ = self.globals.del_item(old.as_str(), vm);
         }
         for name in &names {
+            // A tab never takes the place of a name the engine holds or a
+            // module provides: nothing is shadowed.
+            if crate::names::is_reserved(name) || self.provided.borrow().contains_key(name) {
+                continue;
+            }
             let sheet: Rc<str> = Rc::from(name.as_str());
             let proxy = node::lazy_proxy(&self.shared, vm, &sheet, Path::root());
             let _ = self.globals.set_item(name.as_str(), proxy, vm);
@@ -249,6 +265,7 @@ impl PythonEngine {
         ctx: &Rc<dyn Context>,
     ) -> Result<Value, Failure> {
         let code = self.compiled(vm, text)?;
+        self.record_module_use(text, ctx);
         let locals = vm.ctx.new_dict();
         let sheet: Rc<str> = Rc::from(ctx.sheet());
         let here = ctx.path();
@@ -279,6 +296,9 @@ impl PythonEngine {
                     && let Some(name) = missing_name(vm, &exc)
                 {
                     ctx.record(&name, &Path::root(), Depth::Shallow);
+                    if let Some(failure) = self.failed_module_name(&name) {
+                        return Err(failure);
+                    }
                 }
                 Err(convert::failure(&self.shared, vm, &exc))
             }
@@ -306,6 +326,14 @@ impl Default for PythonEngine {
 impl Engine for PythonEngine {
     fn set_time_limit(&self, limit: Option<Duration>) {
         PythonEngine::set_time_limit(self, limit);
+    }
+
+    fn sync_modules(
+        &self,
+        specs: &[crate::ModuleSpec],
+        tabs: &[String],
+    ) -> Vec<crate::ModuleReport> {
+        self.load_modules(specs, tabs)
     }
 
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure> {
@@ -366,8 +394,17 @@ fn set_up(
         }
     }
 
-    let globals = vm.ctx.new_dict();
-    globals.set_item("__builtins__", builtins.into(), vm)?;
+    // One flat namespace: it is the globals of every formula, and the builtins
+    // of every module, so a module finds a tab or another module's function by
+    // name when it is called, even if that was added after it was loaded.
+    let globals = builtins;
+    globals.set_item("__builtins__", globals.clone().into(), vm)?;
+    // The replacement `__import__`, which serves only the workbook's modules
+    // and the exposed standard library modules.
+    let importer = node::_cliotree::Importer {
+        shared: shared.clone(),
+    };
+    globals.set_item("__import__", importer.into_ref(&vm.ctx).into(), vm)?;
     for name in [
         "ErrorValue",
         "PropagatedError",
@@ -384,7 +421,12 @@ fn set_up(
         globals.set_item(*name, prelude.get_item(*name, vm)?, vm)?;
     }
     for name in MODULES {
-        globals.set_item(*name, vm.import(*name, 0)?, vm)?;
+        let module = vm.import(*name, 0)?;
+        shared
+            .stdlib
+            .borrow_mut()
+            .insert((*name).to_owned(), module.clone());
+        globals.set_item(*name, module, vm)?;
     }
     Ok((globals, prelude))
 }
@@ -404,3 +446,7 @@ mod tests_budget;
 #[cfg(test)]
 #[path = "tests_std.rs"]
 mod tests_std;
+
+#[cfg(test)]
+#[path = "tests_modules.rs"]
+mod tests_modules;

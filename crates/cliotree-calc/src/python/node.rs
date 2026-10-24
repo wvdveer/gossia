@@ -18,8 +18,9 @@ use std::rc::Rc;
 
 use cliotree_core::{Node, Path, Segment, Value};
 use rustpython::vm::builtins::{PyInt, PyList, PySlice, PyStr, PyStrRef};
+use rustpython::vm::function::FuncArgs;
 use rustpython::vm::protocol::{PyMapping, PyMappingMethods};
-use rustpython::vm::types::{AsMapping, GetAttr, Iterable, Representable};
+use rustpython::vm::types::{AsMapping, Callable, GetAttr, Iterable, Representable};
 use rustpython::vm::{
     AsObject, Py, PyObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine, atomic_func,
     pyclass, pymodule,
@@ -48,6 +49,27 @@ pub(super) mod _cliotree {
         /// engine do not: a node kept here would be shared with the data, and
         /// the next edit of the data would have to copy it first.
         pub(in crate::python) remember: bool,
+    }
+
+    /// The `__import__` of the workbook's modules: it serves the workbook's
+    /// own modules and the standard library modules formulas can use, and
+    /// refuses everything else with `ImportError`.
+    #[pyattr]
+    #[pyclass(module = "_cliotree", name = "Importer")]
+    #[derive(Debug, PyPayload)]
+    pub struct Importer {
+        pub(in crate::python) shared: Rc<Shared>,
+    }
+
+    #[pyclass(with(Callable))]
+    impl Importer {}
+
+    impl Callable for Importer {
+        type Args = FuncArgs;
+
+        fn call(zelf: &Py<Self>, args: FuncArgs, vm: &VirtualMachine) -> PyResult {
+            super::super::modules::import(&zelf.shared, &args, vm)
+        }
     }
 
     /// `JSONPATH(query, node)`: see `jsonpath.rs`.

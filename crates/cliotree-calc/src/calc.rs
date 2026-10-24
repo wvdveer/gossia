@@ -57,6 +57,11 @@ enum SchemaRole {
 mod schema;
 pub use schema::{FieldKind, FieldPlaces};
 
+#[path = "modules.rs"]
+mod modules;
+use modules::Module;
+pub use modules::ModuleStatus;
+
 /// Why an edit was refused.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditError {
@@ -72,6 +77,10 @@ pub enum EditError {
     ContainsFormulas { node: Loc, formula: Path },
     /// The edit does not fit the data.
     Path(String),
+    /// There is no module of that name.
+    NoModule(String),
+    /// A tab or module name that cannot be used; the message says why.
+    BadName(String),
 }
 
 impl fmt::Display for EditError {
@@ -97,7 +106,8 @@ impl fmt::Display for EditError {
                 "{node} cannot take a formula because the formula at {} is inside it",
                 Loc::new(node.sheet.clone(), formula.clone())
             ),
-            EditError::Path(message) => f.write_str(message),
+            EditError::Path(message) | EditError::BadName(message) => f.write_str(message),
+            EditError::NoModule(name) => write!(f, "there is no module called {name}"),
         }
     }
 }
@@ -146,6 +156,11 @@ pub struct Calc {
     /// The version of the newest edit dropped from the log.
     log_floor: u64,
     history: History,
+    /// The workbook's Python modules, in display order.
+    modules: indexmap::IndexMap<String, Module>,
+    /// Counts the changes to modules, so that every one has a generation of
+    /// its own.
+    module_generation: u64,
 }
 
 impl Calc {
@@ -162,6 +177,8 @@ impl Calc {
             log: VecDeque::new(),
             log_floor: 0,
             history: History::default(),
+            modules: indexmap::IndexMap::new(),
+            module_generation: 0,
         }
     }
 
@@ -704,6 +721,13 @@ impl Calc {
                     }
                 }
             }
+            Op::ModuleSource {
+                name,
+                before,
+                after,
+            } => {
+                self.store_module_source(name, if forward { after } else { before })?;
+            }
             Op::AutoUpdate {
                 sheet,
                 before,
@@ -895,6 +919,7 @@ impl Calc {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             version: self.version,
+            modules: self.module_specs(),
             sheets: self
                 .sheets
                 .iter()
@@ -918,6 +943,7 @@ impl Calc {
     /// or if it read the result of a formula that was dropped. Dropped
     /// formulas stay out of date, for the next evaluation.
     pub fn apply(&mut self, evaluation: Evaluation) -> Applied {
+        self.apply_module_reports(evaluation.modules);
         let mut applied = Applied::default();
         let mut dropped: HashMap<String, PathTrie<Loc>> = HashMap::new();
         for outcome in evaluation.outcomes {
@@ -971,10 +997,11 @@ impl Calc {
     /// this thread. Returns how many formulas were run.
     pub fn recalc(&mut self, engine: &dyn Engine) -> usize {
         let mut run = 0;
-        while !self.dirty.is_empty() {
+        while !self.dirty.is_empty() || self.pending_modules() > 0 {
             let evaluation = self.snapshot().evaluate(engine);
             run += evaluation.outcomes.len();
-            if self.apply(evaluation).applied.is_empty() {
+            let applied = self.apply(evaluation);
+            if applied.applied.is_empty() && self.pending_modules() == 0 {
                 break;
             }
         }

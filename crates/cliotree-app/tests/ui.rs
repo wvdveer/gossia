@@ -626,3 +626,25 @@ fn the_control_commands_drive_the_window_in_process() {
     });
     assert!(has(&harness, "Ready"));
 }
+
+#[test]
+fn a_module_that_failed_is_counted_in_the_status_bar_and_listed_in_the_issues_panel() {
+    let mut harness = window();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .add_module("Bad", "x = 1 / 0\n")
+        .unwrap();
+    harness.state_mut().session.tick();
+    settle(&mut harness);
+    harness.get_by_label("1 module failed");
+    click(&mut harness, "View");
+    click(&mut harness, "Issues panel");
+    assert!(
+        harness
+            .query_all_by_label_contains("Module Bad: ZeroDivisionError")
+            .next()
+            .is_some()
+    );
+}

@@ -14,6 +14,7 @@
 //! not required to be `Send`.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use cliotree_core::{ErrorKind, ErrorValue, Node, Path, Value};
 
@@ -117,11 +118,47 @@ pub trait Context {
     fn sheets(&self) -> Vec<String>;
 }
 
+/// What the source of a module says about itself, found without running it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModuleInfo {
+    /// The first part of each name imported at the top level, in order.
+    pub imports: Vec<String>,
+    /// The functions defined at the top level, in order, private ones too.
+    pub functions: Vec<String>,
+}
+
+/// A module as the engine is asked to have it loaded.
+#[derive(Debug, Clone)]
+pub struct ModuleSpec {
+    pub name: String,
+    pub source: Arc<str>,
+    /// Goes up with each change; the engine loads a module again when it has
+    /// changed.
+    pub generation: u64,
+    pub info: ModuleInfo,
+    /// Why the module is not to be loaded, if that is known without running it:
+    /// it does not parse, or it is on a cycle of imports.
+    pub refused: Option<String>,
+}
+
+/// What loading a module came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleReport {
+    pub name: String,
+    pub generation: u64,
+    pub result: Result<(), String>,
+}
+
 /// Checks that formula text parses, without running it, so it is also safe in a
 /// workbook that is not trusted. Formulas are single expressions without the
 /// leading `=`.
 pub trait Syntax: Send + Sync {
     fn check(&self, formula: &str) -> Result<(), SyntaxError>;
+
+    /// Reads the source of a module without running it.
+    fn module_info(&self, _source: &str) -> Result<ModuleInfo, SyntaxError> {
+        Ok(ModuleInfo::default())
+    }
 }
 
 /// Runs formulas. Not required to be `Send`.
@@ -135,4 +172,24 @@ pub trait Engine {
     /// data (a formula such as `=Orders.total` whose source has failed) is
     /// returned as `Ok(Value::Error(..))`.
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure>;
+
+    /// Makes the engine's modules the ones given: loads those that are new or
+    /// have changed (and those that use them), in the order their imports
+    /// need, and takes away those that are gone. Called between evaluations,
+    /// never during one. `tabs` are the names of the tabs, which no function of
+    /// a module may take the place of. An engine without modules reports each
+    /// as loaded.
+    fn sync_modules(&self, modules: &[ModuleSpec], _tabs: &[String]) -> Vec<ModuleReport> {
+        modules
+            .iter()
+            .map(|m| ModuleReport {
+                name: m.name.clone(),
+                generation: m.generation,
+                result: match &m.refused {
+                    Some(why) => Err(why.clone()),
+                    None => Ok(()),
+                },
+            })
+            .collect()
+    }
 }

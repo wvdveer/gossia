@@ -887,6 +887,16 @@ impl ClioApp {
             ui.label(evaluation_text(&self.session.status()));
             ui.separator();
             ui.label(problems_text(self.summary.errors, self.summary.invalid));
+            let failed = self.calc().module_issues().len();
+            if failed > 0 {
+                ui.separator();
+                let text = if failed == 1 {
+                    "1 module failed".to_owned()
+                } else {
+                    format!("{failed} modules failed")
+                };
+                ui.colored_label(error_color(ui), text);
+            }
             if self.calc().is_modified() {
                 ui.separator();
                 ui.label("Modified");
@@ -897,11 +907,15 @@ impl ClioApp {
     fn issues_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Issues");
         let issues = self.issue_list();
-        if issues.is_empty() {
+        let modules = self.calc().module_issues();
+        if issues.is_empty() && modules.is_empty() {
             ui.label("No errors, no invalid data.");
             return;
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
+            for (module, why) in modules {
+                ui.colored_label(error_color(ui), format!("Module {module}: {why}"));
+            }
             for (path, text) in issues {
                 if ui
                     .selectable_label(false, format!("{}  {text}", self.name_of(&path)))

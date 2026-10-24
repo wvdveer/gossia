@@ -28,7 +28,7 @@ use cliotree_core::{ErrorKind, ErrorValue, Node, Path, TypeSpec};
 use indexmap::IndexSet;
 
 use crate::check::{Computed, finish, store};
-use crate::engine::{Context, Depth, Engine, Read};
+use crate::engine::{Context, Depth, Engine, ModuleReport, ModuleSpec, Read};
 use crate::model::{Dep, Formulas, Loc};
 
 /// One tab as the evaluator sees it.
@@ -44,6 +44,7 @@ pub(crate) struct SheetSnap {
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub(crate) version: u64,
+    pub(crate) modules: Arc<Vec<ModuleSpec>>,
     pub(crate) sheets: HashMap<String, SheetSnap>,
     pub(crate) dirty: Vec<Loc>,
 }
@@ -64,6 +65,8 @@ pub struct Outcome {
 pub struct Evaluation {
     pub(crate) base: u64,
     pub(crate) outcomes: Vec<Outcome>,
+    /// What loading the modules came to, if the evaluation loaded any.
+    pub(crate) modules: Vec<ModuleReport>,
 }
 
 impl Evaluation {
@@ -95,6 +98,9 @@ impl Snapshot {
     /// As [`Snapshot::evaluate`], telling `hooks` before each formula is run
     /// and letting it stop the pass.
     pub fn evaluate_with(&self, engine: &dyn Engine, hooks: &mut dyn Hooks) -> Evaluation {
+        // Modules are loaded between evaluations, never during one.
+        let tabs: Vec<String> = self.sheets.keys().cloned().collect();
+        let modules = engine.sync_modules(&self.modules, &tabs);
         let mut run = Run {
             engine,
             hooks,
@@ -116,6 +122,7 @@ impl Snapshot {
         Evaluation {
             base: self.version,
             outcomes: run.outcomes,
+            modules,
         }
     }
 }

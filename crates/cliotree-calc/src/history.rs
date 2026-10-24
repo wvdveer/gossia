@@ -42,6 +42,12 @@ pub(crate) enum Op {
         /// As for [`Op::Add`].
         moved: Vec<(Path, Node)>,
     },
+    /// The source of a module changes.
+    ModuleSource {
+        name: String,
+        before: String,
+        after: String,
+    },
     /// The auto-update switch of a schema tab is turned on or off.
     AutoUpdate {
         sheet: String,
@@ -78,6 +84,7 @@ impl Op {
                 size(node) + moved.iter().map(|(_, n)| size(n)).sum::<usize>()
             }
             Op::AutoUpdate { .. } => 1,
+            Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
             Op::Formula { value, .. } => {
                 1 + value
                     .as_ref()
