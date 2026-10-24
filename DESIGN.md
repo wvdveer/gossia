@@ -1211,6 +1211,12 @@ Deferred features, with what v1 does to keep them possible:
 - **Not done in this part, and why.** `XMLPATH` needs XML data, which comes with step 6. The reserved-names checks (a tab or a function that clashes with these names) come with the modules, in 5b.
 - **Tests.** 15 in `cliotree-calc` (`python/tests_std.rs`: each function, its error cases, and that an error among the items is raised by every aggregate), 3 in `cliotree-std`, and one more window test for the Insert Function dialog (the list is long now, so the existing test searches for its function).
 
+**Found by running the real window on Windows (after step 4e)**
+- **A window dragged between monitors of different scale grew.** With a 125% monitor and a 100% one, each round trip made the window about 1.25 times larger, and the scale flipped every frame while the window straddled both. With both at 125% it did not happen, so the cause is the mixed scale, and not the layout or the minimum size (removing the 640 by 400 minimum did not stop it). It looks like Windows and winit disagreeing about the size on a scale change; this has not been checked in winit's source or reported to it.
+- **The guard** (`keep_size_across_monitors` in `lib.rs`) remembers the window's size in points from before a change of scale, and for one second after the change puts the window back to it if it has moved by more than 1.5 points. It does nothing for a maximised or full-screen window. It stopped the growing in the owner's test. **Known flaw:** the grip on the title bar slips a little while the window is dragged across, because the guard resizes the window under the pointer.
+- **`CLIOTREE_LOG_WINDOW`**, when set, prints the scale and size of the window to standard error each time they change, and each correction the guard makes. It is how this was found.
+- **To revisit** if winit fixes this, or if the slipping bothers: correct the size once when the drag ends instead of during it.
+
 **Risks that only building and measuring can settle**
 - **RustPython.** It is young and not production-ready by its own account, it builds only from a pinned git revision, and the single long builtin call cannot be interrupted. Mitigations: the `PythonEngine` trait, the pinned and vendored build, the abandoned-thread backstop, and the test-suite probes.
 - **Proxy layer speed.** The budgets are under Python engine. A miss is addressed by the mitigations listed there.
