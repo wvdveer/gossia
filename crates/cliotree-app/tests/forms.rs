@@ -222,6 +222,16 @@ fn an_optional_field_that_is_absent_is_empty_and_a_value_creates_it() {
     );
 }
 
+/// Opens the context menu of the table row whose header reads `row` and
+/// chooses `item`.
+fn row_menu(harness: &mut Harness<'_, ClioApp>, row: &str, item: &str) {
+    harness.get_by_label(row).click_secondary();
+    harness.run();
+    harness.get_by_label(item).click();
+    harness.run();
+    settle(harness);
+}
+
 #[test]
 fn the_items_of_an_array_are_a_table_with_row_commands() {
     let mut harness = form();
@@ -244,14 +254,8 @@ fn the_items_of_an_array_are_a_table_with_row_commands() {
         4
     );
     harness.get_by_label("Orders.items[3].sku");
-    // A row is deleted from its own buttons.
-    harness
-        .get_all_by_label("Delete row")
-        .nth(3)
-        .unwrap()
-        .click();
-    harness.run();
-    settle(&mut harness);
+    // A row is deleted from its context menu.
+    row_menu(&mut harness, "[3]", "Delete row");
     assert_eq!(
         harness
             .state()
@@ -267,13 +271,7 @@ fn the_items_of_an_array_are_a_table_with_row_commands() {
         3
     );
     // Moving a row down swaps it with the next.
-    harness
-        .get_all_by_label("Move down")
-        .next()
-        .unwrap()
-        .click();
-    harness.run();
-    settle(&mut harness);
+    row_menu(&mut harness, "[0]", "Move down");
     assert_eq!(
         value(&harness, "Orders", "items[0].sku"),
         Some(Value::Str("B-220".into()))

@@ -809,8 +809,9 @@ impl Painter<'_> {
             .id_salt(("form_table", &self.app.sheet, array.to_string()))
             .striped(true)
             .vscroll(false)
+            .sense(Sense::click())
             .cell_layout(egui::Layout::left_to_right(Align::Center))
-            .column(TableColumn::auto().at_least(96.0));
+            .column(TableColumn::auto().at_least(32.0));
         for _ in columns {
             table = table.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
         }
@@ -840,28 +841,13 @@ impl Painter<'_> {
                 body.rows(ROW_HEIGHT, len, |mut row| {
                     let index = row.index();
                     row.col(|ui| {
-                        ui.label(RichText::new(format!("[{index}]")).weak());
-                        if icons::button(ui, editable && index > 0, icons::ARROW_UP, "^", "Move up")
-                            .clicked()
-                        {
-                            self.actions
-                                .push(FormAction::Move(array.clone(), index, true));
-                        }
-                        if icons::button(
-                            ui,
-                            editable && index + 1 < len,
-                            icons::ARROW_DOWN,
-                            "v",
-                            "Move down",
-                        )
-                        .clicked()
-                        {
-                            self.actions
-                                .push(FormAction::Move(array.clone(), index, false));
-                        }
-                        if icons::button(ui, editable, icons::X, "x", "Delete row").clicked() {
-                            self.actions.push(FormAction::Delete(array.clone(), index));
-                        }
+                        let label = ui.add(
+                            egui::Label::new(RichText::new(format!("[{index}]")).weak())
+                                .sense(Sense::click()),
+                        );
+                        label.context_menu(|ui| {
+                            self.row_menu(ui, array, index, len, editable);
+                        });
                     });
                     for column in columns {
                         row.col(|ui| {
@@ -869,8 +855,46 @@ impl Painter<'_> {
                             self.editor(ui, &cell, column.ty, column.required, true);
                         });
                     }
+                    // A right click on the row opens its menu.
+                    row.response().context_menu(|ui| {
+                        self.row_menu(ui, array, index, len, editable);
+                    });
                 });
             });
+    }
+
+    /// The commands of a table row, in its context menu.
+    fn row_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        array: &Path,
+        index: usize,
+        len: usize,
+        editable: bool,
+    ) {
+        if ui
+            .add_enabled(editable && index > 0, egui::Button::new("Move up"))
+            .clicked()
+        {
+            self.actions
+                .push(FormAction::Move(array.clone(), index, true));
+            ui.close();
+        }
+        if ui
+            .add_enabled(editable && index + 1 < len, egui::Button::new("Move down"))
+            .clicked()
+        {
+            self.actions
+                .push(FormAction::Move(array.clone(), index, false));
+            ui.close();
+        }
+        if ui
+            .add_enabled(editable, egui::Button::new("Delete row"))
+            .clicked()
+        {
+            self.actions.push(FormAction::Delete(array.clone(), index));
+            ui.close();
+        }
     }
 
     /// Items that are not flat, one at a time with a stepper.
