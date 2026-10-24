@@ -24,11 +24,38 @@ pub struct TypeId(pub(crate) u32);
 pub struct TypeSpec {
     types: Vec<TypeDef>,
     root: TypeId,
+    xml: Option<XmlInfo>,
+}
+
+/// What a schema lowered from an XSD says about the XML document itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XmlInfo {
+    /// The name of the root element: the one global element.
+    pub root: String,
+    /// The target namespace, if the schema has one. The root element is in it.
+    pub target_namespace: Option<String>,
+    /// Whether local elements are in the target namespace too
+    /// (`elementFormDefault="qualified"`).
+    pub qualified: bool,
 }
 
 impl TypeSpec {
     pub(crate) fn new(types: Vec<TypeDef>, root: TypeId) -> TypeSpec {
-        TypeSpec { types, root }
+        TypeSpec {
+            types,
+            root,
+            xml: None,
+        }
+    }
+
+    pub(crate) fn with_xml(mut self, xml: XmlInfo) -> TypeSpec {
+        self.xml = Some(xml);
+        self
+    }
+
+    /// For a schema lowered from an XSD, how its documents are put together.
+    pub fn xml(&self) -> Option<&XmlInfo> {
+        self.xml.as_ref()
     }
 
     pub fn root(&self) -> TypeId {

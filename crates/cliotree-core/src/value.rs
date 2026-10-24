@@ -159,6 +159,9 @@ pub struct Node(Arc<NodeData>);
 struct NodeData {
     id: NodeId,
     value: Value,
+    /// A comment on the node (XML tabs only; DESIGN.md, "Comments"). It belongs
+    /// to the node, so it goes where the node goes. Formulas cannot see it.
+    comment: Option<String>,
 }
 
 /// Why a path could not be followed by an edit.
@@ -191,7 +194,22 @@ impl Node {
         Node(Arc::new(NodeData {
             id: NodeId::fresh(),
             value,
+            comment: None,
         }))
+    }
+
+    /// The same node with a comment (or with none), keeping its id.
+    pub fn with_comment(mut self, comment: Option<String>) -> Node {
+        Arc::make_mut(&mut self.0).comment = comment;
+        self
+    }
+
+    pub fn comment(&self) -> Option<&str> {
+        self.0.comment.as_deref()
+    }
+
+    pub fn set_comment(&mut self, comment: Option<String>) {
+        Arc::make_mut(&mut self.0).comment = comment;
     }
 
     pub fn id(&self) -> NodeId {

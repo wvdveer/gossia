@@ -12,12 +12,15 @@ mod path;
 mod typespec;
 pub mod validate;
 mod value;
+pub mod xml;
+pub mod xmltree;
+pub mod xsd;
 
 pub use num::Num;
 pub use path::{ParsePathError, Path, Segment};
 pub use typespec::{
     Field, Kind, Pattern, Range, Resolved, StringConstraints, StringFormat, TypeDef, TypeId,
-    TypeSpec,
+    TypeSpec, XmlInfo,
 };
 pub use value::{DateTimeValue, ErrorKind, ErrorValue, Node, NodeId, PathError, Value};
 

@@ -78,6 +78,12 @@ pub(super) mod _cliotree {
         super::run_jsonpath(query.expect_str(), &node, vm)
     }
 
+    /// `XMLPATH(query, node)`: see `xmlpath.rs`.
+    #[pyfunction]
+    fn xmlpath(query: PyStrRef, node: PyObjectRef, vm: &VirtualMachine) -> PyResult {
+        super::run_xmlpath(query.expect_str(), &node, vm)
+    }
+
     #[pyclass(with(GetAttr, AsMapping, Iterable, Representable))]
     impl NodeProxy {
         /// `"array"` or `"object"`, for the functions that take arrays.
@@ -378,32 +384,77 @@ fn plain(zelf: &Py<NodeProxy>, vm: &VirtualMachine) -> PyResult {
 /// list of the values and proxies a formula would get by walking there. The
 /// whole of `node` is read, so the formula depends on all of it.
 fn run_jsonpath(query: &str, base: &PyObject, vm: &VirtualMachine) -> PyResult {
-    let Some(proxy) = base.downcast_ref::<NodeProxy>() else {
-        return Err(vm.new_type_error(
-            "JSONPATH takes a query and then a tab or a node, for example JSONPATH('$.items[*].price', Orders)",
-        ));
-    };
+    let proxy = path_base(
+        base,
+        vm,
+        "JSONPATH takes a query and then a tab or a node, for example JSONPATH('$.items[*].price', Orders)",
+    )?;
     let parsed = super::jsonpath::parse(query).map_err(|message| {
         vm.new_value_error(format!(
             "the JSONPath query {query:?} is not valid: {message}"
         ))
     })?;
+    let root = read_deep(proxy, vm)?;
+    let matches = super::jsonpath::select(&parsed, &root)
+        .into_iter()
+        .map(|(steps, node)| (steps, node.clone()))
+        .collect();
+    matches_to_py(proxy, matches, vm)
+}
+
+/// `XMLPATH(query, node)`: the nodes of `node` that match the XPath query, as a
+/// list, like `JSONPATH`. The whole of `node` is read.
+fn run_xmlpath(query: &str, base: &PyObject, vm: &VirtualMachine) -> PyResult {
+    let proxy = path_base(
+        base,
+        vm,
+        "XMLPATH takes a query and then a tab or a node, for example XMLPATH('line[qty > 1]/sku', Orders)",
+    )?;
+    let parsed = super::xmlpath::parse(query).map_err(|message| {
+        vm.new_value_error(format!(
+            "the XMLPATH query {query:?} is not valid: {message}"
+        ))
+    })?;
+    let root = read_deep(proxy, vm)?;
+    matches_to_py(proxy, super::xmlpath::select(&parsed, &root), vm)
+}
+
+/// The tab or node a path query is run on.
+fn path_base<'a>(
+    base: &'a PyObject,
+    vm: &VirtualMachine,
+    usage: &'static str,
+) -> PyResult<&'a NodeProxy> {
+    base.downcast_ref::<NodeProxy>()
+        .map(|p| &**p)
+        .ok_or_else(|| vm.new_type_error(usage))
+}
+
+/// Reads the node of `proxy` and everything below it.
+fn read_deep(proxy: &NodeProxy, vm: &VirtualMachine) -> PyResult<cliotree_core::Node> {
     let ctx = proxy.shared.ctx().ok_or_else(|| no_context(vm))?;
-    let root = match ctx.read(&proxy.sheet, &proxy.path, Depth::Deep) {
-        Read::Node(node) => node,
-        Read::Missing | Read::NoSheet => {
-            return Err(vm.new_key_error(
-                vm.ctx
-                    .new_str(format!(
-                        "there is nothing at {}",
-                        crate::Loc::new(&*proxy.sheet, proxy.path.clone())
-                    ))
-                    .into(),
-            ));
-        }
-    };
+    match ctx.read(&proxy.sheet, &proxy.path, Depth::Deep) {
+        Read::Node(node) => Ok(node),
+        Read::Missing | Read::NoSheet => Err(vm.new_key_error(
+            vm.ctx
+                .new_str(format!(
+                    "there is nothing at {}",
+                    crate::Loc::new(&*proxy.sheet, proxy.path.clone())
+                ))
+                .into(),
+        )),
+    }
+}
+
+/// The matches of a query as a list of the values and proxies a formula would
+/// get by walking there.
+fn matches_to_py(
+    proxy: &NodeProxy,
+    matches: Vec<(Vec<cliotree_core::Segment>, cliotree_core::Node)>,
+    vm: &VirtualMachine,
+) -> PyResult {
     let mut out = Vec::new();
-    for (steps, node) in super::jsonpath::select(&parsed, &root) {
+    for (steps, node) in matches {
         let mut path = proxy.path.clone();
         for step in steps {
             path.push(step);
@@ -413,7 +464,7 @@ fn run_jsonpath(query: &str, base: &PyObject, vm: &VirtualMachine) -> PyResult {
             vm,
             &proxy.sheet,
             path,
-            node,
+            &node,
         )?);
     }
     Ok(vm.ctx.new_list(out).into())

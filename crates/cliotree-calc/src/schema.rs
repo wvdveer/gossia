@@ -8,7 +8,8 @@
 //! so a command is only ever an edit of the document together with the edits of
 //! the data and formulas that go with it, recorded as one entry.
 
-use cliotree_core::{Kind, TypeId, jsonschema, metaschema};
+use cliotree_core::xml::XmlDocument;
+use cliotree_core::{Kind, TypeId, jsonschema, metaschema, xsd};
 use indexmap::IndexMap;
 
 use super::*;
@@ -69,6 +70,14 @@ fn text(s: &str) -> Node {
     Node::new(Value::Str(s.to_owned()))
 }
 
+/// The language a schema tab is written in. It fixes the format of the data of
+/// the tabs bound to it: JSON Schema gives JSON data, XSD gives XML data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaFormat {
+    Json,
+    Xsd,
+}
+
 /// Where an object type is used, for a command that changes it.
 #[derive(Debug, Clone)]
 pub struct FieldPlaces {
@@ -104,11 +113,66 @@ impl Calc {
             document,
         )?;
         self.sheet_mut(&name)?.schema = SchemaRole::Document {
+            format: SchemaFormat::Json,
             auto_update: false,
             error: None,
         };
         self.relower_schema(&name);
         Ok(())
+    }
+
+    /// Adds a tab that holds an XSD, as the tree the bundled XSD meta-schema
+    /// types (an XML document: see `cliotree_core::xml`). `document` says how
+    /// the XML was written; [`cliotree_core::xsd::default_document`] is the one
+    /// a new schema starts with.
+    pub fn add_xsd_sheet(
+        &mut self,
+        name: impl Into<String>,
+        tree: Node,
+        document: XmlDocument,
+    ) -> Result<(), EditError> {
+        let name = name.into();
+        self.add_sheet(name.clone(), metaschema::xsd_meta().clone(), tree)?;
+        let sheet = self.sheet_mut(&name)?;
+        sheet.xml = Some(document);
+        sheet.schema = SchemaRole::Document {
+            format: SchemaFormat::Xsd,
+            auto_update: false,
+            error: None,
+        };
+        self.relower_schema(&name);
+        Ok(())
+    }
+
+    /// The language of a schema tab, if the tab is one.
+    pub fn schema_format(&self, sheet: &str) -> Option<SchemaFormat> {
+        match &self.sheets.get(sheet)?.schema {
+            SchemaRole::Document { format, .. } => Some(*format),
+            _ => None,
+        }
+    }
+
+    /// What an XML tab says about its document beyond its tree. None for a
+    /// tab that is not XML.
+    pub fn xml_document(&self, sheet: &str) -> Option<&XmlDocument> {
+        self.sheets.get(sheet)?.xml.as_ref()
+    }
+
+    /// Records how the XML of a tab was written, so it is written the same way.
+    pub fn set_xml_document(
+        &mut self,
+        sheet: &str,
+        document: XmlDocument,
+    ) -> Result<(), EditError> {
+        self.sheet_mut(sheet)?.xml = Some(document);
+        Ok(())
+    }
+
+    /// Whether the tab holds XML data, as its schema is an XSD.
+    pub fn is_xml(&self, sheet: &str) -> bool {
+        self.sheets
+            .get(sheet)
+            .is_some_and(|s| s.spec.xml().is_some())
     }
 
     /// Binds a tab to a schema tab: the tab takes the type the document
@@ -252,7 +316,21 @@ impl Calc {
             .sheets
             .get(schema_sheet)
             .ok_or_else(|| EditError::NoSheet(schema_sheet.to_owned()))?;
-        jsonschema::lower(&s.data).map_err(|e| {
+        let lowered = match &s.schema {
+            SchemaRole::Document {
+                format: SchemaFormat::Xsd,
+                ..
+            } => {
+                let declarations = s
+                    .xml
+                    .as_ref()
+                    .map(|d| d.declarations.clone())
+                    .unwrap_or_else(|| xsd::default_document().declarations);
+                xsd::lower_node(&s.data, &declarations).map_err(|e| e.to_string())
+            }
+            _ => jsonschema::lower(&s.data).map_err(|e| e.to_string()),
+        };
+        lowered.map_err(|e| {
             EditError::Path(format!("the schema in {schema_sheet} cannot be used: {e}"))
         })
     }
@@ -301,6 +379,12 @@ impl Calc {
                  changed from here"
             )));
         };
+        if self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd) {
+            return Err(EditError::Path(format!(
+                "{schema_sheet} is an XSD; changing an XML schema from {sheet} is not supported \
+                 yet, so edit {schema_sheet} itself"
+            )));
+        }
         if !self.auto_update(schema_sheet) {
             return Err(EditError::Path(format!(
                 "switch on auto-update on {schema_sheet} to change the schema from {sheet}"

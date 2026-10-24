@@ -21,7 +21,7 @@ mod trie;
 
 pub use calc::{
     Applied, Calc, Cell, Change, ChangeKind, Decision, EditError, FieldKind, FieldPlaces,
-    Fingerprint, ModuleStatus, TrustStore,
+    Fingerprint, ModuleStatus, SchemaFormat, TrustStore,
 };
 pub use check::Computed;
 pub use engine::{

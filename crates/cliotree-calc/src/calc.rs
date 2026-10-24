@@ -33,6 +33,9 @@ struct Sheet {
     formulas: Arc<Formulas>,
     /// How the tab is tied to a schema (see the `schema` module).
     schema: SchemaRole,
+    /// What an XML tab says about its document beyond the tree: the declaration,
+    /// the prefix and the namespaces of the root. None on a JSON tab.
+    xml: Option<cliotree_core::xml::XmlDocument>,
 }
 
 /// What a tab is to the schema machinery.
@@ -44,6 +47,8 @@ enum SchemaRole {
     /// A tab whose data is a schema document, described by the bundled
     /// meta-schema.
     Document {
+        /// The language the document is written in.
+        format: SchemaFormat,
         /// Whether tabs that use it may change it (DESIGN.md, "Schema binding").
         auto_update: bool,
         /// Why the document cannot be lowered now, if it cannot.
@@ -55,7 +60,7 @@ enum SchemaRole {
 
 #[path = "schema.rs"]
 mod schema;
-pub use schema::{FieldKind, FieldPlaces};
+pub use schema::{FieldKind, FieldPlaces, SchemaFormat};
 
 #[path = "modules.rs"]
 mod modules;
@@ -232,6 +237,7 @@ impl Calc {
                 data,
                 formulas: Arc::default(),
                 schema: SchemaRole::Free,
+                xml: None,
             },
         );
         self.changed(&name, &Path::root());

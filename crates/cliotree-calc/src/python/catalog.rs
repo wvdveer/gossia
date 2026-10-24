@@ -72,6 +72,13 @@ fn others() -> &'static [Function] {
             Data,
         ),
         f(
+            "XMLPATH",
+            "XMLPATH(",
+            "XMLPATH(query, node)",
+            "The nodes of a tab or node that match an XPath query, as a list.",
+            Data,
+        ),
+        f(
             "abs",
             "abs(",
             "abs(x)",

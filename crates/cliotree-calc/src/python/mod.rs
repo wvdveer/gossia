@@ -14,6 +14,7 @@ mod node;
 mod shared;
 mod syntax;
 mod watchdog;
+mod xmlpath;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -413,6 +414,7 @@ fn set_up(
         "VALID",
         "PLAIN",
         "JSONPATH",
+        "XMLPATH",
         "range",
     ]
     .iter()
@@ -454,3 +456,7 @@ mod tests_modules;
 #[cfg(test)]
 #[path = "tests_trust.rs"]
 mod tests_trust;
+
+#[cfg(test)]
+#[path = "tests_xml.rs"]
+mod tests_xml;

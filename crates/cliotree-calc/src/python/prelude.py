@@ -3,7 +3,7 @@
 # Python"). Run once when the engine starts. It is trusted code, so it may use
 # double-underscore names that formulas may not.
 
-from _cliotree import Node, jsonpath as _jsonpath
+from _cliotree import Node, jsonpath as _jsonpath, xmlpath as _xmlpath
 
 
 class FormulaTimeout(BaseException):
@@ -116,6 +116,11 @@ def PLAIN(value):
 def JSONPATH(query, node):
     """The nodes of `node` that match a JSONPath query, as a list."""
     return _jsonpath(query, node)
+
+
+def XMLPATH(query, node):
+    """The nodes of `node` that match an XPath query, as a list."""
+    return _xmlpath(query, node)
 
 
 _range = range
