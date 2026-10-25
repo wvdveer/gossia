@@ -35,6 +35,10 @@ pub struct Editing {
     /// A cursor position to set in the next frame, after the text was changed
     /// by the program (accepting a completion, inserting a function).
     pub set_cursor: Option<usize>,
+    /// What is being typed is the formula of a whole column: the array and the
+    /// field of its items. `path` is then that field of the first item, which
+    /// is what completion reads names relative to.
+    pub column: Option<(Path, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

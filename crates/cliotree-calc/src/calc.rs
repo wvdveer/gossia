@@ -36,6 +36,8 @@ struct Sheet {
     /// What an XML tab says about its document beyond the tree: the declaration,
     /// the prefix and the namespaces of the root. None on a JSON tab.
     xml: Option<cliotree_core::xml::XmlDocument>,
+    /// The formulas that are given to a field of every item of an array.
+    columns: Vec<ColumnFormula>,
 }
 
 /// What a tab is to the schema machinery.
@@ -68,6 +70,10 @@ pub use package::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
     RESERVED_NAMES_VERSION, safe_path,
 };
+
+#[path = "columns.rs"]
+mod columns;
+pub use columns::ColumnFormula;
 
 #[path = "modules.rs"]
 mod modules;
@@ -270,6 +276,7 @@ impl Calc {
                 formulas: Arc::default(),
                 schema: SchemaRole::Free,
                 xml: None,
+                columns: Vec::new(),
             },
         );
         self.changed(&name, &Path::root());
@@ -371,6 +378,8 @@ impl Calc {
         let after = s.data.get(path).cloned().expect("it was just set");
         let position = s.data.position_of(path).unwrap_or(0);
         let mut ops = Vec::new();
+        // A literal in one item of a column ends the column formula.
+        ops.extend(self.release_column(sheet, path));
         if let Some(text) = formula {
             ops.push(Op::Formula {
                 sheet: sheet.to_owned(),
@@ -397,6 +406,7 @@ impl Calc {
         });
         self.drop_formula(sheet, path);
         self.changed(sheet, path);
+        ops.extend(self.sync_columns(sheet, path));
         let key = merge.then(|| MergeKey {
             sheet: sheet.to_owned(),
             path: path.clone(),
@@ -422,6 +432,7 @@ impl Calc {
             .remove(path)
             .map_err(|e| EditError::Path(e.to_string()))?;
         let mut ops = Vec::new();
+        ops.extend(self.release_column(sheet, path));
         if let Some(text) = formula {
             ops.push(Op::Formula {
                 sheet: sheet.to_owned(),
@@ -446,6 +457,7 @@ impl Calc {
             moved,
         });
         self.changed_by_structure(sheet, path);
+        ops.extend(self.sync_columns(sheet, path));
         self.history.record(
             format!("Remove {}", Loc::new(sheet, path.clone())),
             ops,
@@ -471,17 +483,16 @@ impl Calc {
         self.changed(sheet, array);
         let path = array.index(index);
         let moved = self.moved_by(sheet, array, index + 1, -1);
-        self.history.record(
-            format!("Insert {}", Loc::new(sheet, path.clone())),
-            vec![Op::Add {
-                sheet: sheet.to_owned(),
-                path,
-                position: index,
-                node,
-                moved,
-            }],
-            None,
-        );
+        let mut ops = vec![Op::Add {
+            sheet: sheet.to_owned(),
+            path: path.clone(),
+            position: index,
+            node,
+            moved,
+        }];
+        ops.extend(self.sync_columns(sheet, &path));
+        self.history
+            .record(format!("Insert {}", Loc::new(sheet, path)), ops, None);
         Ok(())
     }
 
@@ -551,8 +562,26 @@ impl Calc {
     /// Text that does not parse is kept: the node holds `#SYNTAX!` and the text
     /// stays for the author to correct (DESIGN.md, "Syntax errors").
     pub fn set_formula(&mut self, sheet: &str, path: &Path, text: &str) -> Result<(), EditError> {
+        self.check_formula_place(sheet, path)?;
         let loc = Loc::new(sheet, path.clone());
-        let s = self.sheet_mut(sheet)?;
+        let mut ops = Vec::new();
+        // A different formula on one item of a column ends the column formula.
+        if self.column_of(sheet, path).is_some_and(|c| c.text != text) {
+            ops.extend(self.release_column(sheet, path));
+        }
+        ops.push(self.formula_op(sheet, path, text));
+        self.history
+            .record(format!("Set formula at {loc}"), ops, None);
+        Ok(())
+    }
+
+    /// Whether a formula can go on the node.
+    fn check_formula_place(&self, sheet: &str, path: &Path) -> Result<(), EditError> {
+        let loc = Loc::new(sheet, path.clone());
+        let s = self
+            .sheets
+            .get(sheet)
+            .ok_or_else(|| EditError::NoSheet(sheet.to_owned()))?;
         if s.spec.resolve(path).is_none() {
             return Err(EditError::NotInSchema(loc));
         }
@@ -562,26 +591,26 @@ impl Calc {
         if let Some(formula) = s.formulas.below(path).into_iter().next() {
             return Err(EditError::ContainsFormulas { node: loc, formula });
         }
-        let before = self.formula_text(sheet, path);
-        let s = self.sheet_mut(sheet)?;
-        let value = s
-            .data
-            .get(path)
-            .cloned()
-            .map(|node| (node, s.data.position_of(path).unwrap_or(0)));
-        self.install_formula(sheet, path, text);
-        self.history.record(
-            format!("Set formula at {loc}"),
-            vec![Op::Formula {
-                sheet: sheet.to_owned(),
-                path: path.clone(),
-                before,
-                after: Some(text.to_owned()),
-                value: Some(value),
-            }],
-            None,
-        );
         Ok(())
+    }
+
+    /// Puts a formula on a node and returns the operation that records it.
+    fn formula_op(&mut self, sheet: &str, path: &Path, text: &str) -> Op {
+        let before = self.formula_text(sheet, path);
+        let value = self.sheets.get(sheet).and_then(|s| {
+            s.data
+                .get(path)
+                .cloned()
+                .map(|node| (node, s.data.position_of(path).unwrap_or(0)))
+        });
+        self.install_formula(sheet, path, text);
+        Op::Formula {
+            sheet: sheet.to_owned(),
+            path: path.clone(),
+            before,
+            after: Some(text.to_owned()),
+            value: Some(value),
+        }
     }
 
     /// Puts a formula on a node (replacing one that is there) and marks it out
@@ -635,17 +664,20 @@ impl Calc {
         let Some(text) = self.formula_text(sheet, path) else {
             return Ok(false);
         };
+        // Clearing one item of a column ends the column formula.
+        let mut ops: Vec<Op> = self.release_column(sheet, path).into_iter().collect();
         self.drop_formula(sheet, path);
         self.changed(sheet, path);
+        ops.push(Op::Formula {
+            sheet: sheet.to_owned(),
+            path: path.clone(),
+            before: Some(text),
+            after: None,
+            value: None,
+        });
         self.history.record(
             format!("Clear formula at {}", Loc::new(sheet, path.clone())),
-            vec![Op::Formula {
-                sheet: sheet.to_owned(),
-                path: path.clone(),
-                before: Some(text),
-                after: None,
-                value: None,
-            }],
+            ops,
             None,
         );
         Ok(true)
@@ -788,6 +820,17 @@ impl Calc {
                 after,
             } => {
                 self.store_auto_update(sheet, if forward { *after } else { *before })?;
+            }
+            Op::Column {
+                sheet,
+                array,
+                field,
+                before,
+                after,
+            } => {
+                self.sheet_mut(sheet)?;
+                let target = if forward { after } else { before };
+                self.put_column(sheet, array, field, target.as_deref());
             }
             Op::Formula {
                 sheet,

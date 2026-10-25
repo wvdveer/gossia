@@ -193,16 +193,32 @@ struct Overlay {
     /// By the path of the node, sorted.
     #[serde(default)]
     formulas: BTreeMap<String, OverlayFormula>,
+    /// The column formulas, each once; the items that have one are not listed
+    /// in `formulas` unless they ended in an error.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    columns: Vec<OverlayColumn>,
     /// The state of the view, which the application owns and this layer only
     /// carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     view: Option<Json>,
 }
 
+/// A formula for a field of every item of an array.
 #[derive(Debug, Serialize, Deserialize)]
-struct OverlayFormula {
+struct OverlayColumn {
+    /// The array, as a path.
+    array: String,
+    field: String,
     /// The expression, without the `=`.
     formula: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OverlayFormula {
+    /// The expression, without the `=`. Absent for an item of a column, which
+    /// has the column's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    formula: Option<String>,
     status: OverlayStatus,
 }
 
@@ -363,7 +379,8 @@ impl Calc {
             ));
 
             let overlay = self.overlay_of(name, sheet, meta.views.get(name).cloned());
-            if !overlay.formulas.is_empty() || overlay.view.is_some() {
+            if !overlay.formulas.is_empty() || !overlay.columns.is_empty() || overlay.view.is_some()
+            {
                 files.push((format!("sheets/{name}/overlay.json"), json_text(&overlay)));
             }
 
@@ -439,6 +456,7 @@ impl Calc {
     fn overlay_of(&self, tab: &str, sheet: &Sheet, view: Option<Json>) -> Overlay {
         let mut formulas = BTreeMap::new();
         for (path, formula) in &sheet.formulas.by_path {
+            let in_column = sheet.columns.iter().any(|c| c.holds(path));
             let loc = Loc::new(tab, path.clone());
             let status = if let Some(error) = &formula.error {
                 OverlayStatus::Error(OverlayError {
@@ -452,15 +470,32 @@ impl Calc {
             } else {
                 OverlayStatus::Ok
             };
+            // An item of a column that is as the column makes it needs no entry.
+            if in_column && !matches!(status, OverlayStatus::Error(_)) {
+                continue;
+            }
             formulas.insert(
                 path.to_string(),
                 OverlayFormula {
-                    formula: formula.text.clone(),
+                    formula: (!in_column).then(|| formula.text.clone()),
                     status,
                 },
             );
         }
-        Overlay { formulas, view }
+        let columns = sheet
+            .columns
+            .iter()
+            .map(|c| OverlayColumn {
+                array: c.array.to_string(),
+                field: c.field.clone(),
+                formula: c.text.clone(),
+            })
+            .collect();
+        Overlay {
+            formulas,
+            columns,
+            view,
+        }
     }
 }
 
@@ -720,6 +755,14 @@ impl Calc {
             if let Some(view) = overlay.view {
                 views.insert(name.to_owned(), view);
             }
+            for column in overlay.columns {
+                if let Err(message) = self.restore_column(name, &column) {
+                    warnings.push(format!(
+                        "Tab {name}: the column formula on {}[].{} is dropped: {message}",
+                        column.array, column.field
+                    ));
+                }
+            }
             for (path_text, entry) in overlay.formulas {
                 if let Err(message) = self.restore_formula(name, &path_text, entry) {
                     warnings.push(format!(
@@ -727,8 +770,47 @@ impl Calc {
                     ));
                 }
             }
+            self.restore_column_items(name);
         }
         Ok(())
+    }
+
+    /// Puts a column formula back. The formulas of its items follow, once the
+    /// ones that were saved with an error are back.
+    fn restore_column(&mut self, sheet: &str, column: &OverlayColumn) -> Result<(), String> {
+        let array: Path = column.array.parse().map_err(|e| format!("{e}"))?;
+        self.column_length(sheet, &array, &column.field)
+            .map_err(|e| e.to_string())?;
+        self.put_column(sheet, &array, &column.field, Some(&column.formula));
+        Ok(())
+    }
+
+    /// Gives every item of every column the formula of the column, where it
+    /// has none, without marking anything out of date.
+    fn restore_column_items(&mut self, sheet: &str) {
+        for column in self.column_formulas(sheet).to_vec() {
+            let length = match self.data(sheet).and_then(|d| d.get(&column.array)) {
+                Some(node) => match node.value() {
+                    Value::Array(items) => items.len(),
+                    _ => 0,
+                },
+                None => 0,
+            };
+            for index in 0..length {
+                let place = column.place(index);
+                let entry = OverlayFormula {
+                    formula: Some(column.text.clone()),
+                    status: OverlayStatus::Ok,
+                };
+                let has = self
+                    .sheets
+                    .get(sheet)
+                    .is_some_and(|s| s.formulas.by_path.contains_key(&place));
+                if !has {
+                    let _ = self.restore_formula(sheet, &place.to_string(), entry);
+                }
+            }
+        }
     }
 
     /// Puts a formula back as it was saved: its text, and the error it ended
@@ -742,7 +824,15 @@ impl Calc {
         entry: OverlayFormula,
     ) -> Result<(), String> {
         let path: Path = path_text.parse().map_err(|e| format!("{e}"))?;
-        let syntax = self.syntax.check(&entry.formula);
+        // An item of a column has the column's formula.
+        let text = match entry.formula.clone() {
+            Some(text) => text,
+            None => self
+                .column_of(sheet, &path)
+                .map(|c| c.text.clone())
+                .ok_or("it has no formula and is not in a column")?,
+        };
+        let syntax = self.syntax.check(&text);
         let s = self.sheets.get_mut(sheet).ok_or("no such tab")?;
         if s.spec.resolve(&path).is_none() {
             return Err("the schema defines no node there".to_owned());
@@ -751,7 +841,7 @@ impl Calc {
             return Err("it overlaps another formula".to_owned());
         }
         let mut formula = Formula {
-            text: entry.formula,
+            text,
             deps: Vec::new(),
             error: None,
             traceback: None,

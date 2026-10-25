@@ -223,6 +223,13 @@ impl ClioApp {
                             for column in &shown {
                                 table_row.col(|ui| {
                                     let cell = cell_row(spec, array, index, item, column);
+                                    if self.column_is_selected(array, &column.name) {
+                                        ui.painter().rect_filled(
+                                            ui.max_rect(),
+                                            0.0,
+                                            ui.visuals().selection.bg_fill.gamma_multiply(0.35),
+                                        );
+                                    }
                                     let selected = self.selection.as_ref() == Some(&cell.path);
                                     if selected {
                                         ui.painter().rect_stroke(
@@ -257,11 +264,21 @@ impl ClioApp {
             } else {
                 column.name.clone()
             };
+            let chosen = self.column_is_selected(array, &column.name);
             let response = ui.add(
                 egui::Label::new(RichText::new(text).strong())
+                    .selectable(false)
                     .sense(Sense::click_and_drag())
                     .truncate(),
             );
+            if chosen {
+                ui.painter().rect_stroke(
+                    response.rect.expand2(egui::vec2(2.0, 1.0)),
+                    2.0,
+                    Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                    StrokeKind::Inside,
+                );
+            }
             let owner = self.column_owner(array, column);
             let movable = owner
                 .as_ref()
@@ -306,8 +323,8 @@ impl ClioApp {
                     Stroke::NONE,
                 ));
             }
-            if response.clicked() && sortable {
-                actions.push(Action::SortBy(array.clone(), column.name.clone(), None));
+            if response.clicked() {
+                actions.push(Action::SelectColumn(array.clone(), column.name.clone()));
             }
             let drag_note = match (&owner, movable) {
                 (_, true) => " Drag to move the field.".to_owned(),
@@ -318,11 +335,9 @@ impl ClioApp {
                     .unwrap_or_default(),
                 _ => String::new(),
             };
-            let response = if sortable {
-                response.on_hover_text(format!("Click to sort. Right-click for more.{drag_note}"))
-            } else {
-                response
-            };
+            let response = response.on_hover_text(format!(
+                "Click to select the column. Right-click for more, such as sorting.{drag_note}"
+            ));
             response.context_menu(|ui| {
                 if ui
                     .add_enabled(sortable, egui::Button::new("Sort ascending"))
@@ -369,6 +384,12 @@ impl ClioApp {
                 self.field_menu_items(ui, Some(&array.index(0)), owner.as_ref(), actions);
             });
         });
+    }
+
+    /// Whether this column is the selected one.
+    fn column_is_selected(&self, array: &Path, name: &str) -> bool {
+        self.column_selected()
+            .is_some_and(|c| &c.array == array && c.field == name)
     }
 
     // ------------------------------------------------------ the filter

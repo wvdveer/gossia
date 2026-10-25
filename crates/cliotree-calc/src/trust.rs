@@ -225,7 +225,17 @@ impl Calc {
         let mut items = BTreeMap::new();
         for (name, sheet) in &self.sheets {
             for (path, formula) in &sheet.formulas.by_path {
+                // The formulas a column formula gave the items are that one.
+                if sheet.columns.iter().any(|c| c.holds(path)) {
+                    continue;
+                }
                 items.insert(format!("formula {name}!{path}"), digest_of(&formula.text));
+            }
+            for column in &sheet.columns {
+                items.insert(
+                    format!("column formula {name}!{}", column.label()),
+                    digest_of(&column.text),
+                );
             }
         }
         for (name, module) in &self.modules {

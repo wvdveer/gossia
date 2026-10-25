@@ -96,14 +96,9 @@ pub fn workbook() -> Calc {
             .expect("the sample schema can be used");
     }
     let p = |text: &str| -> Path { text.parse().expect("a path") };
-    for i in 0..3 {
-        calc.set_formula(
-            "Orders",
-            &p(&format!("items[{i}].total")),
-            "parent.qty * parent.price",
-        )
-        .expect("a formula can go there");
-    }
+    // One formula for the total of every item, as a column of the table has.
+    calc.set_column_formula("Orders", &p("items"), "total", "parent.qty * parent.price")
+        .expect("a column formula can go there");
     for (path, formula) in [
         ("subtotal", "round(sum(Orders.items.total), 2)"),
         ("tax", "round(subtotal_ * Orders.tax_rate, 2)"),

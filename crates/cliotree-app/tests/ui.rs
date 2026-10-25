@@ -364,13 +364,27 @@ fn an_array_of_objects_is_drawn_as_a_table_under_the_tree() {
     harness.get_by_label("customer");
 }
 
+/// Chooses `item` from the menu of the header of a column.
+fn header_menu(harness: &mut Harness<'_, ClioApp>, column: &str, item: &str) {
+    harness.get_by_label(column).click_secondary();
+    harness.run();
+    click(harness, item);
+}
+
 #[test]
-fn clicking_a_header_sorts_and_clicking_it_again_reverses() {
+fn the_header_menu_sorts_and_reverses_and_clicking_a_header_only_selects() {
     let mut harness = table_window();
     click(&mut harness, "qty");
     settle(&mut harness);
+    assert_eq!(
+        skus(&harness),
+        ["A-100", "B-220", "C-310"],
+        "a click does not sort"
+    );
+    header_menu(&mut harness, "qty", "Sort ascending");
+    settle(&mut harness);
     assert_eq!(skus(&harness), ["B-220", "A-100", "C-310"]);
-    click(&mut harness, "qty");
+    header_menu(&mut harness, "qty", "Sort descending");
     settle(&mut harness);
     assert_eq!(skus(&harness), ["C-310", "A-100", "B-220"]);
     click(&mut harness, "Reverse row order");
@@ -386,7 +400,7 @@ fn clicking_a_header_sorts_and_clicking_it_again_reverses() {
 #[test]
 fn a_column_that_cannot_be_sorted_says_why_and_offers_the_rows() {
     let mut harness = table_window();
-    click(&mut harness, "note");
+    header_menu(&mut harness, "note", "Sort ascending");
     harness.run();
     assert_eq!(skus(&harness), ["A-100", "B-220", "C-310"], "unchanged");
     assert!(
@@ -399,6 +413,80 @@ fn a_column_that_cannot_be_sorted_says_why_and_offers_the_rows() {
     settle(&mut harness);
     harness.get_by_label("2 of 3 rows (0 hidden, 1 filtered)");
     assert!(harness.query_by_label("B-220").is_none(), "filtered out");
+}
+
+#[test]
+fn clicking_a_header_selects_the_column_and_the_formula_bar_shows_its_formula() {
+    let mut harness = table_window();
+    // The `total` of the sample is a column formula.
+    let headers: Vec<_> = harness.query_all_by_label("total").collect();
+    assert_eq!(headers.len(), 2, "the header, and the order's own total");
+    headers[0].click();
+    harness.run();
+    assert!(harness.state().column_selected().is_some());
+    assert_eq!(bar(&harness), "=parent.qty * parent.price");
+    // Selecting a cell leaves the column.
+    click(&mut harness, "9.5");
+    assert!(harness.state().column_selected().is_none());
+    assert_eq!(bar(&harness), "9.5");
+}
+
+#[test]
+fn a_column_formula_is_typed_in_the_formula_bar_and_one_undo_takes_it_back() {
+    let mut harness = table_window();
+    click(&mut harness, "qty");
+    assert_eq!(bar(&harness), "");
+    click_bar(&mut harness);
+    select_all(&mut harness);
+    harness
+        .get_by_label("Formula bar")
+        .type_text("=parent.price * 2");
+    harness.run();
+    press(&mut harness, Key::Enter);
+    settle(&mut harness);
+    // Every item has the formula and shows its result.
+    let calc = harness.state().calc();
+    assert_eq!(
+        calc.column_formula("Orders", &"items".parse().unwrap(), "qty"),
+        Some("parent.price * 2")
+    );
+    assert_eq!(
+        calc.formulas("Orders")
+            .iter()
+            .filter(|(p, _)| p.to_string().ends_with(".qty"))
+            .count(),
+        3
+    );
+    ctrl(&mut harness, Key::Z);
+    settle(&mut harness);
+    assert!(
+        harness
+            .state()
+            .calc()
+            .column_formula("Orders", &"items".parse().unwrap(), "qty")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_column_formula_cannot_be_a_literal_and_a_summary_column_cannot_have_one() {
+    let mut harness = table_window();
+    click(&mut harness, "qty");
+    click_bar(&mut harness);
+    select_all(&mut harness);
+    harness.get_by_label("Formula bar").type_text("7");
+    harness.run();
+    press(&mut harness, Key::Enter);
+    harness.run();
+    harness.get_by_label_contains("start it with =");
+    assert!(
+        harness
+            .state()
+            .calc()
+            .column_formulas("Orders")
+            .iter()
+            .all(|c| c.field != "qty")
+    );
 }
 
 #[test]

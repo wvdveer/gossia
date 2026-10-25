@@ -161,6 +161,33 @@ pub fn enter(
     Ok(())
 }
 
+/// Enters `text` as the formula of a whole column: the field `field` of every
+/// item of the array at `array`. Only a formula, or nothing (which removes the
+/// column formula), makes sense there.
+pub fn enter_column(
+    calc: &mut Calc,
+    sheet: &str,
+    array: &Path,
+    field: &str,
+    text: &str,
+) -> Result<(), EntryError> {
+    let spec = calc
+        .spec(sheet)
+        .ok_or_else(|| EntryError::Refused(EditError::NoSheet(sheet.to_owned())))?;
+    match classify(spec, &array.index(0).key(field), text)? {
+        Entered::Formula(formula) => calc.set_column_formula(sheet, array, field, &formula)?,
+        Entered::Clear => {
+            calc.remove_column_formula(sheet, array, field)?;
+        }
+        Entered::Literal(_) => {
+            return Err(EntryError::Invalid(
+                "a whole column holds a formula: start it with =".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Removes the formula and the value of a node (DESIGN.md, "Entering
 /// formulas"): an optional node becomes absent, and so does a required one,
 /// which then shows as an empty flagged cell. An array item cannot be left

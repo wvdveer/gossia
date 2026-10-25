@@ -70,6 +70,36 @@ impl ClioApp {
             changed: false,
             in_cell,
             set_cursor: None,
+            column: None,
+        });
+        self.notice = None;
+        self.completion = CompletionUi::default();
+        true
+    }
+
+    /// Starts editing the formula of the selected column, in the formula bar.
+    pub fn begin_editing_column(&mut self) -> bool {
+        let Some(column) = self.column_selected().cloned() else {
+            return false;
+        };
+        if let Some(why) = self.column_refusal(&column) {
+            self.notice = Some(why);
+            return false;
+        }
+        if self.editing.is_some() && !self.commit_editing() {
+            return false;
+        }
+        let text = self.column_text(&column);
+        self.editing = Some(Editing {
+            sheet: self.sheet.clone(),
+            path: column.place(),
+            cursor: text.chars().count(),
+            text,
+            focus: Focus::Bar,
+            changed: false,
+            in_cell: false,
+            set_cursor: None,
+            column: Some((column.array, column.field)),
         });
         self.notice = None;
         self.completion = CompletionUi::default();
@@ -102,18 +132,29 @@ impl ClioApp {
         let Some(editing) = self.editing.take() else {
             return true;
         };
-        let result = entry::enter(
-            self.session.calc_mut(),
-            &editing.sheet,
-            &editing.path,
-            &editing.text,
-            false,
-        );
+        let result = match &editing.column {
+            Some((array, field)) => entry::enter_column(
+                self.session.calc_mut(),
+                &editing.sheet,
+                array,
+                field,
+                &editing.text,
+            ),
+            None => entry::enter(
+                self.session.calc_mut(),
+                &editing.sheet,
+                &editing.path,
+                &editing.text,
+                false,
+            ),
+        };
         match result {
             Ok(()) => {
                 self.notice = None;
                 self.completion = CompletionUi::default();
-                self.pin_row_of(&editing.path);
+                if editing.column.is_none() {
+                    self.pin_row_of(&editing.path);
+                }
                 self.note_unevaluated_formula(&editing.text);
                 self.session.tick();
                 true
@@ -149,6 +190,7 @@ impl ClioApp {
             return false;
         }
         self.selection = Some(path.clone());
+        self.tables.column = None;
         self.note_selection_in_table(path);
         if self.editing.is_none() {
             self.notice = None;

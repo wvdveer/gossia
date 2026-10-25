@@ -53,6 +53,7 @@ pub(crate) enum Action {
     ToggleTabular(Path, bool),
     Reverse(Path),
     SortBy(Path, String, Option<bool>),
+    SelectColumn(Path, String),
     HideColumn(Path, String),
     ShowColumn(Path, String),
     FilterDialog(Path, String),
@@ -322,11 +323,14 @@ impl ClioApp {
 
     fn formula_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let name = self
-                .selection
-                .as_ref()
-                .map(|p| self.name_of(p))
-                .unwrap_or_default();
+            let name = match self.column_selected() {
+                Some(c) => format!("{}[].{}", self.name_of(&c.array), c.field),
+                None => self
+                    .selection
+                    .as_ref()
+                    .map(|p| self.name_of(p))
+                    .unwrap_or_default(),
+            };
             ui.add_sized(
                 [260.0, 22.0],
                 egui::Label::new(RichText::new(name).monospace()).truncate(),
@@ -346,7 +350,12 @@ impl ClioApp {
     /// starts editing; Enter enters, Esc cancels.
     fn bar_text(&mut self, ui: &mut egui::Ui) {
         let id = egui::Id::unique("formula_bar_text");
-        let Some(path) = self.selection.clone() else {
+        let column = self.column_selected().cloned();
+        let Some(path) = column
+            .as_ref()
+            .map(|c| c.place())
+            .or_else(|| self.selection.clone())
+        else {
             let mut empty = String::new();
             let response = ui.add_enabled(
                 false,
@@ -355,22 +364,29 @@ impl ClioApp {
             named(&response, "Formula bar");
             return;
         };
-        let editing_here = self
-            .editing
-            .as_ref()
-            .is_some_and(|e| e.path == path && e.sheet == self.sheet);
+        let editing_here = self.editing.as_ref().is_some_and(|e| {
+            e.path == path && e.sheet == self.sheet && e.column.is_some() == column.is_some()
+        });
         if !editing_here {
-            // Showing the cell. Clicking into it starts editing.
-            let mut shown = self.cell_text(&path);
+            // Showing the cell, or the column's formula. Clicking into it
+            // starts editing.
+            let (mut shown, interactive) = match &column {
+                Some(c) => (self.column_text(c), self.column_refusal(c).is_none()),
+                None => (self.cell_text(&path), self.can_edit(&path)),
+            };
             let response = ui.add(
                 egui::TextEdit::singleline(&mut shown)
                     .id(id)
                     .desired_width(f32::INFINITY)
-                    .interactive(self.can_edit(&path)),
+                    .interactive(interactive),
             );
             named(&response, "Formula bar");
             if response.gained_focus() || response.clicked() {
-                self.begin_editing(&path, false, None);
+                if column.is_some() {
+                    self.begin_editing_column();
+                } else {
+                    self.begin_editing(&path, false, None);
+                }
             }
             return;
         }
@@ -534,6 +550,7 @@ impl ClioApp {
             Action::Select(path) => {
                 self.select(&path);
             }
+            Action::SelectColumn(array, name) => self.select_column(&array, &name),
             Action::Toggle(path) => {
                 let open = !self.is_open(&path);
                 self.set_open(&path, open);

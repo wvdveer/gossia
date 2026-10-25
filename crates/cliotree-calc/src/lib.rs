@@ -21,8 +21,8 @@ mod session;
 mod trie;
 
 pub use calc::{
-    Applied, Calc, Cell, Change, ChangeKind, Decision, EditError, FieldKind, FieldPlaces,
-    Fingerprint, ModuleStatus, SchemaFormat, TrustStore,
+    Applied, Calc, Cell, Change, ChangeKind, ColumnFormula, Decision, EditError, FieldKind,
+    FieldPlaces, Fingerprint, ModuleStatus, SchemaFormat, TrustStore,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -70,3 +70,7 @@ mod schema_tests;
 #[cfg(test)]
 #[path = "package_tests.rs"]
 mod package_tests;
+
+#[cfg(test)]
+#[path = "columns_tests.rs"]
+mod columns_tests;

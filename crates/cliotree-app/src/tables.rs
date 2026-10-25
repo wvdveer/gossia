@@ -153,10 +153,84 @@ pub struct Tables {
     pub last_sort: Option<(String, Path, String, bool)>,
     pub refused: Option<Refusal>,
     pub dialog: Option<FilterDialog>,
+    /// The column selected by clicking its header, if one is.
+    pub column: Option<ColumnSel>,
+}
+
+/// A whole column of a table, selected by its header.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnSel {
+    pub sheet: String,
+    pub array: Path,
+    /// The name of the column: a field, or fields joined by dots.
+    pub field: String,
+}
+
+impl ColumnSel {
+    /// This column of the first item: where the column's formula is read from
+    /// (`this`, `parent`) and what names are offered for it.
+    pub fn place(&self) -> Path {
+        self.array.index(0).key(self.field.as_str())
+    }
 }
 
 impl ClioApp {
     // ------------------------------------------------------------ which
+
+    /// Selects the whole column. What was being typed is entered first.
+    pub fn select_column(&mut self, array: &Path, name: &str) {
+        if self.editing.is_some() && !self.commit_editing() {
+            return;
+        }
+        self.selection = None;
+        self.tables.active.insert(self.sheet.clone(), array.clone());
+        let column = ColumnSel {
+            sheet: self.sheet.clone(),
+            array: array.clone(),
+            field: name.to_owned(),
+        };
+        self.notice = self.column_refusal(&column);
+        self.tables.column = Some(column);
+    }
+
+    /// The column selected in this tab.
+    pub fn column_selected(&self) -> Option<&ColumnSel> {
+        self.tables
+            .column
+            .as_ref()
+            .filter(|c| c.sheet == self.sheet && self.is_tabular(&c.array))
+    }
+
+    /// Why this column cannot have a formula, if it cannot.
+    pub fn column_refusal(&self, column: &ColumnSel) -> Option<String> {
+        let found = self
+            .columns_of(&column.array)
+            .into_iter()
+            .find(|c| c.name == column.field)?;
+        if found.summary {
+            Some(format!(
+                "{} holds other values, so it cannot have a column formula",
+                column.field
+            ))
+        } else if found.fields.len() > 1 {
+            Some(format!(
+                "{} is inside an object of the items: a column formula is for a field of the items themselves",
+                column.field
+            ))
+        } else if !self.can_edit(&column.array) {
+            Some(format!("{} cannot be edited", self.name_of(&column.array)))
+        } else {
+            None
+        }
+    }
+
+    /// The formula bar's text for a selected column: its formula, or nothing.
+    pub fn column_text(&self, column: &ColumnSel) -> String {
+        self.calc()
+            .column_formula(&column.sheet, &column.array, &column.field)
+            .map(|text| format!("={text}"))
+            .unwrap_or_default()
+    }
 
     pub fn is_tabular(&self, array: &Path) -> bool {
         self.tables
