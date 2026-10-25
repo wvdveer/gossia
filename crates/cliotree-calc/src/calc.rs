@@ -178,6 +178,8 @@ pub struct Calc {
     module_generation: u64,
     /// Whether Python may run (see [`Calc::set_trusted`]).
     trusted: bool,
+    /// The customised forms of the tabs.
+    forms: crate::forms::FormStore,
 }
 
 impl Calc {
@@ -197,7 +199,20 @@ impl Calc {
             modules: indexmap::IndexMap::new(),
             module_generation: 0,
             trusted: true,
+            forms: crate::forms::FormStore::default(),
         }
+    }
+
+    /// The customised forms of the tabs. A form that has not been customised
+    /// is not stored: it is generated from the schema.
+    pub fn forms(&self) -> &crate::forms::FormStore {
+        &self.forms
+    }
+
+    /// Changes to forms are not edits of the workbook's data, so they are not
+    /// in the undo history and do not recalculate anything.
+    pub fn forms_mut(&mut self) -> &mut crate::forms::FormStore {
+        &mut self.forms
     }
 
     pub fn syntax(&self) -> &Arc<dyn Syntax> {

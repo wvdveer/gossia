@@ -481,3 +481,116 @@ fn the_raw_view_of_an_xml_tab_is_xml_and_a_paste_is_checked_against_the_xsd() {
         Some(Value::Str("Globex".into()))
     );
 }
+
+// --------------------------------------------------- named forms, layout mode
+
+fn new_form(harness: &mut Harness<'_, ClioApp>, name: &str) {
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
+    harness.get_by_label("New form...").click();
+    harness.run();
+    harness.get_by_label("Form name").click();
+    harness.run();
+    harness.get_by_label("Form name").type_text(name);
+    harness.run();
+    click(harness, "Create");
+    settle(harness);
+}
+
+fn edit_form(harness: &mut Harness<'_, ClioApp>) {
+    harness.get_by_label("Edit form").click();
+    harness.run();
+}
+
+#[test]
+fn a_new_form_is_made_from_the_view_menu_and_shown() {
+    let mut harness = form();
+    new_form(&mut harness, "Packing");
+    assert_eq!(harness.state().form_name(), "Packing");
+    assert!(harness.state().in_form());
+    harness.get_by_label("Orders.customer.name");
+    // It is offered by the view selector.
+    show_as(&mut harness, "Default");
+    assert_eq!(harness.state().form_name(), "Default");
+    show_as(&mut harness, "Packing");
+    assert_eq!(harness.state().form_name(), "Packing");
+}
+
+#[test]
+fn a_refused_form_name_is_explained_and_the_dialog_stays() {
+    let mut harness = form();
+    new_form(&mut harness, "two words");
+    assert!(has(&harness, "Create"));
+    assert!(harness.state().form.dialog.is_some());
+    click(&mut harness, "Cancel");
+    assert!(harness.state().form.dialog.is_none());
+}
+
+#[test]
+fn layout_mode_selects_a_control_and_edits_its_label_on_the_property_page() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    assert!(harness.state().layout_active());
+    click(&mut harness, "Field customer.name");
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 0]));
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::TextInput, "Label")
+        .click();
+    harness.run();
+    harness.key_combination_modifiers(egui::Modifiers::COMMAND, &[Key::A]);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::TextInput, "Label")
+        .type_text("Customer");
+    harness.run();
+    let design = harness.state().design_of("Default");
+    assert_eq!(
+        design.get(&[0, 0]).unwrap().label.as_deref(),
+        Some("Customer")
+    );
+    assert!(harness.state().is_customised("Default"));
+    // Editing a design is not an edit of the workbook.
+    assert_eq!(harness.state().calc().history_len().0, 0);
+}
+
+#[test]
+fn a_control_is_deleted_from_its_context_menu_and_listed_as_not_on_the_form() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    let before = harness.state().design_of("Default").walk().len();
+    harness
+        .get_by_label("Field customer.name")
+        .click_secondary();
+    harness.run();
+    harness.get_by_label("Delete control").click();
+    harness.run();
+    assert_eq!(
+        harness.state().design_of("Default").walk().len(),
+        before - 1
+    );
+    harness.get_by_label("Add customer.name to the form");
+    click(&mut harness, "Add customer.name to the form");
+    assert_eq!(harness.state().design_of("Default").walk().len(), before);
+}
+
+#[test]
+fn a_control_whose_field_is_gone_is_a_placeholder_that_can_be_removed() {
+    let mut harness = form();
+    new_form(&mut harness, "Packing");
+    harness.state_mut().edit_design(|d| {
+        d.get_mut(&[0, 0])?.path = Some("customer.nickname".to_owned());
+        Some(None)
+    });
+    harness.run();
+    assert!(
+        harness
+            .query_all_by_label_contains("customer.nickname")
+            .next()
+            .is_some()
+    );
+    edit_form(&mut harness);
+    let name = "Remove Field customer.nickname";
+    click(&mut harness, name);
+    assert!(!has(&harness, name));
+}

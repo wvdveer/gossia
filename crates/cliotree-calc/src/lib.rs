@@ -12,6 +12,7 @@ mod engine;
 pub mod entry;
 mod eval;
 pub mod fake;
+mod forms;
 mod history;
 mod model;
 pub mod names;
@@ -29,6 +30,7 @@ pub use engine::{
     SyntaxError,
 };
 pub use eval::{Evaluation, Hooks, Outcome, Snapshot};
+pub use forms::{DEFAULT_FORM, FormStore};
 pub use model::{Dep, Loc};
 pub use session::{EngineFactory, EvalSettings, Evaluator, Session, Status};
 

@@ -234,6 +234,7 @@ impl ClioApp {
             return;
         }
         self.cancel_editing();
+        self.form.layout = None;
         self.sheet = sheet.to_owned();
         self.selection = None;
         self.notice = None;

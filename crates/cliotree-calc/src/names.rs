@@ -10,6 +10,9 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subject {
     Tab,
+    /// A form of a tab: the rules of a tab name, which is all that is
+    /// checked here.
+    Form,
     Module,
     /// A public function of a module.
     Function,
@@ -19,6 +22,7 @@ impl Subject {
     fn noun(self) -> &'static str {
         match self {
             Subject::Tab => "tab",
+            Subject::Form => "form",
             Subject::Module => "module",
             Subject::Function => "function",
         }

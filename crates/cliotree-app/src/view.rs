@@ -105,6 +105,12 @@ impl ClioApp {
                 .default_size(300.0)
                 .show(ui, |ui| self.issues_panel(ui));
         }
+        if form && self.layout_active() {
+            egui::Panel::right("form_properties")
+                .resizable(true)
+                .default_size(320.0)
+                .show(ui, |ui| self.property_page(ui));
+        }
         if form {
             egui::CentralPanel::default().show(ui, |ui| {
                 if self.in_form() {
@@ -127,6 +133,7 @@ impl ClioApp {
         self.insert_function_window(ui.ctx());
         self.filter_window(ui.ctx());
         self.schema_window(ui.ctx());
+        self.form_window(ui.ctx());
     }
 
     // ------------------------------------------------------------- keys
@@ -261,6 +268,7 @@ impl ClioApp {
                         }
                     }
                 });
+                self.forms_menu(ui);
                 ui.separator();
                 if ui.checkbox(&mut self.show_issues, "Issues panel").clicked() {
                     ui.close();

@@ -10,19 +10,21 @@
 use std::collections::HashMap;
 
 use cliotree_calc::entry;
+use cliotree_core::form::{Address, Control, ControlKind, Editor, RepeaterMode};
 use cliotree_core::validate::validate_at;
 use cliotree_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
 use egui::{Align, Color32, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
+use crate::form_layout::{ControlAction, FormDialog, LayoutState};
 use crate::icons;
 use crate::rows::display;
 use crate::table::{self, Column};
 use crate::view::{ROW_HEIGHT, computed_fill, error_color};
 
 /// The form every Data Tab has. It cannot be renamed or deleted.
-pub const DEFAULT_FORM: &str = "Default";
+pub const DEFAULT_FORM: &str = cliotree_calc::DEFAULT_FORM;
 
 /// The width of the labels of fields, in points.
 const LABEL_WIDTH: f32 = 170.0;
@@ -68,6 +70,10 @@ pub struct FormState {
     pub new_keys: HashMap<(String, Path), String>,
     /// Scroll so that the control bound to this node is in view.
     pub scroll_to: Option<Path>,
+    /// Layout mode, while the form being shown is being edited.
+    pub layout: Option<LayoutState>,
+    /// The dialog of a command on forms, when one is waiting.
+    pub dialog: Option<FormDialog>,
 }
 
 /// Something a control asked for while it was drawn. They are applied after
@@ -88,6 +94,8 @@ pub(crate) enum FormAction {
     Step(Path, usize),
     AddEntry(Path, String),
     DeleteEntry(Path, String),
+    /// A command on a control, in layout mode.
+    Control(ControlAction),
 }
 
 impl ClioApp {
@@ -108,7 +116,28 @@ impl ClioApp {
 
     /// The names of the views of the current tab, the data tree first.
     pub fn view_names(&self) -> Vec<View> {
-        vec![View::Tree, View::Form(DEFAULT_FORM.to_owned()), View::Raw]
+        let mut views = vec![View::Tree];
+        views.extend(
+            self.calc()
+                .forms()
+                .all_names(&self.sheet)
+                .into_iter()
+                .map(View::Form),
+        );
+        views.push(View::Raw);
+        views
+    }
+
+    /// The form the tab shows: the one chosen, or Default if it is gone.
+    pub fn form_name(&self) -> String {
+        match self.current_view() {
+            View::Form(name)
+                if name == DEFAULT_FORM || self.calc().forms().get(&self.sheet, name).is_some() =>
+            {
+                name.clone()
+            }
+            _ => DEFAULT_FORM.to_owned(),
+        }
     }
 
     /// Shows `view` in the current tab. What is being typed is entered first,
@@ -122,6 +151,7 @@ impl ClioApp {
             return false;
         }
         let selection = self.selection.clone();
+        self.form.layout = None;
         if view == View::Tree {
             self.views.remove(&self.sheet);
             // The control that had the focus is the selected node.
@@ -229,12 +259,17 @@ impl ClioApp {
 
     // ------------------------------------------------------------ drawing
 
-    /// The generated Default form, filling the central panel.
+    /// The form of the tab, filling the central panel: the strip with the
+    /// switch to layout mode, then the controls of its design.
     pub(crate) fn form_view(&mut self, ui: &mut egui::Ui) {
         if let Some(notice) = &self.notice {
             let color = error_color(ui);
             ui.colored_label(color, notice);
         }
+        let name = self.form_name();
+        self.form_bar(ui, &name);
+        let design = self.design_of(&name);
+        let layout = self.layout_selection(&name);
         let mut drafts = std::mem::take(&mut self.form.drafts);
         let mut new_keys = std::mem::take(&mut self.form.new_keys);
         let scroll_to = self.form.scroll_to.take();
@@ -250,16 +285,27 @@ impl ClioApp {
                     new_keys: &mut new_keys,
                     actions: Vec::new(),
                     scroll_to,
+                    layout,
+                    look: None,
                 };
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        let title = spec
-                            .get(spec.root())
+                        let title = design
                             .title
                             .clone()
+                            .or_else(|| spec.get(spec.root()).title.clone())
                             .unwrap_or_else(|| self.sheet.clone());
-                        painter.node(ui, &Path::root(), spec.root(), &title, true);
+                        let response = ui.heading(&title);
+                        painter.arrive(&Path::root(), &response);
+                        if let Some(help) = spec.get(spec.root()).description.as_deref() {
+                            ui.label(RichText::new(help).weak());
+                        }
+                        ui.add_space(4.0);
+                        if design.controls.is_empty() {
+                            ui.weak("This form has no controls. Add some from the palette above.");
+                        }
+                        painter.controls(ui, &design.controls, &[]);
                     });
                 actions = painter.actions;
             }
@@ -316,6 +362,7 @@ impl ClioApp {
             FormAction::DeleteEntry(map, key) => {
                 self.delete_node(&map.key(key));
             }
+            FormAction::Control(action) => self.apply_control(action),
         }
     }
 
@@ -467,6 +514,39 @@ struct Painter<'a> {
     new_keys: &'a mut HashMap<(String, Path), String>,
     actions: Vec<FormAction>,
     scroll_to: Option<Path>,
+    /// In layout mode: the control that is selected, if one is.
+    layout: Option<Option<Address>>,
+    /// What the control being drawn says about how to draw its node.
+    look: Option<(Path, Look)>,
+}
+
+/// How the control of a node wants it drawn, beyond what its type calls for.
+#[derive(Debug, Clone, Default)]
+struct Look {
+    help: Option<String>,
+    editor: Option<Editor>,
+    read_only: bool,
+}
+
+/// Where a control is among the others of its list, for its menu.
+struct Slot {
+    at: Address,
+    siblings: usize,
+    above_is_group: bool,
+}
+
+fn slots(list: &[Control], parent: &[usize]) -> Vec<Slot> {
+    (0..list.len())
+        .map(|i| {
+            let mut at = parent.to_vec();
+            at.push(i);
+            Slot {
+                at,
+                siblings: list.len(),
+                above_is_group: i > 0 && list[i - 1].kind == ControlKind::Group,
+            }
+        })
+        .collect()
 }
 
 impl Painter<'_> {
@@ -481,6 +561,271 @@ impl Painter<'_> {
         }
     }
 
+    // ------------------------------------------------------------ controls
+
+    fn controls(&mut self, ui: &mut egui::Ui, list: &[Control], parent: &[usize]) {
+        for (control, slot) in list.iter().zip(slots(list, parent)) {
+            self.control(ui, control, &slot);
+        }
+    }
+
+    fn control(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        if c.kind == ControlKind::Group {
+            self.group(ui, c, slot);
+        } else if self.layout.is_none() {
+            self.leaf(ui, c);
+        } else {
+            // In layout mode a control is drawn as it will look, but cannot be
+            // used: a click selects it.
+            let rect = ui
+                .scope(|ui| {
+                    ui.add_enabled_ui(false, |ui| self.leaf(ui, c));
+                })
+                .response
+                .rect;
+            let id = ui.scope_id().with(("control", slot.at.clone()));
+            let target = ui.interact(rect, id, Sense::click());
+            self.layout_target(ui, &target, rect, c, slot);
+        }
+    }
+
+    /// What selecting a control in layout mode looks like and does.
+    fn layout_target(
+        &mut self,
+        ui: &mut egui::Ui,
+        target: &egui::Response,
+        rect: egui::Rect,
+        c: &Control,
+        slot: &Slot,
+    ) {
+        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at);
+        let name = control_name(c);
+        target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
+        if target.clicked() {
+            self.actions
+                .push(FormAction::Control(ControlAction::Select(slot.at.clone())));
+        }
+        if selected {
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                3.0,
+                Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                StrokeKind::Outside,
+            );
+        } else if target.hovered() {
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                3.0,
+                Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
+                StrokeKind::Outside,
+            );
+        }
+        target.context_menu(|ui| {
+            self.control_menu(ui, slot);
+        });
+    }
+
+    /// The commands on a control, in its context menu.
+    fn control_menu(&mut self, ui: &mut egui::Ui, slot: &Slot) {
+        let index = slot.at.last().copied().unwrap_or(0);
+        let nested = slot.at.len() > 1;
+        let mut commands = vec![
+            (
+                "Move up",
+                index > 0,
+                ControlAction::Shift(slot.at.clone(), true),
+            ),
+            (
+                "Move down",
+                index + 1 < slot.siblings,
+                ControlAction::Shift(slot.at.clone(), false),
+            ),
+            (
+                "Move into the group above",
+                slot.above_is_group,
+                ControlAction::Nest(slot.at.clone(), true),
+            ),
+            (
+                "Move out of the group",
+                nested,
+                ControlAction::Nest(slot.at.clone(), false),
+            ),
+        ];
+        commands.push((
+            "Delete control",
+            true,
+            ControlAction::Delete(slot.at.clone()),
+        ));
+        for (label, enabled, action) in commands {
+            if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                self.actions.push(FormAction::Control(action));
+                ui.close();
+            }
+        }
+    }
+
+    /// A group: its controls in columns, in a box when it has a title or is
+    /// bound to an object.
+    fn group(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        let layout = self.layout.is_some();
+        let problem = design_problem(self.spec, c);
+        let path = c.bound_path().filter(|_| problem.is_none());
+        let label = c.label.clone().or_else(|| {
+            path.as_ref()
+                .and_then(last_name)
+                .or_else(|| layout.then(|| "(group)".to_owned()))
+        });
+        // An object that is not there is made on request; in layout mode its
+        // controls are shown all the same.
+        if let Some(path) = &path
+            && !layout
+            && !path.is_root()
+            && self.data.get(path).is_none()
+        {
+            let ty = self.spec.resolve(path).map(|r| r.ty);
+            ui.horizontal(|ui| {
+                let help = ty.and_then(|ty| self.help(path, ty));
+                label_cell(ui, label.as_deref().unwrap_or(""), false, help);
+                let can = self.app.can_edit(path);
+                if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
+                    self.actions.push(FormAction::Create(path.clone()));
+                }
+            });
+            return;
+        }
+        let framed = label.is_some() || path.is_some() || layout;
+        let draw = |this: &mut Self, ui: &mut egui::Ui| {
+            if let Some(problem) = &problem {
+                this.placeholder(ui, c, problem);
+                return;
+            }
+            let columns = c.columns.unwrap_or(1).clamp(1, 6) as usize;
+            if columns == 1 {
+                this.controls(ui, &c.children, &slot.at);
+            } else {
+                let list = slots(&c.children, &slot.at);
+                ui.columns(columns, |cols| {
+                    for (i, (child, child_slot)) in c.children.iter().zip(&list).enumerate() {
+                        this.control(&mut cols[i % columns], child, child_slot);
+                    }
+                });
+            }
+        };
+        if !framed {
+            draw(self, ui);
+            return;
+        }
+        let response = ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            let title = label.clone().unwrap_or_default();
+            if layout {
+                let header =
+                    ui.add(egui::Label::new(RichText::new(&title).strong()).sense(Sense::click()));
+                let name = control_name(c);
+                header.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone())
+                });
+                if header.clicked() {
+                    self.actions
+                        .push(FormAction::Control(ControlAction::Select(slot.at.clone())));
+                }
+                header.context_menu(|ui| self.control_menu(ui, slot));
+            } else {
+                let response = ui.strong(&title);
+                if let Some(path) = &path {
+                    self.arrive(path, &response);
+                }
+            }
+            let help = c.help.as_deref().or_else(|| {
+                let path = path.as_ref()?;
+                self.help(path, self.spec.resolve(path)?.ty)
+            });
+            if let Some(help) = help {
+                ui.label(RichText::new(help).weak().small());
+            }
+            draw(self, ui);
+        });
+        if self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at) {
+            ui.painter().rect_stroke(
+                response.response.rect.expand(2.0),
+                3.0,
+                Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                StrokeKind::Outside,
+            );
+        }
+    }
+
+    /// A control that is not a group.
+    fn leaf(&mut self, ui: &mut egui::Ui, c: &Control) {
+        match c.kind {
+            ControlKind::Label => {
+                ui.label(c.text.clone().unwrap_or_default());
+            }
+            ControlKind::Separator => {
+                ui.separator();
+            }
+            ControlKind::Button => {
+                let label = c.label.clone().unwrap_or_else(|| "Button".to_owned());
+                let hint = match &c.procedure {
+                    Some(p) => format!("Runs {p}. Running procedures is not built yet."),
+                    None => "No procedure has been chosen.".to_owned(),
+                };
+                ui.add_enabled(false, egui::Button::new(label))
+                    .on_disabled_hover_text(hint);
+            }
+            ControlKind::Field | ControlKind::Repeater => self.bound(ui, c),
+            ControlKind::Group => {}
+        }
+    }
+
+    /// A field or a repeater: the control of the node it is bound to.
+    fn bound(&mut self, ui: &mut egui::Ui, c: &Control) {
+        if let Some(problem) = design_problem(self.spec, c) {
+            self.placeholder(ui, c, &problem);
+            return;
+        }
+        let Some(path) = c.bound_path() else {
+            return;
+        };
+        let Some(resolved) = self.spec.resolve(&path) else {
+            return;
+        };
+        let ty = resolved.ty;
+        let label = c
+            .label
+            .clone()
+            .or_else(|| last_name(&path))
+            .unwrap_or_else(|| self.app.sheet.clone());
+        self.look = Some((
+            path.clone(),
+            Look {
+                help: c.help.clone(),
+                editor: c.editor,
+                read_only: c.read_only,
+            },
+        ));
+        match (&self.spec.get(ty).kind, c.kind) {
+            (Kind::Array { .. }, _) => {
+                self.repeater_of(ui, &path, ty, &label, c.mode, c.show.as_deref());
+            }
+            (Kind::Map { .. }, _) => self.map(ui, &path, ty, &label),
+            (Kind::Object { .. }, _) => self.object(ui, &path, ty, &label, resolved.required),
+            _ => self.field(ui, &path, ty, &label, resolved.required),
+        }
+        self.look = None;
+    }
+
+    /// Stands in for a control whose path the schema does not have.
+    fn placeholder(&mut self, ui: &mut egui::Ui, c: &Control, problem: &str) {
+        let what = c
+            .path
+            .clone()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| c.kind.label().to_lowercase());
+        let color = error_color(ui);
+        ui.label(RichText::new(format!("{what}: {problem}")).color(color));
+    }
+
     /// The control for the node at `path` of type `ty`: a group, a repeater,
     /// a list of entries, or a field.
     fn node(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str, required: bool) {
@@ -492,8 +837,13 @@ impl Painter<'_> {
         }
     }
 
-    fn help(&self, ty: TypeId) -> Option<&str> {
-        self.spec.get(ty).description.as_deref()
+    /// The help text of a node: what its control says, or else the schema.
+    fn help(&self, path: &Path, ty: TypeId) -> Option<&str> {
+        self.look
+            .as_ref()
+            .filter(|(p, _)| p == path)
+            .and_then(|(_, look)| look.help.as_deref())
+            .or(self.spec.get(ty).description.as_deref())
     }
 
     fn object(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str, required: bool) {
@@ -504,7 +854,7 @@ impl Painter<'_> {
         if self.data.get(path).is_none() {
             // Absent: an empty control, and the object is made on request.
             ui.horizontal(|ui| {
-                label_cell(ui, label, required, self.help(ty));
+                label_cell(ui, label, required, self.help(path, ty));
                 let can = self.app.can_edit(path);
                 if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
@@ -521,7 +871,7 @@ impl Painter<'_> {
         if root {
             let response = ui.heading(label);
             self.arrive(path, &response);
-            if let Some(help) = self.help(ty) {
+            if let Some(help) = self.help(path, ty) {
                 ui.label(RichText::new(help).weak());
             }
             ui.add_space(4.0);
@@ -531,7 +881,7 @@ impl Painter<'_> {
                 ui.set_width(ui.available_width());
                 let response = ui.strong(label);
                 self.arrive(path, &response);
-                if let Some(help) = self.help(ty) {
+                if let Some(help) = self.help(path, ty) {
                     ui.label(RichText::new(help).weak().small());
                 }
                 draw(self, ui);
@@ -544,7 +894,7 @@ impl Painter<'_> {
     fn field(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str, required: bool) {
         let problem = ui
             .horizontal(|ui| {
-                label_cell(ui, label, required, self.help(ty));
+                label_cell(ui, label, required, self.help(path, ty));
                 self.editor(ui, path, ty, required, false)
             })
             .inner;
@@ -580,6 +930,14 @@ impl Painter<'_> {
         let kind = &self.spec.get(ty).kind;
         let name = app.name_of(path);
         let key = self.key(path);
+        let look = self
+            .look
+            .as_ref()
+            .filter(|(p, _)| p == path)
+            .map(|(_, look)| look.clone())
+            .unwrap_or_default();
+        let read_only = read_only || look.read_only;
+        let as_text = matches!(look.editor, Some(Editor::Text | Editor::Multiline));
 
         let mut problem = None;
         let mut response = None;
@@ -592,7 +950,7 @@ impl Painter<'_> {
                 );
                 r.on_hover_text(format!("{} {}", error.kind.code(), error.message));
             }
-            (_, Kind::Bool) => {
+            (_, Kind::Bool) if !as_text => {
                 let mut checked = matches!(value, Some(Value::Bool(true)));
                 let r = ui.add_enabled(!read_only, egui::Checkbox::new(&mut checked, ""));
                 r.widget_info(|| {
@@ -609,7 +967,7 @@ impl Painter<'_> {
                 }
                 response = Some(r);
             }
-            (_, Kind::Enum { values, .. }) => {
+            (_, Kind::Enum { values, .. }) if !as_text => {
                 let current = match value {
                     Some(Value::Str(s)) => s.clone(),
                     _ => String::new(),
@@ -651,7 +1009,11 @@ impl Painter<'_> {
                     .drafts
                     .get(&key)
                     .map_or_else(|| current.clone(), |d| d.text.clone());
-                let long = matches!(kind, Kind::String(c) if c.max_length.is_some_and(|m| m > 200));
+                let long = match look.editor {
+                    Some(Editor::Multiline) => matches!(kind, Kind::String(_) | Kind::Enum { .. }),
+                    Some(Editor::Text) => false,
+                    _ => matches!(kind, Kind::String(c) if c.max_length.is_some_and(|m| m > 200)),
+                };
                 let width = if compact {
                     f32::INFINITY
                 } else {
@@ -753,6 +1115,20 @@ impl Painter<'_> {
     // ----------------------------------------------------------- repeaters
 
     fn repeater(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str) {
+        self.repeater_of(ui, path, ty, label, None, None);
+    }
+
+    /// An array as a table or one item at a time, as its control says; with no
+    /// say, a table when the items are flat.
+    fn repeater_of(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &Path,
+        ty: TypeId,
+        label: &str,
+        mode: Option<RepeaterMode>,
+        show: Option<&[String]>,
+    ) {
         let Kind::Array { items: item_ty, .. } = &self.spec.get(ty).kind else {
             return;
         };
@@ -770,10 +1146,16 @@ impl Painter<'_> {
                     self.actions.push(FormAction::Add(path.clone()));
                 }
             });
-            if let Some(help) = self.help(ty) {
+            if let Some(help) = self.help(path, ty) {
                 ui.label(RichText::new(help).weak().small());
             }
-            match self.table_columns(item_ty) {
+            let columns = match mode {
+                Some(RepeaterMode::Stacked) => None,
+                _ => self
+                    .table_columns(item_ty)
+                    .map(|columns| chosen(columns, show)),
+            };
+            match columns {
                 Some(columns) if !items.is_empty() => {
                     self.table(ui, path, items.len(), &columns);
                 }
@@ -948,7 +1330,7 @@ impl Painter<'_> {
             ui.set_width(ui.available_width());
             let response = ui.strong(label);
             self.arrive(path, &response);
-            if let Some(help) = self.help(ty) {
+            if let Some(help) = self.help(path, ty) {
                 ui.label(RichText::new(help).weak().small());
             }
             for key in &entries {
@@ -1023,5 +1405,55 @@ fn label_cell(ui: &mut egui::Ui, label: &str, required: bool, help: Option<&str>
         .inner;
     if let Some(help) = help {
         response.on_hover_text(help);
+    }
+}
+
+/// The columns of a table that a control chose, in its order. A choice that
+/// matches no column is no choice.
+fn chosen(columns: Vec<Column>, show: Option<&[String]>) -> Vec<Column> {
+    let Some(show) = show else {
+        return columns;
+    };
+    let picked: Vec<Column> = show
+        .iter()
+        .filter_map(|name| columns.iter().find(|c| &c.name == name).cloned())
+        .collect();
+    if picked.is_empty() { columns } else { picked }
+}
+
+/// The name of the last step of a path, which labels a control by default.
+pub(crate) fn last_name(path: &Path) -> Option<String> {
+    match path.segments().last()? {
+        cliotree_core::Segment::Key(key) => Some(key.clone()),
+        cliotree_core::Segment::Index(i) => Some(format!("[{i}]")),
+    }
+}
+
+/// Why the control cannot be drawn against the schema, if it cannot.
+pub(crate) fn design_problem(spec: &TypeSpec, control: &Control) -> Option<String> {
+    cliotree_core::form::control_problem(spec, control)
+}
+
+/// What a control is called to a screen reader, a test, and the list of
+/// broken controls.
+pub(crate) fn control_name(control: &Control) -> String {
+    let detail = match control.kind {
+        ControlKind::Label => control.text.clone().unwrap_or_default(),
+        ControlKind::Button => control
+            .label
+            .clone()
+            .or_else(|| control.procedure.clone())
+            .unwrap_or_default(),
+        ControlKind::Separator => String::new(),
+        _ => control
+            .path
+            .clone()
+            .or_else(|| control.label.clone())
+            .unwrap_or_default(),
+    };
+    if detail.is_empty() {
+        control.kind.label().to_owned()
+    } else {
+        format!("{} {detail}", control.kind.label())
     }
 }

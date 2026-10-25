@@ -4,6 +4,7 @@
 //! This crate has no UI and no Python, so that it can be tested headlessly and
 //! reused by a later web port (see DESIGN.md, Application structure).
 
+pub mod form;
 pub mod json;
 pub mod jsonschema;
 pub mod metaschema;
