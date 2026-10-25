@@ -79,6 +79,7 @@ impl ClioApp {
     /// One frame of the window.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         crate::icons::prepare(ui.ctx());
+        self.apply_settings();
         self.session.tick();
         self.collect_procedures();
         if !self.session.is_idle() {
@@ -153,12 +154,15 @@ impl ClioApp {
         let save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
         let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
         let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+        let new = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
         if ui.input_mut(|i| i.consume_shortcut(&save_as)) {
             self.begin_save_as();
         } else if ui.input_mut(|i| i.consume_shortcut(&save)) {
             self.begin_save();
         } else if ui.input_mut(|i| i.consume_shortcut(&open)) {
             self.begin_open();
+        } else if ui.input_mut(|i| i.consume_shortcut(&new)) {
+            self.begin_new();
         }
         if !typing_somewhere {
             // The longer shortcut first, so that Ctrl+Shift+Z is not Ctrl+Z.
@@ -236,10 +240,15 @@ impl ClioApp {
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
+                if ui.button("New").clicked() {
+                    self.begin_new();
+                    ui.close();
+                }
                 if ui.button("Open...").clicked() {
                     self.begin_open();
                     ui.close();
                 }
+                self.recent_menu(ui);
                 if ui
                     .add_enabled(self.editing.is_none(), egui::Button::new("Save"))
                     .clicked()
@@ -316,6 +325,34 @@ impl ClioApp {
                         set.insert(root);
                     }
                     self.expansion_rev += 1;
+                    ui.close();
+                }
+            });
+        });
+    }
+
+    /// File > Open Recent: the file names, with the folder on hover.
+    fn recent_menu(&mut self, ui: &mut egui::Ui) {
+        let recent = self.user.prefs.recent.clone();
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            ui.menu_button("Open Recent", |ui| {
+                for path in &recent {
+                    let name = path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    );
+                    if ui
+                        .button(name)
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        self.begin_open_recent(path);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button("Clear the list").clicked() {
+                    self.change_prefs(|p| p.recent.clear());
                     ui.close();
                 }
             });

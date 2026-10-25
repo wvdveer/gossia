@@ -21,8 +21,9 @@ mod session;
 mod trie;
 
 pub use calc::{
-    Applied, Calc, Cell, Change, ChangeKind, ColumnFormula, Decision, EditError, FieldKind,
-    FieldPlaces, Fingerprint, ModuleStatus, SchemaFormat, TrustStore,
+    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, EditError,
+    Effective, FieldKind, FieldPlaces, Fingerprint, ModuleStatus, SchemaFormat, Setting,
+    TrustStore, Unit, WorkbookSettings,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -35,6 +36,7 @@ pub use engine::{
 };
 pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
+pub use history::{DEFAULT_MAX_ENTRIES, DEFAULT_MAX_WEIGHT};
 pub use model::{Dep, Loc};
 pub use session::{EngineFactory, EvalSettings, Evaluator, Finished, Session, Status};
 
@@ -78,3 +80,7 @@ mod columns_tests;
 #[cfg(test)]
 #[path = "procedure_tests.rs"]
 mod procedure_tests;
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod settings_tests;

@@ -37,6 +37,8 @@ pub const ENGINE_NAME: &str = "rustpython";
 pub const ENGINE_REVISION: &str = "e5554e23abfbaee85508c32fc22e5074f88aebdd";
 
 const MANIFEST: &str = "manifest.json";
+/// The workbook settings. Left out when every setting has its default.
+const SETTINGS: &str = "settings.json";
 
 // ------------------------------------------------------------------ entries
 
@@ -420,6 +422,9 @@ impl Calc {
             }
             files.push((format!("modules/{name}.py"), lf(module.source.to_string())));
         }
+        if let Some(text) = self.settings.to_json() {
+            files.push((SETTINGS.to_owned(), text.into_bytes()));
+        }
 
         let manifest = Manifest {
             format_version: version_text(FORMAT_MAJOR, FORMAT_MINOR),
@@ -659,6 +664,13 @@ impl Calc {
             if let Err(e) = calc.add_module(name, source) {
                 warnings.push(format!("Module {name} is not used: {e}"));
             }
+        }
+
+        if let Some(text) = package.text(SETTINGS)? {
+            used.insert(SETTINGS.to_owned());
+            let (settings, problems) = WorkbookSettings::from_json(text);
+            warnings.extend(problems);
+            calc.store_settings(settings);
         }
 
         // Nothing has been run, edited or undone yet.

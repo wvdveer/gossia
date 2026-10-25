@@ -8,6 +8,18 @@
 )]
 
 use cliotree_app::ClioApp;
+use cliotree_app::prefs::{Config, User};
+
+/// The sample, with the user's preferences and trust record from disk. What
+/// could not be read is said in the notice line.
+fn start() -> ClioApp {
+    let (user, warnings) = User::load(Config::standard());
+    let mut app = ClioApp::sample().with_user(user);
+    if !warnings.is_empty() {
+        app.notice = Some(warnings.join(" "));
+    }
+    app
+}
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -22,7 +34,7 @@ fn main() -> eframe::Result {
 
 #[cfg(not(feature = "test-control"))]
 fn creator() -> eframe::AppCreator<'static> {
-    Box::new(|_cc| Ok(Box::new(ClioApp::sample())))
+    Box::new(|_cc| Ok(Box::new(start())))
 }
 
 /// With the `test-control` feature the window also listens for the tests.
@@ -30,7 +42,7 @@ fn creator() -> eframe::AppCreator<'static> {
 fn creator() -> eframe::AppCreator<'static> {
     use cliotree_app::control_server::Controlled;
     Box::new(|cc| {
-        let app = Controlled::start(ClioApp::sample(), cc.egui_ctx.clone())?;
+        let app = Controlled::start(start(), cc.egui_ctx.clone())?;
         Ok(Box::new(app))
     })
 }

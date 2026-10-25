@@ -14,9 +14,8 @@ use cliotree_calc::{Package, safe_path};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
-/// What a zip may hold when it is read. These are application preferences in
-/// the design (see Settings and limits); until the preferences exist they are
-/// these defaults.
+/// What a zip may hold when it is read: application preferences (see
+/// [`crate::prefs::Preferences`]), with these defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// The most entries an archive may have.

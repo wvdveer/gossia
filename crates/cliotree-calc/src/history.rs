@@ -64,6 +64,11 @@ pub(crate) enum Op {
         before: Option<String>,
         after: Option<String>,
     },
+    /// The workbook settings change.
+    Settings {
+        before: Box<crate::calc::WorkbookSettings>,
+        after: Box<crate::calc::WorkbookSettings>,
+    },
     /// The formula at `path` changes. `value` is what the node held before a
     /// formula was put on it, with its position (`Some(None)` for no node),
     /// which running this backwards puts back, because the formula's results
@@ -93,7 +98,7 @@ impl Op {
             Op::Add { node, moved, .. } | Op::Remove { node, moved, .. } => {
                 size(node) + moved.iter().map(|(_, n)| size(n)).sum::<usize>()
             }
-            Op::AutoUpdate { .. } | Op::Column { .. } => 1,
+            Op::AutoUpdate { .. } | Op::Column { .. } | Op::Settings { .. } => 1,
             Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
             Op::Formula { value, .. } => {
                 1 + value

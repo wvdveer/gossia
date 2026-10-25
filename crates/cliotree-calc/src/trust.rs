@@ -21,10 +21,10 @@ const FORMAT: &str = "cliotree-trust-1";
 /// item of it, so that a workbook that has changed can say what changed.
 ///
 /// The content is the formulas (by tab and path), the module sources and the
-/// order of the modules, which decides who keeps a name. Button procedure
-/// names, the expressions of controls, report expressions and workbook
-/// settings join it when those exist. Data, view state and the order of tabs
-/// are not part of it.
+/// order of the modules, which decides who keeps a name, and the workbook
+/// settings when they are not the defaults. Button procedure names, the
+/// expressions of controls and report expressions join it when those exist.
+/// Data, view state and the order of tabs are not part of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
     /// Hex digest of the whole.
@@ -93,7 +93,8 @@ pub enum Decision {
 }
 
 /// The workbooks the user has trusted: per workbook id, the content as it was
-/// when it was trusted. Keeping it on disk is for the preferences to do.
+/// when it was trusted. The application keeps it on disk, with the user's
+/// preferences.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrustStore {
     records: BTreeMap<String, Fingerprint>,
@@ -113,6 +114,11 @@ impl TrustStore {
     /// The ids that are trusted, for the list in the settings.
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.records.keys().map(String::as_str)
+    }
+
+    /// Every decision, by workbook id, for keeping them on disk.
+    pub fn records(&self) -> impl Iterator<Item = (&str, &Fingerprint)> {
+        self.records.iter().map(|(id, f)| (id.as_str(), f))
     }
 
     pub fn is_recorded(&self, id: &str) -> bool {
@@ -244,6 +250,11 @@ impl Calc {
         if !self.modules.is_empty() {
             let order: Vec<&str> = self.modules.keys().map(String::as_str).collect();
             items.insert("order of modules".to_string(), digest_of(&order.join("\n")));
+        }
+        // The settings govern how the code runs. Default settings are no item,
+        // so a workbook with no code still has no executable content.
+        if let Some(text) = self.settings.to_json() {
+            items.insert("workbook settings".to_string(), digest_of(&text));
         }
         Fingerprint::from_items(items)
     }

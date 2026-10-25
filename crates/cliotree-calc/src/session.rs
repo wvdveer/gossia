@@ -131,6 +131,9 @@ pub struct Evaluator {
     abandoned: Arc<AtomicUsize>,
     done: VecDeque<Evaluation>,
     finished_calls: VecDeque<ProcedureResult>,
+    /// The worker was made with settings that have changed since: it is let
+    /// go when what it is running comes back.
+    retire: bool,
 }
 
 impl Evaluator {
@@ -143,6 +146,16 @@ impl Evaluator {
             abandoned: Arc::new(AtomicUsize::new(0)),
             done: VecDeque::new(),
             finished_calls: VecDeque::new(),
+            retire: false,
+        }
+    }
+
+    /// The thread's answer came back: a worker that is to be retired goes.
+    fn finished_one(&mut self) {
+        self.running = None;
+        if self.retire {
+            self.retire = false;
+            self.worker = None;
         }
     }
 
@@ -154,6 +167,21 @@ impl Evaluator {
     /// engine of a running thread keeps the formula limit it has.
     pub fn set_settings(&mut self, settings: EvalSettings) {
         self.settings = settings;
+    }
+
+    /// Changes how engines are made and the limits, for everything that
+    /// starts afterwards. The thread's engine was made with the old ones, so
+    /// the thread is retired: at once if it is idle, otherwise when what it is
+    /// running comes back. The next evaluation starts a fresh one, which loads
+    /// the modules again.
+    pub fn reconfigure(&mut self, factory: EngineFactory, settings: EvalSettings) {
+        self.factory = factory;
+        self.settings = settings;
+        if self.running.is_some() {
+            self.retire = true;
+        } else {
+            self.worker = None;
+        }
     }
 
     /// An evaluation is running.
@@ -245,17 +273,25 @@ impl Evaluator {
     /// Takes the evaluations that have finished, and gives up on a formula
     /// that has run too long to be stopped.
     pub fn poll(&mut self) -> Vec<Evaluation> {
+        let mut received = Vec::new();
         if let Some(worker) = &self.worker {
             while let Ok(done) = worker.results.try_recv() {
-                self.running = None;
-                match done {
-                    Done::Evaluation(evaluation) => self.done.push_back(evaluation),
-                    Done::Procedure(result) => self.finished_calls.push_back(result),
-                }
+                received.push(done);
             }
+        }
+        for done in received {
+            self.take(done);
         }
         self.abandon_if_stuck();
         self.done.drain(..).collect()
+    }
+
+    fn take(&mut self, done: Done) {
+        self.finished_one();
+        match done {
+            Done::Evaluation(evaluation) => self.done.push_back(evaluation),
+            Done::Procedure(result) => self.finished_calls.push_back(result),
+        }
     }
 
     /// Waits up to `timeout` for the running evaluation to finish.
@@ -264,15 +300,9 @@ impl Evaluator {
             && self.running.is_some()
         {
             match worker.results.recv_timeout(timeout) {
-                Ok(done) => {
-                    self.running = None;
-                    match done {
-                        Done::Evaluation(evaluation) => self.done.push_back(evaluation),
-                        Done::Procedure(result) => self.finished_calls.push_back(result),
-                    }
-                }
+                Ok(done) => self.take(done),
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => self.running = None,
+                Err(RecvTimeoutError::Disconnected) => self.finished_one(),
             }
         }
     }
@@ -307,6 +337,8 @@ impl Evaluator {
             self.abandoned.fetch_add(1, Ordering::SeqCst);
         }
         self.running = None;
+        // The next worker is made with the settings as they are now.
+        self.retire = false;
         if let Some(call) = call {
             let failure = Failure::new(
                 ErrorKind::Timeout,

@@ -33,6 +33,8 @@ impl Running {
         let child = Command::new(env!("CARGO_BIN_EXE_cliotree"))
             .env("CLIOTREE_TEST_TOKEN", TOKEN)
             .env("CLIOTREE_TEST_PORT_FILE", &port_file)
+            // Preferences and trust decisions of its own, not the user's.
+            .env("CLIOTREE_CONFIG_DIR", dir.join("config"))
             .spawn()
             .expect("the application starts");
         let mut running = Running::connect(child, &port_file, dir);

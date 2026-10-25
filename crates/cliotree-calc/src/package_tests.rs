@@ -333,14 +333,14 @@ fn what_this_version_does_not_know_is_kept_and_handed_back() {
     run(&mut calc);
     let mut package = saved(&calc);
     package
-        .insert("settings.json", b"{\"history\": 50}\n".to_vec())
+        .insert("datasources.json", b"{\"sources\": []}\n".to_vec())
         .unwrap();
     package
         .insert("reports/Sales.json", b"{}\n".to_vec())
         .unwrap();
     let opened = open(&package);
     let names: Vec<_> = opened.unknown.iter().map(|(p, _)| p.as_str()).collect();
-    assert_eq!(names, ["settings.json", "reports/Sales.json"]);
+    assert_eq!(names, ["datasources.json", "reports/Sales.json"]);
     let again = opened
         .calc
         .to_package(&Meta {
@@ -349,7 +349,10 @@ fn what_this_version_does_not_know_is_kept_and_handed_back() {
             ..meta()
         })
         .unwrap();
-    assert_eq!(again.get("settings.json"), package.get("settings.json"));
+    assert_eq!(
+        again.get("datasources.json"),
+        package.get("datasources.json")
+    );
     assert_eq!(
         again.get("reports/Sales.json"),
         package.get("reports/Sales.json")
@@ -358,7 +361,7 @@ fn what_this_version_does_not_know_is_kept_and_handed_back() {
     let paths: Vec<_> = again.entries().map(|(p, _)| p).collect();
     assert_eq!(
         &paths[paths.len() - 2..],
-        ["reports/Sales.json", "settings.json"]
+        ["datasources.json", "reports/Sales.json"]
     );
 }
 

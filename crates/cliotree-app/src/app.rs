@@ -6,8 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cliotree_calc::python::PythonSettings;
-use cliotree_calc::{Calc, EvalSettings, Evaluator, Session, python};
+use cliotree_calc::{Calc, Ceilings, Effective, Evaluator, Session, python};
 use cliotree_core::validate::validate;
 use cliotree_core::{Node, Path, Value};
 
@@ -107,18 +106,25 @@ pub struct ClioApp {
     pub doc: crate::workbook_file::Document,
     /// The dialogs of the file commands.
     pub files: crate::workbook_file::FileUi,
+    /// The user's preferences and trust record, kept apart from any workbook.
+    pub user: crate::prefs::User,
+    /// The settings the evaluation thread was last given.
+    pub applied: Option<Effective>,
 }
 
 impl ClioApp {
     /// An application showing `calc`, evaluated by the Python engine.
     pub fn new(calc: Calc) -> ClioApp {
+        let effective = calc.settings().effective(&Ceilings::default());
         let evaluator = Evaluator::new(
-            python::factory(PythonSettings::default()),
-            EvalSettings::default(),
+            python::factory(effective.python_settings()),
+            effective.eval_settings(),
         );
         ClioApp::with_session(Session::new(calc, evaluator))
     }
 
+    /// The window for a session whose evaluator is the caller's: it is kept
+    /// until the settings in force change.
     pub fn with_session(session: Session) -> ClioApp {
         // A trusted workbook is calculated when it is opened.
         ClioApp::build(session, true)
@@ -136,6 +142,7 @@ impl ClioApp {
         if recalc {
             session.calc_mut().recalc_all();
         }
+        let applied = Some(session.calc().settings().effective(&Ceilings::default()));
         let mut expanded: HashMap<String, HashSet<Path>> = HashMap::new();
         for name in session.calc().sheet_names() {
             expanded
@@ -166,12 +173,46 @@ impl ClioApp {
             raw: RawState::default(),
             doc: crate::workbook_file::Document::default(),
             files: crate::workbook_file::FileUi::default(),
+            user: crate::prefs::User::in_memory(),
+            applied,
         }
     }
 
     /// The sample workbook.
     pub fn sample() -> ClioApp {
         ClioApp::new(crate::sample::workbook())
+    }
+
+    /// Uses the user's configuration: their limits, ceilings and trust record.
+    pub fn with_user(mut self, user: crate::prefs::User) -> ClioApp {
+        self.user = user;
+        let (entries, weight) = (
+            self.user.prefs.history_entries,
+            self.user.prefs.history_weight,
+        );
+        self.session.calc_mut().set_history_limits(entries, weight);
+        self.applied = None;
+        self.apply_settings();
+        self
+    }
+
+    /// The settings in force: the workbook's, held down by the user's ceilings.
+    pub fn effective_settings(&self) -> Effective {
+        self.calc().settings().effective(&self.user.prefs.ceilings)
+    }
+
+    /// Gives the evaluation thread the settings in force, when they have
+    /// changed since it was last given them (an undo, a file, a preference).
+    pub fn apply_settings(&mut self) {
+        let effective = self.effective_settings();
+        if self.applied.as_ref() == Some(&effective) {
+            return;
+        }
+        self.session.evaluator_mut().reconfigure(
+            python::factory(effective.python_settings()),
+            effective.eval_settings(),
+        );
+        self.applied = Some(effective);
     }
 
     pub fn calc(&self) -> &Calc {

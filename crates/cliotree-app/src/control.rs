@@ -22,14 +22,7 @@ const MAX_WAIT: Duration = Duration::from_secs(120);
 
 /// Commands of the protocol that need a workbook layer, which does not exist
 /// yet.
-const WAIT_FOR_WORKBOOKS: &[&str] = &[
-    "new_workbook",
-    "close",
-    "menu",
-    "context_menu",
-    "set_option",
-    "grant",
-];
+const WAIT_FOR_WORKBOOKS: &[&str] = &["close", "menu", "context_menu", "set_option", "grant"];
 
 /// Does one command. `args` is the `args` object of the request (or `null`).
 pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
@@ -173,6 +166,13 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 "tab": app.sheet,
                 "file": app.doc.path.as_ref().map(|p| p.display().to_string()),
                 "modified": app.is_dirty(),
+                "recent_files": app
+                    .user
+                    .prefs
+                    .recent
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>(),
                 "view": app.current_view().label(),
                 "selection": app.selection.as_ref().map(ToString::to_string),
             }))
@@ -186,6 +186,12 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 "trusted": app.calc().is_trusted(),
                 "notice": app.notice,
             }))
+        }
+        // File > New, without the question about unsaved changes.
+        "new_workbook" => {
+            app.new_workbook();
+            app.refresh_rows();
+            Ok(json!({ "tabs": app.calc().sheet_names().collect::<Vec<_>>() }))
         }
         "save" => {
             app.save()?;

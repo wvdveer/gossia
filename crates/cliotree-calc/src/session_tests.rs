@@ -286,3 +286,44 @@ fn the_status_describes_what_is_going_on() {
     );
     assert!(!status.suspended);
 }
+
+/// New settings reach the engine: the thread that was made with the old ones
+/// is let go, and the next evaluation runs on a fresh one.
+#[test]
+fn a_new_range_limit_takes_effect_on_the_next_evaluation() {
+    let mut s = session(quick());
+    s.calc_mut()
+        .set_formula("S", &p("c"), "len(range(1000))")
+        .unwrap();
+    assert!(s.wait_idle(LONG));
+    assert_eq!(get(&s, "c"), Some(Value::Int(1000)));
+
+    s.evaluator_mut()
+        .reconfigure(python::factory(PythonSettings { max_range: 10 }), quick());
+    s.calc_mut().recalc_all();
+    assert!(s.wait_idle(LONG));
+    assert_eq!(kind(&s, "c"), Some(ErrorKind::Value));
+}
+
+/// Settings changed while an evaluation runs apply to the one after it.
+#[test]
+fn settings_changed_while_running_apply_after_the_evaluation_comes_back() {
+    let mut s = session(quick());
+    s.calc_mut()
+        .set_formula(
+            "S",
+            &p("c"),
+            "sum(1 for _ in range(300000)) and len(range(1000))",
+        )
+        .unwrap();
+    s.tick();
+    assert!(s.evaluator().is_running());
+    s.evaluator_mut()
+        .reconfigure(python::factory(PythonSettings { max_range: 10 }), quick());
+    assert!(s.wait_idle(LONG));
+    // That evaluation was made with the old engine.
+    assert_eq!(get(&s, "c"), Some(Value::Int(1000)));
+    s.calc_mut().recalc_all();
+    assert!(s.wait_idle(LONG));
+    assert_eq!(kind(&s, "c"), Some(ErrorKind::Value));
+}

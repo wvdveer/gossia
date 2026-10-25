@@ -35,11 +35,15 @@ pub const WARNING: &str = "This workbook has not been trusted, so its formulas a
      not run. Trusting it allows it to run code.";
 
 impl ClioApp {
-    /// Trusts the workbook as it is now.
+    /// Trusts the workbook as it is now, and records it, so that it opens
+    /// trusted next time.
     pub fn trust_workbook(&mut self) {
         self.session.calc_mut().set_trusted(true);
         self.trust = TrustBanner::default();
         self.notice = None;
+        let content = self.calc().fingerprint();
+        let id = self.doc.workbook_id.clone();
+        self.change_trust(|t| t.trust(&id, content));
         self.session.tick();
     }
 

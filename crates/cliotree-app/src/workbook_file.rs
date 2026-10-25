@@ -11,13 +11,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use cliotree_calc::python::{PythonSettings, PythonSyntax};
-use cliotree_calc::{Calc, Decision, Evaluator, Meta, Opened, Session, TrustStore, python};
+use cliotree_calc::python::PythonSyntax;
+use cliotree_calc::{
+    Calc, Decision, Evaluator, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Session, TrustStore,
+    python,
+};
 use egui_file_dialog::{DialogState, FileDialog as Browser, FileDialogLabels};
 use serde_json::Value as Json;
 
 use crate::app::ClioApp;
-use crate::file::{Limits, read_zip, save_atomic, write_zip};
+use crate::file::{read_zip, save_atomic, write_zip};
 use crate::trust_ui::TrustBanner;
 use crate::view::named;
 
@@ -77,13 +80,10 @@ pub struct Document {
     /// What a newer version put in the file and this one does not know: kept,
     /// and written back unchanged.
     pub unknown: Vec<(String, Vec<u8>)>,
-    /// The state of the view of each tab, as it was in the file.
+    /// The state of the view of each tab, as it was in the file. What this
+    /// version knows of it is put in the window when the file is opened; the
+    /// rest is written back as it was (see [`crate::view_state`]).
     pub views: BTreeMap<String, Json>,
-    /// The workbooks the user has trusted (kept in memory until the
-    /// preferences can keep them on disk).
-    pub trust: TrustStore,
-    /// What a file may hold when it is read.
-    pub limits: Limits,
     /// The version of the forms as they were saved.
     saved_forms: u64,
 }
@@ -95,8 +95,6 @@ impl Default for Document {
             workbook_id: new_workbook_id(),
             unknown: Vec::new(),
             views: BTreeMap::new(),
-            trust: TrustStore::default(),
-            limits: Limits::default(),
             saved_forms: 0,
         }
     }
@@ -125,6 +123,10 @@ pub enum Pending {
     Quit,
     /// Choosing a file to open.
     Open,
+    /// Opening this file, from the recent files.
+    OpenRecent(PathBuf),
+    /// Starting a new workbook.
+    New,
 }
 
 /// The dialog for a file name.
@@ -213,11 +215,39 @@ impl ClioApp {
     /// unsaved changes. Nothing changes if the file cannot be read.
     pub fn open_path(&mut self, path: &Path) -> Result<(), String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let package = read_zip(&bytes, &self.doc.limits)?;
+        let package = read_zip(&bytes, &self.user.prefs.limits)?;
         let opened =
             Calc::from_package(Arc::new(PythonSyntax), &package).map_err(|e| e.to_string())?;
         self.install(opened, Some(path.to_path_buf()));
+        self.remember_recent(path);
         Ok(())
+    }
+
+    /// Opens a file from the recent files. One that is no longer there is
+    /// taken off the list.
+    pub fn open_recent(&mut self, path: &Path) {
+        if let Err(e) = self.open_path(path) {
+            if !path.exists() {
+                let gone = path.to_path_buf();
+                self.change_prefs(|p| p.remove_recent(&gone));
+            }
+            self.notice = Some(e);
+        }
+    }
+
+    /// Replaces the workbook with a new one: a data tab and the schema tab it
+    /// is bound to, with auto-update on, so that its fields are added from the
+    /// data tab. The caller has dealt with unsaved changes.
+    pub fn new_workbook(&mut self) {
+        let opened = Opened {
+            calc: blank_workbook(),
+            workbook_id: new_workbook_id(),
+            views: BTreeMap::new(),
+            unknown: Vec::new(),
+            warnings: Vec::new(),
+            format_version: (FORMAT_MAJOR, FORMAT_MINOR),
+        };
+        self.install(opened, None);
     }
 
     /// Shows a workbook that was read. Whether it runs Python is decided here:
@@ -236,7 +266,7 @@ impl ClioApp {
         let decision = if content.items.is_empty() {
             Decision::Trusted
         } else {
-            self.doc.trust.decide(&workbook_id, &content)
+            self.user.trust.decide(&workbook_id, &content)
         };
         let (trusted, changes) = match decision {
             Decision::Trusted => (true, Vec::new()),
@@ -246,20 +276,32 @@ impl ClioApp {
         if !trusted {
             calc.set_trusted(false);
         }
+        let prefs = &self.user.prefs;
+        calc.set_history_limits(prefs.history_entries, prefs.history_weight);
+        // The workbook's limits, held down by the user's ceilings.
+        let mut warnings = warnings;
+        for (setting, asked, ceiling) in calc.settings().held_down(&prefs.ceilings) {
+            warnings.push(format!(
+                "The workbook asks for a {} of {asked}; your ceiling of {ceiling} is used.",
+                setting.label().to_lowercase()
+            ));
+        }
+        let effective = calc.settings().effective(&prefs.ceilings);
         let evaluator = Evaluator::new(
-            python::factory(PythonSettings::default()),
-            self.session.evaluator().settings().clone(),
+            python::factory(effective.python_settings()),
+            effective.eval_settings(),
         );
         let mut fresh = ClioApp::build(Session::new(calc, evaluator), trusted);
+        fresh.user = std::mem::take(&mut self.user);
+        fresh.applied = Some(effective);
         fresh.doc = Document {
             path,
             workbook_id,
             unknown,
-            views,
-            trust: std::mem::take(&mut self.doc.trust),
-            limits: self.doc.limits,
+            views: views.clone(),
             saved_forms: fresh.calc().forms_version(),
         };
+        fresh.restore_view_state(&views);
         if !trusted {
             fresh.trust = TrustBanner {
                 changes,
@@ -267,6 +309,7 @@ impl ClioApp {
             };
         }
         fresh.show_issues = self.show_issues;
+        fresh.files.browse = self.files.browse;
         fresh.files.quit_confirmed = false;
         if !warnings.is_empty() {
             fresh.notice = Some(warnings.join(" "));
@@ -292,9 +335,18 @@ impl ClioApp {
             return self.write_to(&path);
         }
         let old = std::mem::replace(&mut self.doc.workbook_id, new_workbook_id());
-        self.doc.trust.carry(&old, &self.doc.workbook_id);
         match self.write_to(&path) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // A trusted copy was recorded as it was written; one that is
+                // not trusted keeps what was recorded for the original.
+                if !self.calc().is_trusted() {
+                    let new = self.doc.workbook_id.clone();
+                    self.change_trust(|t| {
+                        t.carry(&old, &new);
+                    });
+                }
+                Ok(())
+            }
             Err(e) => {
                 self.doc.workbook_id = old;
                 Err(e)
@@ -310,7 +362,7 @@ impl ClioApp {
         let meta = Meta {
             workbook_id: self.doc.workbook_id.clone(),
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
-            views: self.doc.views.clone(),
+            views: self.view_state(),
             unknown: self.doc.unknown.clone(),
         };
         let package = self.calc().to_package(&meta).map_err(|e| e.to_string())?;
@@ -318,13 +370,39 @@ impl ClioApp {
         save_atomic(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         self.session.calc_mut().mark_saved();
         self.doc.saved_forms = self.calc().forms_version();
+        self.doc.views = meta.views;
+        self.doc.path = Some(path.to_path_buf());
         // What the user saved is what they trust, if they trust the workbook.
         if self.calc().is_trusted() {
             let content = self.calc().fingerprint();
-            self.doc.trust.trust(&self.doc.workbook_id, content);
+            let id = self.doc.workbook_id.clone();
+            self.change_trust(|t| t.trust(&id, content));
         }
-        self.doc.path = Some(path.to_path_buf());
+        self.remember_recent(path);
         Ok(())
+    }
+
+    // ------------------------------------------------------------ user
+
+    /// Changes the trust record on disk. If it cannot be written the change
+    /// still holds for this session, and the notice says so.
+    pub(crate) fn change_trust(&mut self, change: impl FnOnce(&mut TrustStore)) {
+        if let Err(e) = self.user.change_trust(change) {
+            self.notice = Some(format!(
+                "The trust decision holds until ClioTree ends, but it could not be kept: {e}"
+            ));
+        }
+    }
+
+    pub(crate) fn change_prefs(&mut self, change: impl FnOnce(&mut crate::prefs::Preferences)) {
+        if let Err(e) = self.user.change_prefs(change) {
+            self.notice = Some(format!("The preferences could not be saved: {e}"));
+        }
+    }
+
+    fn remember_recent(&mut self, path: &Path) {
+        let path = path.to_path_buf();
+        self.change_prefs(|p| p.add_recent(&path));
     }
 
     // --------------------------------------------------------- commands
@@ -335,6 +413,24 @@ impl ClioApp {
             self.files.confirm = Some(Pending::Open);
         } else {
             self.show_open_dialog();
+        }
+    }
+
+    /// File > Open Recent: asks first about unsaved changes.
+    pub fn begin_open_recent(&mut self, path: &Path) {
+        if self.is_dirty() {
+            self.files.confirm = Some(Pending::OpenRecent(path.to_path_buf()));
+        } else {
+            self.open_recent(path);
+        }
+    }
+
+    /// File > New: asks first about unsaved changes.
+    pub fn begin_new(&mut self) {
+        if self.is_dirty() {
+            self.files.confirm = Some(Pending::New);
+        } else {
+            self.new_workbook();
         }
     }
 
@@ -465,6 +561,8 @@ impl ClioApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Pending::Open => self.show_open_dialog(),
+            Pending::OpenRecent(path) => self.open_recent(&path),
+            Pending::New => self.new_workbook(),
         }
     }
 
@@ -529,7 +627,8 @@ impl ClioApp {
                         self.file_name(),
                         match pending {
                             Pending::Quit => "quitting",
-                            Pending::Open => "opening another workbook",
+                            Pending::Open | Pending::OpenRecent(_) => "opening another workbook",
+                            Pending::New => "starting a new workbook",
                         }
                     ));
                     ui.horizontal(|ui| {
@@ -607,4 +706,31 @@ fn with_extension(path: &Path) -> PathBuf {
     } else {
         path.with_extension(EXTENSION)
     }
+}
+
+/// What File > New makes: a data tab, `Data`, bound to its schema tab,
+/// `DataSchema`, whose record has no fields yet. Auto-update is on, so the
+/// fields are added from the data tab.
+pub fn blank_workbook() -> Calc {
+    use cliotree_core::{json, jsonschema};
+    const SCHEMA: &str = r#"{"type": "object", "properties": {}}"#;
+    let mut calc = Calc::new(Arc::new(PythonSyntax));
+    calc.add_sheet(
+        "Data",
+        jsonschema::lower_str(SCHEMA).expect("the blank schema is valid"),
+        json::parse("{}").expect("the blank data is JSON").node,
+    )
+    .expect("a new workbook has no tabs");
+    calc.add_schema_sheet(
+        "DataSchema",
+        json::parse(SCHEMA).expect("the blank schema is JSON").node,
+    )
+    .expect("the tabs have different names");
+    calc.bind_schema("Data", "DataSchema")
+        .expect("the blank schema can be used");
+    calc.set_auto_update("DataSchema", true)
+        .expect("one tab uses the schema");
+    calc.clear_history();
+    calc.mark_saved();
+    calc
 }

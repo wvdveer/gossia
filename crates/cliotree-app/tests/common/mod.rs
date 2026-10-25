@@ -61,8 +61,15 @@ pub fn edit_and_recalculate(send: Send<'_>) {
 
     // Commands that still wait for the workbook layer say so; unknown ones are
     // refused.
-    let new = send("new_workbook", Value::Null).unwrap_err();
-    assert!(new.contains("not supported yet"), "{new}");
+    let close = send("close", Value::Null).unwrap_err();
+    assert!(close.contains("not supported yet"), "{close}");
     let unknown = send("explode", Value::Null).unwrap_err();
     assert!(unknown.contains("unknown command"), "{unknown}");
+
+    // File > New replaces the workbook with an empty data tab and its schema.
+    let made = ok(send, "new_workbook", Value::Null);
+    assert_eq!(made["tabs"], json!(["Data", "DataSchema"]));
+    let status = ok(send, "status", Value::Null);
+    assert_eq!(status["tab"], "Data");
+    assert_eq!(status["modified"], false);
 }

@@ -14,6 +14,7 @@ pub mod form_layout;
 #[cfg(test)]
 mod form_layout_tests;
 pub mod icons;
+pub mod prefs;
 pub mod raw;
 pub mod rows;
 pub mod sample;
@@ -29,6 +30,7 @@ pub mod tables;
 mod tables_tests;
 pub mod trust_ui;
 pub mod view;
+pub mod view_state;
 pub mod workbook_file;
 
 pub use app::ClioApp;
@@ -150,3 +152,5 @@ fn log_window(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod workbook_file_tests;
+#[cfg(test)]
+mod workbook_state_tests;

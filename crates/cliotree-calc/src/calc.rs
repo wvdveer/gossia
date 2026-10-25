@@ -83,6 +83,10 @@ mod modules;
 use modules::Module;
 pub use modules::ModuleStatus;
 
+#[path = "settings.rs"]
+mod settings;
+pub use settings::{Ceilings, Effective, Setting, Unit, WorkbookSettings};
+
 #[path = "trust.rs"]
 mod trust;
 pub use trust::{Change, ChangeKind, Decision, Fingerprint, TrustStore};
@@ -199,6 +203,8 @@ pub struct Calc {
     /// Counts the times the forms were changed, which are not edits of the
     /// data and so are not in the history, but are unsaved changes all the same.
     forms_version: u64,
+    /// The limits the workbook asks for (`settings.json`).
+    settings: WorkbookSettings,
 }
 
 impl Calc {
@@ -220,6 +226,7 @@ impl Calc {
             trusted: true,
             forms: crate::forms::FormStore::default(),
             forms_version: 0,
+            settings: WorkbookSettings::default(),
         }
     }
 
@@ -823,6 +830,10 @@ impl Calc {
                 after,
             } => {
                 self.store_auto_update(sheet, if forward { *after } else { *before })?;
+            }
+            Op::Settings { before, after } => {
+                let target = if forward { after } else { before };
+                self.store_settings((**target).clone());
             }
             Op::Column {
                 sheet,
