@@ -1086,7 +1086,7 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
 
 8. **The workbook layer**, in parts:
    - **8a. The archive in memory** *(done)*: `Calc::to_package` and `Calc::from_package` in `cliotree-calc`: the manifest, the data and overlay of each tab, the form designs, the modules, format versioning, and what a newer version added.
-   - **8b. Files and the File menu** *(done, apart from a native file picker; the recent-files list came with 8c)*: the zip with its limits, atomic saves, *Open...*, *Save*, *Save As...*, the question about unsaved changes, the window title, the trust decision on opening, and the control channel commands.
+   - **8b. Files and the File menu** *(done; the recent-files list came with 8c)*: the zip with its limits, atomic saves, *Open...*, *Save*, *Save As...* through the `egui-file-dialog` browser, the question about unsaved changes, the window title, the trust decision on opening, and the control channel commands. A native file picker is not planned: the browser needs no GTK, portal or operating-system dialog, and works the same on every platform and on the runner.
    - **8c. What a file carries besides the tabs** *(done; editing the settings and the preferences waits for the Options dialog, as listed in the decisions below)*: the state of the view of each tab in the overlay, the trust record and the preferences on disk, `settings.json`, *New*, recent files.
    - Later, as steps of their own: the code editor for modules, import and export, inference, the Options dialog.
 
