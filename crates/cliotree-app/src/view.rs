@@ -85,6 +85,8 @@ impl ClioApp {
         self.refresh_rows();
         self.refresh_summary();
         self.handle_keys(ui);
+        self.handle_close_request(ui.ctx());
+        self.update_title(ui.ctx());
 
         egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
         if self.banner_shown() {
@@ -134,6 +136,7 @@ impl ClioApp {
         self.filter_window(ui.ctx());
         self.schema_window(ui.ctx());
         self.form_window(ui.ctx());
+        self.file_windows(ui.ctx());
     }
 
     // ------------------------------------------------------------- keys
@@ -144,6 +147,17 @@ impl ClioApp {
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
         let redo_y = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
         let redo_z = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        // The file commands work wherever the keyboard is.
+        let save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+        let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+        let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+        if ui.input_mut(|i| i.consume_shortcut(&save_as)) {
+            self.begin_save_as();
+        } else if ui.input_mut(|i| i.consume_shortcut(&save)) {
+            self.begin_save();
+        } else if ui.input_mut(|i| i.consume_shortcut(&open)) {
+            self.begin_open();
+        }
         if !typing_somewhere {
             // The longer shortcut first, so that Ctrl+Shift+Z is not Ctrl+Z.
             if ui.input_mut(|i| i.consume_shortcut(&redo_z) || i.consume_shortcut(&redo_y)) {
@@ -220,8 +234,26 @@ impl ClioApp {
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
+                if ui.button("Open...").clicked() {
+                    self.begin_open();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(self.editing.is_none(), egui::Button::new("Save"))
+                    .clicked()
+                {
+                    self.begin_save();
+                    ui.close();
+                }
+                if ui.button("Save As...").clicked() {
+                    self.begin_save_as();
+                    ui.close();
+                }
+                ui.separator();
                 if ui.button("Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    let ctx = ui.ctx().clone();
+                    self.request_quit(&ctx);
+                    ui.close();
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -695,7 +727,13 @@ impl ClioApp {
             .as_ref()
             .is_some_and(|e| e.path == row.path && e.in_cell && e.sheet == self.sheet);
         if editing_here {
-            self.cell_editor(ui, editing, actions);
+            let numeric = row
+                .ty
+                .zip(self.calc().spec(&self.sheet))
+                .is_some_and(|(ty, spec)| {
+                    matches!(spec.get(ty).kind, Kind::Integer(_) | Kind::Number(_))
+                });
+            self.cell_editor(ui, editing, actions, numeric);
             return;
         }
         // Not trusted: the value is the one that was stored, greyed when what
@@ -778,7 +816,18 @@ impl ClioApp {
                 } else if row.unrecognised {
                     text = text.weak().italics();
                 }
-                let response = ui.add(egui::Label::new(text).sense(Sense::CLICK).truncate());
+                let label = |ui: &mut egui::Ui| {
+                    ui.add(egui::Label::new(text).sense(Sense::CLICK).truncate())
+                };
+                // Numbers line up on the right.
+                let numeric = matches!(value, Value::Int(_) | Value::Float(_))
+                    || matches!(kind, Some(Kind::Integer(_) | Kind::Number(_)));
+                let response = if numeric {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), label)
+                        .inner
+                } else {
+                    label(ui)
+                };
                 if response.clicked() {
                     actions.push(Action::Select(row.path.clone()));
                 }
@@ -833,6 +882,7 @@ impl ClioApp {
         ui: &mut egui::Ui,
         editing: &mut Option<Editing>,
         actions: &mut Vec<Action>,
+        numeric: bool,
     ) {
         let Some(e) = editing.as_mut() else {
             return;
@@ -840,8 +890,14 @@ impl ClioApp {
         let id = egui::Id::unique(("cell_editor", e.path.to_string()));
         let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let escape = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+        let align = if numeric {
+            egui::Align2::RIGHT_CENTER
+        } else {
+            egui::Align2::LEFT_CENTER
+        };
         let output = egui::TextEdit::singleline(&mut e.text)
             .id(id)
+            .align(align)
             .desired_width(f32::INFINITY)
             .show(ui);
         named(&output.response, "Cell editor");

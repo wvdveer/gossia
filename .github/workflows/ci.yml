@@ -13,7 +13,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
-# Jobs run on a self-hosted GitHub Actions runner on the acer server, registered
+# Jobs run on a self-hosted GitHub Actions runner, registered
 # for this repository with the label `cliotree` (see README, "CI runner").
 # There is no rust-cache or vendor cache: the workspace persists between runs, and
 # rust-cache's cleanup would delete rustup from ~/.cargo/bin on a shared machine.
@@ -93,3 +93,25 @@ jobs:
         with:
           name: snapshot-differences
           path: crates/cliotree-app/tests/snapshots/linux/
+
+
+  # The Windows installer, cross-built on Linux (packaging/windows/build-msi.sh:
+  # cargo-xwin and wixl). Advisory, and only for pushes to main: a first run
+  # downloads the Windows SDK and every run compiles the release application.
+  # The MSI is unsigned.
+  windows-installer:
+    name: Windows installer
+    runs-on: [self-hosted, cliotree]
+    continue-on-error: true
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - run: packaging/windows/build-msi.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: target/msi/*.msi

@@ -59,9 +59,10 @@ pub fn edit_and_recalculate(send: Send<'_>) {
     let tree = ok(send, "tree", json!({ "path": "customer", "depth": 1 }));
     assert!(tree.is_object());
 
-    // Commands that need the workbook layer say so; unknown ones are refused.
-    let save = send("save", Value::Null).unwrap_err();
-    assert!(save.contains("not supported yet"), "{save}");
+    // Commands that still wait for the workbook layer say so; unknown ones are
+    // refused.
+    let new = send("new_workbook", Value::Null).unwrap_err();
+    assert!(new.contains("not supported yet"), "{new}");
     let unknown = send("explode", Value::Null).unwrap_err();
     assert!(unknown.contains("unknown command"), "{unknown}");
 }

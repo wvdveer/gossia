@@ -62,6 +62,13 @@ enum SchemaRole {
 mod schema;
 pub use schema::{FieldKind, FieldPlaces, SchemaFormat};
 
+#[path = "package.rs"]
+mod package;
+pub use package::{
+    ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
+    RESERVED_NAMES_VERSION, safe_path,
+};
+
 #[path = "modules.rs"]
 mod modules;
 use modules::Module;
@@ -180,6 +187,9 @@ pub struct Calc {
     trusted: bool,
     /// The customised forms of the tabs.
     forms: crate::forms::FormStore,
+    /// Counts the times the forms were changed, which are not edits of the
+    /// data and so are not in the history, but are unsaved changes all the same.
+    forms_version: u64,
 }
 
 impl Calc {
@@ -200,6 +210,7 @@ impl Calc {
             module_generation: 0,
             trusted: true,
             forms: crate::forms::FormStore::default(),
+            forms_version: 0,
         }
     }
 
@@ -212,7 +223,13 @@ impl Calc {
     /// Changes to forms are not edits of the workbook's data, so they are not
     /// in the undo history and do not recalculate anything.
     pub fn forms_mut(&mut self) -> &mut crate::forms::FormStore {
+        self.forms_version += 1;
         &mut self.forms
+    }
+
+    /// Changes whenever the forms may have been changed.
+    pub fn forms_version(&self) -> u64 {
+        self.forms_version
     }
 
     pub fn syntax(&self) -> &Arc<dyn Syntax> {

@@ -311,7 +311,7 @@ impl Calc {
 
     // --------------------------------------------------------- lowering
 
-    fn lowered(&self, schema_sheet: &str) -> Result<TypeSpec, EditError> {
+    pub(super) fn lowered(&self, schema_sheet: &str) -> Result<TypeSpec, EditError> {
         let s = self
             .sheets
             .get(schema_sheet)

@@ -74,6 +74,27 @@ impl ErrorKind {
             ErrorKind::Na => "#N/A",
         }
     }
+
+    /// Every kind, in a fixed order.
+    pub const ALL: [ErrorKind; 12] = [
+        ErrorKind::Type,
+        ErrorKind::Ref,
+        ErrorKind::Name,
+        ErrorKind::Value,
+        ErrorKind::DivZero,
+        ErrorKind::Circular,
+        ErrorKind::Syntax,
+        ErrorKind::PyErr,
+        ErrorKind::Timeout,
+        ErrorKind::Source,
+        ErrorKind::Untrusted,
+        ErrorKind::Na,
+    ];
+
+    /// The kind whose [`code`](ErrorKind::code) this is.
+    pub fn from_code(code: &str) -> Option<ErrorKind> {
+        ErrorKind::ALL.into_iter().find(|kind| kind.code() == code)
+    }
 }
 
 impl fmt::Display for ErrorKind {

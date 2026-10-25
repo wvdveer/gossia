@@ -72,6 +72,9 @@ impl Controlled {
             match job.cmd.as_str() {
                 "quit" => {
                     let _ = job.reply.send(Ok(Json::Null));
+                    // A test that asks to quit means it: no question about
+                    // unsaved changes.
+                    self.app.files.quit_confirmed = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 "screenshot" => self.screenshot(ctx, job),

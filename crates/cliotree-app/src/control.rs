@@ -23,10 +23,7 @@ const MAX_WAIT: Duration = Duration::from_secs(120);
 /// Commands of the protocol that need a workbook layer, which does not exist
 /// yet.
 const WAIT_FOR_WORKBOOKS: &[&str] = &[
-    "open_workbook",
     "new_workbook",
-    "save",
-    "save_as",
     "close",
     "menu",
     "context_menu",
@@ -151,9 +148,30 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 "stale": app.calc().stale(),
                 "notice": app.notice,
                 "tab": app.sheet,
+                "file": app.doc.path.as_ref().map(|p| p.display().to_string()),
+                "modified": app.is_dirty(),
                 "view": app.current_view().label(),
                 "selection": app.selection.as_ref().map(ToString::to_string),
             }))
+        }
+        "open_workbook" => {
+            let path = text_arg(args, "path")?;
+            app.open_path(std::path::Path::new(path))?;
+            app.refresh_rows();
+            Ok(json!({
+                "tabs": app.calc().sheet_names().collect::<Vec<_>>(),
+                "trusted": app.calc().is_trusted(),
+                "notice": app.notice,
+            }))
+        }
+        "save" => {
+            app.save()?;
+            Ok(Json::Null)
+        }
+        "save_as" => {
+            let path = text_arg(args, "path")?;
+            app.save_as(std::path::Path::new(path))?;
+            Ok(Json::Null)
         }
         "wait_idle" => {
             let ms = args

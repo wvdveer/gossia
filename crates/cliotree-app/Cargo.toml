@@ -24,6 +24,10 @@ egui = "0.37.0"
 eframe = "0.37.0"
 egui_extras = "0.37.0"
 serde_json = "1.0.154"
+# Deflate in pure Rust (no C library, no encryption): a .clio is an ordinary zip.
+# The file browser of the window: egui only, fetched into vendor/ (see vendor.lock).
+egui-file-dialog = { path = "../../vendor/egui-file-dialog", default-features = false }
+zip = { version = "9.1.0", default-features = false, features = ["deflate-flate2"] }
 image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
 
 [features]

@@ -24,6 +24,10 @@ pub use calc::{
     Applied, Calc, Cell, Change, ChangeKind, Decision, EditError, FieldKind, FieldPlaces,
     Fingerprint, ModuleStatus, SchemaFormat, TrustStore,
 };
+pub use calc::{
+    ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
+    RESERVED_NAMES_VERSION, safe_path,
+};
 pub use check::Computed;
 pub use engine::{
     Context, Depth, Engine, Failure, ModuleInfo, ModuleReport, ModuleSpec, Read, Syntax,
@@ -62,3 +66,7 @@ mod session_tests;
 #[cfg(test)]
 #[path = "schema_tests.rs"]
 mod schema_tests;
+
+#[cfg(test)]
+#[path = "package_tests.rs"]
+mod package_tests;

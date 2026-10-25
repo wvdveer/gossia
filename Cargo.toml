@@ -23,7 +23,7 @@ cliotree-std = { path = "crates/cliotree-std" }
 # these before it starts Cargo, because Cargo needs every path dependency to
 # exist before any build script can run. RustPython and ruff are added here by
 # build step 3.
-vendor = ["rustpython", "ruff", "json-schema-test-suite"]
+vendor = ["rustpython", "ruff", "egui-file-dialog", "json-schema-test-suite"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

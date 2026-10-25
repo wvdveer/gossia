@@ -99,6 +99,10 @@ pub struct ClioApp {
     pub form: FormState,
     /// What the Raw view keeps between frames.
     pub raw: RawState,
+    /// The file the workbook is saved in, and what goes with it.
+    pub doc: crate::workbook_file::Document,
+    /// The dialogs of the file commands.
+    pub files: crate::workbook_file::FileUi,
 }
 
 impl ClioApp {
@@ -111,15 +115,23 @@ impl ClioApp {
         ClioApp::with_session(Session::new(calc, evaluator))
     }
 
-    pub fn with_session(mut session: Session) -> ClioApp {
+    pub fn with_session(session: Session) -> ClioApp {
+        // A trusted workbook is calculated when it is opened.
+        ClioApp::build(session, true)
+    }
+
+    /// The window for a session. `recalc` makes every formula out of date, as
+    /// opening a trusted workbook does; an untrusted one runs nothing.
+    pub(crate) fn build(mut session: Session, recalc: bool) -> ClioApp {
         let sheet = session
             .calc()
             .sheet_names()
             .next()
             .unwrap_or_default()
             .to_owned();
-        // A trusted workbook is calculated when it is opened.
-        session.calc_mut().recalc_all();
+        if recalc {
+            session.calc_mut().recalc_all();
+        }
         let mut expanded: HashMap<String, HashSet<Path>> = HashMap::new();
         for name in session.calc().sheet_names() {
             expanded
@@ -148,6 +160,8 @@ impl ClioApp {
             views: HashMap::new(),
             form: FormState::default(),
             raw: RawState::default(),
+            doc: crate::workbook_file::Document::default(),
+            files: crate::workbook_file::FileUi::default(),
         }
     }
 

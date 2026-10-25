@@ -26,6 +26,13 @@ sparse = [
     "crates/ruff_unicode_names2_generator",
 ]
 
+# The file dialog of the window (MIT). Its release 0.15.0 is for egui 0.36; this is the
+# branch that moves it to egui 0.37 (upstream issue 338), until a release exists.
+[[item]]
+name = "egui-file-dialog"
+url  = "https://github.com/jannistpl/egui-file-dialog.git"
+rev  = "607ad279ec359a1ba9548b9534f3302cdc783350"
+
 # Test-only: the official JSON Schema Test Suite (DESIGN.md, Testing and CI,
 # "Selecting JSON Schema Test Suite cases"). Only the 2020-12 cases are used.
 [[item]]

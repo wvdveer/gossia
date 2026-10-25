@@ -13,6 +13,35 @@ pub const CARET_LEFT: &str = "\u{E138}";
 pub const CARET_RIGHT: &str = "\u{E13A}";
 pub const X: &str = "\u{E4F6}";
 
+// What the file browser draws (its own symbols are not in the bundled font).
+pub const HOUSE: &str = "\u{E2C2}";
+pub const FOLDER: &str = "\u{E24A}";
+pub const FOLDER_OPEN: &str = "\u{E256}";
+pub const FILE: &str = "\u{E230}";
+pub const FILE_TEXT: &str = "\u{E23A}";
+pub const DESKTOP: &str = "\u{E560}";
+pub const DOWNLOAD: &str = "\u{E20C}";
+pub const MUSIC: &str = "\u{E33C}";
+pub const IMAGE: &str = "\u{E2CA}";
+pub const FILM: &str = "\u{E792}";
+pub const PIN: &str = "\u{E3E2}";
+pub const PENCIL: &str = "\u{E3B4}";
+pub const RELOAD: &str = "\u{E036}";
+pub const ARROW_UP_RIGHT: &str = "\u{E092}";
+pub const CHECK_SQUARE: &str = "\u{E186}";
+pub const PROHIBIT: &str = "\u{E3DE}";
+pub const DRIVE: &str = "\u{E29E}";
+pub const DRIVES: &str = "\u{E2A0}";
+pub const WARNING: &str = "\u{E4E0}";
+pub const CARET_UP: &str = "\u{E13C}";
+pub const MENU: &str = "\u{E2F0}";
+pub const SEARCH: &str = "\u{E30C}";
+pub const CHECK: &str = "\u{E182}";
+pub const PLUS: &str = "\u{E3D4}";
+pub const FILE_PLUS: &str = "\u{E236}";
+pub const FLOPPY: &str = "\u{E248}";
+pub const USB: &str = "\u{E956}";
+
 const FAMILY: &str = "phosphor";
 
 fn state_id() -> egui::Id {
@@ -40,7 +69,16 @@ pub fn prepare(ctx: &egui::Context) {
     fonts
         .families
         .insert(FontFamily::Name(FAMILY.into()), vec![FAMILY.to_owned()]);
+    // The icons are in the private use area, so adding the font to the end of
+    // the text families lets a label carry one (the file browser's do).
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.push(FAMILY.to_owned());
+        }
+    }
     ctx.set_fonts(fonts);
+    // A symbol that no font has is drawn as a box, not a reason to stop.
+    ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
     ctx.data_mut(|d| {
         d.insert_temp(state_id(), true);
         d.insert_temp(ready_id(), false);

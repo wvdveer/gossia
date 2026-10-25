@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer of ClioTree, in the WiX 3 dialect that wixl (msitools)
+  reads, so that it can be built on Linux by build-msi.sh. Variables: Version,
+  Exe and License, given with -D.
+  The UpgradeCode never changes: it is what lets a newer MSI replace an older one.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="ClioTree" Language="1033" Version="$(var.Version)"
+           Manufacturer="ClioTree" UpgradeCode="6f1b8a3e-5d0c-4c0e-9f43-2a6c1d7b9e15">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="ClioTree installer"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ClioTree is already installed."/>
+    <Media Id="1" Cabinet="cliotree.cab" EmbedCab="yes"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="ClioTree">
+          <Component Id="MainExecutable" Guid="0b7e4c52-8a1d-4f6e-b3a9-71c5d2e8f4a0" Win64="yes">
+            <File Id="CliotreeExe" Name="cliotree.exe" Source="$(var.Exe)" KeyPath="yes">
+              <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="ClioTree"
+                        WorkingDirectory="INSTALLDIR" Advertise="yes"/>
+            </File>
+          </Component>
+          <Component Id="LicenseFile" Guid="c93a1e7d-24b6-4d58-a0f1-5e8b3c6d7a29" Win64="yes">
+            <File Id="LicenseTxt" Name="LICENSE.txt" Source="$(var.License)" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+    </Directory>
+
+    <Feature Id="Everything" Title="ClioTree" Level="1">
+      <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="LicenseFile"/>
+    </Feature>
+  </Product>
+</Wix>

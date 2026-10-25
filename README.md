@@ -39,15 +39,13 @@ cargo xtask clean            # remove the build output AND vendor/
 
 ## CI runner
 
-CI (`.github/workflows/ci.yml`) runs on a self-hosted GitHub Actions runner on the `acer` server, not on GitHub's hosted runners. Every job uses `runs-on: [self-hosted, cliotree]`.
+CI (`.github/workflows/ci.yml`) runs on a self-hosted GitHub Actions runner, not on GitHub's hosted runners. Every job uses `runs-on: [self-hosted, cliotree]`.
 
-To register it (once, as the user that owns the other runners on `acer`):
+To register a runner (once, as an unprivileged user):
 
 1. On GitHub: repository **Settings, Actions, Runners, New self-hosted runner**, choose Linux, and follow the download and `./config.sh --url ... --token ...` commands. Give it the label `cliotree` (`--labels cliotree`).
 2. Start it with `./run.sh` (for example `nohup ./run.sh > runner.log 2> runner.err &`), or install it as a service with `sudo ./svc.sh install && sudo ./svc.sh start`.
 3. The machine needs `git`, `curl`, a C compiler and linker (`build-essential` or equivalent), and `rustup`. The workflow installs the toolchain pinned in `rust-toolchain.toml` through `rustup`, so nothing else has to be provisioned.
-
-This is the real GitHub runner agent, not the Gitea `act_runner` on the same machine.
 
 ## Licence
 

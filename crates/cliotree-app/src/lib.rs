@@ -8,6 +8,7 @@ pub mod control_server;
 pub mod edit;
 #[cfg(test)]
 mod edit_tests;
+pub mod file;
 pub mod form;
 pub mod form_layout;
 #[cfg(test)]
@@ -28,6 +29,7 @@ pub mod tables;
 mod tables_tests;
 pub mod trust_ui;
 pub mod view;
+pub mod workbook_file;
 
 pub use app::ClioApp;
 
@@ -145,3 +147,6 @@ fn log_window(ctx: &egui::Context) {
         }
     });
 }
+
+#[cfg(test)]
+mod workbook_file_tests;
