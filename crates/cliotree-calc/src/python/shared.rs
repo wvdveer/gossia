@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use rustpython::vm::PyObjectRef;
 
-use crate::engine::Context;
+use crate::engine::{Context, Write};
 
 /// Python classes the Rust side needs to make or to recognise.
 pub(super) struct Classes {
@@ -42,6 +42,9 @@ pub(super) struct Shared {
     /// The standard library modules a module may import, which are already
     /// loaded. (`vm.import` would ask the replacement `__import__` itself.)
     pub stdlib: RefCell<std::collections::HashMap<String, PyObjectRef>>,
+    /// The writes a button procedure has made so far. `None` while a formula
+    /// runs, which cannot change data: the proxies refuse to be written to.
+    pub writes: RefCell<Option<Vec<Write>>>,
 }
 
 impl fmt::Debug for Shared {
@@ -60,6 +63,7 @@ impl Shared {
             classes: RefCell::new(None),
             modules: RefCell::new(std::collections::HashMap::new()),
             stdlib: RefCell::new(std::collections::HashMap::new()),
+            writes: RefCell::new(None),
         })
     }
 

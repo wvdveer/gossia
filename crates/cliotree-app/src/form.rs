@@ -94,6 +94,8 @@ pub(crate) enum FormAction {
     Step(Path, usize),
     AddEntry(Path, String),
     DeleteEntry(Path, String),
+    /// A click on a button: its label, and the procedure it runs.
+    Button(String, String),
     /// A command on a control, in layout mode.
     Control(ControlAction),
 }
@@ -179,6 +181,52 @@ impl ClioApp {
             .get(&(self.sheet.clone(), path.clone()))
             .and_then(|d| d.error.clone())
             .unwrap_or_else(|| format!("{} cannot be entered here", self.name_of(path))))
+    }
+
+    /// What a click on a button does (DESIGN.md, "Button procedures"): what is
+    /// being typed is entered first, so that the procedure sees what is on the
+    /// screen, and a refused entry stops the click. Then the procedure is
+    /// asked for; it runs on the evaluation thread when the workbook is up to
+    /// date, and its outcome is shown by [`ClioApp::collect_procedures`].
+    /// Returns why it did not start.
+    pub fn click_button(&mut self, procedure: &str, label: &str) -> Result<(), String> {
+        if let Some(call) = self.session.running_procedure() {
+            let message = format!("{} is still running", call.button);
+            self.notice = Some(message.clone());
+            return Err(message);
+        }
+        if !self.commit_editing() || !self.enter_drafts() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        let call = cliotree_calc::Call {
+            procedure: procedure.to_owned(),
+            sheet: self.sheet.clone(),
+            form: self.form_name(),
+            button: label.to_owned(),
+            time_limit: None,
+        };
+        match self.session.run_procedure(call) {
+            Ok(()) => {
+                self.notice = None;
+                Ok(())
+            }
+            Err(message) => {
+                self.notice = Some(message.clone());
+                Err(message)
+            }
+        }
+    }
+
+    /// Takes the procedures that have finished: one that failed, or whose
+    /// writes were refused, leaves its message where the user sees it, and the
+    /// data as it was.
+    pub fn collect_procedures(&mut self) {
+        for done in self.session.take_finished() {
+            self.notice = match done.outcome {
+                Ok(()) => None,
+                Err(message) => Some(format!("{}: {message}", done.call.button)),
+            };
+        }
     }
 
     /// Enters the text typed into the fields of this tab. A text that is not
@@ -335,6 +383,9 @@ impl ClioApp {
                 if let Some(value) = value {
                     self.set_node(&path, value);
                 }
+            }
+            FormAction::Button(label, procedure) => {
+                let _ = self.click_button(&procedure, &label);
             }
             FormAction::Select(path) => self.selection = Some(path),
             FormAction::Add(array) => self.add_item_to(&array),
@@ -766,12 +817,37 @@ impl Painter<'_> {
             }
             ControlKind::Button => {
                 let label = c.label.clone().unwrap_or_else(|| "Button".to_owned());
-                let hint = match &c.procedure {
-                    Some(p) => format!("Runs {p}. Running procedures is not built yet."),
-                    None => "No procedure has been chosen.".to_owned(),
+                let running = self
+                    .app
+                    .session
+                    .running_procedure()
+                    .map(|c| c.button.clone());
+                let (can, hint) = match &c.procedure {
+                    None => (false, "No procedure has been chosen.".to_owned()),
+                    Some(_) if !self.app.calc().is_trusted() => (
+                        false,
+                        "Buttons run Python, so this workbook has to be trusted first.".to_owned(),
+                    ),
+                    Some(_) if running.is_some() => (
+                        false,
+                        format!(
+                            "{} is running; wait for it to finish.",
+                            running.unwrap_or_default()
+                        ),
+                    ),
+                    Some(p) => (true, format!("Runs {p}")),
                 };
-                ui.add_enabled(false, egui::Button::new(label))
-                    .on_disabled_hover_text(hint);
+                let response = ui.add_enabled(can, egui::Button::new(&label));
+                if can {
+                    if response.on_hover_text(hint).clicked()
+                        && let Some(procedure) = &c.procedure
+                    {
+                        self.actions
+                            .push(FormAction::Button(label.clone(), procedure.clone()));
+                    }
+                } else {
+                    response.on_disabled_hover_text(hint);
+                }
             }
             ControlKind::Field | ControlKind::Repeater => self.bound(ui, c),
             ControlKind::Group => {}

@@ -30,13 +30,13 @@ pub use calc::{
 };
 pub use check::Computed;
 pub use engine::{
-    Context, Depth, Engine, Failure, ModuleInfo, ModuleReport, ModuleSpec, Read, Syntax,
-    SyntaxError,
+    Call, Context, Depth, Engine, Failure, ModuleInfo, ModuleReport, ModuleSpec, Read, Syntax,
+    SyntaxError, Write, WriteOp,
 };
-pub use eval::{Evaluation, Hooks, Outcome, Snapshot};
+pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
 pub use model::{Dep, Loc};
-pub use session::{EngineFactory, EvalSettings, Evaluator, Session, Status};
+pub use session::{EngineFactory, EvalSettings, Evaluator, Finished, Session, Status};
 
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -74,3 +74,7 @@ mod package_tests;
 #[cfg(test)]
 #[path = "columns_tests.rs"]
 mod columns_tests;
+
+#[cfg(test)]
+#[path = "procedure_tests.rs"]
+mod procedure_tests;

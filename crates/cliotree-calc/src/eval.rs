@@ -28,7 +28,7 @@ use cliotree_core::{ErrorKind, ErrorValue, Node, Path, TypeSpec};
 use indexmap::IndexSet;
 
 use crate::check::{Computed, finish, store};
-use crate::engine::{Context, Depth, Engine, ModuleReport, ModuleSpec, Read};
+use crate::engine::{Call, Context, Depth, Engine, Failure, ModuleReport, ModuleSpec, Read, Write};
 use crate::model::{Dep, Formulas, Loc};
 
 /// One tab as the evaluator sees it.
@@ -69,6 +69,30 @@ pub struct Evaluation {
     pub(crate) modules: Vec<ModuleReport>,
 }
 
+/// What running a button procedure came to: the writes it made, not yet
+/// applied (see [`crate::Calc::apply_procedure`]), or why it failed.
+#[derive(Debug, Clone)]
+pub struct ProcedureResult {
+    pub(crate) base: u64,
+    pub(crate) call: Call,
+    pub(crate) result: Result<Vec<Write>, Failure>,
+}
+
+impl ProcedureResult {
+    pub fn call(&self) -> &Call {
+        &self.call
+    }
+
+    /// A result for a procedure that was given up on.
+    pub(crate) fn failed(base: u64, call: Call, failure: Failure) -> ProcedureResult {
+        ProcedureResult {
+            base,
+            call,
+            result: Err(failure),
+        }
+    }
+}
+
 impl Evaluation {
     /// The workbook version the evaluation started from.
     pub fn base_version(&self) -> u64 {
@@ -83,6 +107,39 @@ impl Evaluation {
 impl Snapshot {
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Runs a button procedure against this snapshot. Nothing it reads is
+    /// recorded, and what it writes is returned, not applied.
+    pub fn run_call(&self, engine: &dyn Engine, call: &Call) -> ProcedureResult {
+        let tabs: Vec<String> = self.sheets.keys().cloned().collect();
+        // A fresh engine (after one was abandoned) has no modules yet.
+        let _ = engine.sync_modules(&self.modules, &tabs);
+        let ctx = Rc::new(EvalContext {
+            loc: Loc::new(call.sheet.clone(), Path::root()),
+            data: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), s.data.clone()))
+                .collect(),
+            specs: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), Arc::clone(&s.spec)))
+                .collect(),
+            names: self
+                .sheets
+                .keys()
+                .map(|name| (name.clone(), Rc::from(name.as_str())))
+                .collect(),
+            reads: RefCell::new(Vec::new()),
+        });
+        let result = engine.call(call, ctx);
+        ProcedureResult {
+            base: self.version,
+            call: call.clone(),
+            result,
+        }
     }
 
     /// How many formulas are to be run.

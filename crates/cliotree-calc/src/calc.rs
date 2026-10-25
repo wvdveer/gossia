@@ -75,6 +75,9 @@ pub use package::{
 mod columns;
 pub use columns::ColumnFormula;
 
+#[path = "procedure.rs"]
+mod procedure;
+
 #[path = "modules.rs"]
 mod modules;
 use modules::Module;

@@ -314,7 +314,7 @@ impl ClioApp {
     // ----------------------------------------------------- undo and redo
 
     pub fn undo(&mut self) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.session.running_procedure().is_some() {
             return;
         }
         match self.session.calc_mut().undo() {
@@ -325,7 +325,7 @@ impl ClioApp {
     }
 
     pub fn redo(&mut self) {
-        if self.editing.is_some() {
+        if self.editing.is_some() || self.session.running_procedure().is_some() {
             return;
         }
         match self.session.calc_mut().redo() {

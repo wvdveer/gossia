@@ -45,6 +45,7 @@ fn quick() -> EvalSettings {
     EvalSettings {
         formula_limit: Some(Duration::from_secs(20)),
         recalc_limit: Some(Duration::from_secs(60)),
+        procedure_limit: Some(Duration::from_secs(60)),
         grace: Duration::from_secs(5),
         max_abandoned: 20,
         stack_size: 64 * 1024 * 1024,

@@ -3,7 +3,8 @@
 
 use cliotree_calc::Status;
 
-/// `Ready`, or `Calculating... N pending`, or that evaluation is suspended.
+/// `Ready`, or `Calculating... N pending`, or `Running <button>...` while a
+/// button procedure waits or runs, or that evaluation is suspended.
 pub fn evaluation_text(status: &Status) -> String {
     if status.suspended {
         return format!(
@@ -11,7 +12,9 @@ pub fn evaluation_text(status: &Status) -> String {
             status.abandoned
         );
     }
-    let mut text = if status.running || status.pending > 0 {
+    let mut text = if let Some(button) = &status.procedure {
+        format!("Running {button}...")
+    } else if status.running || status.pending > 0 {
         format!("Calculating... {} pending", status.pending)
     } else {
         "Ready".to_owned()
@@ -49,6 +52,7 @@ mod tests {
             running,
             abandoned,
             suspended,
+            procedure: None,
         }
     }
 
@@ -71,6 +75,13 @@ mod tests {
             evaluation_text(&status(5, false, 20, true)),
             "Evaluation suspended: 20 abandoned threads still running"
         );
+    }
+
+    #[test]
+    fn the_status_bar_names_the_button_that_is_running() {
+        let mut running = status(0, true, 0, false);
+        running.procedure = Some("Add line".to_owned());
+        assert_eq!(evaluation_text(&running), "Running Add line...");
     }
 
     #[test]

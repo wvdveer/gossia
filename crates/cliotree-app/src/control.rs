@@ -135,12 +135,35 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 .ok_or_else(|| format!("there is no data at {path}"))?;
             Ok(tree(node, depth))
         }
+        // What a user does on a form: click the button with this label.
+        "click_button" => {
+            let label = text_arg(args, "label")?;
+            if !app.in_form() {
+                return Err("click_button needs a form view".to_owned());
+            }
+            let design = app.design_of(&app.form_name());
+            let procedure = design
+                .walk()
+                .into_iter()
+                .map(|(_, c)| c)
+                .find(|c| {
+                    c.kind == cliotree_core::form::ControlKind::Button
+                        && c.label.as_deref() == Some(label)
+                })
+                .ok_or_else(|| format!("there is no button called {label} on this form"))?
+                .procedure
+                .clone()
+                .ok_or_else(|| format!("the button {label} has no procedure"))?;
+            app.click_button(&procedure, label).map(|()| Json::Null)
+        }
         "status" => {
             app.session.tick();
+            app.collect_procedures();
             app.refresh_summary();
             let status = app.session.status();
             Ok(json!({
                 "text": evaluation_text(&status),
+                "procedure": status.procedure,
                 "problems": problems_text(app.summary.errors, app.summary.invalid),
                 "pending": status.pending,
                 "abandoned": status.abandoned,
@@ -180,6 +203,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 .unwrap_or(10_000);
             let timeout = Duration::from_millis(ms).min(MAX_WAIT);
             if app.session.wait_idle(timeout) {
+                app.collect_procedures();
                 app.refresh_rows();
                 Ok(Json::Null)
             } else {

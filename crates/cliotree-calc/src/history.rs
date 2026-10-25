@@ -215,6 +215,19 @@ impl History {
         }
     }
 
+    /// Drops the entry being built, whatever its depth, and gives what it had
+    /// recorded so that the caller can take it back.
+    pub fn abort(&mut self) -> Option<Entry> {
+        let group = self.group.take()?;
+        let weight = group.ops.iter().map(Op::weight).sum();
+        Some(Entry {
+            description: group.description,
+            ops: group.ops,
+            merge: None,
+            weight,
+        })
+    }
+
     /// Records one edit, or adds it to the entry being built.
     pub fn record(&mut self, description: String, ops: Vec<Op>, merge: Option<MergeKey>) {
         if ops.is_empty() {

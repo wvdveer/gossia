@@ -66,6 +66,22 @@ class PropagatedError(Exception):
         self.__cause__ = error.exception
 
 
+class ProcedureContext:
+    """The `ctx` of a button procedure: which form and which button were used,
+    and the tabs of the workbook by name, which it may read and write."""
+
+    def __init__(self, form, button, tabs):
+        self.form = form
+        self.button = button
+        self._tabs = tabs
+
+    def tab(self, name):
+        try:
+            return self._tabs[name]
+        except KeyError:
+            raise KeyError("there is no tab called " + repr(name)) from None
+
+
 def ISERROR(value):
     """True if `value` is an error, or, if it is a function, if calling it
     raises or returns an error."""

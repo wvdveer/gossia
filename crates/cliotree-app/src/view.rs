@@ -80,6 +80,7 @@ impl ClioApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         crate::icons::prepare(ui.ctx());
         self.session.tick();
+        self.collect_procedures();
         if !self.session.is_idle() {
             ui.ctx().request_repaint_after(Duration::from_millis(30));
         }
@@ -260,7 +261,9 @@ impl ClioApp {
             ui.menu_button("Edit", |ui| {
                 let undo_label = self.calc().undo_label().map(str::to_owned);
                 let redo_label = self.calc().redo_label().map(str::to_owned);
-                let can_change = self.editing.is_none();
+                // Undo and redo wait while a button procedure runs.
+                let can_change =
+                    self.editing.is_none() && self.session.running_procedure().is_none();
                 let undo_text = match &undo_label {
                     Some(label) => format!("Undo {label}"),
                     None => "Undo".to_owned(),

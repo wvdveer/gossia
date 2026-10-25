@@ -161,6 +161,40 @@ pub trait Syntax: Send + Sync {
     }
 }
 
+/// What a button procedure does to a tab, collected while it runs and applied
+/// afterwards, all or nothing (DESIGN.md, "Button procedures").
+#[derive(Debug, Clone, PartialEq)]
+pub enum WriteOp {
+    /// Puts a value at the path: replaces what is there, or makes the node.
+    Set(Value),
+    /// Removes the node, shifting later array items down.
+    Remove,
+    /// Adds an item at the end of the array at the path.
+    Append(Value),
+}
+
+/// One write of a procedure, in the order it was made.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Write {
+    pub loc: crate::Loc,
+    pub op: WriteOp,
+}
+
+/// A button procedure to run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Call {
+    /// The function, as the button names it: `name`, or `module.name`.
+    pub procedure: String,
+    /// The tab of the form, which is what `form` is a view of.
+    pub sheet: String,
+    /// The name of the form, and the label of the button (`ctx.form` and
+    /// `ctx.button`).
+    pub form: String,
+    pub button: String,
+    /// The longest the procedure may run, if it is limited.
+    pub time_limit: Option<std::time::Duration>,
+}
+
 /// Runs formulas. Not required to be `Send`.
 pub trait Engine {
     /// How long one formula may run before it is stopped with `#TIMEOUT!`.
@@ -172,6 +206,17 @@ pub trait Engine {
     /// data (a formula such as `=Orders.total` whose source has failed) is
     /// returned as `Ok(Value::Error(..))`.
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure>;
+
+    /// Runs a button procedure against what `ctx` reads, and gives the writes
+    /// it made, which are not applied here. Reads are not recorded as
+    /// dependencies of anything. An engine that has no procedures fails.
+    fn call(&self, call: &Call, ctx: Rc<dyn Context>) -> Result<Vec<Write>, Failure> {
+        let _ = (call, ctx);
+        Err(Failure::new(
+            ErrorKind::Name,
+            "this engine cannot run button procedures",
+        ))
+    }
 
     /// Makes the engine's modules the ones given: loads those that are new or
     /// have changed (and those that use them), in the order their imports

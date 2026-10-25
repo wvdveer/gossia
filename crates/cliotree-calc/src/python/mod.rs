@@ -27,9 +27,11 @@ use rustpython::vm::builtins::{PyCode, PyDictRef};
 use rustpython::vm::compiler::Mode;
 use rustpython::vm::function::ArgMapping;
 use rustpython::vm::scope::Scope;
-use rustpython::vm::{AsObject, Interpreter, PyPayload, PyRef, PyResult, Settings, VirtualMachine};
+use rustpython::vm::{
+    AsObject, Interpreter, PyObjectRef, PyPayload, PyRef, PyResult, Settings, VirtualMachine,
+};
 
-use crate::engine::{Context, Depth, Engine, Failure};
+use crate::engine::{Call, Context, Depth, Engine, Failure, Write};
 use shared::{Classes, Shared};
 use watchdog::Watchdog;
 
@@ -307,6 +309,87 @@ impl PythonEngine {
     }
 }
 
+impl PythonEngine {
+    /// The function a button names: one a workbook module defines, as `name`
+    /// or `module.name`. Nothing else is run: not a built-in, not a tab.
+    fn find_procedure(&self, vm: &VirtualMachine, name: &str) -> Result<PyObjectRef, Failure> {
+        let missing = || {
+            Failure::new(
+                ErrorKind::Name,
+                format!(
+                    "there is no procedure called {name}: it must be a function of a workbook module"
+                ),
+            )
+        };
+        let (module, function) = match name.split_once('.') {
+            Some((module, function)) => (Some(module), function),
+            None => (None, name),
+        };
+        if function.starts_with('_') {
+            return Err(missing());
+        }
+        if let Some(failure) = self.failed_module_name(module.unwrap_or(function)) {
+            return Err(failure);
+        }
+        let found = match module {
+            Some(module) => {
+                if !self.modules.borrow().contains_key(module) {
+                    return Err(missing());
+                }
+                self.globals
+                    .get_item(module, vm)
+                    .and_then(|m| m.get_attr(&*vm.ctx.new_str(function), vm))
+            }
+            None => {
+                let owner = self.provided.borrow().get(function).cloned();
+                if owner.is_none_or(|owner| owner == function) {
+                    return Err(missing());
+                }
+                self.globals.get_item(function, vm)
+            }
+        };
+        match found {
+            Ok(f) if f.is_callable() => Ok(f),
+            _ => Err(missing()),
+        }
+    }
+
+    fn run_procedure(
+        &self,
+        vm: &VirtualMachine,
+        call: &Call,
+        ctx: &Rc<dyn Context>,
+    ) -> Result<(), Failure> {
+        let function = self.find_procedure(vm, &call.procedure)?;
+        let sheet: Rc<str> = Rc::from(call.sheet.as_str());
+        let form = node::lazy_proxy(&self.shared, vm, &sheet, Path::root());
+        let tabs = vm.ctx.new_dict();
+        for name in ctx.sheets() {
+            let tab: Rc<str> = Rc::from(name.as_str());
+            let proxy = node::lazy_proxy(&self.shared, vm, &tab, Path::root());
+            let _ = tabs.set_item(name.as_str(), proxy, vm);
+        }
+        let context = self
+            .prelude
+            .get_item("ProcedureContext", vm)
+            .and_then(|class| {
+                class.call(
+                    (
+                        vm.ctx.new_str(call.form.as_str()),
+                        vm.ctx.new_str(call.button.as_str()),
+                        tabs,
+                    ),
+                    vm,
+                )
+            })
+            .map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
+        function
+            .call((form, context), vm)
+            .map(|_| ())
+            .map_err(|exc| convert::failure(&self.shared, vm, &exc))
+    }
+}
+
 /// The name a `NameError` is about.
 fn missing_name(
     vm: &VirtualMachine,
@@ -335,6 +418,24 @@ impl Engine for PythonEngine {
         tabs: &[String],
     ) -> Vec<crate::ModuleReport> {
         self.load_modules(specs, tabs)
+    }
+
+    fn call(&self, call: &Call, ctx: Rc<dyn Context>) -> Result<Vec<Write>, Failure> {
+        self.interp.enter(|vm| {
+            self.sync_sheets(vm, &*ctx);
+            self.shared.begin(ctx.clone());
+            *self.shared.writes.borrow_mut() = Some(Vec::new());
+            if let Some(limit) = call.time_limit {
+                self.watchdog.start(limit);
+            }
+            let result = self.run_procedure(vm, call, &ctx);
+            if call.time_limit.is_some() {
+                self.watchdog.stop();
+            }
+            let writes = self.shared.writes.borrow_mut().take();
+            self.shared.end();
+            result.map(|()| writes.unwrap_or_default())
+        })
     }
 
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure> {

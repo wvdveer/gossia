@@ -18,9 +18,9 @@ use std::rc::Rc;
 
 use cliotree_core::{Node, Path, Segment, Value};
 use rustpython::vm::builtins::{PyInt, PyList, PySlice, PyStr, PyStrRef};
-use rustpython::vm::function::FuncArgs;
+use rustpython::vm::function::{FuncArgs, PySetterValue};
 use rustpython::vm::protocol::{PyMapping, PyMappingMethods};
-use rustpython::vm::types::{AsMapping, Callable, GetAttr, Iterable, Representable};
+use rustpython::vm::types::{AsMapping, Callable, GetAttr, Iterable, Representable, SetAttr};
 use rustpython::vm::{
     AsObject, Py, PyObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine, atomic_func,
     pyclass, pymodule,
@@ -28,7 +28,7 @@ use rustpython::vm::{
 
 use super::convert;
 use super::shared::Shared;
-use crate::engine::{Depth, Read};
+use crate::engine::{Depth, Read, Write, WriteOp};
 
 /// The module `_cliotree`, which the prelude imports `Node` from.
 #[pymodule]
@@ -84,8 +84,14 @@ pub(super) mod _cliotree {
         super::run_xmlpath(query.expect_str(), &node, vm)
     }
 
-    #[pyclass(with(GetAttr, AsMapping, Iterable, Representable))]
+    #[pyclass(with(GetAttr, SetAttr, AsMapping, Iterable, Representable))]
     impl NodeProxy {
+        /// `array.append(value)`: a button procedure adds an item at the end.
+        #[pymethod]
+        fn append(zelf: &Py<Self>, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
+            super::append(zelf, &value, vm)
+        }
+
         /// `"array"` or `"object"`, for the functions that take arrays.
         #[pymethod]
         fn __kind__(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<&'static str> {
@@ -108,7 +114,30 @@ pub(super) mod _cliotree {
             if text.starts_with("__") {
                 return zelf.as_object().generic_getattr(name, vm);
             }
+            // While a procedure runs, `append` on an array is the method, not
+            // the field of the items that it would otherwise be.
+            if text == "append"
+                && zelf.shared.writes.borrow().is_some()
+                && matches!(
+                    super::resolve(zelf, vm).map(|n| matches!(n.value(), Value::Array(_))),
+                    Ok(true)
+                )
+            {
+                return zelf.as_object().generic_getattr(name, vm);
+            }
             super::attribute(zelf, text, vm)
+        }
+    }
+
+    impl SetAttr for NodeProxy {
+        fn setattro(
+            zelf: &Py<Self>,
+            name: &Py<PyStr>,
+            value: PySetterValue,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            let segment = super::field_segment(zelf, name.expect_str(), vm)?;
+            super::write(zelf, segment, value, vm)
         }
     }
 
@@ -123,7 +152,20 @@ pub(super) mod _cliotree {
                         super::subscript(NodeProxy::mapping_downcast(mapping), key, vm)
                     }
                 ),
-                ass_subscript: None,
+                ass_subscript: atomic_func!(
+                    |mapping: PyMapping<'_>,
+                     key: &PyObject,
+                     value: Option<PyObjectRef>,
+                     vm: &VirtualMachine| {
+                        let zelf = NodeProxy::mapping_downcast(mapping);
+                        let segment = super::key_segment(zelf, key, vm)?;
+                        let value = match value {
+                            Some(value) => PySetterValue::Assign(value),
+                            None => PySetterValue::Delete,
+                        };
+                        super::write(zelf, segment, value, vm)
+                    }
+                ),
             };
             &AS_MAPPING
         }
@@ -247,6 +289,115 @@ fn child(zelf: &NodeProxy, segment: Segment, asked: Asked, vm: &VirtualMachine) 
             })
         }
     }
+}
+
+// ------------------------------------------------------------- writing
+//
+// Only a button procedure may write. It runs with a list of writes open in the
+// shared state; each assignment, deletion or `append` adds to it, and nothing
+// is applied until the procedure has returned (DESIGN.md, "Button
+// procedures"). What a procedure reads is the data as it was when it started,
+// not what it has written so far.
+
+fn refuse_write(vm: &VirtualMachine) -> rustpython::vm::builtins::PyBaseExceptionRef {
+    vm.new_type_error("a formula cannot change data; only a button procedure can")
+}
+
+/// The field of an object that `proxy.name = value` is about.
+fn field_segment(zelf: &Py<NodeProxy>, name: &str, vm: &VirtualMachine) -> PyResult<Segment> {
+    if zelf.shared.writes.borrow().is_none() {
+        return Err(refuse_write(vm));
+    }
+    match resolve(zelf, vm)?.value() {
+        Value::Object(_) => Ok(Segment::Key(name.to_owned())),
+        other => Err(vm.new_attribute_error(format!(
+            "a {} has no fields to set; use an index or append",
+            other.kind_name()
+        ))),
+    }
+}
+
+/// The child that `proxy[key] = value` or `del proxy[key]` is about.
+fn key_segment(zelf: &Py<NodeProxy>, key: &PyObject, vm: &VirtualMachine) -> PyResult<Segment> {
+    if zelf.shared.writes.borrow().is_none() {
+        return Err(refuse_write(vm));
+    }
+    let node = resolve(zelf, vm)?;
+    match node.value() {
+        Value::Object(_) => match key.downcast_ref::<PyStr>() {
+            Some(text) => Ok(Segment::Key(text.expect_str().to_owned())),
+            None => Err(vm.new_type_error(format!(
+                "keys of an object are strings, not {}",
+                key.class().name()
+            ))),
+        },
+        Value::Array(items) => {
+            let Some(int) = key.downcast_ref::<PyInt>() else {
+                return Err(vm.new_type_error(format!(
+                    "indexes of an array are integers, not {}",
+                    key.class().name()
+                )));
+            };
+            let wanted: i64 = int.try_to_primitive(vm)?;
+            let len = items.len() as i64;
+            let index = if wanted < 0 { wanted + len } else { wanted };
+            if index < 0 || index >= len {
+                let loc = crate::Loc::new(&*zelf.sheet, zelf.path.clone());
+                return Err(vm.new_index_error(format!(
+                    "{wanted} is outside {loc}, which has {len} items; use append to add one"
+                )));
+            }
+            Ok(Segment::Index(index as usize))
+        }
+        _ => Err(vm.new_type_error("this node has no items")),
+    }
+}
+
+/// Reads a Python value to write, as data.
+fn data_of(zelf: &NodeProxy, value: &PyObject, vm: &VirtualMachine) -> PyResult<Value> {
+    match convert::to_value(&zelf.shared, vm, value) {
+        Ok(value) => Ok(value),
+        Err(convert::Bad::Value(_, message)) => Err(vm.new_value_error(message)),
+        Err(convert::Bad::Raised(exc)) => Err(exc),
+    }
+}
+
+/// Puts a write in the list the procedure is making.
+fn write(
+    zelf: &Py<NodeProxy>,
+    segment: Segment,
+    value: PySetterValue,
+    vm: &VirtualMachine,
+) -> PyResult<()> {
+    let op = match value {
+        PySetterValue::Assign(value) => WriteOp::Set(data_of(zelf, &value, vm)?),
+        PySetterValue::Delete => WriteOp::Remove,
+    };
+    push_write(zelf, zelf.path.child(segment), op, vm)
+}
+
+fn push_write(zelf: &NodeProxy, path: Path, op: WriteOp, vm: &VirtualMachine) -> PyResult<()> {
+    match zelf.shared.writes.borrow_mut().as_mut() {
+        Some(writes) => {
+            writes.push(Write {
+                loc: crate::Loc::new(&*zelf.sheet, path),
+                op,
+            });
+            Ok(())
+        }
+        None => Err(refuse_write(vm)),
+    }
+}
+
+fn append(zelf: &Py<NodeProxy>, value: &PyObject, vm: &VirtualMachine) -> PyResult<()> {
+    if zelf.shared.writes.borrow().is_none() {
+        return Err(refuse_write(vm));
+    }
+    if !matches!(resolve(zelf, vm)?.value(), Value::Array(_)) {
+        return Err(vm.new_attribute_error("only an array has append"));
+    }
+    let item = data_of(zelf, value, vm)?;
+    push_write(zelf, zelf.path.clone(), WriteOp::Append(item), vm)
 }
 
 /// How many children a node has.
