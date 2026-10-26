@@ -1,4 +1,5 @@
-//! The state of the view of each tab, as the tab's overlay keeps it (DESIGN.md,
+//! The state of the view of the whole workbook, in `view.json` (the font of
+//! the Data tree and Raw views), and of each tab, as the tab's overlay keeps it (DESIGN.md,
 //! "File format", "Tabular view of arrays"): which view the tab shows, which
 //! arrays are tables, and for each table the hidden columns, the rows hidden by
 //! hand and the filters. It is not part of the data, not undoable, and not part
@@ -27,11 +28,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use cliotree_core::form::FONT_SIZES;
 use cliotree_core::{Path, Value};
 use serde_json::{Map, Value as Json, json};
 
 use crate::app::ClioApp;
 use crate::form::View;
+use crate::style::{DataFont, Typeface};
+
+/// The key of the font of the data views in `view.json`.
+const DATA_FONT: &str = "data_font";
 use crate::table::{Condition, Filter, TableView, item_type};
 
 /// The keys of the view object this version writes. Anything else in it was
@@ -261,6 +267,57 @@ impl ClioApp {
         self.tables.rev += 1;
         self.expansion_rev += 1;
         self.rows_key = None;
+    }
+
+    /// The state of the view of the whole workbook, for `view.json`, merged
+    /// over what the file had: the font of the data views, left out when it is
+    /// the default.
+    ///
+    /// ```json
+    /// {"data_font": {"family": "serif", "size": 16}}
+    /// ```
+    pub fn workbook_view(&self) -> Option<Json> {
+        let mut object = self
+            .doc
+            .workbook_view
+            .as_ref()
+            .and_then(Json::as_object)
+            .cloned()
+            .unwrap_or_default();
+        object.remove(DATA_FONT);
+        if self.data_font != DataFont::default() {
+            object.insert(
+                DATA_FONT.to_owned(),
+                json!({"family": self.data_font.family.key(), "size": self.data_font.size}),
+            );
+        }
+        (!object.is_empty()).then_some(Json::Object(object))
+    }
+
+    /// Puts back the state of the view of the whole workbook read from a file.
+    /// A value this version cannot use is the default.
+    pub fn restore_workbook_view(&mut self, view: Option<&Json>) {
+        let font = view.and_then(|v| v.get(DATA_FONT));
+        let defaults = DataFont::default();
+        self.data_font = DataFont {
+            family: font
+                .and_then(|f| f.get("family"))
+                .and_then(Json::as_str)
+                .and_then(Typeface::from_key)
+                .unwrap_or(defaults.family),
+            size: font
+                .and_then(|f| f.get("size"))
+                .and_then(Json::as_u64)
+                .and_then(|s| u32::try_from(s).ok())
+                .filter(|s| FONT_SIZES.contains(s))
+                .unwrap_or(defaults.size),
+        };
+    }
+
+    /// Changes the font of the data views. Like the rest of the view state it
+    /// is not an edit: it is kept with the next save.
+    pub fn set_data_font(&mut self, font: DataFont) {
+        self.data_font = font;
     }
 
     fn restore_table(&mut self, tab: &str, table: &Json) {

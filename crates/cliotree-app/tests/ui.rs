@@ -614,6 +614,34 @@ fn picture() {
 }
 
 #[test]
+fn view_font_sets_the_font_of_the_data_tree_of_every_tab() {
+    use cliotree_app::style::{DataFont, Typeface};
+    let mut harness = window();
+    let before = harness.get_by_label("tax_rate").rect().height();
+    click(&mut harness, "View");
+    click(&mut harness, "Font");
+    click(&mut harness, "Serif (Source Serif 4)");
+    click(&mut harness, "View");
+    click(&mut harness, "Font");
+    click(&mut harness, "24 pt");
+    assert_eq!(
+        harness.state().data_font,
+        DataFont {
+            family: Typeface::Serif,
+            size: 24
+        }
+    );
+    assert!(harness.get_by_label("tax_rate").rect().height() > before * 1.4);
+    // It belongs to the workbook, not the tab: another tab keeps it.
+    click(&mut harness, "Prices");
+    assert_eq!(harness.state().data_font.size, 24);
+    click(&mut harness, "View");
+    click(&mut harness, "Font");
+    click(&mut harness, "Default font");
+    assert_eq!(harness.state().data_font, DataFont::default());
+}
+
+#[test]
 fn escape_gives_up_an_edit_and_the_cell_keeps_its_content() {
     let mut harness = window();
     click(&mut harness, "0.21");

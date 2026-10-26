@@ -574,6 +574,56 @@ fn a_control_is_deleted_from_its_context_menu_and_listed_as_not_on_the_form() {
     assert_eq!(harness.state().design_of("Default").walk().len(), before);
 }
 
+/// The height of the widget with this label.
+fn height(harness: &Harness<'_, ClioApp>, label: &str) -> f32 {
+    harness.get_by_label(label).rect().height()
+}
+
+#[test]
+fn a_control_has_a_font_and_the_controls_of_a_group_inherit_it() {
+    use cliotree_core::form::{Control, ControlKind, FontFamily};
+    let mut harness = form();
+    new_form(&mut harness, "Fonts");
+    let label = |text: &str| Control {
+        text: Some(text.to_owned()),
+        ..Control::new(ControlKind::Label)
+    };
+    harness.state_mut().edit_design(|d| {
+        let mut group = Control::new(ControlKind::Group);
+        group.font = Some(FontFamily::Serif);
+        group.font_size = Some(28);
+        let mut small = label("Small print");
+        small.font_size = Some(10);
+        group.children = vec![label("Big title"), small];
+        d.controls.insert(0, label("Plain text"));
+        d.controls.insert(1, group);
+        Some(None)
+    });
+    harness.run();
+    harness.run();
+    let plain = height(&harness, "Plain text");
+    let big = height(&harness, "Big title");
+    let small = height(&harness, "Small print");
+    assert!(big > plain * 1.5, "inherited 28 pt: {big} against {plain}");
+    assert!(small < plain, "its own 10 pt: {small} against {plain}");
+}
+
+#[test]
+fn the_font_of_a_control_is_chosen_on_the_property_page() {
+    use cliotree_core::form::FontFamily;
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Field customer.name");
+    click(&mut harness, "Font of the control");
+    click(&mut harness, "Script (Dancing Script)");
+    click(&mut harness, "Font size of the control");
+    click(&mut harness, "20 pt");
+    let design = harness.state().design_of("Default");
+    let control = design.get(&[0, 0]).unwrap();
+    assert_eq!(control.font, Some(FontFamily::Script));
+    assert_eq!(control.font_size, Some(20));
+}
+
 #[test]
 fn a_control_whose_field_is_gone_is_a_placeholder_that_can_be_removed() {
     let mut harness = form();

@@ -103,6 +103,60 @@ impl RepeaterMode {
     }
 }
 
+/// The typeface of the text of a control, or of the data views. The
+/// application bundles a font for each (see `cliotree-app`, `style.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FontFamily {
+    Sans,
+    Serif,
+    Monospace,
+    Condensed,
+    Script,
+    Handwriting,
+}
+
+impl FontFamily {
+    pub const ALL: [FontFamily; 6] = [
+        FontFamily::Sans,
+        FontFamily::Serif,
+        FontFamily::Monospace,
+        FontFamily::Condensed,
+        FontFamily::Script,
+        FontFamily::Handwriting,
+    ];
+
+    /// The name in a document.
+    pub fn key(self) -> &'static str {
+        match self {
+            FontFamily::Sans => "sans",
+            FontFamily::Serif => "serif",
+            FontFamily::Monospace => "monospace",
+            FontFamily::Condensed => "condensed",
+            FontFamily::Script => "script",
+            FontFamily::Handwriting => "handwriting",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<FontFamily> {
+        FontFamily::ALL.into_iter().find(|f| f.key() == key)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FontFamily::Sans => "Sans",
+            FontFamily::Serif => "Serif",
+            FontFamily::Monospace => "Monospace",
+            FontFamily::Condensed => "Condensed",
+            FontFamily::Script => "Script",
+            FontFamily::Handwriting => "Handwriting",
+        }
+    }
+}
+
+/// The font sizes a document may give, in points.
+pub const FONT_SIZES: std::ops::RangeInclusive<u32> = 6..=72;
+
 /// One control. All kinds share the one record, so that the stored document
 /// can be described in the schema subset, which has no unions; the checks say
 /// which properties a kind uses.
@@ -149,6 +203,13 @@ pub struct Control {
     pub visible_when: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_when: Option<String>,
+    /// The typeface of the control's text. Absent: the one of the group it is
+    /// in, or the interface font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<FontFamily>,
+    /// The size of the control's text, in points. Absent: as for `font`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
 }
@@ -173,6 +234,8 @@ impl Control {
             procedure: None,
             visible_when: None,
             enabled_when: None,
+            font: None,
+            font_size: None,
             children: Vec::new(),
         }
     }
@@ -254,6 +317,8 @@ pub fn form_schema_source() -> &'static str {
         "procedure": {"type": "string"},
         "visible_when": {"type": "string"},
         "enabled_when": {"type": "string"},
+        "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
+        "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "children": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["type"]
@@ -673,6 +738,8 @@ mod tests {
         design.controls[0].editor = Some(Editor::Multiline);
         design.controls[2].mode = Some(RepeaterMode::Stacked);
         design.controls[2].show = Some(vec!["sku".into()]);
+        design.controls[1].font = Some(FontFamily::Serif);
+        design.controls[1].font_size = Some(18);
         design.controls.push(Control::new(ControlKind::Separator));
         let text = design.to_json();
         assert_eq!(FormDesign::from_json(&text).unwrap(), design);
@@ -693,6 +760,29 @@ mod tests {
         assert!(not_json.starts_with("not valid JSON"));
         let newer = FormDesign::from_json(r#"{"version":99,"controls":[]}"#).unwrap_err();
         assert!(newer.contains("newer version"));
+    }
+
+    #[test]
+    fn a_font_is_one_of_the_families_and_a_size_within_bounds() {
+        let ok = FormDesign::from_json(
+            r#"{"version":1,"controls":[{"type":"label","font":"script","font_size":24}]}"#,
+        )
+        .unwrap();
+        assert_eq!(ok.controls[0].font, Some(FontFamily::Script));
+        assert_eq!(ok.controls[0].font_size, Some(24));
+        for wrong in [
+            r#""font":"comic""#,
+            r#""font_size":5"#,
+            r#""font_size":100"#,
+        ] {
+            let text = format!(r#"{{"version":1,"controls":[{{"type":"label",{wrong}}}]}}"#);
+            assert!(FormDesign::from_json(&text).is_err(), "{wrong}");
+        }
+        // The schema's list is the enum's.
+        for family in FontFamily::ALL {
+            assert!(form_schema_source().contains(&format!("\"{}\"", family.key())));
+            assert_eq!(FontFamily::from_key(family.key()), Some(family));
+        }
     }
 
     #[test]

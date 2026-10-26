@@ -768,6 +768,9 @@ impl ClioApp {
             }
             ControlKind::Separator => {}
         }
+        if kind != ControlKind::Separator {
+            font_properties(ui, &mut edited);
+        }
         if option_text(
             ui,
             "Visible when",
@@ -1047,6 +1050,54 @@ fn sibling_count(design: &FormDesign, at: &[usize]) -> usize {
         Some(_) => design.controls.len(),
         None => 0,
     }
+}
+
+/// The sizes the property page offers, in points.
+const FONT_SIZE_CHOICES: [u32; 16] = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
+
+/// The font of a control: a typeface and a size, each *Inherited* (from the
+/// group it is in, or the interface font) unless chosen.
+fn font_properties(ui: &mut egui::Ui, edited: &mut Control) {
+    use crate::style::{Typeface, family, typeface_label};
+    ui.horizontal(|ui| {
+        ui.label("Font");
+        let mut font = edited.font;
+        let response = egui::ComboBox::from_id_salt("property_font")
+            .selected_text(font.map_or_else(|| "Inherited".to_owned(), typeface_label))
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut font, None, "Inherited");
+                for typeface in Typeface::ALL {
+                    let text =
+                        egui::RichText::new(typeface_label(typeface)).family(family(typeface));
+                    ui.selectable_value(&mut font, Some(typeface), text);
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Font of the control")
+        });
+        edited.font = font;
+    });
+    ui.horizontal(|ui| {
+        ui.label("Size");
+        let mut size = edited.font_size;
+        let response = egui::ComboBox::from_id_salt("property_font_size")
+            .selected_text(size.map_or_else(|| "Inherited".to_owned(), |s| format!("{s} pt")))
+            // Tall enough for every size, with no scrolling.
+            .height(480.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut size, None, "Inherited");
+                for choice in FONT_SIZE_CHOICES {
+                    ui.selectable_value(&mut size, Some(choice), format!("{choice} pt"));
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Font size of the control")
+        });
+        edited.font_size = size;
+    });
 }
 
 /// A labelled text field for an optional property: empty is absent. Returns

@@ -39,6 +39,10 @@ pub const ENGINE_REVISION: &str = "e5554e23abfbaee85508c32fc22e5074f88aebdd";
 const MANIFEST: &str = "manifest.json";
 /// The workbook settings. Left out when every setting has its default.
 const SETTINGS: &str = "settings.json";
+/// The state of the view of the whole workbook (the font of the data views),
+/// which the application owns and this layer only carries. Left out when
+/// empty.
+const VIEW: &str = "view.json";
 
 // ------------------------------------------------------------------ entries
 
@@ -255,6 +259,8 @@ pub struct Meta {
     pub app_version: String,
     /// The state of the view of each tab, by tab name.
     pub views: BTreeMap<String, Json>,
+    /// The state of the view of the whole workbook: a JSON object, or None.
+    pub workbook_view: Option<Json>,
     /// Entries this version does not know, to be written back unchanged.
     pub unknown: Vec<(String, Vec<u8>)>,
 }
@@ -267,6 +273,8 @@ pub struct Opened {
     pub calc: Calc,
     pub workbook_id: String,
     pub views: BTreeMap<String, Json>,
+    /// The state of the view of the whole workbook (`view.json`), if any.
+    pub workbook_view: Option<Json>,
     /// Entries this version does not know, to be handed back on save.
     pub unknown: Vec<(String, Vec<u8>)>,
     /// Things worth telling the user: the file opened, but not quite as it
@@ -424,6 +432,13 @@ impl Calc {
         }
         if let Some(text) = self.settings.to_json() {
             files.push((SETTINGS.to_owned(), text.into_bytes()));
+        }
+        if let Some(view) = meta
+            .workbook_view
+            .as_ref()
+            .filter(|v| v.as_object().is_some_and(|o| !o.is_empty()))
+        {
+            files.push((VIEW.to_owned(), json_text(view)));
         }
 
         let manifest = Manifest {
@@ -673,6 +688,19 @@ impl Calc {
             calc.store_settings(settings);
         }
 
+        // The view of the workbook only changes what is drawn, so one that
+        // cannot be read is dropped with a warning.
+        let mut workbook_view = None;
+        if let Some(text) = package.text(VIEW)? {
+            used.insert(VIEW.to_owned());
+            match serde_json::from_str::<Json>(text) {
+                Ok(view @ Json::Object(_)) => workbook_view = Some(view),
+                _ => warnings.push(format!(
+                    "{VIEW} is not a JSON object, so the workbook's view settings are the defaults."
+                )),
+            }
+        }
+
         // Nothing has been run, edited or undone yet.
         calc.dirty.clear();
         calc.clear_history();
@@ -687,6 +715,7 @@ impl Calc {
             calc,
             workbook_id: manifest.workbook_id,
             views,
+            workbook_view,
             unknown,
             warnings,
             format_version: (major, minor),

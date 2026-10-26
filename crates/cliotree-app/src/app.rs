@@ -98,6 +98,8 @@ pub struct ClioApp {
     pub trust: crate::trust_ui::TrustBanner,
     /// The view each tab shows. A tab not in the map shows its data tree.
     pub views: HashMap<String, View>,
+    /// The font of the Data tree and Raw views of every tab (View > Font).
+    pub data_font: crate::style::DataFont,
     /// What the form views keep between frames.
     pub form: FormState,
     /// What the Raw view keeps between frames.
@@ -169,6 +171,7 @@ impl ClioApp {
             scroll_to: None,
             trust: crate::trust_ui::TrustBanner::default(),
             views: HashMap::new(),
+            data_font: crate::style::DataFont::default(),
             form: FormState::default(),
             raw: RawState::default(),
             doc: crate::workbook_file::Document::default(),

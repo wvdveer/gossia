@@ -328,6 +328,41 @@ fn the_state_of_the_view_is_carried_and_not_interpreted() {
 }
 
 #[test]
+fn the_view_of_the_workbook_is_carried_in_its_own_entry() {
+    let mut calc = book();
+    run(&mut calc);
+    // Nothing to carry: no entry.
+    let plain = calc.to_package(&meta()).unwrap();
+    assert!(plain.get("view.json").is_none());
+    let empty = calc
+        .to_package(&Meta {
+            workbook_view: Some(serde_json::json!({})),
+            ..meta()
+        })
+        .unwrap();
+    assert!(empty.get("view.json").is_none());
+
+    let view = serde_json::json!({"data_font": {"family": "serif", "size": 16}, "later": 1});
+    let package = calc
+        .to_package(&Meta {
+            workbook_view: Some(view.clone()),
+            ..meta()
+        })
+        .unwrap();
+    let opened = open(&package);
+    assert_eq!(opened.workbook_view, Some(view));
+    assert!(opened.unknown.is_empty(), "view.json is known");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+
+    // One that cannot be read opens with the defaults and says so.
+    let mut broken = package.clone();
+    broken.insert("view.json", b"[1, 2]\n".to_vec()).unwrap();
+    let opened = open(&broken);
+    assert_eq!(opened.workbook_view, None);
+    assert!(opened.warnings.iter().any(|w| w.contains("view.json")));
+}
+
+#[test]
 fn what_this_version_does_not_know_is_kept_and_handed_back() {
     let mut calc = book();
     run(&mut calc);

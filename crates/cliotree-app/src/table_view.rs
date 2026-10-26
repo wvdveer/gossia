@@ -11,7 +11,7 @@ use crate::rows::{Row, RowKind};
 use crate::schema_view::ColumnDrag;
 use crate::table::Column;
 use crate::tables::{Choice, Layout};
-use crate::view::{Action, ROW_HEIGHT, error_color, named};
+use crate::view::{Action, error_color, named};
 
 impl ClioApp {
     /// The pane: a toolbar, and the table.
@@ -162,6 +162,7 @@ impl ClioApp {
         egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let row_height = crate::style::row_height(ui);
                 let mut table = TableBuilder::new(ui)
                     .id_salt(("table", array.to_string()))
                     .striped(true)
@@ -187,7 +188,7 @@ impl ClioApp {
                         }
                     })
                     .body(|body| {
-                        body.rows(ROW_HEIGHT, rows.len(), |mut table_row| {
+                        body.rows(row_height, rows.len(), |mut table_row| {
                             let position = table_row.index();
                             let index = rows[position];
                             let item = &items[index];

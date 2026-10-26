@@ -84,6 +84,9 @@ pub struct Document {
     /// version knows of it is put in the window when the file is opened; the
     /// rest is written back as it was (see [`crate::view_state`]).
     pub views: BTreeMap<String, Json>,
+    /// The state of the view of the whole workbook as it was in the file
+    /// (`view.json`), kept for what this version does not know of it.
+    pub workbook_view: Option<Json>,
     /// The version of the forms as they were saved.
     saved_forms: u64,
 }
@@ -95,6 +98,7 @@ impl Default for Document {
             workbook_id: new_workbook_id(),
             unknown: Vec::new(),
             views: BTreeMap::new(),
+            workbook_view: None,
             saved_forms: 0,
         }
     }
@@ -243,6 +247,7 @@ impl ClioApp {
             calc: blank_workbook(),
             workbook_id: new_workbook_id(),
             views: BTreeMap::new(),
+            workbook_view: None,
             unknown: Vec::new(),
             warnings: Vec::new(),
             format_version: (FORMAT_MAJOR, FORMAT_MINOR),
@@ -258,6 +263,7 @@ impl ClioApp {
             mut calc,
             workbook_id,
             views,
+            workbook_view,
             unknown,
             warnings,
             ..
@@ -299,9 +305,11 @@ impl ClioApp {
             workbook_id,
             unknown,
             views: views.clone(),
+            workbook_view: workbook_view.clone(),
             saved_forms: fresh.calc().forms_version(),
         };
         fresh.restore_view_state(&views);
+        fresh.restore_workbook_view(workbook_view.as_ref());
         if !trusted {
             fresh.trust = TrustBanner {
                 changes,
@@ -363,6 +371,7 @@ impl ClioApp {
             workbook_id: self.doc.workbook_id.clone(),
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             views: self.view_state(),
+            workbook_view: self.workbook_view(),
             unknown: self.doc.unknown.clone(),
         };
         let package = self.calc().to_package(&meta).map_err(|e| e.to_string())?;
@@ -371,6 +380,7 @@ impl ClioApp {
         self.session.calc_mut().mark_saved();
         self.doc.saved_forms = self.calc().forms_version();
         self.doc.views = meta.views;
+        self.doc.workbook_view = meta.workbook_view;
         self.doc.path = Some(path.to_path_buf());
         // What the user saved is what they trust, if they trust the workbook.
         if self.calc().is_trusted() {

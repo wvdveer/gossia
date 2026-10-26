@@ -221,6 +221,63 @@ fn view_state_a_newer_version_wrote_is_kept() {
     assert_eq!(overlay["view"], json!({ "zoom": 150 }));
 }
 
+// ------------------------------------------------------------ data font
+
+#[test]
+fn the_font_of_the_data_views_is_saved_with_the_workbook() {
+    use crate::style::{DataFont, Typeface};
+    let folder = Folder::new("font");
+    let path = folder.file("f.clio");
+    let mut app = sample();
+    // The default font needs no entry.
+    app.save_as(&path).unwrap();
+    assert!(entry(&path, "view.json").is_none());
+
+    let serif = DataFont {
+        family: Typeface::Serif,
+        size: 18,
+    };
+    app.set_data_font(serif);
+    assert!(!app.is_dirty(), "a font is view state, not an edit");
+    app.save().unwrap();
+    let saved: Json = serde_json::from_str(&entry(&path, "view.json").unwrap()).unwrap();
+    assert_eq!(saved, json!({"data_font": {"family": "serif", "size": 18}}));
+    // The fingerprint does not include it, so trust is not asked again.
+    let before = app.calc().fingerprint();
+    app.set_data_font(DataFont::default());
+    assert_eq!(app.calc().fingerprint(), before);
+
+    let mut other = sample();
+    other.open_path(&path).unwrap();
+    assert_eq!(other.data_font, serif);
+    // A new workbook has the default font.
+    other.new_workbook();
+    assert_eq!(other.data_font, DataFont::default());
+}
+
+#[test]
+fn a_data_font_that_cannot_be_used_is_the_default_and_unknown_keys_are_kept() {
+    use crate::style::DataFont;
+    let folder = Folder::new("fontbad");
+    let path = folder.file("b.clio");
+    let mut app = sample();
+    app.save_as(&path).unwrap();
+    let mut package = read_zip(&std::fs::read(&path).unwrap(), &Limits::default()).unwrap();
+    package
+        .insert(
+            "view.json",
+            br#"{"data_font": {"family": "gothic", "size": 400}, "zoom": 125}"#.to_vec(),
+        )
+        .unwrap();
+    std::fs::write(&path, write_zip(&package).unwrap()).unwrap();
+
+    app.open_path(&path).unwrap();
+    assert_eq!(app.data_font, DataFont::default());
+    app.save().unwrap();
+    let saved: Json = serde_json::from_str(&entry(&path, "view.json").unwrap()).unwrap();
+    assert_eq!(saved, json!({"zoom": 125}));
+}
+
 // -------------------------------------------------------- trust on disk
 
 #[test]

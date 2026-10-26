@@ -20,6 +20,7 @@ use crate::app::ClioApp;
 use crate::form_layout::{ControlAction, FormDialog, LayoutState};
 use crate::icons;
 use crate::rows::display;
+use crate::style::Typeface;
 use crate::table::{self, Column};
 use crate::view::{ROW_HEIGHT, computed_fill, error_color};
 
@@ -335,6 +336,7 @@ impl ClioApp {
                     scroll_to,
                     layout,
                     look: None,
+                    font: (None, None),
                 };
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -569,6 +571,8 @@ struct Painter<'a> {
     layout: Option<Option<Address>>,
     /// What the control being drawn says about how to draw its node.
     look: Option<(Path, Look)>,
+    /// The font of the group being drawn, which its controls inherit.
+    font: (Option<Typeface>, Option<u32>),
 }
 
 /// How the control of a node wants it drawn, beyond what its type calls for.
@@ -620,7 +624,24 @@ impl Painter<'_> {
         }
     }
 
+    /// A control, in its font: its own, or else the one of the group it is
+    /// in, for the typeface and the size separately.
     fn control(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        if c.font.is_none() && c.font_size.is_none() {
+            self.control_in_font(ui, c, slot);
+            return;
+        }
+        let outer = self.font;
+        self.font = (c.font.or(outer.0), c.font_size.or(outer.1));
+        let (typeface, size) = self.font;
+        ui.scope(|ui| {
+            crate::style::use_font(ui.style_mut(), typeface, size);
+            self.control_in_font(ui, c, slot);
+        });
+        self.font = outer;
+    }
+
+    fn control_in_font(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
         if c.kind == ControlKind::Group {
             self.group(ui, c, slot);
         } else if self.layout.is_none() {
@@ -1262,6 +1283,7 @@ impl Painter<'_> {
     fn table(&mut self, ui: &mut egui::Ui, array: &Path, len: usize, columns: &[Column]) {
         let editable = self.app.can_reorder(array);
         let sortable = editable && columns.iter().any(|c| !c.fields.is_empty());
+        let row_height = crate::style::row_height(ui);
         let mut table = TableBuilder::new(ui)
             .id_salt(("form_table", &self.app.sheet, array.to_string()))
             .striped(true)
@@ -1295,7 +1317,7 @@ impl Painter<'_> {
                 }
             })
             .body(|body| {
-                body.rows(ROW_HEIGHT, len, |mut row| {
+                body.rows(row_height, len, |mut row| {
                     let index = row.index();
                     row.col(|ui| {
                         let label = ui.add(

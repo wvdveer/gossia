@@ -139,19 +139,31 @@ impl ClioApp {
                 if self.in_form() {
                     self.form_view(ui);
                 } else {
-                    self.raw_view(ui);
+                    let font = self.data_font;
+                    ui.scope(|ui| {
+                        crate::style::use_font(ui.style_mut(), Some(font.family), Some(font.size));
+                        self.raw_view(ui);
+                    });
                 }
             });
         } else {
             self.refresh_rows();
             self.refresh_table();
             if self.layout().is_some() {
+                let font = self.data_font;
                 egui::Panel::bottom("table")
                     .resizable(true)
                     .default_size(280.0)
-                    .show(ui, |ui| self.table_pane(ui));
+                    .show(ui, |ui| {
+                        crate::style::use_font(ui.style_mut(), Some(font.family), Some(font.size));
+                        self.table_pane(ui);
+                    });
             }
-            egui::CentralPanel::default().show(ui, |ui| self.grid(ui));
+            let font = self.data_font;
+            egui::CentralPanel::default().show(ui, |ui| {
+                crate::style::use_font(ui.style_mut(), Some(font.family), Some(font.size));
+                self.grid(ui);
+            });
         }
         self.insert_function_window(ui.ctx());
         self.filter_window(ui.ctx());
@@ -332,6 +344,7 @@ impl ClioApp {
                     }
                 });
                 self.forms_menu(ui);
+                ui.menu_button("Font", |ui| self.font_menu(ui));
                 ui.separator();
                 if ui.checkbox(&mut self.show_issues, "Issues panel").clicked() {
                     ui.close();
@@ -375,6 +388,42 @@ impl ClioApp {
                 }
             });
         });
+    }
+
+    /// View > Font: the typeface and size of the Data tree and Raw views of
+    /// every tab. A form's text has the font of its controls instead.
+    fn font_menu(&mut self, ui: &mut egui::Ui) {
+        ui.weak("Data tree and Raw views, every tab");
+        let current = self.data_font;
+        let mut chosen = current;
+        for typeface in crate::style::Typeface::ALL {
+            let label = crate::style::typeface_label(typeface);
+            let text = RichText::new(label).family(crate::style::family(typeface));
+            if ui.radio(current.family == typeface, text).clicked() {
+                chosen.family = typeface;
+            }
+        }
+        ui.separator();
+        for size in crate::style::DATA_FONT_SIZES {
+            if ui
+                .radio(current.size == size, format!("{size} pt"))
+                .clicked()
+            {
+                chosen.size = size;
+            }
+        }
+        ui.separator();
+        let default = crate::style::DataFont::default();
+        if ui
+            .add_enabled(current != default, egui::Button::new("Default font"))
+            .clicked()
+        {
+            chosen = default;
+        }
+        if chosen != current {
+            self.set_data_font(chosen);
+            ui.close();
+        }
     }
 
     // ------------------------------------------------------ formula bar
@@ -576,6 +625,7 @@ impl ClioApp {
         let mut actions: Vec<Action> = Vec::new();
         let scroll_to = self.scroll_to.take();
         {
+            let row_height = crate::style::row_height(ui);
             let mut table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
@@ -597,7 +647,7 @@ impl ClioApp {
                     }
                 })
                 .body(|body| {
-                    body.rows(ROW_HEIGHT, rows.len(), |mut table_row| {
+                    body.rows(row_height, rows.len(), |mut table_row| {
                         let row = &rows[table_row.index()];
                         let selected = self.selection.as_ref() == Some(&row.path);
                         table_row.set_selected(selected);
@@ -690,8 +740,10 @@ impl ClioApp {
         table_row.col(|ui| {
             ui.add_space(row.depth as f32 * INDENT);
             if row.expandable() {
-                let (rect, response) =
-                    ui.allocate_exact_size(egui::vec2(14.0, ROW_HEIGHT - 4.0), Sense::CLICK);
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(14.0, crate::style::row_height(ui) - 4.0),
+                    Sense::CLICK,
+                );
                 paint_triangle(ui, rect, row.expanded, response.hovered());
                 if response.clicked() {
                     actions.push(Action::Toggle(row.path.clone()));

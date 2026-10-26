@@ -10,6 +10,7 @@
 //! The fonts and the style are installed when the first frame is drawn and
 //! take effect on the next one; [`ready`] says whether they are in use.
 
+pub use cliotree_core::form::FontFamily as Typeface;
 use egui::epaint::text::{FontTweak, VariationCoords};
 use egui::{
     Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Response,
@@ -220,24 +221,95 @@ pub const HANDWRITING: &str = "handwriting";
 /// The Phosphor icons (see [`crate::icons`]).
 pub const ICONS: &str = "phosphor";
 
-/// The typefaces a form can use, by the name shown to the user, and the family
-/// each is drawn with.
-pub const TYPEFACES: [(&str, &str); 6] = [
-    ("Sans (Inter)", "sans"),
-    ("Serif (Source Serif 4)", SERIF),
-    ("Monospace (Geist Mono)", "monospace"),
-    ("Condensed (Oswald)", CONDENSED),
-    ("Script (Dancing Script)", SCRIPT),
-    ("Handwriting (Caveat)", HANDWRITING),
-];
-
-/// The egui family of a name in [`TYPEFACES`].
-pub fn family(name: &str) -> FontFamily {
-    match name {
-        "sans" => FontFamily::Proportional,
-        "monospace" => FontFamily::Monospace,
-        other => FontFamily::Name(other.into()),
+/// The egui family a typeface of a document is drawn with.
+pub fn family(typeface: Typeface) -> FontFamily {
+    match typeface {
+        Typeface::Sans => FontFamily::Proportional,
+        Typeface::Monospace => FontFamily::Monospace,
+        Typeface::Serif => FontFamily::Name(SERIF.into()),
+        Typeface::Condensed => FontFamily::Name(CONDENSED.into()),
+        Typeface::Script => FontFamily::Name(SCRIPT.into()),
+        Typeface::Handwriting => FontFamily::Name(HANDWRITING.into()),
     }
+}
+
+/// The name of a typeface in a menu: what it is, and the font it is.
+pub fn typeface_label(typeface: Typeface) -> String {
+    let font = match typeface {
+        Typeface::Sans => "Inter",
+        Typeface::Serif => "Source Serif 4",
+        Typeface::Monospace => "Geist Mono",
+        Typeface::Condensed => "Oswald",
+        Typeface::Script => "Dancing Script",
+        Typeface::Handwriting => "Caveat",
+    };
+    format!("{} ({font})", typeface.label())
+}
+
+/// The sizes the View menu offers for the data font, in points.
+pub const DATA_FONT_SIZES: [u32; 10] = [10, 11, 12, 13, 14, 16, 18, 20, 24, 28];
+
+/// The font of the Data tree and Raw views of every tab of a workbook (View >
+/// Font). It is kept in the workbook (`view.json`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataFont {
+    pub family: Typeface,
+    pub size: u32,
+}
+
+impl Default for DataFont {
+    fn default() -> DataFont {
+        DataFont {
+            family: Typeface::Sans,
+            size: BODY_SIZE as u32,
+        }
+    }
+}
+
+/// The text sizes of the window, scaled by `scale`, in `body` (the family of
+/// everything but code) and the monospace family.
+fn text_styles(body: FontFamily, scale: f32) -> std::collections::BTreeMap<TextStyle, FontId> {
+    let heading = if body == FontFamily::Proportional {
+        FontFamily::Name(MEDIUM.into())
+    } else {
+        body.clone()
+    };
+    [
+        (
+            TextStyle::Small,
+            FontId::new(SMALL_SIZE * scale, body.clone()),
+        ),
+        (
+            TextStyle::Body,
+            FontId::new(BODY_SIZE * scale, body.clone()),
+        ),
+        (TextStyle::Button, FontId::new(BODY_SIZE * scale, body)),
+        (
+            TextStyle::Heading,
+            FontId::new(HEADING_SIZE * scale, heading),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::monospace(MONOSPACE_SIZE * scale),
+        ),
+    ]
+    .into()
+}
+
+/// Makes what is drawn with `style` use a typeface and a size: every text
+/// style takes the typeface (code stays monospace) and is scaled so that the
+/// body text has the size. None keeps the interface font, or its size. Text
+/// that names its own font, like a badge, keeps it.
+pub fn use_font(style: &mut Style, typeface: Option<Typeface>, size: Option<u32>) {
+    let body = typeface.map_or(FontFamily::Proportional, family);
+    let scale = size.map_or(1.0, |s| s as f32 / BODY_SIZE);
+    style.text_styles = text_styles(body, scale);
+}
+
+/// The height of a row of a grid for the body text of this `Ui`: the standard
+/// height, or more for a larger font.
+pub fn row_height(ui: &egui::Ui) -> f32 {
+    (ui.text_style_height(&TextStyle::Body) + 11.0).max(ROW_HEIGHT)
 }
 
 fn font(bytes: &'static [u8]) -> FontData {
@@ -403,17 +475,7 @@ pub fn style(theme: Theme) -> Style {
         visuals: visuals(theme),
         ..Style::default()
     };
-    style.text_styles = [
-        (TextStyle::Small, FontId::proportional(SMALL_SIZE)),
-        (TextStyle::Body, FontId::proportional(BODY_SIZE)),
-        (TextStyle::Button, FontId::proportional(BODY_SIZE)),
-        (
-            TextStyle::Heading,
-            FontId::new(HEADING_SIZE, FontFamily::Name(MEDIUM.into())),
-        ),
-        (TextStyle::Monospace, FontId::monospace(MONOSPACE_SIZE)),
-    ]
-    .into();
+    style.text_styles = text_styles(FontFamily::Proportional, 1.0);
     let s = &mut style.spacing;
     s.item_spacing = egui::vec2(8.0, 5.0);
     s.button_padding = egui::vec2(8.0, 3.0);
@@ -523,8 +585,11 @@ mod tests {
             }
             assert!(list.contains(&ICONS.to_owned()), "{family:?}");
         }
-        for (_, name) in TYPEFACES {
-            assert!(fonts.families.contains_key(&family(name)), "{name}");
+        for typeface in Typeface::ALL {
+            assert!(
+                fonts.families.contains_key(&family(typeface)),
+                "{typeface:?}"
+            );
         }
     }
 
@@ -546,6 +611,29 @@ mod tests {
                 "{name} has no weight axis"
             );
         }
+    }
+
+    #[test]
+    fn a_font_sets_every_text_style_and_scales_from_the_defaults() {
+        let mut style = style(Theme::Dark);
+        use_font(&mut style, Some(Typeface::Serif), Some(28));
+        let body = &style.text_styles[&TextStyle::Body];
+        assert_eq!(body.size, 28.0);
+        assert_eq!(body.family, family(Typeface::Serif));
+        assert_eq!(style.text_styles[&TextStyle::Small].size, SMALL_SIZE * 2.0);
+        assert_eq!(
+            style.text_styles[&TextStyle::Monospace].family,
+            FontFamily::Monospace,
+            "code stays monospace"
+        );
+        // Applied again (a control in a group with a font), it does not
+        // compound.
+        use_font(&mut style, None, Some(14));
+        assert_eq!(style.text_styles[&TextStyle::Body].size, 14.0);
+        assert_eq!(
+            style.text_styles[&TextStyle::Body].family,
+            FontFamily::Proportional
+        );
     }
 
     #[test]
