@@ -81,6 +81,20 @@ impl FormStore {
         taken.then(|| format!("the tab {tab} has a form called {name} already"))
     }
 
+    /// Moves the forms of a tab to its new name, keeping their order and the
+    /// place of the tab among the others.
+    pub fn rename_tab(&mut self, from: &str, to: &str) {
+        if let Some(at) = self.by_tab.get_index_of(from) {
+            let (_, forms) = self
+                .by_tab
+                .shift_remove_index(at)
+                .expect("the index was found");
+            self.by_tab.insert(to.to_owned(), forms);
+            let last = self.by_tab.len() - 1;
+            self.by_tab.move_index(last, at);
+        }
+    }
+
     /// Renames a stored form, which keeps its place. Default cannot be renamed.
     pub fn rename(&mut self, tab: &str, from: &str, to: &str) -> Result<(), String> {
         if from == DEFAULT_FORM {

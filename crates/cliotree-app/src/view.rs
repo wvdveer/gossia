@@ -86,6 +86,7 @@ impl ClioApp {
         self.apply_settings();
         self.session.tick();
         self.collect_procedures();
+        self.follow_renames();
         if !self.session.is_idle() {
             ui.ctx().request_repaint_after(Duration::from_millis(30));
         }
@@ -169,6 +170,7 @@ impl ClioApp {
         self.filter_window(ui.ctx());
         self.schema_window(ui.ctx());
         self.form_window(ui.ctx());
+        self.rename_tab_window(ui.ctx());
         self.file_windows(ui.ctx());
     }
 
@@ -329,6 +331,15 @@ impl ClioApp {
                     .clicked()
                 {
                     self.redo();
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .add_enabled(can_change, egui::Button::new("Rename tab..."))
+                    .clicked()
+                {
+                    let sheet = self.sheet.clone();
+                    self.begin_rename_tab(&sheet);
                     ui.close();
                 }
             });
@@ -1130,9 +1141,19 @@ impl ClioApp {
             ui.spacing_mut().item_spacing.x = 2.0;
             for name in names {
                 let selected = name == self.sheet;
-                if sheet_tab(ui, &name, selected).clicked() {
+                let response = sheet_tab(ui, &name, selected);
+                if response.clicked() {
                     self.switch_to(&name);
                 }
+                if response.double_clicked() {
+                    self.begin_rename_tab(&name);
+                }
+                response.context_menu(|ui| {
+                    if ui.button("Rename tab...").clicked() {
+                        self.begin_rename_tab(&name);
+                        ui.close();
+                    }
+                });
             }
         });
     }

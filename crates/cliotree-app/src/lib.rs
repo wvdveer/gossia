@@ -24,6 +24,7 @@ mod schema_tests;
 pub mod schema_view;
 pub mod status;
 pub mod style;
+pub mod tab_rename;
 pub mod table;
 pub mod table_view;
 pub mod tables;
@@ -155,3 +156,6 @@ fn log_window(ctx: &egui::Context) {
 mod workbook_file_tests;
 #[cfg(test)]
 mod workbook_state_tests;
+
+#[cfg(test)]
+mod tab_rename_tests;

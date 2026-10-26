@@ -850,3 +850,38 @@ fn a_formula_entered_in_an_untrusted_workbook_waits_and_brings_the_banner_back()
     harness.get_by_label("Trust this version");
     harness.get_by_label_contains("stored but not calculated");
 }
+
+/// Renaming a tab from its context menu (DESIGN.md, "Renaming a tab"): the
+/// name is selected, so typing replaces it, and Enter renames.
+#[test]
+fn a_tab_is_renamed_from_its_context_menu() {
+    let mut harness = window();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Tab, "Orders")
+        .click_secondary();
+    harness.run();
+    click(&mut harness, "Rename tab...");
+    harness.get_by_label("Rename tab Orders");
+    harness.get_by_label("Tab name").type_text("SUM");
+    harness.run();
+    assert!(has(
+        &harness,
+        "SUM cannot be a tab name: it is the name of a built-in function or of a special name in formulas"
+    ));
+    harness.get_by_label("Tab name").type_text("_list");
+    harness.run();
+    harness.get_by_label(
+        "3 formulas use Orders. They are not changed, and will show #NAME! until they are edited.",
+    );
+    press(&mut harness, Key::Enter);
+    settle(&mut harness);
+    let names: Vec<String> = harness
+        .state()
+        .calc()
+        .sheet_names()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(names[0], "SUM_list");
+    assert!(!has(&harness, "Rename tab Orders"));
+    harness.get_by_role_and_label(egui::accesskit::Role::Tab, "SUM_list");
+}

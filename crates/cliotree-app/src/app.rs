@@ -110,6 +110,8 @@ pub struct ClioApp {
     pub files: crate::workbook_file::FileUi,
     /// The user's preferences and trust record, kept apart from any workbook.
     pub user: crate::prefs::User,
+    /// The dialog of *Rename tab...*, while it is open.
+    pub rename_tab: Option<crate::tab_rename::RenameTab>,
     /// The settings the evaluation thread was last given.
     pub applied: Option<Effective>,
 }
@@ -177,6 +179,7 @@ impl ClioApp {
             doc: crate::workbook_file::Document::default(),
             files: crate::workbook_file::FileUi::default(),
             user: crate::prefs::User::in_memory(),
+            rename_tab: None,
             applied,
         }
     }

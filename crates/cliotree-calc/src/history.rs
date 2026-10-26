@@ -64,6 +64,8 @@ pub(crate) enum Op {
         before: Option<String>,
         after: Option<String>,
     },
+    /// A tab is renamed.
+    RenameSheet { from: String, to: String },
     /// The workbook settings change.
     Settings {
         before: Box<crate::calc::WorkbookSettings>,
@@ -98,7 +100,10 @@ impl Op {
             Op::Add { node, moved, .. } | Op::Remove { node, moved, .. } => {
                 size(node) + moved.iter().map(|(_, n)| size(n)).sum::<usize>()
             }
-            Op::AutoUpdate { .. } | Op::Column { .. } | Op::Settings { .. } => 1,
+            Op::AutoUpdate { .. }
+            | Op::Column { .. }
+            | Op::Settings { .. }
+            | Op::RenameSheet { .. } => 1,
             Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
             Op::Formula { value, .. } => {
                 1 + value

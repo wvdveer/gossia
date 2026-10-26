@@ -37,6 +37,14 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.refresh_rows();
             Ok(Json::Null)
         }
+        // Renames a tab, as the *Rename tab...* dialog does.
+        "rename_tab" => {
+            let from = text_arg(args, "from")?;
+            let to = text_arg(args, "to")?;
+            app.rename_tab(from, to)?;
+            app.refresh_rows();
+            Ok(Json::Null)
+        }
         "select" => {
             let path = path_arg(args, "path")?;
             if app

@@ -22,7 +22,7 @@ mod trie;
 
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, EditError,
-    Effective, FieldKind, FieldPlaces, Fingerprint, ModuleStatus, SchemaFormat, Setting,
+    Effective, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleStatus, SchemaFormat, Setting,
     TrustStore, Unit, WorkbookSettings,
 };
 pub use calc::{
@@ -84,3 +84,7 @@ mod procedure_tests;
 #[cfg(test)]
 #[path = "settings_tests.rs"]
 mod settings_tests;
+
+#[cfg(test)]
+#[path = "tabs_tests.rs"]
+mod tabs_tests;

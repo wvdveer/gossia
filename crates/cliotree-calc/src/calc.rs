@@ -87,6 +87,10 @@ pub use modules::ModuleStatus;
 mod settings;
 pub use settings::{Ceilings, Effective, Setting, Unit, WorkbookSettings};
 
+#[path = "tabs.rs"]
+mod tabs;
+pub use tabs::Mentions;
+
 #[path = "trust.rs"]
 mod trust;
 pub use trust::{Change, ChangeKind, Decision, Fingerprint, TrustStore};
@@ -205,6 +209,8 @@ pub struct Calc {
     forms_version: u64,
     /// The limits the workbook asks for (`settings.json`).
     settings: WorkbookSettings,
+    /// The renames not yet taken by [`Calc::take_renames`].
+    renames: Vec<(String, String)>,
 }
 
 impl Calc {
@@ -227,6 +233,7 @@ impl Calc {
             forms: crate::forms::FormStore::default(),
             forms_version: 0,
             settings: WorkbookSettings::default(),
+            renames: Vec::new(),
         }
     }
 
@@ -834,6 +841,13 @@ impl Calc {
             Op::Settings { before, after } => {
                 let target = if forward { after } else { before };
                 self.store_settings((**target).clone());
+            }
+            Op::RenameSheet { from, to } => {
+                if forward {
+                    self.store_rename(from, to);
+                } else {
+                    self.store_rename(to, from);
+                }
             }
             Op::Column {
                 sheet,
