@@ -885,3 +885,34 @@ fn a_tab_is_renamed_from_its_context_menu() {
     assert!(!has(&harness, "Rename tab Orders"));
     harness.get_by_role_and_label(egui::accesskit::Role::Tab, "SUM_list");
 }
+
+/// The `+` after the tabs makes a tab with its own schema, and the context
+/// menu of a tab deletes it again.
+#[test]
+fn a_tab_is_added_with_the_plus_and_deleted_from_its_menu() {
+    let mut harness = window();
+    click(&mut harness, "New tab");
+    harness.get_by_label("New tab name").type_text("Notes");
+    harness.run();
+    click(&mut harness, "Create");
+    settle(&mut harness);
+    assert_eq!(harness.state().sheet, "Notes");
+    assert_eq!(
+        harness.state().calc().schema_of("Notes"),
+        Some("DataSchema")
+    );
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Tab, "Notes")
+        .click_secondary();
+    harness.run();
+    click(&mut harness, "Delete tab...");
+    harness.get_by_label("Delete Notes with its data, formulas and forms? Undo puts it back.");
+    click(&mut harness, "Delete");
+    settle(&mut harness);
+    assert!(harness.state().calc().data("Notes").is_none());
+    assert!(
+        harness
+            .query_by_role_and_label(egui::accesskit::Role::Tab, "Notes")
+            .is_none()
+    );
+}

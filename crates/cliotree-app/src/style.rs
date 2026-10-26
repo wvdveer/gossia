@@ -604,6 +604,10 @@ pub fn style(theme: Theme) -> Style {
     s.window_margin = Margin::same(10);
     s.menu_margin = Margin::same(6);
     s.indent = 16.0;
+    // Scroll bars that are always there and take their own room, as in a
+    // desktop utility: egui's floating ones are hidden until the pointer is
+    // near, so a form or table wider than the window did not look scrollable.
+    s.scroll = egui::style::ScrollStyle::solid();
     style
 }
 

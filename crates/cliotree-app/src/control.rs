@@ -45,6 +45,65 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.refresh_rows();
             Ok(Json::Null)
         }
+        // A new tab, as *New tab...* makes it: with its own schema, or with
+        // the schema of `schema`.
+        "new_tab" => {
+            let name = text_arg(args, "name")?;
+            let schema = match args.get("schema").and_then(Json::as_str) {
+                Some(schema) => crate::tab_commands::NewSchema::Existing(schema.to_owned()),
+                None => crate::tab_commands::NewSchema::Own,
+            };
+            app.begin_new_tab();
+            let mut dialog = app
+                .tab_dialogs
+                .new
+                .take()
+                .ok_or_else(|| app.notice.clone().unwrap_or_default())?;
+            dialog.name = name.to_owned();
+            dialog.schema_name = format!("{name}Schema");
+            dialog.schema = schema;
+            app.create_tab(&dialog)?;
+            app.refresh_rows();
+            Ok(Json::Null)
+        }
+        "delete_tab" => {
+            let name = text_arg(args, "name")?;
+            app.delete_tab(name)?;
+            app.refresh_rows();
+            Ok(Json::Null)
+        }
+        "bind_schema" => {
+            let tab = text_arg(args, "tab")?;
+            let schema = text_arg(args, "schema")?;
+            app.bind_tab(tab, schema)?;
+            app.refresh_rows();
+            Ok(Json::Null)
+        }
+        // Imports a file with what the dialog starts with, or with `name`,
+        // and `schema` (a schema tab, or `"new"` for the inferred schema).
+        "import" => {
+            let path = text_arg(args, "path")?;
+            app.begin_import_path(std::path::Path::new(path))?;
+            let mut plan = app.imports.pop_back().ok_or("nothing was read")?;
+            if let Some(name) = args.get("name").and_then(Json::as_str) {
+                plan.name = name.to_owned();
+                plan.schema_name = format!("{name}Schema");
+            }
+            match args.get("schema").and_then(Json::as_str) {
+                Some("new") => plan.choice = crate::import::SchemaChoice::Inferred,
+                Some(schema) => {
+                    plan.choice = crate::import::SchemaChoice::Existing(schema.to_owned());
+                }
+                None => {}
+            }
+            let schema = match &plan.choice {
+                crate::import::SchemaChoice::Inferred => plan.schema_name.clone(),
+                crate::import::SchemaChoice::Existing(s) => s.clone(),
+            };
+            app.import(&plan)?;
+            app.refresh_rows();
+            Ok(json!({ "tab": plan.name, "schema": schema, "report": plan.report() }))
+        }
         "select" => {
             let path = path_arg(args, "path")?;
             if app

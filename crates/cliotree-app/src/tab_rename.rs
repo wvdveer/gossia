@@ -55,17 +55,88 @@ impl ClioApp {
             .calc_mut()
             .rename_sheet(from, to.trim())
             .map_err(|e| e.to_string())?;
-        self.follow_renames();
+        self.follow_tabs();
         self.session.tick();
         Ok(())
     }
 
-    /// Moves what the window keeps for each tab renamed since the last call:
-    /// renames made here, and undoing or redoing them.
-    pub fn follow_renames(&mut self) {
+    /// Brings what the window keeps for each tab up to date with the tabs
+    /// there are: renamed tabs take their state with them, deleted ones lose
+    /// it, new ones get their root opened, and if the current tab has gone the
+    /// last tab is shown instead. Edits made here call it, and so do undoing
+    /// and redoing them.
+    pub fn follow_tabs(&mut self) {
         for (from, to) in self.session.calc_mut().take_renames() {
             self.move_tab_state(&from, &to);
         }
+        for name in self.session.calc_mut().take_removed() {
+            // A tab deleted and put back by an undo starts afresh.
+            if self.calc().data(&name).is_none() {
+                self.forget_tab_state(&name);
+            }
+        }
+        let names: Vec<String> = self.calc().sheet_names().map(str::to_owned).collect();
+        for name in &names {
+            if !self.expanded.contains_key(name) {
+                self.expanded
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(Path::root());
+            }
+        }
+        if !names.contains(&self.sheet)
+            && let Some(last) = names.last()
+        {
+            self.show_tab(last);
+        }
+    }
+
+    /// Shows a tab, even when the current one no longer exists.
+    pub(crate) fn show_tab(&mut self, name: &str) {
+        if self.calc().data(&self.sheet).is_none() {
+            self.editing = None;
+            self.sheet = String::new();
+        }
+        self.switch_to(name);
+    }
+
+    /// Forgets what the window kept for a tab that is gone.
+    fn forget_tab_state(&mut self, name: &str) {
+        if self.editing.as_ref().is_some_and(|e| e.sheet == name) {
+            self.editing = None;
+        }
+        self.expanded.remove(name);
+        self.views.remove(name);
+        self.doc.views.remove(name);
+        let tables = &mut self.tables;
+        tables.tabular.retain(|(sheet, _)| sheet != name);
+        tables.views.retain(|(sheet, _), _| sheet != name);
+        tables.active.remove(name);
+        if tables
+            .last_sort
+            .as_ref()
+            .is_some_and(|(sheet, ..)| sheet == name)
+        {
+            tables.last_sort = None;
+        }
+        if tables.column.as_ref().is_some_and(|c| c.sheet == name) {
+            tables.column = None;
+        }
+        tables.layout = None;
+        tables.rev += 1;
+        self.form.drafts.retain(|(sheet, _), _| sheet != name);
+        self.form.steps.retain(|(sheet, _), _| sheet != name);
+        self.form.new_keys.retain(|(sheet, _), _| sheet != name);
+        if self.form.layout.as_ref().is_some_and(|l| l.sheet == name) {
+            self.form.layout = None;
+        }
+        if self.rename_tab.as_ref().is_some_and(|d| d.from == name) {
+            self.rename_tab = None;
+        }
+        self.tab_dialogs.forget(name);
+        self.rows_key = None;
+        self.summary.key = None;
+        self.raw.key = None;
     }
 
     fn move_tab_state(&mut self, from: &str, to: &str) {
@@ -196,7 +267,7 @@ pub(crate) fn mentions_text(name: &str, mentions: cliotree_calc::Mentions) -> Op
 }
 
 /// Selects the whole text of a field, so that typing replaces the name.
-fn select_all(ui: &egui::Ui, response: &egui::Response, text: &str) {
+pub(crate) fn select_all(ui: &egui::Ui, response: &egui::Response, text: &str) {
     if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), response.id) {
         let all = egui::text::CCursorRange::two(
             egui::text::CCursor::new(0),

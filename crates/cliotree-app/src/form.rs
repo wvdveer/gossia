@@ -343,7 +343,10 @@ impl ClioApp {
                     column,
                     column_targets: Vec::new(),
                 };
-                egui::ScrollArea::vertical()
+                // Both ways: a form whose rows are wider than the window
+                // scrolls sideways to its rightmost fields.
+                egui::ScrollArea::both()
+                    .id_salt("form_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let title = design
@@ -1354,14 +1357,21 @@ impl Painter<'_> {
                 Some(columns) if !items.is_empty() || self.layout.is_some() => {
                     let header_font = control
                         .and_then(|c| own_font(c.header_font, c.header_font_size, self.font));
-                    self.table(
-                        ui,
-                        path,
-                        items.len(),
-                        &columns,
-                        control.is_some(),
-                        header_font,
-                    );
+                    // A table wider than the form scrolls sideways on its own,
+                    // as the tabular pane does.
+                    egui::ScrollArea::horizontal()
+                        .id_salt(("form_table_scroll", path.to_string()))
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            self.table(
+                                ui,
+                                path,
+                                items.len(),
+                                &columns,
+                                control.is_some(),
+                                header_font,
+                            );
+                        });
                 }
                 Some(_) => {}
                 None => self.stacked(ui, path, item_ty, items.len()),

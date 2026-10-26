@@ -86,7 +86,7 @@ impl ClioApp {
         self.apply_settings();
         self.session.tick();
         self.collect_procedures();
-        self.follow_renames();
+        self.follow_tabs();
         if !self.session.is_idle() {
             ui.ctx().request_repaint_after(Duration::from_millis(30));
         }
@@ -171,7 +171,9 @@ impl ClioApp {
         self.schema_window(ui.ctx());
         self.form_window(ui.ctx());
         self.rename_tab_window(ui.ctx());
+        self.tab_windows(ui.ctx());
         self.file_windows(ui.ctx());
+        self.drop_hint(ui.ctx());
     }
 
     // ------------------------------------------------------------- keys
@@ -282,6 +284,14 @@ impl ClioApp {
                 }
                 self.recent_menu(ui);
                 if ui
+                    .add_enabled(self.editing.is_none(), egui::Button::new("Import..."))
+                    .clicked()
+                {
+                    self.begin_import();
+                    ui.close();
+                }
+                ui.separator();
+                if ui
                     .add_enabled(self.editing.is_none(), egui::Button::new("Save"))
                     .clicked()
                 {
@@ -334,14 +344,8 @@ impl ClioApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui
-                    .add_enabled(can_change, egui::Button::new("Rename tab..."))
-                    .clicked()
-                {
-                    let sheet = self.sheet.clone();
-                    self.begin_rename_tab(&sheet);
-                    ui.close();
-                }
+                let sheet = self.sheet.clone();
+                self.tab_menu_items(ui, &sheet);
             });
             ui.menu_button("View", |ui| {
                 // How the current tab is shown.
@@ -1148,12 +1152,14 @@ impl ClioApp {
                 if response.double_clicked() {
                     self.begin_rename_tab(&name);
                 }
-                response.context_menu(|ui| {
-                    if ui.button("Rename tab...").clicked() {
-                        self.begin_rename_tab(&name);
-                        ui.close();
-                    }
-                });
+                response.context_menu(|ui| self.tab_menu_items(ui, &name));
+            }
+            let add = ui
+                .add(egui::Button::new(crate::icons::PLUS).frame(false))
+                .on_hover_text("New tab");
+            named(&add, "New tab");
+            if add.clicked() {
+                self.begin_new_tab();
             }
         });
     }

@@ -231,3 +231,161 @@ fn mentions_count_formulas_and_modules_that_use_a_name() {
     );
     assert!(b.calc.mentions("Nothing").is_empty());
 }
+
+// ------------------------------------------- adding, deleting, rebinding
+
+/// `Shop` bound to `ShopSchema`, beside the tabs of [`Book::new`].
+fn with_schema(b: &mut Book) {
+    b.calc
+        .create_json_schema_tab("ShopSchema", json::parse(SCHEMA).unwrap().node)
+        .unwrap();
+    b.calc
+        .create_data_tab(
+            "Shop",
+            "ShopSchema",
+            json::parse(r#"{"n": 5}"#).unwrap().node,
+            None,
+        )
+        .unwrap();
+}
+
+#[test]
+fn new_tabs_go_at_the_end_and_each_is_an_entry() {
+    let mut b = Book::new();
+    b.calc.set_formula("A", &p("m"), "Shop.n").unwrap();
+    b.run();
+    assert_eq!(b.error("A", "m"), Some(ErrorKind::Name));
+    with_schema(&mut b);
+    assert_eq!(b.names(), ["A", "B", "C", "ShopSchema", "Shop"]);
+    assert_eq!(b.calc.schema_of("Shop"), Some("ShopSchema"));
+    assert_eq!(b.calc.undo_label(), Some("New tab Shop"));
+    b.run();
+    assert_eq!(b.get("A", "m"), Some(Value::Int(5)), "the formula finds it");
+
+    b.calc.undo().unwrap();
+    assert_eq!(b.names(), ["A", "B", "C", "ShopSchema"]);
+    assert_eq!(b.calc.take_removed(), ["Shop"]);
+    b.run();
+    assert_eq!(b.error("A", "m"), Some(ErrorKind::Name));
+    b.calc.redo().unwrap();
+    assert_eq!(b.names(), ["A", "B", "C", "ShopSchema", "Shop"]);
+    b.run();
+    assert_eq!(b.get("A", "m"), Some(Value::Int(5)));
+}
+
+#[test]
+fn an_import_of_two_tabs_is_one_entry() {
+    let mut b = Book::new();
+    b.calc.begin_entry("Import shop.json");
+    with_schema(&mut b);
+    b.calc.end_entry();
+    assert_eq!(b.calc.undo_label(), Some("Import shop.json"));
+    b.calc.undo().unwrap();
+    assert_eq!(b.names(), ["A", "B", "C"]);
+    b.calc.redo().unwrap();
+    assert_eq!(b.calc.schema_users("ShopSchema"), ["Shop"]);
+}
+
+#[test]
+fn a_new_tab_is_checked_like_a_renamed_one() {
+    let mut b = Book::new();
+    let schema = || json::parse(SCHEMA).unwrap().node;
+    assert!(matches!(
+        b.calc.create_json_schema_tab("b", schema()),
+        Err(EditError::BadName(_))
+    ));
+    assert!(matches!(
+        b.calc.create_json_schema_tab("SUM", schema()),
+        Err(EditError::BadName(_))
+    ));
+    assert!(
+        b.calc.create_data_tab("D", "A", schema(), None).is_err(),
+        "A is no schema"
+    );
+    assert!(!b.calc.can_undo());
+}
+
+#[test]
+fn a_deleted_tab_comes_back_with_its_formulas_forms_and_place() {
+    let mut b = Book::new();
+    b.calc.set_formula("B", &p("m"), "A.n + 1").unwrap();
+    b.calc.set_formula("C", &p("m"), "B.m * 10").unwrap();
+    b.calc.forms_mut().set("B", "Entry", FormDesign::default());
+    b.run();
+    assert_eq!(b.get("C", "m"), Some(Value::Int(20)));
+    assert_eq!(b.calc.mentions("B").formulas, 1);
+
+    b.calc.delete_sheet("B").unwrap();
+    assert_eq!(b.names(), ["A", "C"]);
+    assert_eq!(b.calc.undo_label(), Some("Delete tab B"));
+    assert!(b.calc.forms().names("B").is_empty());
+    assert_eq!(b.calc.take_removed(), ["B"]);
+    b.run();
+    assert_eq!(b.error("C", "m"), Some(ErrorKind::Name));
+    // What B's formula read no longer runs it.
+    b.calc.set_value("A", &p("n"), Value::Int(4)).unwrap();
+    assert_eq!(b.calc.pending(), 0);
+
+    b.calc.undo().unwrap(); // the edit of A
+    b.calc.undo().unwrap();
+    assert_eq!(b.names(), ["A", "B", "C"]);
+    assert_eq!(b.calc.forms().names("B"), ["Entry"]);
+    assert_eq!(
+        b.calc.formula_text("B", &p("m")).as_deref(),
+        Some("A.n + 1")
+    );
+    b.run();
+    assert_eq!(b.get("B", "m"), Some(Value::Int(2)), "calculated again");
+    assert_eq!(b.get("C", "m"), Some(Value::Int(20)));
+}
+
+#[test]
+fn a_schema_in_use_and_the_last_tab_are_not_deleted() {
+    let mut b = Book::new();
+    with_schema(&mut b);
+    let why = b.calc.delete_problem("ShopSchema").unwrap();
+    assert_eq!(
+        why,
+        "Shop uses this schema; delete that tab or give it another schema first"
+    );
+    assert!(b.calc.delete_sheet("ShopSchema").is_err());
+    b.calc.delete_sheet("Shop").unwrap();
+    assert_eq!(b.calc.delete_problem("ShopSchema"), None);
+
+    let mut one = Book::new();
+    one.calc.delete_sheet("A").unwrap();
+    one.calc.delete_sheet("B").unwrap();
+    assert_eq!(
+        one.calc.delete_problem("C").as_deref(),
+        Some("a workbook keeps at least one tab")
+    );
+}
+
+#[test]
+fn a_tab_is_bound_to_another_schema_and_back() {
+    let mut b = Book::new();
+    with_schema(&mut b);
+    const STRICT: &str = r#"{"type": "object", "properties": {"n": {"type": "string"}}}"#;
+    b.calc
+        .create_json_schema_tab("Strict", json::parse(STRICT).unwrap().node)
+        .unwrap();
+    assert_eq!(
+        b.calc.rebind_problem("Shop", "Shop"),
+        Some("Shop is not a schema tab".to_owned())
+    );
+    b.calc.rebind_sheet("Shop", "Strict").unwrap();
+    assert_eq!(b.calc.schema_of("Shop"), Some("Strict"));
+    assert_eq!(b.calc.undo_label(), Some("Bind Shop to Strict"));
+    let spec = b.calc.spec("Shop").unwrap().clone();
+    let data = b.calc.data("Shop").unwrap().clone();
+    assert_eq!(
+        cliotree_core::validate::validate(&spec, &data).len(),
+        1,
+        "n is not text"
+    );
+    b.calc.undo().unwrap();
+    assert_eq!(b.calc.schema_of("Shop"), Some("ShopSchema"));
+    assert_eq!(b.calc.schema_users("Strict"), Vec::<String>::new());
+    b.calc.redo().unwrap();
+    assert_eq!(b.calc.schema_users("Strict"), ["Shop"]);
+}

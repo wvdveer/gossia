@@ -136,16 +136,18 @@ pub enum Pending {
 /// The dialog for a file name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDialog {
-    pub save: bool,
+    pub purpose: Browsing,
     pub text: String,
     pub error: Option<String>,
 }
 
-/// What the file browser was opened for.
+/// What the file browser, or the dialog for a file name, was opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Browsing {
     Open,
     SaveAs,
+    /// A JSON, XML or text file to import as tabs.
+    Import,
 }
 
 /// What the file commands keep between frames.
@@ -468,8 +470,29 @@ impl ClioApp {
             return;
         }
         self.files.dialog = Some(FileDialog {
-            save: false,
+            purpose: Browsing::Open,
             text: self.default_file_text(),
+            error: None,
+        });
+    }
+
+    /// File > Import...: a JSON, XML or text file, as tabs of this workbook.
+    pub fn begin_import(&mut self) {
+        if self.files.browse {
+            self.files.browser = new_browser()
+                .title("Import a file")
+                .initial_directory(self.start_folder())
+                .add_file_filter_extensions("JSON and XML", vec!["json", "xml"])
+                .add_file_filter_extensions("JSON", vec!["json"])
+                .add_file_filter_extensions("XML", vec!["xml"])
+                .default_file_filter("JSON and XML");
+            self.files.browser.pick_file();
+            self.files.browsing = Some(Browsing::Import);
+            return;
+        }
+        self.files.dialog = Some(FileDialog {
+            purpose: Browsing::Import,
+            text: String::new(),
             error: None,
         });
     }
@@ -503,7 +526,7 @@ impl ClioApp {
             return;
         }
         self.files.dialog = Some(FileDialog {
-            save: true,
+            purpose: Browsing::SaveAs,
             text: self.default_file_text(),
             error: None,
         });
@@ -537,10 +560,10 @@ impl ClioApp {
             self.files.dialog = Some(dialog);
             return;
         }
-        let done = if dialog.save {
-            self.save_as(&path)
-        } else {
-            self.open_path(&path)
+        let done = match dialog.purpose {
+            Browsing::SaveAs => self.save_as(&path),
+            Browsing::Open => self.open_path(&path),
+            Browsing::Import => self.begin_import_path(&path),
         };
         if let Err(e) = done {
             dialog.error = Some(e);
@@ -584,10 +607,10 @@ impl ClioApp {
         if let Some(mut dialog) = self.files.dialog.take() {
             let (mut apply, mut cancel) = (false, false);
             let mut open = true;
-            egui::Window::new(if dialog.save {
-                "Save As"
-            } else {
-                "Open a workbook"
+            egui::Window::new(match dialog.purpose {
+                Browsing::SaveAs => "Save As",
+                Browsing::Open => "Open a workbook",
+                Browsing::Import => "Import a file",
             })
             .open(&mut open)
             .collapsible(false)
@@ -605,7 +628,11 @@ impl ClioApp {
                 }
                 ui.horizontal(|ui| {
                     apply |= ui
-                        .button(if dialog.save { "Save" } else { "Open" })
+                        .button(match dialog.purpose {
+                            Browsing::SaveAs => "Save",
+                            Browsing::Open => "Open",
+                            Browsing::Import => "Import",
+                        })
                         .clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
@@ -670,10 +697,11 @@ impl ClioApp {
             let done = match purpose {
                 Browsing::Open => self.open_path(&path),
                 Browsing::SaveAs => self.save_as(&path),
+                Browsing::Import => self.begin_import_path(&path),
             };
             if let Err(error) = done {
                 self.files.dialog = Some(FileDialog {
-                    save: purpose == Browsing::SaveAs,
+                    purpose,
                     text: path.display().to_string(),
                     error: Some(error),
                 });

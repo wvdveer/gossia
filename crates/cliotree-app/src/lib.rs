@@ -14,6 +14,7 @@ pub mod form_layout;
 #[cfg(test)]
 mod form_layout_tests;
 pub mod icons;
+pub mod import;
 pub mod prefs;
 pub mod raw;
 pub mod rows;
@@ -24,6 +25,7 @@ mod schema_tests;
 pub mod schema_view;
 pub mod status;
 pub mod style;
+pub mod tab_commands;
 pub mod tab_rename;
 pub mod table;
 pub mod table_view;
@@ -157,5 +159,7 @@ mod workbook_file_tests;
 #[cfg(test)]
 mod workbook_state_tests;
 
+#[cfg(test)]
+mod tab_commands_tests;
 #[cfg(test)]
 mod tab_rename_tests;

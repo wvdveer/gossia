@@ -66,6 +66,20 @@ pub(crate) enum Op {
     },
     /// A tab is renamed.
     RenameSheet { from: String, to: String },
+    /// A tab comes into being, as it was then. The reverse of
+    /// [`Op::RemoveSheet`].
+    AddSheet(Box<crate::calc::SavedTab>),
+    /// A tab is deleted, with everything it held, so that undoing it puts the
+    /// same tab back in the same place.
+    RemoveSheet(Box<crate::calc::SavedTab>),
+    /// A tab is bound to another schema tab. `before_spec` is the type it had,
+    /// for a tab that was bound to none.
+    Bind {
+        sheet: String,
+        before: Option<String>,
+        before_spec: std::sync::Arc<cliotree_core::TypeSpec>,
+        after: String,
+    },
     /// The workbook settings change.
     Settings {
         before: Box<crate::calc::WorkbookSettings>,
@@ -100,7 +114,9 @@ impl Op {
             Op::Add { node, moved, .. } | Op::Remove { node, moved, .. } => {
                 size(node) + moved.iter().map(|(_, n)| size(n)).sum::<usize>()
             }
+            Op::AddSheet(saved) | Op::RemoveSheet(saved) => saved.weight(),
             Op::AutoUpdate { .. }
+            | Op::Bind { .. }
             | Op::Column { .. }
             | Op::Settings { .. }
             | Op::RenameSheet { .. } => 1,

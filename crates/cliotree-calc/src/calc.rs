@@ -27,7 +27,7 @@ use crate::trie::PathTrie;
 const LOG_LIMIT: usize = 10_000;
 
 #[derive(Debug, Clone)]
-struct Sheet {
+pub(crate) struct Sheet {
     spec: Arc<TypeSpec>,
     data: Node,
     formulas: Arc<Formulas>,
@@ -90,6 +90,7 @@ pub use settings::{Ceilings, Effective, Setting, Unit, WorkbookSettings};
 #[path = "tabs.rs"]
 mod tabs;
 pub use tabs::Mentions;
+pub(crate) use tabs::SavedTab;
 
 #[path = "trust.rs"]
 mod trust;
@@ -211,6 +212,8 @@ pub struct Calc {
     settings: WorkbookSettings,
     /// The renames not yet taken by [`Calc::take_renames`].
     renames: Vec<(String, String)>,
+    /// The tabs taken out since the last [`Calc::take_removed`].
+    removed: Vec<String>,
 }
 
 impl Calc {
@@ -234,6 +237,7 @@ impl Calc {
             forms_version: 0,
             settings: WorkbookSettings::default(),
             renames: Vec::new(),
+            removed: Vec::new(),
         }
     }
 
@@ -841,6 +845,26 @@ impl Calc {
             Op::Settings { before, after } => {
                 let target = if forward { after } else { before };
                 self.store_settings((**target).clone());
+            }
+            Op::AddSheet(saved) | Op::RemoveSheet(saved) => {
+                if matches!(op, Op::AddSheet(_)) == forward {
+                    self.store_insert_tab(saved);
+                } else {
+                    self.store_remove_tab(&saved.name);
+                }
+            }
+            Op::Bind {
+                sheet,
+                before,
+                before_spec,
+                after,
+            } => {
+                if forward {
+                    let spec = self.lowered(after)?;
+                    self.store_binding(sheet, Some(after.clone()), Arc::new(spec))?;
+                } else {
+                    self.store_binding(sheet, before.clone(), Arc::clone(before_spec))?;
+                }
             }
             Op::RenameSheet { from, to } => {
                 if forward {

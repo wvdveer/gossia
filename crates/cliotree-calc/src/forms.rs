@@ -55,6 +55,19 @@ impl FormStore {
             .insert(name.to_owned(), design);
     }
 
+    /// Takes away every form of a tab, in display order, for a tab that is
+    /// deleted.
+    pub fn take_tab(&mut self, tab: &str) -> IndexMap<String, FormDesign> {
+        self.by_tab.shift_remove(tab).unwrap_or_default()
+    }
+
+    /// Gives a tab back the forms [`FormStore::take_tab`] took.
+    pub fn put_tab(&mut self, tab: &str, forms: IndexMap<String, FormDesign>) {
+        if !forms.is_empty() {
+            self.by_tab.insert(tab.to_owned(), forms);
+        }
+    }
+
     /// Discards a design. Default is then generated again; any other form is
     /// gone. Returns whether there was one.
     pub fn remove(&mut self, tab: &str, name: &str) -> bool {

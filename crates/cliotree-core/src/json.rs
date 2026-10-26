@@ -71,6 +71,123 @@ pub fn parse(text: &str) -> Result<Parsed, ParseError> {
     Ok(Parsed { node, warnings })
 }
 
+/// Reads JSON text as it is often written by hand, for importing a file: a
+/// comma before a closing `]` or `}`, and `//` and `/* */` comments, are
+/// passed over, each with a warning. Anything else is as strict as [`parse`].
+pub fn parse_lenient(text: &str) -> Result<Parsed, ParseError> {
+    let (strict, commas, comments) = strip_lenient(text);
+    let mut parsed = parse(&strict)?;
+    let mut notes = Vec::new();
+    if !commas.is_empty() {
+        let lines: Vec<String> = commas.iter().map(ToString::to_string).collect();
+        notes.push(if commas.len() == 1 {
+            format!(
+                "a comma before a closing bracket, on line {}, was ignored",
+                lines[0]
+            )
+        } else {
+            format!(
+                "{} commas before a closing bracket were ignored (lines {})",
+                commas.len(),
+                lines.join(", ")
+            )
+        });
+    }
+    if comments > 0 {
+        notes.push(if comments == 1 {
+            "a comment was left out, since JSON has none".to_owned()
+        } else {
+            format!("{comments} comments were left out, since JSON has none")
+        });
+    }
+    let mut warnings: Vec<Warning> = notes
+        .into_iter()
+        .map(|message| Warning {
+            path: Path::root(),
+            message,
+        })
+        .collect();
+    warnings.append(&mut parsed.warnings);
+    parsed.warnings = warnings;
+    Ok(parsed)
+}
+
+/// The text with trailing commas and comments blanked out (with spaces, and
+/// the line breaks kept, so that an error's line and column are still those
+/// of the file), the lines of the commas, and the number of comments.
+fn strip_lenient(text: &str) -> (String, Vec<usize>, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<char> = chars.clone();
+    let mut commas = Vec::new();
+    let mut comments = 0;
+    let mut line = 1;
+    let mut i = 0;
+    let mut in_string = false;
+    // Whether a comment starts at `j`, and where it ends (exclusive).
+    let comment_end = |j: usize| -> Option<usize> {
+        match (chars.get(j), chars.get(j + 1)) {
+            (Some('/'), Some('/')) => Some(
+                (j..chars.len())
+                    .find(|&k| chars[k] == '\n')
+                    .unwrap_or(chars.len()),
+            ),
+            (Some('/'), Some('*')) => Some(
+                (j + 2..chars.len().saturating_sub(1))
+                    .find(|&k| chars[k] == '*' && chars[k + 1] == '/')
+                    .map_or(chars.len(), |k| k + 2),
+            ),
+            _ => None,
+        }
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            match c {
+                '\\' => i += 1,
+                '"' => in_string = false,
+                '\n' => line += 1,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+        } else if c == '\n' {
+            line += 1;
+        } else if let Some(end) = comment_end(i) {
+            for k in i..end {
+                if chars[k] == '\n' {
+                    line += 1;
+                } else {
+                    out[k] = ' ';
+                }
+            }
+            comments += 1;
+            i = end;
+            continue;
+        } else if c == ',' {
+            // What comes next, past blanks and comments.
+            let mut j = i + 1;
+            loop {
+                if chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                    j += 1;
+                } else if let Some(end) = comment_end(j) {
+                    j = end;
+                } else {
+                    break;
+                }
+            }
+            if matches!(chars.get(j), Some(']' | '}')) {
+                out[i] = ' ';
+                commas.push(line);
+            }
+        }
+        i += 1;
+    }
+    (out.into_iter().collect(), commas, comments)
+}
+
 fn convert(json: &serde_json::Value, path: &Path, warnings: &mut Vec<Warning>) -> Node {
     use serde_json::Value as J;
     Node::new(match json {
@@ -172,6 +289,30 @@ mod tests {
 
     fn read(text: &str) -> Node {
         parse(text).unwrap().node
+    }
+
+    #[test]
+    fn lenient_reading_passes_over_trailing_commas_and_comments() {
+        let text = "{\n  // who\n  \"a\": [1, 2,],\n  \"b\": {\"c\": \"x,}\", /* d */},\n}\n";
+        assert!(parse(text).is_err(), "strict reading refuses it");
+        let parsed = parse_lenient(text).unwrap();
+        assert_eq!(
+            to_string(&parsed.node, false).unwrap(),
+            r#"{"a":[1,2],"b":{"c":"x,}"}}"#,
+            "a comma in a string is kept"
+        );
+        let warnings: Vec<&str> = parsed.warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            warnings,
+            [
+                "3 commas before a closing bracket were ignored (lines 3, 4, 4)",
+                "2 comments were left out, since JSON has none",
+            ]
+        );
+        // An error is still reported where it is in the file.
+        let e = parse_lenient("{\n  // note\n  \"a\": 1 2\n}").unwrap_err();
+        assert_eq!(e.line, 3);
+        assert!(parse_lenient("[1, 2]").unwrap().warnings.is_empty());
     }
 
     #[test]

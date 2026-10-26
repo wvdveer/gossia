@@ -112,6 +112,10 @@ pub struct ClioApp {
     pub user: crate::prefs::User,
     /// The dialog of *Rename tab...*, while it is open.
     pub rename_tab: Option<crate::tab_rename::RenameTab>,
+    /// The dialogs of *New tab...*, *Delete tab...* and *Change schema...*.
+    pub tab_dialogs: crate::tab_commands::TabDialogs,
+    /// Files read for importing, each waiting for its dialog in turn.
+    pub imports: crate::import::Imports,
     /// The settings the evaluation thread was last given.
     pub applied: Option<Effective>,
 }
@@ -180,6 +184,8 @@ impl ClioApp {
             files: crate::workbook_file::FileUi::default(),
             user: crate::prefs::User::in_memory(),
             rename_tab: None,
+            tab_dialogs: crate::tab_commands::TabDialogs::default(),
+            imports: crate::import::Imports::new(),
             applied,
         }
     }

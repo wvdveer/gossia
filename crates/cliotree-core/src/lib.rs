@@ -6,6 +6,9 @@
 
 pub mod form;
 pub mod format;
+pub mod infer;
+#[cfg(test)]
+mod infer_tests;
 pub mod json;
 pub mod jsonschema;
 pub mod metaschema;

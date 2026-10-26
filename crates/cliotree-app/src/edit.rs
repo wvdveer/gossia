@@ -321,7 +321,7 @@ impl ClioApp {
             Ok(_) => self.notice = None,
             Err(e) => self.notice = Some(e.to_string()),
         }
-        self.follow_renames();
+        self.follow_tabs();
         self.session.tick();
     }
 
@@ -333,7 +333,7 @@ impl ClioApp {
             Ok(_) => self.notice = None,
             Err(e) => self.notice = Some(e.to_string()),
         }
-        self.follow_renames();
+        self.follow_tabs();
         self.session.tick();
     }
 
