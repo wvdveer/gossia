@@ -150,7 +150,7 @@ fn a_schema_tab_and_its_field_dialog() {
     }
     let mut results = SnapshotResults::new();
     let mut harness = window();
-    click(&mut harness, "Orders schema");
+    click(&mut harness, "Orders_schema");
     check(&mut harness, "schema_tab", &mut results);
     click(&mut harness, "Auto-update");
     click(&mut harness, "Orders");

@@ -23,6 +23,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"
 egui_extras = "0.37.0"
+# Reads the character map of a bundled font (style.rs); egui reads fonts with it.
+skrifa = { version = "0.44.0", default-features = false, features = ["std"] }
 serde_json = "1.0.154"
 # Deflate in pure Rust (no C library, no encryption): a .clio is an ordinary zip.
 # The file browser of the window: egui only, fetched into vendor/ (see vendor.lock).

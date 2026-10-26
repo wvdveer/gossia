@@ -644,3 +644,236 @@ fn a_control_whose_field_is_gone_is_a_placeholder_that_can_be_removed() {
     click(&mut harness, name);
     assert!(!has(&harness, name));
 }
+
+// ------------------------------------------------- table columns, formats
+
+fn text_of(harness: &Harness<'_, ClioApp>, label: &str) -> String {
+    harness.get_by_label(label).value().unwrap_or_default()
+}
+
+#[test]
+fn a_column_of_a_table_is_selected_by_its_title_and_has_its_own_properties() {
+    use cliotree_core::form::Alignment;
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Column qty of Repeater items");
+    assert_eq!(
+        harness.state().selected_column(),
+        Some((vec![1], "qty".to_owned()))
+    );
+    let label = || (egui::accesskit::Role::TextInput, "Label");
+    harness.get_by_role_and_label(label().0, label().1).click();
+    harness.run();
+    harness
+        .get_by_role_and_label(label().0, label().1)
+        .type_text("Quantity");
+    harness.run();
+    // The row numbers are a column too.
+    click(&mut harness, "Column # of Repeater items");
+    assert_eq!(
+        harness.state().selected_column(),
+        Some((vec![1], "#".to_owned()))
+    );
+    click(&mut harness, "Alignment of the cells");
+    click(&mut harness, "Right");
+    let design = harness.state().design_of("Default");
+    let columns = &design.get(&[1]).unwrap().table_columns;
+    let find = |name: &str| columns.iter().find(|c| c.name == name).unwrap();
+    assert_eq!(find("qty").label.as_deref(), Some("Quantity"));
+    assert_eq!(find("#").align, Some(Alignment::Right));
+    click(&mut harness, "Back to the table");
+    assert_eq!(harness.state().selected_column(), None);
+    assert_eq!(harness.state().selected_control(), Some(vec![1]));
+    // Out of layout mode, the column has its title.
+    edit_form(&mut harness);
+    assert!(has(&harness, "Quantity"));
+}
+
+#[test]
+fn the_order_and_visibility_of_the_columns_are_properties_of_the_table() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Repeater items");
+    click(&mut harness, "Show column note");
+    click(&mut harness, "Move column price up");
+    click(&mut harness, "Show column #");
+    edit_form(&mut harness);
+    assert!(!has(&harness, "Orders.items[0].note"));
+    assert!(!has(&harness, "[0]"), "the row numbers are hidden");
+    let left = |label: &str| harness.get_by_label(label).rect().left();
+    assert!(left("Orders.items[0].price") < left("Orders.items[0].qty"));
+    assert!(left("Orders.items[0].sku") < left("Orders.items[0].price"));
+}
+
+#[test]
+fn numbers_are_shown_in_their_format_and_typed_as_they_are() {
+    use cliotree_core::form::ColumnDesign;
+    let mut harness = form();
+    harness.state_mut().edit_design(|d| {
+        let total = d.get_mut(&[5])?;
+        assert_eq!(total.path.as_deref(), Some("total"));
+        total.decimals = Some(3);
+        let items = d.get_mut(&[1])?;
+        items.table_columns = vec![ColumnDesign {
+            thousands: true,
+            decimals: Some(2),
+            ..ColumnDesign::named("price")
+        }];
+        Some(None)
+    });
+    harness.run();
+    // 2 * 9.5 + 24 + 12 * 0.75 = 52, and 21% tax.
+    assert_eq!(text_of(&harness, "Orders.total"), "62.920");
+    assert_eq!(text_of(&harness, "Orders.items[0].price"), "9.50");
+    type_into(&mut harness, "Orders.items[0].price", "1234.5");
+    settle(&mut harness);
+    assert_eq!(
+        value(&harness, "Orders", "items[0].price"),
+        Some(Value::Float(1234.5))
+    );
+    assert_eq!(text_of(&harness, "Orders.items[0].price"), "1,234.50");
+    // With the focus, the field has the value as it is stored.
+    click(&mut harness, "Orders.items[0].price");
+    harness.run();
+    assert_eq!(text_of(&harness, "Orders.items[0].price"), "1234.5");
+}
+
+#[test]
+fn the_format_of_a_number_field_is_chosen_on_the_property_page() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Field total");
+    click(&mut harness, "Thousands separator of the field");
+    click(&mut harness, "Decimal places of the field");
+    click(&mut harness, "Automatic");
+    let design = harness.state().design_of("Default");
+    let total = design.get(&[5]).unwrap();
+    assert!(total.thousands);
+    assert_eq!(total.decimals, None);
+    // A text field has no number format.
+    click(&mut harness, "Field customer.name");
+    assert!(!has(&harness, "Thousands separator of the field"));
+}
+
+#[test]
+fn a_date_is_shown_in_its_format() {
+    use cliotree_core::form::ColumnDesign;
+    use cliotree_core::{json, jsonschema};
+    let schema = r#"{"type": "object", "properties": {
+        "due": {"type": "string", "format": "date"},
+        "lines": {"type": "array", "items": {"type": "object", "properties": {
+            "on": {"type": "string", "format": "date"}}}}}}"#;
+    let data = r#"{"due": "2026-03-07", "lines": [{"on": "2026-12-25"}]}"#;
+    let mut calc =
+        cliotree_calc::Calc::new(std::sync::Arc::new(cliotree_calc::python::PythonSyntax));
+    calc.add_sheet(
+        "Plan",
+        jsonschema::lower_str(schema).unwrap(),
+        json::parse(data).unwrap().node,
+    )
+    .unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), ClioApp::new(calc));
+    settle(&mut harness);
+    show_as(&mut harness, "Default");
+    harness.state_mut().edit_design(|d| {
+        d.get_mut(&[0])?.date_format = Some("d mmm yyyy".to_owned());
+        d.get_mut(&[1])?.table_columns = vec![ColumnDesign {
+            date_format: Some("dd/mm/yyyy".to_owned()),
+            ..ColumnDesign::named("on")
+        }];
+        Some(None)
+    });
+    harness.run();
+    assert_eq!(text_of(&harness, "Plan.due"), "7 Mar 2026");
+    assert_eq!(text_of(&harness, "Plan.lines[0].on"), "25/12/2026");
+}
+
+#[test]
+fn the_title_of_a_column_in_layout_mode_is_as_wide_as_the_column() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    // As wide as the cells below it, and not into the next column.
+    let title = harness.get_by_label("Column sku of Repeater items").rect();
+    let cell = harness.get_by_label("Orders.items[0].sku").rect();
+    let next = harness.get_by_label("Orders.items[0].qty").rect();
+    assert!(
+        (title.left() - cell.left()).abs() < 1.0 && (title.right() - cell.right()).abs() < 1.0,
+        "{title:?} against {cell:?}"
+    );
+    assert!(title.right() < next.left());
+}
+
+#[test]
+fn the_row_numbers_have_a_numbering_and_a_start() {
+    use cliotree_core::form::{ColumnDesign, Numbering, ROW_NUMBER};
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Column # of Repeater items");
+    click(&mut harness, "Numbering of the rows");
+    click(&mut harness, "i, ii, iii");
+    let design = harness.state().design_of("Default");
+    let row = design.get(&[1]).unwrap().table_columns[0].clone();
+    assert_eq!(row.name, ROW_NUMBER);
+    assert_eq!(row.numbering, Some(Numbering::LowerRoman));
+    assert_eq!(row.start, None, "counting starts at 1");
+    edit_form(&mut harness);
+    for label in ["i", "ii", "iii"] {
+        assert!(has(&harness, label), "{label}");
+    }
+    // Any integer starts the count.
+    let changed = harness.state_mut().set_column(
+        None,
+        &vec![1],
+        ColumnDesign {
+            numbering: Some(Numbering::Decimal),
+            start: Some(100),
+            ..row
+        },
+    );
+    assert!(changed);
+    harness.run();
+    for label in ["100", "101", "102"] {
+        assert!(has(&harness, label), "{label}");
+    }
+}
+
+#[test]
+fn the_fonts_of_the_titles_are_the_tables_and_a_column_aligns_its_title() {
+    use cliotree_core::form::{Alignment, FontFamily};
+    let mut harness = form();
+    let title_before = height(&harness, "sku");
+    let cell_before = height(&harness, "Orders.items[0].sku");
+    edit_form(&mut harness);
+    click(&mut harness, "Repeater items");
+    click(&mut harness, "Font size of the column titles");
+    click(&mut harness, "28 pt");
+    click(&mut harness, "Font of the table title");
+    click(&mut harness, "Serif (Source Serif 4)");
+    click(&mut harness, "Column qty of Repeater items");
+    click(&mut harness, "Alignment of the title");
+    click(&mut harness, "Right");
+    let design = harness.state().design_of("Default");
+    let items = design.get(&[1]).unwrap();
+    assert_eq!(items.header_font_size, Some(28));
+    assert_eq!(items.title_font, Some(FontFamily::Serif));
+    let qty = items
+        .table_columns
+        .iter()
+        .find(|c| c.name == "qty")
+        .unwrap();
+    assert_eq!(qty.title_align, Some(Alignment::Right));
+    assert_eq!(qty.align, None, "the cells keep their own alignment");
+    edit_form(&mut harness);
+    // The titles are larger; the cells are not.
+    assert!(height(&harness, "sku") > title_before * 1.5);
+    assert!((height(&harness, "Orders.items[0].sku") - cell_before).abs() < 1.0);
+    // The title of qty is on the right of its column.
+    let title = harness.get_by_label("qty").rect();
+    let cell = harness.get_by_label("Orders.items[0].qty").rect();
+    assert!(
+        title.right() > cell.center().x,
+        "{title:?} against {cell:?}"
+    );
+}

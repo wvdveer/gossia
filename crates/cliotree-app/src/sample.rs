@@ -86,7 +86,7 @@ pub fn workbook() -> Calc {
     // Each tab's type is written on a schema tab of its own, which is where
     // the tab's fields can be changed once auto-update is switched on.
     for (tab, schema) in [("Orders", ORDERS_SCHEMA), ("Prices", PRICES_SCHEMA)] {
-        let name = format!("{tab} schema");
+        let name = format!("{tab}_schema");
         calc.add_schema_sheet(
             &name,
             json::parse(schema).expect("the sample schema is JSON").node,

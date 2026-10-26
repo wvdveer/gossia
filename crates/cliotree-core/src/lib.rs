@@ -5,6 +5,7 @@
 //! reused by a later web port (see DESIGN.md, Application structure).
 
 pub mod form;
+pub mod format;
 pub mod json;
 pub mod jsonschema;
 pub mod metaschema;

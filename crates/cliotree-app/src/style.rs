@@ -274,6 +274,13 @@ fn text_styles(body: FontFamily, scale: f32) -> std::collections::BTreeMap<TextS
     } else {
         body.clone()
     };
+    // Sans is the interface pairing: Inter for text, Geist Mono for code. Any
+    // other typeface is used for code too.
+    let code = if body == FontFamily::Proportional {
+        FontFamily::Monospace
+    } else {
+        body.clone()
+    };
     [
         (
             TextStyle::Small,
@@ -290,16 +297,17 @@ fn text_styles(body: FontFamily, scale: f32) -> std::collections::BTreeMap<TextS
         ),
         (
             TextStyle::Monospace,
-            FontId::monospace(MONOSPACE_SIZE * scale),
+            FontId::new(MONOSPACE_SIZE * scale, code),
         ),
     ]
     .into()
 }
 
 /// Makes what is drawn with `style` use a typeface and a size: every text
-/// style takes the typeface (code stays monospace) and is scaled so that the
-/// body text has the size. None keeps the interface font, or its size. Text
-/// that names its own font, like a badge, keeps it.
+/// style takes the typeface and is scaled so that the body text has the size.
+/// Under Sans, code (formulas, the Raw view) stays in Geist Mono; under any
+/// other typeface it takes that one too. None keeps the interface font, or
+/// its size. Type badges follow through [`badge_label`].
 pub fn use_font(style: &mut Style, typeface: Option<Typeface>, size: Option<u32>) {
     let body = typeface.map_or(FontFamily::Proportional, family);
     let scale = size.map_or(1.0, |s| s as f32 / BODY_SIZE);
@@ -312,14 +320,127 @@ pub fn row_height(ui: &egui::Ui) -> f32 {
     (ui.text_style_height(&TextStyle::Body) + 11.0).max(ROW_HEIGHT)
 }
 
+/// The height of a row whose text is in a typeface and a size (each None for
+/// the interface's), as [`row_height`] gives it.
+pub fn row_height_in(ui: &egui::Ui, typeface: Option<Typeface>, size: Option<u32>) -> f32 {
+    let mut style = (**ui.style()).clone();
+    use_font(&mut style, typeface, size);
+    let body = TextStyle::Body.resolve(&style);
+    (ui.fonts_mut(|f| f.row_height(&body)) + 11.0).max(ROW_HEIGHT)
+}
+
 fn font(bytes: &'static [u8]) -> FontData {
     FontData::from_static(bytes)
 }
 
+/// A text font at a weight, without its private use characters (see
+/// [`without_private_use`]).
 fn weighted(bytes: &'static [u8], weight: f32) -> FontData {
-    font(bytes).tweak(FontTweak {
+    FontData::from_owned(without_private_use(bytes)).tweak(FontTweak {
         coords: VariationCoords::new([(b"wght", weight)]),
         ..FontTweak::default()
+    })
+}
+
+/// The private use area of the Basic Multilingual Plane, where the icons are.
+const PRIVATE_USE: std::ops::RangeInclusive<u32> = 0xE000..=0xF8FF;
+
+/// The font with no character of the private use area in its character map.
+/// The icons are there, and some text fonts (Inter has 745) have glyphs of
+/// their own there, which would be drawn instead of an icon in text that is
+/// not in the icon font, as the file dialog's is. The glyphs stay in the font;
+/// only the characters that lead to them are taken out. A font that cannot be
+/// read is returned as it is.
+fn without_private_use(bytes: &[u8]) -> Vec<u8> {
+    use skrifa::MetadataProvider;
+    let Ok(font) = skrifa::FontRef::new(bytes) else {
+        return bytes.to_vec();
+    };
+    let mut mappings: Vec<(u32, u32)> = font
+        .charmap()
+        .mappings()
+        .filter(|(c, _)| !PRIVATE_USE.contains(c))
+        .map(|(c, glyph)| (c, glyph.to_u32()))
+        .collect();
+    mappings.sort_unstable();
+    replace_table(bytes, *b"cmap", &character_map(&mappings))
+}
+
+/// A `cmap` table of one Unicode subtable of format 12 (any plane), for
+/// mappings sorted by character.
+fn character_map(mappings: &[(u32, u32)]) -> Vec<u8> {
+    // Runs of characters whose glyphs are also consecutive.
+    let mut groups: Vec<(u32, u32, u32)> = Vec::new();
+    for &(c, glyph) in mappings {
+        match groups.last_mut() {
+            Some((start, end, first)) if c == *end + 1 && glyph == *first + (c - *start) => {
+                *end = c;
+            }
+            _ => groups.push((c, c, glyph)),
+        }
+    }
+    let mut table = Vec::new();
+    // The header: version 0, one subtable, Windows Unicode full repertoire.
+    for word in [0u16, 1, 3, 10] {
+        table.extend(word.to_be_bytes());
+    }
+    table.extend(12u32.to_be_bytes());
+    // The subtable.
+    table.extend(12u16.to_be_bytes());
+    table.extend(0u16.to_be_bytes());
+    table.extend((16 + 12 * groups.len() as u32).to_be_bytes());
+    table.extend(0u32.to_be_bytes());
+    table.extend((groups.len() as u32).to_be_bytes());
+    for (start, end, glyph) in groups {
+        table.extend(start.to_be_bytes());
+        table.extend(end.to_be_bytes());
+        table.extend(glyph.to_be_bytes());
+    }
+    table
+}
+
+/// The font file with the table `tag` replaced by `data`, laid out again
+/// (tables in the order of the directory, each on four bytes). The
+/// directory's own fields and the other tables are unchanged.
+fn replace_table(font: &[u8], tag: [u8; 4], data: &[u8]) -> Vec<u8> {
+    let be32 = |at: usize| u32::from_be_bytes(font[at..at + 4].try_into().expect("4 bytes"));
+    let count = u16::from_be_bytes([font[4], font[5]]) as usize;
+    let tables: Vec<([u8; 4], &[u8])> = (0..count)
+        .map(|i| {
+            let record = 12 + 16 * i;
+            let name: [u8; 4] = font[record..record + 4].try_into().expect("4 bytes");
+            let offset = be32(record + 8) as usize;
+            let length = be32(record + 12) as usize;
+            let body = if name == tag {
+                data
+            } else {
+                &font[offset..offset + length]
+            };
+            (name, body)
+        })
+        .collect();
+    let mut out = font[..12].to_vec();
+    let mut offset = 12 + 16 * count;
+    for (name, body) in &tables {
+        out.extend(name);
+        out.extend(checksum(body).to_be_bytes());
+        out.extend((offset as u32).to_be_bytes());
+        out.extend((body.len() as u32).to_be_bytes());
+        offset += body.len().next_multiple_of(4);
+    }
+    for (_, body) in &tables {
+        out.extend(*body);
+        out.resize(out.len().next_multiple_of(4), 0);
+    }
+    out
+}
+
+/// The checksum of a table: its 32-bit words summed, the last one padded.
+fn checksum(body: &[u8]) -> u32 {
+    body.chunks(4).fold(0u32, |sum, chunk| {
+        let mut word = [0u8; 4];
+        word[..chunk.len()].copy_from_slice(chunk);
+        sum.wrapping_add(u32::from_be_bytes(word))
     })
 }
 
@@ -536,15 +657,32 @@ pub fn bar_frame(ui: &egui::Ui) -> egui::Frame {
 /// A type badge: the text on a rounded fill, cut short with an ellipsis when
 /// the column is narrow. Clicking it is reported, as for a label.
 pub fn badge_label(ui: &mut egui::Ui, text: &str, colours: Badge) -> Response {
-    let room = (ui.available_width() - 2.0 * BADGE_PADDING).max(0.0);
-    let galley = egui::WidgetText::from(medium(text).size(BADGE_SIZE).color(colours.text))
-        .into_galley(
-            ui,
-            Some(TextWrapMode::Truncate),
-            room,
-            egui::FontSelection::Default,
-        );
-    let size = egui::vec2(galley.size().x + 2.0 * BADGE_PADDING, BADGE_HEIGHT);
+    // The badge follows the font of its `Ui` (the data font in the grid):
+    // its typeface, medium for Inter, and its size relative to the default.
+    let body = ui.style().text_styles[&TextStyle::Body].clone();
+    let scale = body.size / BODY_SIZE;
+    let family = if body.family == FontFamily::Proportional {
+        FontFamily::Name(MEDIUM.into())
+    } else {
+        body.family
+    };
+    let padding = BADGE_PADDING * scale;
+    let room = (ui.available_width() - 2.0 * padding).max(0.0);
+    let galley = egui::WidgetText::from(
+        RichText::new(text)
+            .font(FontId::new(BADGE_SIZE * scale, family))
+            .color(colours.text),
+    )
+    .into_galley(
+        ui,
+        Some(TextWrapMode::Truncate),
+        room,
+        egui::FontSelection::Default,
+    );
+    let size = egui::vec2(
+        galley.size().x + 2.0 * padding,
+        (BADGE_HEIGHT * scale).max(galley.size().y + 2.0),
+    );
     let (rect, response) = ui.allocate_exact_size(size, Sense::CLICK);
     if ui.is_rect_visible(rect) {
         ui.painter()
@@ -572,6 +710,88 @@ pub fn pending_marker(ui: &mut egui::Ui) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An icon is drawn from the icon font in every family, as the file
+    /// dialog draws its icons in the text font. (Inter has glyphs of its own
+    /// in the private use area, where the icons are.)
+    #[test]
+    fn an_icon_is_drawn_from_the_icon_font_in_every_family() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let icons = [
+            crate::icons::FOLDER,
+            crate::icons::FOLDER_OPEN,
+            crate::icons::HOUSE,
+            crate::icons::DESKTOP,
+            crate::icons::FILE,
+            crate::icons::FILE_TEXT,
+            crate::icons::DOWNLOAD,
+            crate::icons::MUSIC,
+            crate::icons::IMAGE,
+            crate::icons::FILM,
+            crate::icons::PIN,
+            crate::icons::PENCIL,
+            crate::icons::RELOAD,
+            crate::icons::DRIVE,
+            crate::icons::WARNING,
+        ];
+        let icon_font = FontId::new(16.0, FontFamily::Name(ICONS.into()));
+        ctx.fonts_mut(|f| {
+            // The icon font has no letters, so it can come first.
+            assert!(!f.has_glyph(&icon_font, 'A'));
+            assert!(!f.has_glyph(&icon_font, '1'));
+            for family in fonts().families.keys() {
+                let font = FontId::new(16.0, family.clone());
+                for icon in icons {
+                    let c = icon.chars().next().unwrap();
+                    assert_eq!(
+                        f.glyph_width(&font, c),
+                        f.glyph_width(&icon_font, c),
+                        "{family:?} draws {:X} from another font",
+                        c as u32
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn taking_out_the_private_use_area_keeps_every_other_character() {
+        use skrifa::MetadataProvider;
+        let original = include_bytes!("../assets/fonts/Inter.ttf");
+        let cleaned = without_private_use(original);
+        let map = |bytes: &[u8]| -> Vec<(u32, u32)> {
+            skrifa::FontRef::new(bytes)
+                .unwrap()
+                .charmap()
+                .mappings()
+                .map(|(c, g)| (c, g.to_u32()))
+                .collect()
+        };
+        let before = map(original);
+        let after = map(&cleaned);
+        let kept: Vec<(u32, u32)> = before
+            .iter()
+            .copied()
+            .filter(|(c, _)| !PRIVATE_USE.contains(c))
+            .collect();
+        assert!(
+            before.len() > kept.len(),
+            "Inter has private use characters"
+        );
+        assert_eq!(after, kept);
+        // The other tables are as they were.
+        let font = skrifa::FontRef::new(&cleaned).unwrap();
+        assert_eq!(
+            font.table_data(skrifa::Tag::new(b"glyf")).map(|d| d.len()),
+            skrifa::FontRef::new(original)
+                .unwrap()
+                .table_data(skrifa::Tag::new(b"glyf"))
+                .map(|d| d.len())
+        );
+    }
 
     #[test]
     fn every_family_starts_with_a_bundled_font_and_has_the_icons() {
@@ -621,10 +841,14 @@ mod tests {
         assert_eq!(body.size, 28.0);
         assert_eq!(body.family, family(Typeface::Serif));
         assert_eq!(style.text_styles[&TextStyle::Small].size, SMALL_SIZE * 2.0);
+        let code = &style.text_styles[&TextStyle::Monospace];
+        assert_eq!(code.family, family(Typeface::Serif), "code takes the font");
+        assert_eq!(code.size, MONOSPACE_SIZE * 2.0);
+        // Under Sans, code stays in the monospace font.
+        use_font(&mut style, Some(Typeface::Sans), None);
         assert_eq!(
             style.text_styles[&TextStyle::Monospace].family,
-            FontFamily::Monospace,
-            "code stays monospace"
+            FontFamily::Monospace
         );
         // Applied again (a control in a group with a font), it does not
         // compound.
@@ -634,6 +858,28 @@ mod tests {
             style.text_styles[&TextStyle::Body].family,
             FontFamily::Proportional
         );
+    }
+
+    #[test]
+    fn a_badge_follows_the_font_of_its_ui() {
+        let ctx = egui::Context::default();
+        let badge = |typeface, size| {
+            let mut rect = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                prepare(ui.ctx());
+                use_font(ui.style_mut(), typeface, size);
+                rect = badge_label(ui, "string", DARK.string).rect;
+            });
+            out.textures_delta.clear();
+            rect
+        };
+        // The first frame installs the fonts.
+        let _ = badge(None, None);
+        let normal = badge(None, None);
+        let large = badge(Some(Typeface::Serif), Some(28));
+        assert_eq!(normal.height(), BADGE_HEIGHT);
+        assert!(large.height() >= 2.0 * BADGE_HEIGHT - 0.5, "{large:?}");
+        assert!(large.width() > normal.width() * 1.5, "{large:?} {normal:?}");
     }
 
     #[test]

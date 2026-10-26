@@ -887,6 +887,7 @@ dependencies = [
  "egui_kittest",
  "image",
  "serde_json",
+ "skrifa",
  "zip",
 ]
 

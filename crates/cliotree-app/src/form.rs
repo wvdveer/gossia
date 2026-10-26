@@ -10,14 +10,16 @@
 use std::collections::HashMap;
 
 use cliotree_calc::entry;
-use cliotree_core::form::{Address, Control, ControlKind, Editor, RepeaterMode};
+use cliotree_core::form::{
+    Address, Alignment, ColumnDesign, Control, ControlKind, Editor, Format, RepeaterMode,
+};
 use cliotree_core::validate::validate_at;
 use cliotree_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
 use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
-use crate::form_layout::{ControlAction, FormDialog, LayoutState};
+use crate::form_layout::{ColumnEdit, ControlAction, FormDialog, LayoutState};
 use crate::icons;
 use crate::rows::display;
 use crate::style::Typeface;
@@ -319,6 +321,7 @@ impl ClioApp {
         self.form_bar(ui, &name);
         let design = self.design_of(&name);
         let layout = self.layout_selection(&name);
+        let column = self.form.layout.as_ref().and_then(|l| l.column.clone());
         let mut drafts = std::mem::take(&mut self.form.drafts);
         let mut new_keys = std::mem::take(&mut self.form.new_keys);
         let scroll_to = self.form.scroll_to.take();
@@ -337,6 +340,8 @@ impl ClioApp {
                     layout,
                     look: None,
                     font: (None, None),
+                    column,
+                    column_targets: Vec::new(),
                 };
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -573,6 +578,12 @@ struct Painter<'a> {
     look: Option<(Path, Look)>,
     /// The font of the group being drawn, which its controls inherit.
     font: (Option<Typeface>, Option<u32>),
+    /// In layout mode: the column selected in the table of the selected
+    /// control.
+    column: Option<String>,
+    /// In layout mode: the titles of the columns of the table being drawn,
+    /// which select the column when clicked.
+    column_targets: Vec<(String, egui::Rect)>,
 }
 
 /// How the control of a node wants it drawn, beyond what its type calls for.
@@ -581,6 +592,9 @@ struct Look {
     help: Option<String>,
     editor: Option<Editor>,
     read_only: bool,
+    /// Absent: numbers on the right, the rest on the left.
+    align: Option<Alignment>,
+    format: Format,
 }
 
 /// Where a control is among the others of its list, for its menu.
@@ -648,17 +662,85 @@ impl Painter<'_> {
             self.leaf(ui, c);
         } else {
             // In layout mode a control is drawn as it will look, but cannot be
-            // used: a click selects it.
+            // used: a click selects it, and a click on the title of a column
+            // of its table selects the column.
+            self.column_targets.clear();
             let rect = ui
                 .scope(|ui| {
                     ui.add_enabled_ui(false, |ui| self.leaf(ui, c));
                 })
                 .response
                 .rect;
+            let columns = std::mem::take(&mut self.column_targets);
             let id = ui.scope_id().with(("control", slot.at.clone()));
             let target = ui.interact(rect, id, Sense::click());
             self.layout_target(ui, &target, rect, c, slot);
+            for (name, title) in columns {
+                self.column_target(ui, c, slot, &name, title, rect);
+            }
         }
+    }
+
+    /// The title of a column of a table in layout mode: a click selects the
+    /// column, and its menu moves or hides it.
+    fn column_target(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Control,
+        slot: &Slot,
+        name: &str,
+        title: egui::Rect,
+        table: egui::Rect,
+    ) {
+        let id = ui.scope_id().with(("column", slot.at.clone(), name));
+        let target = ui.interact(title, id, Sense::click());
+        let label = column_label(name, c);
+        target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label.clone()));
+        if target.clicked() {
+            self.actions
+                .push(FormAction::Control(ControlAction::SelectColumn(
+                    slot.at.clone(),
+                    name.to_owned(),
+                )));
+        }
+        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
+            && self.column.as_deref() == Some(name);
+        if selected {
+            // The whole column, from its title down to the end of the table.
+            let column = egui::Rect::from_min_max(
+                title.min,
+                egui::pos2(title.max.x, (table.max.y - 6.0).max(title.max.y)),
+            );
+            ui.painter().rect_stroke(
+                column,
+                3.0,
+                Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                StrokeKind::Inside,
+            );
+        } else if target.hovered() {
+            ui.painter().rect_stroke(
+                title,
+                3.0,
+                Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
+                StrokeKind::Inside,
+            );
+        }
+        let at = slot.at.clone();
+        target.context_menu(|ui| {
+            let mut command = |ui: &mut egui::Ui, label: &str, edit: ColumnEdit| {
+                if ui.button(label).clicked() {
+                    self.actions.push(FormAction::Control(ControlAction::Column(
+                        at.clone(),
+                        name.to_owned(),
+                        edit,
+                    )));
+                    ui.close();
+                }
+            };
+            command(ui, "Move column left", ColumnEdit::Move(true));
+            command(ui, "Move column right", ColumnEdit::Move(false));
+            command(ui, "Hide column", ColumnEdit::Show(false));
+        });
     }
 
     /// What selecting a control in layout mode looks like and does.
@@ -670,7 +752,10 @@ impl Painter<'_> {
         c: &Control,
         slot: &Slot,
     ) {
-        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at);
+        // When a column of its table is selected, the column is outlined, not
+        // the control.
+        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
+            && self.column.is_none();
         let name = control_name(c);
         target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
         if target.clicked() {
@@ -899,11 +984,13 @@ impl Painter<'_> {
                 help: c.help.clone(),
                 editor: c.editor,
                 read_only: c.read_only,
+                align: None,
+                format: c.format(),
             },
         ));
         match (&self.spec.get(ty).kind, c.kind) {
             (Kind::Array { .. }, _) => {
-                self.repeater_of(ui, &path, ty, &label, c.mode, c.show.as_deref());
+                self.repeater_of(ui, &path, ty, &label, Some(c));
             }
             (Kind::Map { .. }, _) => self.map(ui, &path, ty, &label),
             (Kind::Object { .. }, _) => self.object(ui, &path, ty, &label, resolved.required),
@@ -1102,10 +1189,17 @@ impl Painter<'_> {
             }
             _ => {
                 let current = value.map(value_text).unwrap_or_default();
-                let mut text = self
-                    .drafts
-                    .get(&key)
-                    .map_or_else(|| current.clone(), |d| d.text.clone());
+                // A number or date format shows while the field does not have
+                // the focus; typing is into the value as it is stored.
+                let id = ui.make_persistent_id(("form_text", path.to_string()));
+                let focused = ui.memory(|m| m.has_focus(id));
+                let mut text = match self.drafts.get(&key) {
+                    Some(draft) => draft.text.clone(),
+                    None if !focused => value
+                        .and_then(|v| look.format.apply(v))
+                        .unwrap_or_else(|| current.clone()),
+                    None => current.clone(),
+                };
                 let long = match look.editor {
                     Some(Editor::Multiline) => matches!(kind, Kind::String(_) | Kind::Enum { .. }),
                     Some(Editor::Text) => false,
@@ -1121,14 +1215,19 @@ impl Painter<'_> {
                 } else {
                     egui::TextEdit::singleline(&mut text)
                 };
-                // Numbers line up on the right.
-                let align = if matches!(kind, Kind::Integer(_) | Kind::Number(_)) {
-                    egui::Align2::RIGHT_CENTER
-                } else {
-                    egui::Align2::LEFT_CENTER
+                // Numbers line up on the right, unless the column says.
+                let align = match look.align {
+                    Some(Alignment::Left) => egui::Align2::LEFT_CENTER,
+                    Some(Alignment::Center) => egui::Align2::CENTER_CENTER,
+                    Some(Alignment::Right) => egui::Align2::RIGHT_CENTER,
+                    None if matches!(kind, Kind::Integer(_) | Kind::Number(_)) => {
+                        egui::Align2::RIGHT_CENTER
+                    }
+                    None => egui::Align2::LEFT_CENTER,
                 };
                 let r = ui.add(
-                    edit.desired_width(width)
+                    edit.id(id)
+                        .desired_width(width)
                         .align(align)
                         .hint_text(hint(kind))
                         .interactive(!read_only),
@@ -1211,7 +1310,7 @@ impl Painter<'_> {
     // ----------------------------------------------------------- repeaters
 
     fn repeater(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str) {
-        self.repeater_of(ui, path, ty, label, None, None);
+        self.repeater_of(ui, path, ty, label, None);
     }
 
     /// An array as a table or one item at a time, as its control says; with no
@@ -1222,8 +1321,7 @@ impl Painter<'_> {
         path: &Path,
         ty: TypeId,
         label: &str,
-        mode: Option<RepeaterMode>,
-        show: Option<&[String]>,
+        control: Option<&Control>,
     ) {
         let Kind::Array { items: item_ty, .. } = &self.spec.get(ty).kind else {
             return;
@@ -1235,7 +1333,9 @@ impl Painter<'_> {
         ui.group(|ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                let response = ui.strong(label);
+                let title_font =
+                    control.and_then(|c| own_font(c.title_font, c.title_font_size, self.font));
+                let response = in_font(ui, title_font, |ui| ui.strong(label));
                 self.arrive(path, &response);
                 ui.label(RichText::new(count_text(items.len())).weak());
                 if ui.add_enabled(can_add, egui::Button::new("New")).clicked() {
@@ -1245,15 +1345,23 @@ impl Painter<'_> {
             if let Some(help) = self.help(path, ty) {
                 ui.label(RichText::new(help).weak().small());
             }
-            let columns = match mode {
+            let columns = match control.and_then(|c| c.mode) {
                 Some(RepeaterMode::Stacked) => None,
-                _ => self
-                    .table_columns(item_ty)
-                    .map(|columns| chosen(columns, show)),
+                _ => item_columns(self.spec, item_ty).map(|columns| arranged(control, columns)),
             };
             match columns {
-                Some(columns) if !items.is_empty() => {
-                    self.table(ui, path, items.len(), &columns);
+                // In layout mode an empty table still shows its columns.
+                Some(columns) if !items.is_empty() || self.layout.is_some() => {
+                    let header_font = control
+                        .and_then(|c| own_font(c.header_font, c.header_font_size, self.font));
+                    self.table(
+                        ui,
+                        path,
+                        items.len(),
+                        &columns,
+                        control.is_some(),
+                        header_font,
+                    );
                 }
                 Some(_) => {}
                 None => self.stacked(ui, path, item_ty, items.len()),
@@ -1261,77 +1369,124 @@ impl Painter<'_> {
         });
     }
 
-    /// The columns of a repeater drawn as a table: its items are scalars, or
-    /// flat objects (no array or map inside). None for any other item.
-    fn table_columns(&self, item_ty: TypeId) -> Option<Vec<Column>> {
-        match &self.spec.get(item_ty).kind {
-            Kind::Object { .. } => {
-                let columns = table::columns(self.spec, item_ty);
-                (!columns.is_empty() && columns.iter().all(|c| !c.summary)).then_some(columns)
-            }
-            Kind::Array { .. } | Kind::Map { .. } => None,
-            _ => Some(vec![Column {
-                name: "value".to_owned(),
-                fields: Vec::new(),
-                ty: item_ty,
-                required: true,
-                summary: false,
-            }]),
-        }
-    }
-
-    fn table(&mut self, ui: &mut egui::Ui, array: &Path, len: usize, columns: &[Column]) {
+    /// A table of the items of an array: its columns that are shown, in their
+    /// order, each with its own properties. `designed` says the table is a
+    /// control's, whose columns can be selected in layout mode.
+    fn table(
+        &mut self,
+        ui: &mut egui::Ui,
+        array: &Path,
+        len: usize,
+        columns: &[(ColumnDesign, Option<Column>)],
+        designed: bool,
+        header_font: Option<ColumnFont>,
+    ) {
         let editable = self.app.can_reorder(array);
-        let sortable = editable && columns.iter().any(|c| !c.fields.is_empty());
-        let row_height = crate::style::row_height(ui);
+        let sortable = editable
+            && columns
+                .iter()
+                .any(|(_, c)| c.as_ref().is_some_and(|c| !c.fields.is_empty()));
+        let inherited = self.font;
+        let fonts: Vec<Option<ColumnFont>> = columns
+            .iter()
+            .map(|(d, _)| column_font(d, inherited))
+            .collect();
+        let mut row_height = crate::style::row_height(ui);
+        for (typeface, size) in fonts.iter().flatten() {
+            row_height = row_height.max(crate::style::row_height_in(ui, *typeface, *size));
+        }
+        let header_height = match header_font {
+            Some((typeface, size)) => crate::style::row_height_in(ui, typeface, size),
+            None => crate::style::row_height(ui),
+        };
+        let header_height = (header_height - 6.0).max(22.0);
         let mut table = TableBuilder::new(ui)
             .id_salt(("form_table", &self.app.sheet, array.to_string()))
             .striped(true)
             .vscroll(false)
             .sense(Sense::click())
-            .cell_layout(egui::Layout::left_to_right(Align::Center))
-            .column(TableColumn::auto().at_least(32.0));
-        for _ in columns {
-            table = table.column(TableColumn::initial(140.0).at_least(60.0).clip(true));
+            .cell_layout(egui::Layout::left_to_right(Align::Center));
+        for (design, column) in columns {
+            table = table.column(match (design.width, column) {
+                (Some(width), _) => TableColumn::exact(width as f32).clip(true),
+                (None, None) => TableColumn::auto().at_least(32.0),
+                (None, Some(_)) => TableColumn::initial(140.0).at_least(60.0).clip(true),
+            });
         }
-        let actions = &mut self.actions;
+        let mut sort = None;
+        let mut titles = Vec::new();
         table
-            .header(22.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("#");
-                });
-                for column in columns {
-                    header.col(|ui| {
-                        let text = RichText::new(&column.name).strong();
-                        if sortable {
-                            let response = ui
-                                .add(egui::Label::new(text).sense(Sense::CLICK))
-                                .on_hover_text("Sort by this column");
-                            if response.clicked() {
-                                actions.push(FormAction::Sort(array.clone(), column.name.clone()));
-                            }
-                        } else {
-                            ui.label(text);
-                        }
+            .header(header_height, |mut header| {
+                for (design, column) in columns {
+                    let mut max = egui::Rect::NOTHING;
+                    let (used, _) = header.col(|ui| {
+                        max = ui.max_rect();
+                        in_font(ui, header_font, |ui| {
+                            aligned(ui, design.title_align, |ui| {
+                                let title =
+                                    design.label.clone().unwrap_or_else(|| design.name.clone());
+                                let text = RichText::new(title).strong();
+                                let sorts = sortable && column.is_some();
+                                let mut response = if sorts {
+                                    ui.add(egui::Label::new(text).sense(Sense::CLICK))
+                                } else {
+                                    ui.label(text)
+                                };
+                                let hover = match (&design.help, sorts) {
+                                    (Some(help), true) => {
+                                        Some(format!("{help}\nClick to sort by this column"))
+                                    }
+                                    (Some(help), false) => Some(help.clone()),
+                                    (None, true) => Some("Sort by this column".to_owned()),
+                                    (None, false) => None,
+                                };
+                                if let Some(hover) = hover {
+                                    response = response.on_hover_text(hover);
+                                }
+                                if sorts && response.clicked() {
+                                    sort = Some(design.name.clone());
+                                }
+                            });
+                        });
                     });
+                    // The column, or its title where that is wider. (The response
+                    // of the cell reaches past the column, by the spacing.)
+                    titles.push((design.name.clone(), max.union(used)));
                 }
             })
             .body(|body| {
                 body.rows(row_height, len, |mut row| {
                     let index = row.index();
-                    row.col(|ui| {
-                        let label = ui.add(
-                            egui::Label::new(RichText::new(format!("[{index}]")).weak())
-                                .sense(Sense::click()),
-                        );
-                        label.context_menu(|ui| {
-                            self.row_menu(ui, array, index, len, editable);
-                        });
-                    });
-                    for column in columns {
+                    for ((design, column), font) in columns.iter().zip(&fonts) {
                         row.col(|ui| {
-                            let cell = column.cell_path(array, index);
-                            self.editor(ui, &cell, column.ty, column.required, true);
+                            in_font(ui, *font, |ui| {
+                                aligned(ui, design.align, |ui| match column {
+                                    None => {
+                                        let label = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(design.row_label(index)).weak(),
+                                            )
+                                            .sense(Sense::click()),
+                                        );
+                                        label.context_menu(|ui| {
+                                            self.row_menu(ui, array, index, len, editable);
+                                        });
+                                    }
+                                    Some(column) => {
+                                        let cell = column.cell_path(array, index);
+                                        let look = Look {
+                                            help: None,
+                                            editor: design.editor,
+                                            read_only: design.read_only,
+                                            align: design.align,
+                                            format: design.format(),
+                                        };
+                                        let outer = self.look.replace((cell.clone(), look));
+                                        self.editor(ui, &cell, column.ty, column.required, true);
+                                        self.look = outer;
+                                    }
+                                });
+                            });
                         });
                     }
                     // A right click on the row opens its menu.
@@ -1340,6 +1495,12 @@ impl Painter<'_> {
                     });
                 });
             });
+        if let Some(name) = sort {
+            self.actions.push(FormAction::Sort(array.clone(), name));
+        }
+        if designed && self.layout.is_some() {
+            self.column_targets = titles;
+        }
     }
 
     /// The commands of a table row, in its context menu.
@@ -1505,17 +1666,110 @@ fn label_cell(ui: &mut egui::Ui, label: &str, required: bool, help: Option<&str>
     }
 }
 
-/// The columns of a table that a control chose, in its order. A choice that
-/// matches no column is no choice.
-fn chosen(columns: Vec<Column>, show: Option<&[String]>) -> Vec<Column> {
-    let Some(show) = show else {
-        return columns;
+/// A typeface and a size, each inherited when None.
+type ColumnFont = (Option<Typeface>, Option<u32>);
+
+/// The font of a column that has one of its own, over the one it inherits.
+fn column_font(design: &ColumnDesign, inherited: ColumnFont) -> Option<ColumnFont> {
+    (design.font.is_some() || design.font_size.is_some()).then(|| {
+        (
+            design.font.or(inherited.0),
+            design.font_size.or(inherited.1),
+        )
+    })
+}
+
+/// Draws in a font, if one is given.
+fn in_font<R>(
+    ui: &mut egui::Ui,
+    font: Option<ColumnFont>,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    match font {
+        None => add(ui),
+        Some((typeface, size)) => {
+            ui.scope(|ui| {
+                crate::style::use_font(ui.style_mut(), typeface, size);
+                add(ui)
+            })
+            .inner
+        }
+    }
+}
+
+/// Draws a cell's contents to its left, centre or right.
+fn aligned<R>(
+    ui: &mut egui::Ui,
+    align: Option<Alignment>,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let layout = match align {
+        None | Some(Alignment::Left) => return add(ui),
+        Some(Alignment::Center) => {
+            egui::Layout::centered_and_justified(egui::Direction::LeftToRight)
+        }
+        Some(Alignment::Right) => egui::Layout::right_to_left(Align::Center),
     };
-    let picked: Vec<Column> = show
-        .iter()
-        .filter_map(|name| columns.iter().find(|c| &c.name == name).cloned())
-        .collect();
-    if picked.is_empty() { columns } else { picked }
+    ui.with_layout(layout, add).inner
+}
+
+/// The columns of a table of items of `item_ty`: its fields, or `value` for
+/// scalars. None for items that are not flat, which are stacked.
+fn item_columns(spec: &TypeSpec, item_ty: TypeId) -> Option<Vec<Column>> {
+    match &spec.get(item_ty).kind {
+        Kind::Object { .. } => {
+            let columns = table::columns(spec, item_ty);
+            (!columns.is_empty() && columns.iter().all(|c| !c.summary)).then_some(columns)
+        }
+        Kind::Array { .. } | Kind::Map { .. } => None,
+        _ => Some(vec![Column {
+            name: "value".to_owned(),
+            fields: Vec::new(),
+            ty: item_ty,
+            required: true,
+            summary: false,
+        }]),
+    }
+}
+
+/// The columns the table of a repeater control can have, if it is a table.
+pub(crate) fn columns_of(spec: &TypeSpec, control: &Control) -> Option<Vec<Column>> {
+    let path = control.bound_path()?;
+    let resolved = spec.resolve(&path)?;
+    match &spec.get(resolved.ty).kind {
+        Kind::Array { items, .. } => item_columns(spec, *items),
+        _ => None,
+    }
+}
+
+/// The columns of a table that are shown, in their order, each with its
+/// design and the column of the items it is (None for the row numbers).
+fn arranged(
+    control: Option<&Control>,
+    columns: Vec<Column>,
+) -> Vec<(ColumnDesign, Option<Column>)> {
+    let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let designs = match control {
+        Some(control) => control.arrange_columns(&names),
+        None => Control::new(ControlKind::Repeater).arrange_columns(&names),
+    };
+    designs
+        .into_iter()
+        .filter(|d| !d.hidden)
+        .map(|d| {
+            let column = if d.is_row_number() {
+                None
+            } else {
+                columns.iter().find(|c| c.name == d.name).cloned()
+            };
+            (d, column)
+        })
+        .collect()
+}
+
+/// What a column is called to a screen reader and a test.
+pub(crate) fn column_label(name: &str, control: &Control) -> String {
+    format!("Column {name} of {}", control_name(control))
 }
 
 /// The name of the last step of a path, which labels a control by default.
@@ -1553,4 +1807,14 @@ pub(crate) fn control_name(control: &Control) -> String {
     } else {
         format!("{} {detail}", control.kind.label())
     }
+}
+
+/// A font that a control sets for a part of itself, over the one it inherits;
+/// None if it sets neither the typeface nor the size.
+fn own_font(
+    typeface: Option<Typeface>,
+    size: Option<u32>,
+    inherited: ColumnFont,
+) -> Option<ColumnFont> {
+    (typeface.is_some() || size.is_some()).then(|| (typeface.or(inherited.0), size.or(inherited.1)))
 }

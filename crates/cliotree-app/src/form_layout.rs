@@ -10,13 +10,14 @@
 
 use cliotree_calc::entry;
 use cliotree_core::form::{
-    self as design, Address, Control, ControlKind, Editor, FormDesign, RepeaterMode,
+    self as design, Address, Alignment, ColumnDesign, Control, ControlKind, Editor, FormDesign,
+    RepeaterMode,
 };
 use cliotree_core::{Kind, Path};
 
 use crate::app::ClioApp;
 use crate::form::{DEFAULT_FORM, View, control_name, last_name};
-use crate::table;
+use crate::icons;
 use crate::view::{error_color, named};
 
 /// What layout mode keeps while it is on.
@@ -26,6 +27,9 @@ pub struct LayoutState {
     pub sheet: String,
     pub form: String,
     pub selected: Option<Address>,
+    /// A column of the table of the selected control, when one is selected
+    /// rather than the control.
+    pub column: Option<String>,
     /// What the form was before each change: `None` is a form that was not
     /// stored, a generated one.
     pub undo: Vec<Option<FormDesign>>,
@@ -43,6 +47,7 @@ impl LayoutState {
             sheet: sheet.to_owned(),
             form: form.to_owned(),
             selected: None,
+            column: None,
             undo: Vec::new(),
             redo: Vec::new(),
             merge: None,
@@ -59,6 +64,20 @@ pub(crate) enum ControlAction {
     /// Into the group above (`true`), or out of the group.
     Nest(Address, bool),
     Delete(Address),
+    /// Select a column of the table of a repeater, by its name.
+    SelectColumn(Address, String),
+    /// Move or show a column of the table of a repeater.
+    Column(Address, String, ColumnEdit),
+}
+
+/// A change to the place of a column, or to whether it is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColumnEdit {
+    /// One place earlier (`true`) or later in the list of the table.
+    Step(bool),
+    /// To the left (`true`) or the right of the next column that is shown.
+    Move(bool),
+    Show(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +168,9 @@ impl ClioApp {
             }
             layout.redo.clear();
             layout.merge = merge;
+            if layout.selected != selection {
+                layout.column = None;
+            }
             layout.selected = selection;
         }
         true
@@ -189,6 +211,23 @@ impl ClioApp {
     pub fn select_control(&mut self, address: Option<Address>) {
         if let Some(layout) = self.form.layout.as_mut() {
             layout.selected = address;
+            layout.column = None;
+            layout.merge = None;
+        }
+    }
+
+    /// The column selected in layout mode: the repeater, and the column's name.
+    pub fn selected_column(&self) -> Option<(Address, String)> {
+        let at = self.selected_control()?;
+        let column = self.form.layout.as_ref()?.column.clone()?;
+        Some((at, column))
+    }
+
+    /// Selects a column of the table of a repeater in layout mode.
+    pub fn select_table_column(&mut self, at: Address, name: &str) {
+        if let Some(layout) = self.form.layout.as_mut() {
+            layout.selected = Some(at);
+            layout.column = Some(name.to_owned());
             layout.merge = None;
         }
     }
@@ -229,6 +268,7 @@ impl ClioApp {
             return;
         };
         layout.selected = None;
+        layout.column = None;
         layout.merge = None;
         let form = layout.form.clone();
         let current = self.calc().forms().get(&self.sheet, &form).cloned();
@@ -253,6 +293,10 @@ impl ClioApp {
             }
             ControlAction::Delete(at) => {
                 self.edit_design(|d| d.remove(&at).map(|_| None));
+            }
+            ControlAction::SelectColumn(at, name) => self.select_table_column(at, &name),
+            ControlAction::Column(at, name, edit) => {
+                self.edit_column_place(&at, &name, edit);
             }
         }
     }
@@ -287,6 +331,100 @@ impl ClioApp {
             Some(control) => self.add_control(control),
             None => false,
         }
+    }
+
+    // ------------------------------------------------------- the columns
+
+    /// The names of the columns of the table of the repeater at `at`, in the
+    /// order of the schema, if it is a table.
+    fn column_names(&self, design: &FormDesign, at: &[usize]) -> Option<Vec<String>> {
+        let spec = self.calc().spec(&self.sheet)?;
+        let columns = crate::form::columns_of(spec, design.get(at)?)?;
+        Some(columns.into_iter().map(|c| c.name).collect())
+    }
+
+    /// Changes the columns of the table of the repeater at `at`, as the
+    /// control arranges them. `change` returns whether it changed anything.
+    fn edit_columns(
+        &mut self,
+        merge: Option<String>,
+        at: &Address,
+        change: impl FnOnce(&mut Vec<ColumnDesign>) -> bool,
+    ) -> bool {
+        let design = self.design_of(&self.form_name());
+        let Some(names) = self.column_names(&design, at) else {
+            return false;
+        };
+        let at = at.clone();
+        self.edit_design_merging(merge, |d| {
+            let control = d.get_mut(&at)?;
+            let mut columns = control.arrange_columns(&names);
+            if !change(&mut columns) {
+                return None;
+            }
+            control.set_columns(columns, &names);
+            Some(Some(at))
+        })
+    }
+
+    /// Moves a column, or shows or hides it. The last column of the items
+    /// that is shown cannot be hidden.
+    pub(crate) fn edit_column_place(&mut self, at: &Address, name: &str, edit: ColumnEdit) -> bool {
+        self.edit_columns(None, at, |columns| {
+            let Some(i) = columns.iter().position(|c| c.name == name) else {
+                return false;
+            };
+            match edit {
+                ColumnEdit::Show(on) => {
+                    let shown = columns
+                        .iter()
+                        .filter(|c| !c.hidden && !c.is_row_number())
+                        .count();
+                    let last = !columns[i].is_row_number() && !columns[i].hidden && shown == 1;
+                    if columns[i].hidden != on || (!on && last) {
+                        return false;
+                    }
+                    columns[i].hidden = !on;
+                    true
+                }
+                ColumnEdit::Step(up) | ColumnEdit::Move(up) => {
+                    let past_hidden = matches!(edit, ColumnEdit::Move(_));
+                    let target = if up {
+                        (0..i).rev().find(|&j| !past_hidden || !columns[j].hidden)
+                    } else {
+                        (i + 1..columns.len()).find(|&j| !past_hidden || !columns[j].hidden)
+                    };
+                    let Some(j) = target else {
+                        return false;
+                    };
+                    if up {
+                        columns[j..=i].rotate_right(1);
+                    } else {
+                        columns[i..=j].rotate_left(1);
+                    }
+                    true
+                }
+            }
+        })
+    }
+
+    /// Changes the properties of one column of the table at `at`. A column
+    /// that is selected stays selected.
+    pub fn set_column(
+        &mut self,
+        merge: Option<String>,
+        at: &Address,
+        column: ColumnDesign,
+    ) -> bool {
+        self.edit_columns(merge, at, |columns| {
+            match columns.iter_mut().find(|c| c.name == column.name) {
+                Some(slot) if *slot != column => {
+                    *slot = column;
+                    true
+                }
+                _ => false,
+            }
+        })
     }
 
     // ------------------------------------------------------- the commands
@@ -596,17 +734,31 @@ impl ClioApp {
         let form = self.form_name();
         let design = self.design_of(&form);
         let selected = self.selected_control();
+        let column = self.selected_column();
         ui.heading("Properties");
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                match selected
-                    .as_ref()
-                    .and_then(|at| design.get(at).map(|c| (at, c)))
-                {
-                    Some((at, control)) => self.control_properties(ui, &design, at, control),
-                    None => {
-                        ui.weak("Select a control on the form to change it.");
+                let column = column.and_then(|(at, name)| {
+                    let control = design.get(&at)?;
+                    let names = self.column_names(&design, &at)?;
+                    let column = control
+                        .arrange_columns(&names)
+                        .into_iter()
+                        .find(|c| c.name == name)?;
+                    Some((at, control.clone(), column))
+                });
+                if let Some((at, control, column)) = column {
+                    self.column_properties(ui, &at, &control, column);
+                } else {
+                    match selected
+                        .as_ref()
+                        .and_then(|at| design.get(at).map(|c| (at, c)))
+                    {
+                        Some((at, control)) => self.control_properties(ui, &design, at, control),
+                        None => {
+                            ui.weak("Select a control on the form to change it.");
+                        }
                     }
                 }
                 ui.separator();
@@ -627,6 +779,7 @@ impl ClioApp {
         ui.strong(control_name(control));
         let key = |property: &str| format!("{at:?}:{property}");
         let mut merge = None;
+        let mut column_edit = None;
         let kind = control.kind;
         let bound = matches!(
             kind,
@@ -699,6 +852,22 @@ impl ClioApp {
                     edited.editor = (editor != Editor::Auto).then_some(editor);
                 });
                 ui.checkbox(&mut edited.read_only, "Read only");
+                let kind = spec.as_ref().and_then(|spec| {
+                    let path = edited.bound_path()?;
+                    Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
+                });
+                if let Some(kind) = kind
+                    && format_properties(
+                        ui,
+                        &kind,
+                        &mut edited.thousands,
+                        &mut edited.decimals,
+                        &mut edited.date_format,
+                        "field",
+                    )
+                {
+                    merge = Some(key("date_format"));
+                }
             }
             ControlKind::Group => {
                 ui.horizontal(|ui| {
@@ -745,9 +914,21 @@ impl ClioApp {
                     });
                     edited.mode = mode;
                 });
-                if let Some(spec) = &spec {
-                    self.column_choice(ui, spec, &mut edited);
-                }
+                column_edit = self.column_list(ui, design, at);
+                font_properties(
+                    ui,
+                    &mut edited.title_font,
+                    &mut edited.title_font_size,
+                    "Title ",
+                    "table title",
+                );
+                font_properties(
+                    ui,
+                    &mut edited.header_font,
+                    &mut edited.header_font_size,
+                    "Column title ",
+                    "column titles",
+                );
             }
             ControlKind::Label => {
                 if option_text(ui, "Text", &mut edited.text, "", true) {
@@ -769,7 +950,7 @@ impl ClioApp {
             ControlKind::Separator => {}
         }
         if kind != ControlKind::Separator {
-            font_properties(ui, &mut edited);
+            font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
         }
         if option_text(
             ui,
@@ -852,47 +1033,190 @@ impl ClioApp {
                 *d.get_mut(&at)? = to;
                 Some(Some(at))
             });
+        } else if let Some(action) = column_edit {
+            self.apply_control(action);
         }
     }
 
-    /// The columns a repeater shows, as checkboxes in the order of the schema.
-    fn column_choice(
+    /// The columns of the table of a repeater, the row numbers among them, in
+    /// their order: whether each is shown, buttons that move it, and one that
+    /// opens its properties. Returns what was asked for.
+    fn column_list(
         &self,
         ui: &mut egui::Ui,
-        spec: &cliotree_core::TypeSpec,
-        edited: &mut Control,
-    ) {
-        let Some(path) = edited.bound_path() else {
-            return;
-        };
-        let Some(item) = spec
-            .resolve(&path)
-            .and_then(|r| match &spec.get(r.ty).kind {
-                Kind::Array { items, .. } => Some(*items),
-                _ => None,
-            })
-        else {
-            return;
-        };
-        let columns = table::columns(spec, item);
-        if columns.is_empty() || !matches!(spec.get(item).kind, Kind::Object { .. }) {
-            return;
-        }
+        design: &FormDesign,
+        at: &Address,
+    ) -> Option<ControlAction> {
+        let control = design.get(at)?;
+        let names = self.column_names(design, at)?;
+        let columns = control.arrange_columns(&names);
+        let shown = columns
+            .iter()
+            .filter(|c| !c.hidden && !c.is_row_number())
+            .count();
+        let mut action = None;
         ui.label("Columns of the table");
-        let all: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
-        let mut shown: Vec<String> = edited.show.clone().unwrap_or_else(|| all.clone());
-        for name in &all {
-            let mut on = shown.contains(name);
-            if ui.checkbox(&mut on, name).changed() {
-                if on {
-                    shown.push(name.clone());
-                } else {
-                    shown.retain(|n| n != name);
+        let last = columns.len().saturating_sub(1);
+        egui::Grid::new("table_columns")
+            .num_columns(3)
+            .show(ui, |ui| {
+                for (i, column) in columns.iter().enumerate() {
+                    let name = column.name.clone();
+                    let title = if column.is_row_number() {
+                        "# (row numbers)".to_owned()
+                    } else {
+                        name.clone()
+                    };
+                    let mut on = !column.hidden;
+                    // The last column of the items that is shown stays shown.
+                    let can = column.hidden || column.is_row_number() || shown > 1;
+                    let response = ui.add_enabled(can, egui::Checkbox::new(&mut on, &title));
+                    let show_name = format!("Show column {name}");
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(egui::Role::CheckBox, can, on, show_name.clone())
+                    });
+                    if response.changed() {
+                        action = Some(ControlAction::Column(
+                            at.clone(),
+                            name.clone(),
+                            ColumnEdit::Show(on),
+                        ));
+                    }
+                    ui.horizontal(|ui| {
+                        let up = format!("Move column {name} up");
+                        if icons::button(ui, i > 0, icons::ARROW_UP, "^", &up).clicked() {
+                            action = Some(ControlAction::Column(
+                                at.clone(),
+                                name.clone(),
+                                ColumnEdit::Step(true),
+                            ));
+                        }
+                        let down = format!("Move column {name} down");
+                        if icons::button(ui, i < last, icons::ARROW_DOWN, "v", &down).clicked() {
+                            action = Some(ControlAction::Column(
+                                at.clone(),
+                                name.clone(),
+                                ColumnEdit::Step(false),
+                            ));
+                        }
+                    });
+                    let open = ui.button("Properties");
+                    let open_name = format!("Properties of column {name}");
+                    open.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::Button, true, open_name.clone())
+                    });
+                    if open.clicked() {
+                        action = Some(ControlAction::SelectColumn(at.clone(), name.clone()));
+                    }
+                    ui.end_row();
                 }
-            }
+            });
+        ui.weak("A click on the title of a column on the form also selects it.");
+        action
+    }
+
+    /// The property page of a column of a table.
+    fn column_properties(
+        &mut self,
+        ui: &mut egui::Ui,
+        at: &Address,
+        control: &Control,
+        column: ColumnDesign,
+    ) {
+        let mut edited = column.clone();
+        let row_number = column.is_row_number();
+        ui.strong(crate::form::column_label(&column.name, control));
+        if ui.button("Back to the table").clicked() {
+            self.select_control(Some(at.clone()));
+            return;
         }
-        shown.sort_by_key(|n| all.iter().position(|a| a == n));
-        edited.show = (shown != all && !shown.is_empty()).then_some(shown);
+        let key = |property: &str| format!("{at:?}:{}:{property}", column.name);
+        let mut merge = None;
+        if option_text(ui, "Label", &mut edited.label, &column.name, false) {
+            merge = Some(key("label"));
+        }
+        if option_text(ui, "Help", &mut edited.help, "", true) {
+            merge = Some(key("help"));
+        }
+        ui.horizontal(|ui| {
+            ui.label("Width");
+            // 0 is automatic; anything else is at least the narrowest width.
+            let mut width = edited.width.unwrap_or(0);
+            let response = ui.add(
+                egui::DragValue::new(&mut width)
+                    .range(0..=*design::COLUMN_WIDTHS.end())
+                    .custom_formatter(|v, _| {
+                        if v < 1.0 {
+                            "Automatic".to_owned()
+                        } else {
+                            format!("{v:.0} pt")
+                        }
+                    }),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Width of the column")
+            });
+            edited.width =
+                (width > 0).then(|| width.clamp(*design::COLUMN_WIDTHS.start(), u32::MAX));
+        });
+        alignment_choice(ui, &mut edited.title_align, "Title alignment", "the title");
+        alignment_choice(ui, &mut edited.align, "Cell alignment", "the cells");
+        if row_number {
+            row_numbering(ui, &mut edited);
+        }
+        let kind = (!row_number)
+            .then(|| {
+                let spec = self.calc().spec(&self.sheet)?;
+                let columns = crate::form::columns_of(spec, control)?;
+                let ty = columns.iter().find(|c| c.name == column.name)?.ty;
+                Some(spec.get(ty).kind.clone())
+            })
+            .flatten();
+        if !row_number {
+            ui.horizontal(|ui| {
+                ui.label("Editor");
+                let mut text = edited.editor.is_some_and(|e| e != Editor::Auto);
+                let response = egui::ComboBox::from_id_salt("property_column_editor")
+                    .selected_text(if text {
+                        Editor::Text.label()
+                    } else {
+                        Editor::Auto.label()
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut text, false, Editor::Auto.label());
+                        ui.selectable_value(&mut text, true, Editor::Text.label());
+                    })
+                    .response;
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Editor of the column")
+                });
+                edited.editor = text.then_some(Editor::Text);
+            });
+            ui.checkbox(&mut edited.read_only, "Read only");
+        }
+        if let Some(kind) = &kind
+            && format_properties(
+                ui,
+                kind,
+                &mut edited.thousands,
+                &mut edited.decimals,
+                &mut edited.date_format,
+                "column",
+            )
+        {
+            merge = Some(key("date_format"));
+        }
+        font_properties(
+            ui,
+            &mut edited.font,
+            &mut edited.font_size,
+            "Cell ",
+            "cells",
+        );
+        ui.weak("Where the column is, and whether it is shown, are properties of the table.");
+        if edited != column {
+            self.set_column(merge, at, edited);
+        }
     }
 
     /// The formula of the node a field is bound to, edited here, since a form
@@ -1055,34 +1379,45 @@ fn sibling_count(design: &FormDesign, at: &[usize]) -> usize {
 /// The sizes the property page offers, in points.
 const FONT_SIZE_CHOICES: [u32; 16] = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 
-/// The font of a control: a typeface and a size, each *Inherited* (from the
-/// group it is in, or the interface font) unless chosen.
-fn font_properties(ui: &mut egui::Ui, edited: &mut Control) {
+/// The font of a control or a column: a typeface and a size, each *Inherited*
+/// (from the group or table it is in, or the interface font) unless chosen.
+/// `what` names the two for a screen reader: "Font of the control".
+fn font_properties(
+    ui: &mut egui::Ui,
+    font: &mut Option<cliotree_core::form::FontFamily>,
+    font_size: &mut Option<u32>,
+    prefix: &str,
+    what: &str,
+) {
     use crate::style::{Typeface, family, typeface_label};
+    let (font_label, size_label) = if prefix.is_empty() {
+        ("Font".to_owned(), "Size".to_owned())
+    } else {
+        (format!("{prefix}font"), format!("{prefix}size"))
+    };
     ui.horizontal(|ui| {
-        ui.label("Font");
-        let mut font = edited.font;
-        let response = egui::ComboBox::from_id_salt("property_font")
-            .selected_text(font.map_or_else(|| "Inherited".to_owned(), typeface_label))
+        ui.label(font_label);
+        let mut chosen = *font;
+        let response = egui::ComboBox::from_id_salt(("property_font", what))
+            .selected_text(chosen.map_or_else(|| "Inherited".to_owned(), typeface_label))
             .width(200.0)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut font, None, "Inherited");
+                ui.selectable_value(&mut chosen, None, "Inherited");
                 for typeface in Typeface::ALL {
                     let text =
                         egui::RichText::new(typeface_label(typeface)).family(family(typeface));
-                    ui.selectable_value(&mut font, Some(typeface), text);
+                    ui.selectable_value(&mut chosen, Some(typeface), text);
                 }
             })
             .response;
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Font of the control")
-        });
-        edited.font = font;
+        let name = format!("Font of the {what}");
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+        *font = chosen;
     });
     ui.horizontal(|ui| {
-        ui.label("Size");
-        let mut size = edited.font_size;
-        let response = egui::ComboBox::from_id_salt("property_font_size")
+        ui.label(size_label);
+        let mut size = *font_size;
+        let response = egui::ComboBox::from_id_salt(("property_font_size", what))
             .selected_text(size.map_or_else(|| "Inherited".to_owned(), |s| format!("{s} pt")))
             // Tall enough for every size, with no scrolling.
             .height(480.0)
@@ -1093,11 +1428,141 @@ fn font_properties(ui: &mut egui::Ui, edited: &mut Control) {
                 }
             })
             .response;
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Font size of the control")
-        });
-        edited.font_size = size;
+        let name = format!("Font size of the {what}");
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+        *font_size = size;
     });
+}
+
+/// Where the text of a column's title or cells sits: automatic, left, centre
+/// or right. `what` names it for a screen reader: "Alignment of the title".
+fn alignment_choice(ui: &mut egui::Ui, align: &mut Option<Alignment>, label: &str, what: &str) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let mut chosen = *align;
+        let response = egui::ComboBox::from_id_salt(("property_align", what))
+            .selected_text(chosen.map_or("Automatic", Alignment::label))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut chosen, None, "Automatic");
+                for a in Alignment::ALL {
+                    ui.selectable_value(&mut chosen, Some(a), a.label());
+                }
+            })
+            .response;
+        let name = format!("Alignment of {what}");
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+        *align = chosen;
+    });
+}
+
+/// How the row numbers are written, and the number of the first row. A start
+/// that is the numbering's own is stored as nothing.
+fn row_numbering(ui: &mut egui::Ui, edited: &mut ColumnDesign) {
+    use cliotree_core::form::Numbering;
+    let mut numbering = edited.numbering.unwrap_or(Numbering::Index);
+    ui.horizontal(|ui| {
+        ui.label("Numbering");
+        let response = egui::ComboBox::from_id_salt("property_numbering")
+            .selected_text(numbering.label())
+            .show_ui(ui, |ui| {
+                for n in Numbering::ALL {
+                    ui.selectable_value(&mut numbering, n, n.label());
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Numbering of the rows")
+        });
+    });
+    let mut start = edited
+        .start
+        .unwrap_or_else(|| edited.numbering.unwrap_or(Numbering::Index).default_start());
+    ui.horizontal(|ui| {
+        ui.label("Start at");
+        let response = ui.add(egui::DragValue::new(&mut start).speed(0.1));
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Number of the first row")
+        });
+    });
+    // A start that was not given follows the numbering; one that was is kept.
+    let start = if edited.start.is_none()
+        && start == edited.numbering.unwrap_or(Numbering::Index).default_start()
+    {
+        numbering.default_start()
+    } else {
+        start
+    };
+    edited.numbering = (numbering != Numbering::Index).then_some(numbering);
+    edited.start = (start != numbering.default_start()).then_some(start);
+    let first: Vec<String> = (0..3).map(|i| edited.row_label(i)).collect();
+    ui.weak(format!("The rows are numbered {}, ...", first.join(", ")));
+}
+
+/// The format of a number (a thousands separator, decimal places) or of a
+/// date (a pattern), for a field or column of that type; nothing for another
+/// type. Returns whether the pattern was typed into.
+fn format_properties(
+    ui: &mut egui::Ui,
+    kind: &Kind,
+    thousands: &mut bool,
+    decimals: &mut Option<u32>,
+    date_format: &mut Option<String>,
+    what: &str,
+) -> bool {
+    use cliotree_core::format::{DATE_PRESETS, MAX_DECIMALS, date, is_date, is_number};
+    if is_number(kind) {
+        let response = ui.checkbox(thousands, "Thousands separator");
+        let name = format!("Thousands separator of the {what}");
+        let on = *thousands;
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
+        ui.horizontal(|ui| {
+            ui.label("Decimal places");
+            let mut chosen = *decimals;
+            let response = egui::ComboBox::from_id_salt("property_decimals")
+                .selected_text(chosen.map_or_else(|| "Automatic".to_owned(), |d| d.to_string()))
+                .height(400.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, None, "Automatic");
+                    for d in 0..=MAX_DECIMALS {
+                        ui.selectable_value(&mut chosen, Some(d), d.to_string());
+                    }
+                })
+                .response;
+            let name = format!("Decimal places of the {what}");
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+            *decimals = chosen;
+        });
+        false
+    } else if is_date(kind) {
+        let sample = chrono::NaiveDate::from_ymd_opt(2026, 3, 7).expect("a valid date");
+        ui.horizontal(|ui| {
+            ui.label("Date format");
+            let mut chosen = date_format.clone();
+            let text = chosen.as_deref().map_or_else(
+                || "Automatic (yyyy-mm-dd)".to_owned(),
+                |p| format!("{p} ({})", date(sample, p)),
+            );
+            let response = egui::ComboBox::from_id_salt("property_date_format")
+                .selected_text(text)
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, None, "Automatic (yyyy-mm-dd)");
+                    for preset in DATE_PRESETS {
+                        let label = format!("{preset} ({})", date(sample, preset));
+                        ui.selectable_value(&mut chosen, Some(preset.to_owned()), label);
+                    }
+                })
+                .response;
+            let name = format!("Date format of the {what}");
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+            *date_format = chosen;
+        });
+        let typed = option_text(ui, "Pattern", date_format, "yyyy-mm-dd", false);
+        ui.weak("d dd ddd dddd: the day; m mm mmm mmmm: the month; yy yyyy: the year.");
+        typed
+    } else {
+        false
+    }
 }
 
 /// A labelled text field for an optional property: empty is absent. Returns

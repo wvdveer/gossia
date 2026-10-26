@@ -527,13 +527,13 @@ fn rows_are_added_and_the_table_is_closed_from_its_toolbar() {
 #[test]
 fn a_schema_tab_has_a_switch_for_auto_update_and_says_which_tab_uses_it() {
     let mut harness = window();
-    click(&mut harness, "Orders schema");
+    click(&mut harness, "Orders_schema");
     harness.get_by_label("Used by: Orders");
-    assert!(!harness.state().calc().auto_update("Orders schema"));
+    assert!(!harness.state().calc().auto_update("Orders_schema"));
     click(&mut harness, "Auto-update");
-    assert!(harness.state().calc().auto_update("Orders schema"));
+    assert!(harness.state().calc().auto_update("Orders_schema"));
     click(&mut harness, "Auto-update");
-    assert!(!harness.state().calc().auto_update("Orders schema"));
+    assert!(!harness.state().calc().auto_update("Orders_schema"));
     // The schema tab is an ordinary tree of the schema document.
     harness.get_by_label("properties");
 }
@@ -545,7 +545,7 @@ fn the_field_commands_are_unavailable_until_auto_update_is_on() {
     harness.run();
     click(&mut harness, "Rename field...");
     assert!(harness.state().schema_dialog.is_none());
-    harness.state_mut().set_auto_update("Orders schema", true);
+    harness.state_mut().set_auto_update("Orders_schema", true);
     harness.run();
     harness.get_by_label("qty").click_secondary();
     harness.run();
@@ -556,7 +556,7 @@ fn the_field_commands_are_unavailable_until_auto_update_is_on() {
 #[test]
 fn a_field_is_renamed_from_the_menu_of_its_column_and_the_table_follows() {
     let mut harness = table_window();
-    harness.state_mut().set_auto_update("Orders schema", true);
+    harness.state_mut().set_auto_update("Orders_schema", true);
     harness.run();
     harness.get_by_label("qty").click_secondary();
     harness.run();
@@ -579,7 +579,7 @@ fn a_field_is_renamed_from_the_menu_of_its_column_and_the_table_follows() {
 #[test]
 fn deleting_a_field_asks_first_and_says_how_much_goes() {
     let mut harness = table_window();
-    harness.state_mut().set_auto_update("Orders schema", true);
+    harness.state_mut().set_auto_update("Orders_schema", true);
     harness.run();
     harness.get_by_label("note").click_secondary();
     harness.run();

@@ -276,3 +276,126 @@ fn the_formula_of_a_field_is_entered_from_the_property_page_and_is_undoable() {
     app.commit_formula(&p("tax_rate"), "");
     assert!(app.calc().formula_text("Orders", &p("tax_rate")).is_none());
 }
+
+/// The order of the columns of the table of the items, hidden ones in
+/// brackets.
+fn column_order(app: &ClioApp) -> Vec<String> {
+    let design = app.design_of(DEFAULT_FORM);
+    let control = design.get(&[1]).unwrap();
+    let names: Vec<String> = ["sku", "qty", "price", "total", "note"]
+        .map(String::from)
+        .to_vec();
+    control
+        .arrange_columns(&names)
+        .iter()
+        .map(|c| {
+            if c.hidden {
+                format!("({})", c.name)
+            } else {
+                c.name.clone()
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn the_columns_of_a_table_are_moved_shown_and_given_properties() {
+    use crate::form_layout::ColumnEdit;
+    use cliotree_core::form::{Alignment, ColumnDesign};
+    let mut app = app();
+    app.set_layout(true);
+    let items = vec![1];
+    assert_eq!(
+        app.design_of(DEFAULT_FORM).get(&items).unwrap().kind,
+        ControlKind::Repeater
+    );
+    assert_eq!(
+        column_order(&app),
+        ["#", "sku", "qty", "price", "total", "note"]
+    );
+    // The row numbers are a column like the others.
+    assert!(app.edit_column_place(&items, "#", ColumnEdit::Step(false)));
+    assert!(app.edit_column_place(&items, "note", ColumnEdit::Show(false)));
+    assert!(app.edit_column_place(&items, "price", ColumnEdit::Step(true)));
+    assert_eq!(
+        column_order(&app),
+        ["sku", "#", "price", "qty", "total", "(note)"]
+    );
+    // Moving on the screen goes past the columns that are hidden, and not
+    // past the last one that is shown.
+    assert!(app.edit_column_place(&items, "qty", ColumnEdit::Show(false)));
+    assert!(app.edit_column_place(&items, "price", ColumnEdit::Move(false)));
+    assert_eq!(
+        column_order(&app),
+        ["sku", "#", "(qty)", "total", "price", "(note)"]
+    );
+    assert!(!app.edit_column_place(&items, "price", ColumnEdit::Move(false)));
+    // The last column of the items that is shown stays shown.
+    for name in ["price", "total"] {
+        assert!(app.edit_column_place(&items, name, ColumnEdit::Show(false)));
+    }
+    assert!(!app.edit_column_place(&items, "sku", ColumnEdit::Show(false)));
+    assert!(app.edit_column_place(&items, "#", ColumnEdit::Show(false)));
+    // Each column has its own properties, kept with the table.
+    app.select_table_column(items.clone(), "qty");
+    // As the property page has it: the column as it is, changed.
+    let qty = ColumnDesign {
+        label: Some("Quantity".to_owned()),
+        width: Some(70),
+        align: Some(Alignment::Center),
+        thousands: true,
+        hidden: true,
+        ..ColumnDesign::named("qty")
+    };
+    assert!(app.set_column(None, &items, qty.clone()));
+    assert_eq!(
+        app.selected_column(),
+        Some((items.clone(), "qty".to_owned()))
+    );
+    let design = app.design_of(DEFAULT_FORM);
+    let stored = design.get(&items).unwrap();
+    let found = stored
+        .table_columns
+        .iter()
+        .find(|c| c.name == "qty")
+        .unwrap();
+    assert_eq!(found.label.as_deref(), Some("Quantity"));
+    assert!(found.hidden, "a property keeps the column hidden");
+    // Each change is one step of the layout's undo.
+    app.layout_undo();
+    let design = app.design_of(DEFAULT_FORM);
+    let found = design
+        .get(&items)
+        .unwrap()
+        .table_columns
+        .iter()
+        .find(|c| c.name == "qty")
+        .cloned();
+    assert_eq!(found.and_then(|c| c.label), None);
+}
+
+#[test]
+fn columns_back_in_their_first_order_and_shown_store_nothing() {
+    use crate::form_layout::ColumnEdit;
+    let mut app = app();
+    app.set_layout(true);
+    let items = vec![1];
+    assert!(app.edit_column_place(&items, "qty", ColumnEdit::Step(true)));
+    assert!(app.edit_column_place(&items, "note", ColumnEdit::Show(false)));
+    assert!(
+        !app.design_of(DEFAULT_FORM)
+            .get(&items)
+            .unwrap()
+            .table_columns
+            .is_empty()
+    );
+    assert!(app.edit_column_place(&items, "qty", ColumnEdit::Step(false)));
+    assert!(app.edit_column_place(&items, "note", ColumnEdit::Show(true)));
+    assert!(
+        app.design_of(DEFAULT_FORM)
+            .get(&items)
+            .unwrap()
+            .table_columns
+            .is_empty()
+    );
+}

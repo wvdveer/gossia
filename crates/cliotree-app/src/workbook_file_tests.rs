@@ -74,8 +74,10 @@ fn a_workbook_is_saved_and_opened_again() {
     let names: Vec<_> = app.calc().sheet_names().collect();
     assert_eq!(
         names,
-        ["Orders", "Prices", "Orders schema", "Prices schema"]
+        ["Orders", "Prices", "Orders_schema", "Prices_schema"]
     );
+    // Nothing in the sample breaks the rules of a file, its tab names included.
+    assert_eq!(app.notice, None);
     assert_eq!(value(&app, "Orders", "total"), Some(Value::Float(62.92)));
     assert_eq!(
         app.calc().formula_text("Orders", &p("tax")).as_deref(),

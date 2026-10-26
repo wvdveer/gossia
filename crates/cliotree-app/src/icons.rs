@@ -56,7 +56,7 @@ pub fn button(
     enabled: bool,
     icon: &str,
     letter: &str,
-    name: &'static str,
+    name: &str,
 ) -> egui::Response {
     let text = if ready(ui.ctx()) {
         RichText::new(icon).family(FontFamily::Name(crate::style::ICONS.into()))

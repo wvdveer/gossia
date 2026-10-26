@@ -25,7 +25,7 @@ fn app() -> ClioApp {
 /// The sample with auto-update on for the schema of Orders.
 fn updatable() -> ClioApp {
     let mut app = app();
-    app.set_auto_update("Orders schema", true);
+    app.set_auto_update("Orders_schema", true);
     assert!(app.notice.is_none(), "{:?}", app.notice);
     app
 }
@@ -56,26 +56,26 @@ fn the_sample_has_a_schema_tab_for_each_tab_and_auto_update_is_off() {
     let names: Vec<_> = app.calc().sheet_names().collect();
     assert_eq!(
         names,
-        ["Orders", "Prices", "Orders schema", "Prices schema"]
+        ["Orders", "Prices", "Orders_schema", "Prices_schema"]
     );
-    assert_eq!(app.calc().schema_of("Orders"), Some("Orders schema"));
-    assert!(!app.calc().auto_update("Orders schema"));
+    assert_eq!(app.calc().schema_of("Orders"), Some("Orders_schema"));
+    assert!(!app.calc().auto_update("Orders_schema"));
 }
 
 #[test]
 fn a_command_is_unavailable_until_auto_update_is_on_and_the_reason_names_the_tab() {
     let mut app = app();
     let why = app.schema_edit_allowed(&p("items[0]")).unwrap_err();
-    assert!(why.contains("auto-update on Orders schema"), "{why}");
+    assert!(why.contains("auto-update on Orders_schema"), "{why}");
     app.start_schema_command(&p("items[0]"), rename("qty", "n"));
     assert!(app.schema_dialog.is_none());
-    assert!(app.notice.as_deref().unwrap().contains("Orders schema"));
+    assert!(app.notice.as_deref().unwrap().contains("Orders_schema"));
 
-    app.set_auto_update("Orders schema", true);
+    app.set_auto_update("Orders_schema", true);
     assert!(app.schema_edit_allowed(&p("items[0]")).is_ok());
     // Undoing the switch is an ordinary undo.
     app.undo();
-    assert!(!app.calc().auto_update("Orders schema"));
+    assert!(!app.calc().auto_update("Orders_schema"));
 }
 
 #[test]

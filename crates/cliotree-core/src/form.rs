@@ -157,6 +157,202 @@ impl FontFamily {
 /// The font sizes a document may give, in points.
 pub const FONT_SIZES: std::ops::RangeInclusive<u32> = 6..=72;
 
+/// The widths a table column may be given, in points.
+pub const COLUMN_WIDTHS: std::ops::RangeInclusive<u32> = 24..=800;
+
+/// The name of the column of row numbers in a table, `[0]`, `[1]`, ...
+pub const ROW_NUMBER: &str = "#";
+
+/// Where the text of a table column sits in its cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Alignment {
+    Left,
+    Center,
+    Right,
+}
+
+impl Alignment {
+    pub const ALL: [Alignment; 3] = [Alignment::Left, Alignment::Center, Alignment::Right];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Alignment::Left => "Left",
+            Alignment::Center => "Centre",
+            Alignment::Right => "Right",
+        }
+    }
+}
+
+/// One column of a repeater drawn as a table: a field of the items (`value`
+/// for items that are scalars), or the row numbers ([`ROW_NUMBER`]). Its place
+/// in the list of the table is its place on the screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnDesign {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
+    /// The title of the column, when it is not the name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Shown on hover over the title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    /// In points. Absent: as wide as the table makes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Where the text of the cells sits. Absent: numbers on the right, the
+    /// rest on the left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<Alignment>,
+    /// Where the title sits. Absent: on the left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_align: Option<Alignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor: Option<Editor>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_only: bool,
+    /// For a number: commas between the thousands.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub thousands: bool,
+    /// For a number: decimal places, 0 to 10. Absent: as many as it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u32>,
+    /// For a date or a date-time: a pattern such as `dd/mm/yyyy`. Absent:
+    /// ISO 8601, `yyyy-mm-dd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
+    /// The font of the cells. Absent: the font of the table. The titles of
+    /// the columns are in the table's `header_font`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<FontFamily>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u32>,
+    /// For the row numbers: how they are written. Absent: `[0]`, `[1]`, ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numbering: Option<Numbering>,
+    /// For the row numbers: the number of the first row. Absent: 0 for
+    /// [`Numbering::Index`], 1 for the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<i64>,
+}
+
+/// How the row numbers of a table are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Numbering {
+    /// `[0]`, `[1]`, `[2]`: the index of the item, as a path writes it.
+    Index,
+    /// 1, 2, 3
+    Decimal,
+    /// a, b, c, ... z, aa, ab
+    LowerAlpha,
+    UpperAlpha,
+    /// i, ii, iii, iv
+    LowerRoman,
+    UpperRoman,
+}
+
+impl Numbering {
+    pub const ALL: [Numbering; 6] = [
+        Numbering::Index,
+        Numbering::Decimal,
+        Numbering::LowerAlpha,
+        Numbering::UpperAlpha,
+        Numbering::LowerRoman,
+        Numbering::UpperRoman,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Numbering::Index => "[0], [1], [2]",
+            Numbering::Decimal => "1, 2, 3",
+            Numbering::LowerAlpha => "a, b, c",
+            Numbering::UpperAlpha => "A, B, C",
+            Numbering::LowerRoman => "i, ii, iii",
+            Numbering::UpperRoman => "I, II, III",
+        }
+    }
+
+    /// The number of the first row, unless one is given.
+    pub fn default_start(self) -> i64 {
+        match self {
+            Numbering::Index => 0,
+            _ => 1,
+        }
+    }
+}
+
+impl ColumnDesign {
+    pub fn named(name: &str) -> ColumnDesign {
+        ColumnDesign {
+            name: name.to_owned(),
+            hidden: false,
+            label: None,
+            help: None,
+            width: None,
+            align: None,
+            title_align: None,
+            editor: None,
+            read_only: false,
+            thousands: false,
+            decimals: None,
+            date_format: None,
+            font: None,
+            font_size: None,
+            numbering: None,
+            start: None,
+        }
+    }
+
+    /// What the row numbers column shows for the item at `index`.
+    pub fn row_label(&self, index: usize) -> String {
+        let numbering = self.numbering.unwrap_or(Numbering::Index);
+        let start = self.start.unwrap_or_else(|| numbering.default_start());
+        let n = start.saturating_add(index as i64);
+        crate::format::sequence(n, numbering)
+    }
+
+    pub fn is_row_number(&self) -> bool {
+        self.name == ROW_NUMBER
+    }
+
+    pub fn format(&self) -> Format {
+        Format {
+            thousands: self.thousands,
+            decimals: self.decimals,
+            date_format: self.date_format.clone(),
+        }
+    }
+}
+
+/// How a number or a date is shown (see [`crate::format`]), as a field or a
+/// column gives it. A number format applies to numbers, a date format to
+/// dates and date-times.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Format {
+    pub thousands: bool,
+    pub decimals: Option<u32>,
+    pub date_format: Option<String>,
+}
+
+impl Format {
+    pub fn is_empty(&self) -> bool {
+        self == &Format::default()
+    }
+
+    /// What a value looks like in this format, or None if it does not apply.
+    pub fn apply(&self, value: &crate::Value) -> Option<String> {
+        crate::format::formatted(
+            value,
+            self.thousands,
+            self.decimals,
+            self.date_format.as_deref(),
+        )
+    }
+}
+
 /// One control. All kinds share the one record, so that the stored document
 /// can be described in the schema subset, which has no unions; the checks say
 /// which properties a kind uses.
@@ -191,10 +387,27 @@ pub struct Control {
     /// items are flat, one at a time otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<RepeaterMode>,
-    /// For a repeater drawn as a table: the fields that are its columns, in
-    /// order. Absent: all of them.
+    /// For a repeater drawn as a table, as the first designs wrote it: the
+    /// fields that are its columns, in order. Read, and replaced by
+    /// `table_columns` at the first change to the columns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show: Option<Vec<String>>,
+    /// For a repeater drawn as a table: its columns, the row numbers among
+    /// them, in their order, each with whether it is shown and its own
+    /// properties. A column of the items that is not listed comes after the
+    /// others, shown. Empty: every column in the order of the schema.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub table_columns: Vec<ColumnDesign>,
+    /// For a number: commas between the thousands.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub thousands: bool,
+    /// For a number: decimal places, 0 to 10. Absent: as many as it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u32>,
+    /// For a date or a date-time: a pattern such as `dd/mm/yyyy`. Absent:
+    /// ISO 8601, `yyyy-mm-dd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
     /// For a button: the procedure it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub procedure: Option<String>,
@@ -210,6 +423,17 @@ pub struct Control {
     /// The size of the control's text, in points. Absent: as for `font`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
+    /// For a repeater: the font of its title. Absent: the control's font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_font: Option<FontFamily>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_font_size: Option<u32>,
+    /// For a repeater drawn as a table: the font of the titles of its
+    /// columns. Absent: the control's font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_font: Option<FontFamily>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_font_size: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
 }
@@ -231,11 +455,19 @@ impl Control {
             columns: None,
             mode: None,
             show: None,
+            table_columns: Vec::new(),
+            thousands: false,
+            decimals: None,
+            date_format: None,
             procedure: None,
             visible_when: None,
             enabled_when: None,
             font: None,
             font_size: None,
+            title_font: None,
+            title_font_size: None,
+            header_font: None,
+            header_font_size: None,
             children: Vec::new(),
         }
     }
@@ -258,6 +490,84 @@ impl Control {
             self.kind,
             ControlKind::Field | ControlKind::Group | ControlKind::Repeater
         ) && self.path.is_some()
+    }
+
+    /// How the field shows a number or a date.
+    pub fn format(&self) -> Format {
+        Format {
+            thousands: self.thousands,
+            decimals: self.decimals,
+            date_format: self.date_format.clone(),
+        }
+    }
+
+    /// The columns of the table of a repeater whose items have the columns
+    /// `names`, in their order on the screen, the row numbers among them, each
+    /// with its properties and whether it is hidden. A column the control
+    /// names that the items do not have is left out (and kept in the design).
+    pub fn arrange_columns(&self, names: &[String]) -> Vec<ColumnDesign> {
+        let known = |name: &str| name == ROW_NUMBER || names.iter().any(|n| n == name);
+        let mut out: Vec<ColumnDesign> = Vec::new();
+        if !self.table_columns.is_empty() {
+            for column in &self.table_columns {
+                if known(&column.name) && !out.iter().any(|c| c.name == column.name) {
+                    out.push(column.clone());
+                }
+            }
+            if !out.iter().any(ColumnDesign::is_row_number) {
+                out.insert(0, ColumnDesign::named(ROW_NUMBER));
+            }
+            for name in names {
+                if !out.iter().any(|c| &c.name == name) {
+                    out.push(ColumnDesign::named(name));
+                }
+            }
+            return out;
+        }
+        out.push(ColumnDesign::named(ROW_NUMBER));
+        // The first designs listed the columns shown, in order, and hid the
+        // rest. A list that names no column is no choice.
+        let shown: Vec<&String> = self
+            .show
+            .iter()
+            .flatten()
+            .filter(|n| names.contains(n))
+            .collect();
+        if shown.is_empty() {
+            out.extend(names.iter().map(|n| ColumnDesign::named(n)));
+            return out;
+        }
+        out.extend(shown.iter().map(|n| ColumnDesign::named(n)));
+        for name in names {
+            if !shown.contains(&name) {
+                out.push(ColumnDesign {
+                    hidden: true,
+                    ..ColumnDesign::named(name)
+                });
+            }
+        }
+        out
+    }
+
+    /// Stores the columns of the table, as [`Control::arrange_columns`] gives
+    /// them, after a change. A list that is the default (every column shown,
+    /// in the order of the schema, with no properties) is stored as nothing.
+    /// Designs of columns the items do not have now are kept, at the end.
+    pub fn set_columns(&mut self, columns: Vec<ColumnDesign>, names: &[String]) {
+        let mut default = vec![ColumnDesign::named(ROW_NUMBER)];
+        default.extend(names.iter().map(|n| ColumnDesign::named(n)));
+        let absent: Vec<ColumnDesign> = self
+            .table_columns
+            .iter()
+            .filter(|c| !c.is_row_number() && !names.contains(&c.name))
+            .cloned()
+            .collect();
+        self.show = None;
+        self.table_columns = if columns == default && absent.is_empty() {
+            Vec::new()
+        } else {
+            columns.into_iter().chain(absent).collect()
+        };
     }
 }
 
@@ -314,14 +624,44 @@ pub fn form_schema_source() -> &'static str {
         "columns": {"type": "integer", "minimum": 1, "maximum": 6},
         "mode": {"type": "string", "enum": ["table", "stacked"]},
         "show": {"type": "array", "items": {"type": "string"}},
+        "table_columns": {"type": "array", "items": {"$ref": "#/$defs/Column"}},
+        "thousands": {"type": "boolean"},
+        "decimals": {"type": "integer", "minimum": 0, "maximum": 10},
+        "date_format": {"type": "string", "minLength": 1},
         "procedure": {"type": "string"},
         "visible_when": {"type": "string"},
         "enabled_when": {"type": "string"},
         "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "title_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
+        "title_font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "header_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
+        "header_font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "children": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["type"]
+    },
+    "Column": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "hidden": {"type": "boolean"},
+        "label": {"type": "string"},
+        "help": {"type": "string"},
+        "width": {"type": "integer", "minimum": 24, "maximum": 800},
+        "align": {"type": "string", "enum": ["left", "center", "right"]},
+        "title_align": {"type": "string", "enum": ["left", "center", "right"]},
+        "editor": {"type": "string", "enum": ["auto", "text", "multiline"]},
+        "read_only": {"type": "boolean"},
+        "thousands": {"type": "boolean"},
+        "decimals": {"type": "integer", "minimum": 0, "maximum": 10},
+        "date_format": {"type": "string", "minLength": 1},
+        "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
+        "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "numbering": {"type": "string", "enum": ["index", "decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"]},
+        "start": {"type": "integer"}
+      },
+      "required": ["name"]
     }
   }
 }"##
@@ -783,6 +1123,137 @@ mod tests {
             assert!(form_schema_source().contains(&format!("\"{}\"", family.key())));
             assert_eq!(FontFamily::from_key(family.key()), Some(family));
         }
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn order(columns: &[ColumnDesign]) -> Vec<String> {
+        columns
+            .iter()
+            .map(|c| {
+                if c.hidden {
+                    format!("({})", c.name)
+                } else {
+                    c.name.clone()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn table_columns_and_formats_round_trip_and_are_checked() {
+        let mut design = generate(&spec());
+        let mut qty = ColumnDesign::named("qty");
+        qty.label = Some("Quantity".into());
+        qty.width = Some(80);
+        qty.align = Some(Alignment::Center);
+        qty.thousands = true;
+        qty.decimals = Some(2);
+        qty.font = Some(FontFamily::Condensed);
+        qty.title_align = Some(Alignment::Right);
+        design.controls[2].title_font = Some(FontFamily::Serif);
+        design.controls[2].title_font_size = Some(20);
+        design.controls[2].header_font = Some(FontFamily::Script);
+        design.controls[2].header_font_size = Some(9);
+        let row = ColumnDesign {
+            hidden: true,
+            numbering: Some(Numbering::UpperRoman),
+            start: Some(-2),
+            ..ColumnDesign::named(ROW_NUMBER)
+        };
+        design.controls[2].table_columns = vec![qty, row];
+        design.controls[0].date_format = Some("dd/mm/yyyy".into());
+        design.controls[0].decimals = Some(0);
+        let text = design.to_json();
+        assert_eq!(FormDesign::from_json(&text).unwrap(), design);
+        assert!(!text.contains("null"));
+        for wrong in [
+            r#""table_columns":[{"label":"x"}]"#,
+            r#""table_columns":[{"name":"a","width":10}]"#,
+            r#""table_columns":[{"name":"a","align":"justify"}]"#,
+            r#""table_columns":[{"name":"a","colour":"red"}]"#,
+            r##""table_columns":[{"name":"#","numbering":"greek"}]"##,
+            r##""table_columns":[{"name":"#","start":1.5}]"##,
+            r#""decimals":11"#,
+            r#""date_format":"""#,
+        ] {
+            let text = format!(r#"{{"version":1,"controls":[{{"type":"repeater",{wrong}}}]}}"#);
+            assert!(FormDesign::from_json(&text).is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn row_numbers_start_where_the_design_says() {
+        let mut row = ColumnDesign::named(ROW_NUMBER);
+        assert_eq!(row.row_label(0), "[0]");
+        row.numbering = Some(Numbering::Decimal);
+        assert_eq!(row.row_label(0), "1", "counting starts at 1");
+        row.numbering = Some(Numbering::LowerAlpha);
+        assert_eq!(row.row_label(2), "c");
+        row.start = Some(0);
+        row.numbering = Some(Numbering::Index);
+        assert_eq!(row.row_label(2), "[2]");
+        row.start = Some(10);
+        row.numbering = Some(Numbering::UpperRoman);
+        assert_eq!(row.row_label(4), "XIV");
+    }
+
+    #[test]
+    fn the_columns_of_a_table_are_arranged_from_the_design() {
+        let all = names(&["sku", "qty", "price"]);
+        let mut c = Control::new(ControlKind::Repeater);
+        // No say: the row numbers, then the schema's order.
+        assert_eq!(
+            order(&c.arrange_columns(&all)),
+            ["#", "sku", "qty", "price"]
+        );
+        // The first designs' list: those shown, in order, and the rest hidden.
+        c.show = Some(names(&["price", "sku", "gone"]));
+        assert_eq!(
+            order(&c.arrange_columns(&all)),
+            ["#", "price", "sku", "(qty)"]
+        );
+        // The list of the table: its order, the row numbers anywhere, a column
+        // it does not name after the others, a name the items lack left out.
+        c.show = None;
+        c.table_columns = vec![
+            ColumnDesign::named("qty"),
+            ColumnDesign::named("gone"),
+            ColumnDesign {
+                hidden: true,
+                ..ColumnDesign::named("sku")
+            },
+            ColumnDesign::named(ROW_NUMBER),
+        ];
+        assert_eq!(
+            order(&c.arrange_columns(&all)),
+            ["qty", "(sku)", "#", "price"]
+        );
+    }
+
+    #[test]
+    fn storing_the_default_columns_stores_nothing() {
+        let all = names(&["sku", "qty"]);
+        let mut c = Control::new(ControlKind::Repeater);
+        c.show = Some(names(&["qty"]));
+        let mut columns = c.arrange_columns(&all);
+        for column in &mut columns {
+            column.hidden = false;
+        }
+        columns.swap(1, 2);
+        c.set_columns(columns, &all);
+        assert_eq!(c.show, None, "the old list is replaced");
+        assert!(c.table_columns.is_empty());
+        // A design of a column the items no longer have is kept.
+        c.table_columns = vec![ColumnDesign {
+            label: Some("Old".into()),
+            ..ColumnDesign::named("gone")
+        }];
+        let columns = c.arrange_columns(&all);
+        c.set_columns(columns, &all);
+        assert_eq!(order(&c.table_columns), ["#", "sku", "qty", "gone"]);
     }
 
     #[test]
