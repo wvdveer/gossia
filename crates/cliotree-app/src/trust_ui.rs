@@ -80,34 +80,35 @@ impl ClioApp {
     }
 
     pub(crate) fn trust_banner(&mut self, ui: &mut egui::Ui) {
-        let fill = if ui.visuals().dark_mode {
-            Color32::from_rgb(80, 62, 20)
-        } else {
-            Color32::from_rgb(255, 240, 200)
-        };
+        // The panel the banner is in has the banner's fill (see `show`).
+        let palette = crate::style::Palette::of_ui(ui);
         let mut trust = false;
         let mut dismiss = false;
-        egui::Frame::new()
-            .fill(fill)
-            .inner_margin(6.0)
-            .show(ui, |ui| {
-                ui.label(RichText::new(WARNING).strong());
-                if !self.trust.changes.is_empty() {
-                    ui.label("It was trusted before, but the file has changed since:");
-                    egui::ScrollArea::vertical()
-                        .max_height(90.0)
-                        .id_salt("trust_changes")
-                        .show(ui, |ui| {
-                            for change in &self.trust.changes {
-                                ui.label(change_text(change));
-                            }
-                        });
-                }
-                ui.horizontal(|ui| {
-                    trust = ui.button("Trust this version").clicked();
-                    dismiss = ui.button("Continue read-only").clicked();
+        let text = |words: &str| RichText::new(words).color(palette.banner_text);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(crate::icons::WARNING).color(palette.warning));
+            ui.label(crate::style::medium(WARNING).color(palette.banner_text));
+        });
+        if !self.trust.changes.is_empty() {
+            ui.label(text(
+                "It was trusted before, but the file has changed since:",
+            ));
+            egui::ScrollArea::vertical()
+                .max_height(90.0)
+                .id_salt("trust_changes")
+                .show(ui, |ui| {
+                    for change in &self.trust.changes {
+                        ui.label(text(&change_text(change)));
+                    }
                 });
-            });
+        }
+        ui.horizontal(|ui| {
+            let primary =
+                egui::Button::new(crate::style::medium("Trust this version").color(Color32::WHITE))
+                    .fill(palette.primary);
+            trust = ui.add(primary).clicked();
+            dismiss = ui.button("Continue read-only").clicked();
+        });
         if trust {
             self.trust_workbook();
         } else if dismiss {

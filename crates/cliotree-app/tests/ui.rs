@@ -594,8 +594,14 @@ fn deleting_a_field_asks_first_and_says_how_much_goes() {
 #[test]
 #[ignore = "writes a picture of the window, needs a graphics adapter"]
 fn picture() {
+    // `CLIOTREE_THEME=light` for the light theme; dark otherwise.
+    let theme = match std::env::var("CLIOTREE_THEME").as_deref() {
+        Ok("light") => egui::Theme::Light,
+        _ => egui::Theme::Dark,
+    };
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 700.0))
+        .with_theme(theme)
         .wgpu()
         .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), ClioApp::sample());
     settle(&mut harness);

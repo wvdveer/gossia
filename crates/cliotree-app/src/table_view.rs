@@ -173,9 +173,9 @@ impl ClioApp {
                     table = table.column(TableColumn::initial(120.0).at_least(40.0).clip(true));
                 }
                 table
-                    .header(24.0, |mut header| {
+                    .header(crate::style::HEADER_HEIGHT, |mut header| {
                         header.col(|ui| {
-                            ui.strong("#");
+                            crate::view::column_title(ui, "#");
                         });
                         let mut previous: Option<usize> = None;
                         for &c in &layout.shown {
@@ -234,8 +234,8 @@ impl ClioApp {
                                     if selected {
                                         ui.painter().rect_stroke(
                                             ui.max_rect().shrink(0.5),
-                                            0.0,
-                                            Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                                            2.0,
+                                            Stroke::new(2.0, ui.visuals().selection.stroke.color),
                                             StrokeKind::Inside,
                                         );
                                     }
@@ -265,11 +265,16 @@ impl ClioApp {
                 column.name.clone()
             };
             let chosen = self.column_is_selected(array, &column.name);
+            let colour = crate::style::Palette::of_ui(ui).text_weak;
             let response = ui.add(
-                egui::Label::new(RichText::new(text).strong())
-                    .selectable(false)
-                    .sense(Sense::click_and_drag())
-                    .truncate(),
+                egui::Label::new(
+                    crate::style::medium(text)
+                        .size(crate::style::SMALL_SIZE)
+                        .color(colour),
+                )
+                .selectable(false)
+                .sense(Sense::click_and_drag())
+                .truncate(),
             );
             if chosen {
                 ui.painter().rect_stroke(

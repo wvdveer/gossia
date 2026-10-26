@@ -13,7 +13,7 @@ use cliotree_calc::entry;
 use cliotree_core::form::{Address, Control, ControlKind, Editor, RepeaterMode};
 use cliotree_core::validate::validate_at;
 use cliotree_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
-use egui::{Align, Color32, Key, RichText, Sense, Stroke, StrokeKind};
+use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
@@ -1159,7 +1159,7 @@ impl Painter<'_> {
                 ui.painter().rect_stroke(
                     r.rect.expand(1.0),
                     2.0,
-                    Stroke::new(1.5, Color32::from_rgb(220, 60, 60)),
+                    Stroke::new(1.0, error_color(ui)),
                     StrokeKind::Outside,
                 );
             } else if app.selection.as_ref() == Some(path) {
@@ -1182,8 +1182,7 @@ impl Painter<'_> {
                 .on_hover_text(format!("computed by {}", app.name_of(by)));
         }
         if pending {
-            ui.label(RichText::new("…").weak())
-                .on_hover_text("Waiting to be calculated");
+            crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
         }
         problem
     }

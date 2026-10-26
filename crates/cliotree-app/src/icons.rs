@@ -2,8 +2,8 @@
 //! which has the arrows and the cross the bundled text font lacks.
 //!
 //! The font is added to egui when the first frame is drawn and takes effect
-//! on the next one, so [`ready`] says whether the icons can be drawn yet; an
-//! icon button draws a letter until then.
+//! on the next one (see [`crate::style`]), so [`ready`] says whether the icons
+//! can be drawn yet; an icon button draws a letter until then.
 
 use egui::{FontFamily, RichText};
 
@@ -42,54 +42,11 @@ pub const FILE_PLUS: &str = "\u{E236}";
 pub const FLOPPY: &str = "\u{E248}";
 pub const USB: &str = "\u{E956}";
 
-const FAMILY: &str = "phosphor";
-
-fn state_id() -> egui::Id {
-    egui::Id::unique("cliotree icons installed")
-}
-
-fn ready_id() -> egui::Id {
-    egui::Id::unique("cliotree icons ready")
-}
-
-/// Adds the font on the first frame. Called at the start of each frame.
-pub fn prepare(ctx: &egui::Context) {
-    let installed = ctx
-        .data(|d| d.get_temp::<bool>(state_id()))
-        .unwrap_or(false);
-    if installed {
-        ctx.data_mut(|d| d.insert_temp(ready_id(), true));
-        return;
-    }
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        FAMILY.to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/Phosphor.ttf")).into(),
-    );
-    fonts
-        .families
-        .insert(FontFamily::Name(FAMILY.into()), vec![FAMILY.to_owned()]);
-    // The icons are in the private use area, so adding the font to the end of
-    // the text families lets a label carry one (the file browser's do).
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        if let Some(list) = fonts.families.get_mut(&family) {
-            list.push(FAMILY.to_owned());
-        }
-    }
-    ctx.set_fonts(fonts);
-    // A symbol that no font has is drawn as a box, not a reason to stop.
-    ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
-    ctx.data_mut(|d| {
-        d.insert_temp(state_id(), true);
-        d.insert_temp(ready_id(), false);
-    });
-    ctx.request_repaint();
-}
-
-/// Whether the icon font is in use in this frame.
+/// Whether the icon font is in use in this frame. It is installed with the
+/// other fonts, by [`crate::style::prepare`], and is at the end of every text
+/// family, so a label can carry an icon (the file browser's do).
 pub fn ready(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(ready_id()))
-        .unwrap_or(false)
+    crate::style::ready(ctx)
 }
 
 /// A small button with an icon. `letter` is what is drawn until the font is
@@ -102,7 +59,7 @@ pub fn button(
     name: &'static str,
 ) -> egui::Response {
     let text = if ready(ui.ctx()) {
-        RichText::new(icon).family(FontFamily::Name(FAMILY.into()))
+        RichText::new(icon).family(FontFamily::Name(crate::style::ICONS.into()))
     } else {
         RichText::new(letter)
     };

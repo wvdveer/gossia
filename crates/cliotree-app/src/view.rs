@@ -12,7 +12,8 @@ use crate::app::{ClioApp, Editing, Focus};
 use crate::rows::{Row, RowKind, display};
 use crate::status::{evaluation_text, problems_text};
 
-pub(crate) const ROW_HEIGHT: f32 = 22.0;
+pub(crate) use crate::style::ROW_HEIGHT;
+use crate::style::{HEADER_HEIGHT, Palette};
 const INDENT: f32 = 16.0;
 
 /// Gives a text field a name that a screen reader (and a test) can find it by.
@@ -21,19 +22,22 @@ pub(crate) fn named(response: &egui::Response, name: &'static str) {
 }
 
 pub(crate) fn error_color(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        Color32::from_rgb(255, 120, 110)
-    } else {
-        Color32::from_rgb(190, 30, 30)
-    }
+    Palette::of_ui(ui).error
 }
 
 pub(crate) fn computed_fill(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        Color32::from_rgba_unmultiplied(70, 110, 160, 40)
-    } else {
-        Color32::from_rgba_unmultiplied(70, 110, 190, 28)
-    }
+    Palette::of_ui(ui).computed
+}
+
+/// The outline of a cell whose data is not valid: kept and outlined, not
+/// refused.
+pub(crate) fn outline_invalid(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_stroke(
+        rect.shrink(1.0),
+        2.0,
+        Stroke::new(1.0, error_color(ui)),
+        StrokeKind::Inside,
+    );
 }
 
 /// Something a row asked for while it was being drawn. They are applied after
@@ -78,7 +82,7 @@ pub(crate) enum Action {
 impl ClioApp {
     /// One frame of the window.
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        crate::icons::prepare(ui.ctx());
+        crate::style::prepare(ui.ctx());
         self.apply_settings();
         self.session.tick();
         self.collect_procedures();
@@ -91,20 +95,34 @@ impl ClioApp {
         self.handle_close_request(ui.ctx());
         self.update_title(ui.ctx());
 
-        egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
+        let bar = crate::style::bar_frame(ui);
+        egui::Panel::top("menu")
+            .frame(bar)
+            .show(ui, |ui| self.menu(ui));
         if self.banner_shown() {
-            egui::Panel::top("trust_banner").show(ui, |ui| self.trust_banner(ui));
+            let fill = Palette::of_ui(ui).banner_fill;
+            egui::Panel::top("trust_banner")
+                .frame(bar.fill(fill).inner_margin(8))
+                .show(ui, |ui| self.trust_banner(ui));
         }
         // A form has no formula bar: formulas are edited in the data tree.
         let form = !self.in_tree();
         if !form {
-            egui::Panel::top("formula_bar").show(ui, |ui| self.formula_bar(ui));
+            egui::Panel::top("formula_bar")
+                .frame(bar.inner_margin(egui::Margin::symmetric(8, 5)))
+                .show(ui, |ui| self.formula_bar(ui));
         }
         if !form && self.calc().is_schema_sheet(&self.sheet) {
-            egui::Panel::top("schema_bar").show(ui, |ui| self.schema_bar(ui));
+            egui::Panel::top("schema_bar")
+                .frame(bar)
+                .show(ui, |ui| self.schema_bar(ui));
         }
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::bottom("tabs").show(ui, |ui| self.tab_bar(ui));
+        egui::Panel::bottom("status")
+            .frame(bar)
+            .show(ui, |ui| self.status_bar(ui));
+        egui::Panel::bottom("tabs")
+            .frame(bar.inner_margin(egui::Margin::symmetric(8, 0)))
+            .show(ui, |ui| self.tab_bar(ui));
         if self.show_issues {
             egui::Panel::right("issues")
                 .default_size(300.0)
@@ -371,11 +389,20 @@ impl ClioApp {
                     .map(|p| self.name_of(p))
                     .unwrap_or_default(),
             };
-            ui.add_sized(
-                [260.0, 22.0],
-                egui::Label::new(RichText::new(name).monospace()).truncate(),
-            );
-            if ui.button("fx").on_hover_text("Insert Function").clicked() {
+            // The name box: the path of the selection, in a box like a field's.
+            let palette = Palette::of_ui(ui);
+            egui::Frame::new()
+                .fill(palette.field)
+                .stroke(Stroke::new(1.0, palette.border))
+                .corner_radius(crate::style::CONTROL_RADIUS)
+                .inner_margin(egui::Margin::symmetric(6, 2))
+                .show(ui, |ui| {
+                    ui.set_width(248.0);
+                    ui.set_min_height(18.0);
+                    ui.add(egui::Label::new(RichText::new(name).monospace()).truncate());
+                });
+            let fx = crate::style::medium("fx").italics();
+            if ui.button(fx).on_hover_text("Insert Function").clicked() {
                 self.open_insert_function();
             }
             self.bar_text(ui);
@@ -562,10 +589,10 @@ impl ClioApp {
                 table = table.scroll_to_row(index, Some(egui::Align::Center));
             }
             table
-                .header(24.0, |mut header| {
+                .header(HEADER_HEIGHT, |mut header| {
                     for title in ["Name", "Type", "Value", "Formula"] {
                         header.col(|ui| {
-                            ui.strong(title);
+                            column_title(ui, title);
                         });
                     }
                 })
@@ -691,13 +718,23 @@ impl ClioApp {
             name_response = Some(response);
         });
 
-        // The type.
+        // The type, as a badge in the colour of its kind.
         table_row.col(|ui| {
-            let response = ui.add(
-                egui::Label::new(RichText::new(&row.type_label).weak().small())
-                    .sense(Sense::CLICK)
-                    .truncate(),
-            );
+            let kind = row
+                .ty
+                .zip(calc.spec(&self.sheet))
+                .map(|(ty, spec)| &spec.get(ty).kind);
+            let response = match kind {
+                Some(kind) => {
+                    let colours = Palette::of_ui(ui).badge(kind);
+                    crate::style::badge_label(ui, &row.type_label, colours)
+                }
+                None => ui.add(
+                    egui::Label::new(RichText::new(&row.type_label).weak().small())
+                        .sense(Sense::CLICK)
+                        .truncate(),
+                ),
+            };
             if response.clicked() {
                 actions.push(Action::Select(row.path.clone()));
             }
@@ -767,18 +804,15 @@ impl ClioApp {
         };
         let missing = row.node.is_none() && row.required && !row.unrecognised;
 
-        if computed_by.is_some() || formula.is_some() {
+        if is_error {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, Palette::of_ui(ui).error_fill);
+        } else if computed_by.is_some() || formula.is_some() {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, computed_fill(ui));
         }
         if invalid || missing {
-            // Invalid data is kept and outlined, not refused.
-            ui.painter().rect_stroke(
-                ui.max_rect().shrink(1.0),
-                2.0,
-                Stroke::new(1.5, Color32::from_rgb(220, 60, 60)),
-                StrokeKind::Inside,
-            );
+            outline_invalid(ui, ui.max_rect());
         }
         let editing_here = editing
             .as_ref()
@@ -797,8 +831,7 @@ impl ClioApp {
         // it came from has changed since.
         ui.scope(|ui| {
             if stale {
-                let weak = ui.visuals().weak_text_color();
-                ui.visuals_mut().override_text_color = Some(weak);
+                ui.visuals_mut().override_text_color = Some(Palette::of_ui(ui).stale);
             }
             self.value_cell(
                 ui,
@@ -822,8 +855,7 @@ impl ClioApp {
                 });
         }
         if pending {
-            ui.label(RichText::new("…").weak())
-                .on_hover_text("Waiting to be calculated");
+            crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
         }
     }
 
@@ -1043,9 +1075,10 @@ impl ClioApp {
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let names: Vec<String> = self.calc().sheet_names().map(str::to_owned).collect();
+            ui.spacing_mut().item_spacing.x = 2.0;
             for name in names {
                 let selected = name == self.sheet;
-                if ui.selectable_label(selected, &name).clicked() {
+                if sheet_tab(ui, &name, selected).clicked() {
                     self.switch_to(&name);
                 }
             }
@@ -1170,6 +1203,60 @@ impl ClioApp {
             self.insert_function = Some(dialog);
         }
     }
+}
+
+/// The title of a grid column.
+pub(crate) fn column_title(ui: &mut egui::Ui, title: &str) -> egui::Response {
+    let colour = Palette::of_ui(ui).text_weak;
+    ui.label(
+        crate::style::medium(title)
+            .size(crate::style::SMALL_SIZE)
+            .color(colour),
+    )
+}
+
+/// A sheet's tab at the bottom of the window. The current sheet's tab has the
+/// panel's fill, as if the sheet above went on into it, and an accent line.
+fn sheet_tab(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
+    let palette = Palette::of_ui(ui);
+    let text = if selected {
+        crate::style::medium(name).color(palette.text)
+    } else {
+        RichText::new(name).color(palette.text_weak)
+    };
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let size = egui::vec2(galley.size().x + 20.0, 30.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::CLICK);
+    if ui.is_rect_visible(rect) {
+        let fill = if selected {
+            palette.panel
+        } else if response.hovered() {
+            palette.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        let radius = egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: crate::style::CONTROL_RADIUS,
+            se: crate::style::CONTROL_RADIUS,
+        };
+        ui.painter().rect_filled(rect, radius, fill);
+        if selected {
+            let line =
+                egui::Rect::from_min_max(rect.left_top(), rect.right_top() + egui::vec2(0.0, 2.0));
+            ui.painter().rect_filled(line, 0.0, palette.accent);
+        }
+        ui.painter()
+            .galley(rect.center() - galley.size() / 2.0, galley, palette.text);
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, name));
+    response
 }
 
 fn paint_triangle(ui: &egui::Ui, rect: egui::Rect, open: bool, hovered: bool) {

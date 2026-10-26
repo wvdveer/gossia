@@ -1,0 +1,558 @@
+//! The look of the window (DESIGN.md, "Look and feel"): the colours of the
+//! light and dark themes, the sizes, and the fonts. Every colour the window
+//! draws with comes from a [`Palette`], so the two themes stay in step.
+//!
+//! The fonts are bundled (see `assets/fonts/FONTS.md`). Inter is the interface
+//! font and Geist Mono the font of formulas and paths; both are variable
+//! fonts, so one file gives every weight. The others (a serif, a condensed
+//! sans, a script and a handwriting font) are there for forms.
+//!
+//! The fonts and the style are installed when the first frame is drawn and
+//! take effect on the next one; [`ready`] says whether they are in use.
+
+use egui::epaint::text::{FontTweak, VariationCoords};
+use egui::{
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Response,
+    RichText, Sense, Stroke, Style, TextStyle, TextWrapMode, Theme, Visuals,
+};
+
+// ------------------------------------------------------------- sizes
+
+/// The height of a row of the tree grid, the tabular view and a form's table.
+pub const ROW_HEIGHT: f32 = 28.0;
+/// The height of the header row of a grid.
+pub const HEADER_HEIGHT: f32 = 30.0;
+/// Text sizes, in points.
+pub const BODY_SIZE: f32 = 14.0;
+pub const SMALL_SIZE: f32 = 12.0;
+pub const BADGE_SIZE: f32 = 11.0;
+pub const HEADING_SIZE: f32 = 16.0;
+pub const MONOSPACE_SIZE: f32 = 13.0;
+/// The badge in the Type column.
+pub const BADGE_HEIGHT: f32 = 20.0;
+const BADGE_PADDING: f32 = 6.0;
+/// The marker of a cell waiting to be calculated.
+pub const MARKER_DIAMETER: f32 = 6.0;
+/// Corner radii: small for controls, larger for panels and popups.
+pub const CONTROL_RADIUS: u8 = 4;
+pub const PANEL_RADIUS: u8 = 6;
+/// The weight of [`medium`] text.
+const MEDIUM_WEIGHT: f32 = 560.0;
+
+// ------------------------------------------------------------ colours
+
+/// The colours of a badge in the Type column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Badge {
+    pub fill: Color32,
+    pub text: Color32,
+}
+
+/// The colours of one theme.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Palette {
+    /// Behind the menu, the bars and the tabs.
+    pub chrome: Color32,
+    /// Behind the grid and the panels.
+    pub panel: Color32,
+    /// Inside a text field.
+    pub field: Color32,
+    pub border: Color32,
+    /// Every other row of a grid.
+    pub stripe: Color32,
+    /// A button at rest.
+    pub control: Color32,
+    pub hover: Color32,
+    pub selection: Color32,
+    pub selection_outline: Color32,
+    pub accent: Color32,
+    /// Behind white text: the button of the main action.
+    pub primary: Color32,
+    pub text: Color32,
+    pub text_weak: Color32,
+    /// Laid over a cell whose value a formula computes. Translucent, so it
+    /// shows on a stripe, a hovered row and a selected row alike.
+    pub computed: Color32,
+    pub error: Color32,
+    /// Behind an error value.
+    pub error_fill: Color32,
+    pub warning: Color32,
+    pub success: Color32,
+    pub pending: Color32,
+    /// A value that is out of date because the workbook is not trusted.
+    pub stale: Color32,
+    pub banner_fill: Color32,
+    pub banner_text: Color32,
+    pub code_bg: Color32,
+    pub string: Badge,
+    pub number: Badge,
+    pub integer: Badge,
+    pub boolean: Badge,
+    pub object: Badge,
+    pub array: Badge,
+    pub date: Badge,
+}
+
+const fn hex(rgb: u32) -> Color32 {
+    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+const fn badge(fill: u32, text: u32) -> Badge {
+    Badge {
+        fill: hex(fill),
+        text: hex(text),
+    }
+}
+
+pub const DARK: Palette = Palette {
+    chrome: hex(0x15181D),
+    panel: hex(0x1E232B),
+    field: hex(0x13161B),
+    border: hex(0x343B46),
+    stripe: hex(0x1A1F26),
+    control: hex(0x262D37),
+    hover: hex(0x2E3642),
+    selection: hex(0x214A68),
+    selection_outline: hex(0x65B5FF),
+    accent: hex(0x65B5FF),
+    primary: hex(0x2C77B8),
+    text: hex(0xE7ECF2),
+    text_weak: hex(0x9AA6B2),
+    // rgb(60, 140, 210) at 18%, premultiplied.
+    computed: Color32::from_rgba_premultiplied(11, 25, 38, 46),
+    error: hex(0xF06A6A),
+    error_fill: hex(0x4A2529),
+    warning: hex(0xF2B84B),
+    success: hex(0x5CCB8A),
+    pending: hex(0xF2B84B),
+    stale: hex(0x707A86),
+    banner_fill: hex(0x3B2F1A),
+    banner_text: hex(0xF5C96A),
+    code_bg: hex(0x262D37),
+    string: badge(0x3B2A4A, 0xD7B8FF),
+    number: badge(0x213B59, 0x8AC7FF),
+    integer: badge(0x1E4A4D, 0x72DDD2),
+    boolean: badge(0x4A3520, 0xFFC46B),
+    object: badge(0x243D34, 0x86D9A7),
+    array: badge(0x3B2F55, 0xC7A7FF),
+    date: badge(0x4A2938, 0xFF9FC0),
+};
+
+pub const LIGHT: Palette = Palette {
+    chrome: hex(0xF3F5F7),
+    panel: hex(0xFFFFFF),
+    field: hex(0xFFFFFF),
+    border: hex(0xD5DCE3),
+    stripe: hex(0xF7F9FB),
+    control: hex(0xE9EDF1),
+    hover: hex(0xE2EBF3),
+    // Stronger than the computed tint, so that a computed cell does not look
+    // selected.
+    selection: hex(0xCCE5FA),
+    selection_outline: hex(0x1D74B5),
+    accent: hex(0x247BC1),
+    primary: hex(0x247BC1),
+    text: hex(0x1D252D),
+    text_weak: hex(0x5E6B78),
+    // rgb(90, 140, 170) at 10%, premultiplied: a grey blue, not the
+    // selection's blue.
+    computed: Color32::from_rgba_premultiplied(9, 14, 17, 25),
+    error: hex(0xC93636),
+    error_fill: hex(0xFDEAEA),
+    warning: hex(0xA86800),
+    success: hex(0x237A4A),
+    pending: hex(0xB87700),
+    // Darker than the first design (#8B949E), which was faint on white.
+    stale: hex(0x7A838D),
+    banner_fill: hex(0xFFF2D6),
+    banner_text: hex(0x7A4D00),
+    code_bg: hex(0xEEF1F4),
+    string: badge(0xF1E8FA, 0x6E3AA0),
+    number: badge(0xE5F1FC, 0x17639A),
+    integer: badge(0xE2F6F3, 0x14736D),
+    boolean: badge(0xFFF0D7, 0x945A00),
+    object: badge(0xE3F4E9, 0x267347),
+    array: badge(0xEEE8FC, 0x6240A0),
+    date: badge(0xFBE7EF, 0xA33F68),
+};
+
+impl Palette {
+    pub fn of(theme: Theme) -> &'static Palette {
+        match theme {
+            Theme::Dark => &DARK,
+            Theme::Light => &LIGHT,
+        }
+    }
+
+    /// The palette of the theme a `Ui` is drawn in.
+    pub fn of_ui(ui: &egui::Ui) -> &'static Palette {
+        Self::of_visuals(ui.visuals())
+    }
+
+    pub fn of_visuals(visuals: &Visuals) -> &'static Palette {
+        if visuals.dark_mode { &DARK } else { &LIGHT }
+    }
+
+    /// The badge of a type, by its kind.
+    pub fn badge(&self, kind: &cliotree_core::Kind) -> Badge {
+        use cliotree_core::Kind;
+        match kind {
+            Kind::String(_) | Kind::Enum { .. } => self.string,
+            Kind::Integer(_) => self.integer,
+            Kind::Number(_) => self.number,
+            Kind::Bool => self.boolean,
+            Kind::Date | Kind::DateTime => self.date,
+            Kind::Array { .. } => self.array,
+            Kind::Object { .. } | Kind::Map { .. } => self.object,
+        }
+    }
+}
+
+// -------------------------------------------------------------- fonts
+
+/// The font families the window knows, besides egui's `Proportional` (Inter)
+/// and `Monospace` (Geist Mono).
+pub const MEDIUM: &str = "medium";
+pub const SERIF: &str = "serif";
+pub const CONDENSED: &str = "condensed";
+pub const SCRIPT: &str = "script";
+pub const HANDWRITING: &str = "handwriting";
+/// The Phosphor icons (see [`crate::icons`]).
+pub const ICONS: &str = "phosphor";
+
+/// The typefaces a form can use, by the name shown to the user, and the family
+/// each is drawn with.
+pub const TYPEFACES: [(&str, &str); 6] = [
+    ("Sans (Inter)", "sans"),
+    ("Serif (Source Serif 4)", SERIF),
+    ("Monospace (Geist Mono)", "monospace"),
+    ("Condensed (Oswald)", CONDENSED),
+    ("Script (Dancing Script)", SCRIPT),
+    ("Handwriting (Caveat)", HANDWRITING),
+];
+
+/// The egui family of a name in [`TYPEFACES`].
+pub fn family(name: &str) -> FontFamily {
+    match name {
+        "sans" => FontFamily::Proportional,
+        "monospace" => FontFamily::Monospace,
+        other => FontFamily::Name(other.into()),
+    }
+}
+
+fn font(bytes: &'static [u8]) -> FontData {
+    FontData::from_static(bytes)
+}
+
+fn weighted(bytes: &'static [u8], weight: f32) -> FontData {
+    font(bytes).tweak(FontTweak {
+        coords: VariationCoords::new([(b"wght", weight)]),
+        ..FontTweak::default()
+    })
+}
+
+/// egui's own fonts, with the bundled ones in front of them. What a font lacks
+/// is looked for in the fonts after it: egui's emoji fonts, then the icons.
+pub fn fonts() -> FontDefinitions {
+    const INTER: &[u8] = include_bytes!("../assets/fonts/Inter.ttf");
+    let mut fonts = FontDefinitions::default();
+    let mut add = |name: &str, data: FontData| {
+        fonts.font_data.insert(name.to_owned(), data.into());
+    };
+    add("Inter", weighted(INTER, 400.0));
+    add("Inter Medium", weighted(INTER, MEDIUM_WEIGHT));
+    add(
+        "Geist Mono",
+        weighted(include_bytes!("../assets/fonts/GeistMono.ttf"), 400.0),
+    );
+    add(
+        "Source Serif 4",
+        weighted(include_bytes!("../assets/fonts/SourceSerif4.ttf"), 400.0),
+    );
+    add(
+        "Oswald",
+        weighted(include_bytes!("../assets/fonts/Oswald.ttf"), 400.0),
+    );
+    add(
+        "Dancing Script",
+        weighted(include_bytes!("../assets/fonts/DancingScript.ttf"), 400.0),
+    );
+    add(
+        "Caveat",
+        weighted(include_bytes!("../assets/fonts/Caveat.ttf"), 400.0),
+    );
+    add(ICONS, font(include_bytes!("../assets/Phosphor.ttf")));
+
+    // egui's last resorts (its icons and emoji), from its own families, then
+    // the Phosphor icons, which are in the private use area.
+    let mut fallbacks: Vec<String> = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .into_iter()
+        .flatten()
+        .filter(|name| *name != "Ubuntu-Light")
+        .cloned()
+        .collect();
+    fallbacks.push(ICONS.to_owned());
+    let family = |first: &[&str]| -> Vec<String> {
+        first
+            .iter()
+            .map(|name| (*name).to_owned())
+            // Ubuntu has symbols (√ and others) that some of the fonts lack.
+            .chain(["Inter".to_owned(), "Ubuntu-Light".to_owned()])
+            .chain(fallbacks.iter().cloned())
+            .fold(Vec::new(), |mut list, name| {
+                if !list.contains(&name) {
+                    list.push(name);
+                }
+                list
+            })
+    };
+    let families = [
+        (FontFamily::Proportional, family(&["Inter"])),
+        (FontFamily::Monospace, family(&["Geist Mono", "Hack"])),
+        (FontFamily::Name(MEDIUM.into()), family(&["Inter Medium"])),
+        (FontFamily::Name(SERIF.into()), family(&["Source Serif 4"])),
+        (FontFamily::Name(CONDENSED.into()), family(&["Oswald"])),
+        (FontFamily::Name(SCRIPT.into()), family(&["Dancing Script"])),
+        (FontFamily::Name(HANDWRITING.into()), family(&["Caveat"])),
+        (FontFamily::Name(ICONS.into()), vec![ICONS.to_owned()]),
+    ];
+    for (name, list) in families {
+        fonts.families.insert(name, list);
+    }
+    fonts
+}
+
+/// Text in the interface font, a little heavier than the body: headers, the
+/// active tab, badges.
+pub fn medium(text: impl Into<String>) -> RichText {
+    RichText::new(text).family(FontFamily::Name(MEDIUM.into()))
+}
+
+// -------------------------------------------------------------- style
+
+fn corner(radius: u8) -> CornerRadius {
+    CornerRadius::same(radius)
+}
+
+/// The visuals of a theme, from egui's own (for what is not set here, like the
+/// shadows) with the palette's colours.
+pub fn visuals(theme: Theme) -> Visuals {
+    let p = Palette::of(theme);
+    let mut v = match theme {
+        Theme::Dark => Visuals::dark(),
+        Theme::Light => Visuals::light(),
+    };
+    v.panel_fill = p.panel;
+    v.window_fill = p.panel;
+    v.window_stroke = Stroke::new(1.0, p.border);
+    v.window_corner_radius = corner(PANEL_RADIUS);
+    v.menu_corner_radius = corner(PANEL_RADIUS);
+    v.faint_bg_color = p.stripe;
+    v.extreme_bg_color = p.field;
+    v.text_edit_bg_color = Some(p.field);
+    v.code_bg_color = p.code_bg;
+    v.hyperlink_color = p.accent;
+    v.warn_fg_color = p.warning;
+    v.error_fg_color = p.error;
+    v.weak_text_color = Some(p.text_weak);
+    v.selection.bg_fill = p.selection;
+    v.selection.stroke = Stroke::new(1.0, p.selection_outline);
+
+    let w = &mut v.widgets;
+    let radius = corner(CONTROL_RADIUS);
+    w.noninteractive.bg_fill = p.panel;
+    w.noninteractive.weak_bg_fill = p.panel;
+    w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+    w.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
+    w.noninteractive.corner_radius = radius;
+
+    w.inactive.bg_fill = p.control;
+    w.inactive.weak_bg_fill = p.control;
+    // Text fields draw this outline; without it a field is lost on a bar.
+    w.inactive.bg_stroke = Stroke::new(1.0, p.border);
+    w.inactive.fg_stroke = Stroke::new(1.0, p.text);
+    w.inactive.corner_radius = radius;
+
+    w.hovered.bg_fill = p.hover;
+    w.hovered.weak_bg_fill = p.hover;
+    w.hovered.bg_stroke = Stroke::new(1.0, p.border);
+    w.hovered.fg_stroke = Stroke::new(1.5, p.text);
+    w.hovered.corner_radius = radius;
+    w.hovered.expansion = 0.0;
+
+    w.active.bg_fill = p.selection;
+    w.active.weak_bg_fill = p.selection;
+    w.active.bg_stroke = Stroke::new(1.0, p.accent);
+    w.active.fg_stroke = Stroke::new(2.0, p.text);
+    w.active.corner_radius = radius;
+    w.active.expansion = 0.0;
+
+    w.open.bg_fill = p.hover;
+    w.open.weak_bg_fill = p.hover;
+    w.open.bg_stroke = Stroke::new(1.0, p.border);
+    w.open.fg_stroke = Stroke::new(1.0, p.text);
+    w.open.corner_radius = radius;
+    v
+}
+
+/// The whole style of a theme: its visuals, the spacing and the text sizes.
+pub fn style(theme: Theme) -> Style {
+    let mut style = Style {
+        visuals: visuals(theme),
+        ..Style::default()
+    };
+    style.text_styles = [
+        (TextStyle::Small, FontId::proportional(SMALL_SIZE)),
+        (TextStyle::Body, FontId::proportional(BODY_SIZE)),
+        (TextStyle::Button, FontId::proportional(BODY_SIZE)),
+        (
+            TextStyle::Heading,
+            FontId::new(HEADING_SIZE, FontFamily::Name(MEDIUM.into())),
+        ),
+        (TextStyle::Monospace, FontId::monospace(MONOSPACE_SIZE)),
+    ]
+    .into();
+    let s = &mut style.spacing;
+    s.item_spacing = egui::vec2(8.0, 5.0);
+    s.button_padding = egui::vec2(8.0, 3.0);
+    s.interact_size.y = 22.0;
+    s.window_margin = Margin::same(10);
+    s.menu_margin = Margin::same(6);
+    s.indent = 16.0;
+    style
+}
+
+fn installed_id() -> egui::Id {
+    egui::Id::unique("cliotree style installed")
+}
+
+fn ready_id() -> egui::Id {
+    egui::Id::unique("cliotree style ready")
+}
+
+/// Installs the fonts and the styles of both themes on the first frame. Called
+/// at the start of each frame.
+pub fn prepare(ctx: &egui::Context) {
+    let installed = ctx
+        .data(|d| d.get_temp::<bool>(installed_id()))
+        .unwrap_or(false);
+    if installed {
+        ctx.data_mut(|d| d.insert_temp(ready_id(), true));
+        return;
+    }
+    ctx.set_fonts(fonts());
+    for theme in [Theme::Dark, Theme::Light] {
+        ctx.set_style_of(theme, style(theme));
+    }
+    // A symbol that no font has is drawn as a box, not a reason to stop.
+    ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
+    ctx.data_mut(|d| {
+        d.insert_temp(installed_id(), true);
+        d.insert_temp(ready_id(), false);
+    });
+    ctx.request_repaint();
+}
+
+/// Whether the bundled fonts are in use in this frame.
+pub fn ready(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(ready_id()))
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------- drawing helpers
+
+/// A frame for a bar of the window (the menu, the formula bar, the tabs, the
+/// status bar), in the chrome colour.
+pub fn bar_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::side_top_panel(ui.style())
+        .fill(Palette::of_ui(ui).chrome)
+        .inner_margin(Margin::symmetric(8, 4))
+}
+
+/// A type badge: the text on a rounded fill, cut short with an ellipsis when
+/// the column is narrow. Clicking it is reported, as for a label.
+pub fn badge_label(ui: &mut egui::Ui, text: &str, colours: Badge) -> Response {
+    let room = (ui.available_width() - 2.0 * BADGE_PADDING).max(0.0);
+    let galley = egui::WidgetText::from(medium(text).size(BADGE_SIZE).color(colours.text))
+        .into_galley(
+            ui,
+            Some(TextWrapMode::Truncate),
+            room,
+            egui::FontSelection::Default,
+        );
+    let size = egui::vec2(galley.size().x + 2.0 * BADGE_PADDING, BADGE_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::CLICK);
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, corner(CONTROL_RADIUS), colours.fill);
+        let at = rect.center() - galley.size() / 2.0;
+        ui.painter().galley(at, galley, colours.text);
+    }
+    let text = text.to_owned();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text));
+    response
+}
+
+/// The marker of a cell that is waiting to be calculated: a small dot.
+pub fn pending_marker(ui: &mut egui::Ui) -> Response {
+    let side = MARKER_DIAMETER + 4.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), Sense::hover());
+    ui.painter().circle_filled(
+        rect.center(),
+        MARKER_DIAMETER / 2.0,
+        Palette::of_ui(ui).pending,
+    );
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_family_starts_with_a_bundled_font_and_has_the_icons() {
+        let fonts = fonts();
+        for (family, list) in &fonts.families {
+            for name in list {
+                assert!(
+                    fonts.font_data.contains_key(name),
+                    "{family:?}: no font {name}"
+                );
+            }
+            assert!(list.contains(&ICONS.to_owned()), "{family:?}");
+        }
+        for (_, name) in TYPEFACES {
+            assert!(fonts.families.contains_key(&family(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_bundled_fonts_have_a_weight_axis() {
+        let fonts = fonts();
+        for name in [
+            "Inter",
+            "Inter Medium",
+            "Geist Mono",
+            "Source Serif 4",
+            "Oswald",
+            "Dancing Script",
+            "Caveat",
+        ] {
+            let axes = fonts.font_data[name].variation_axes();
+            assert!(
+                axes.iter().any(|a| a.tag == "wght"),
+                "{name} has no weight axis"
+            );
+        }
+    }
+
+    #[test]
+    fn the_computed_tint_is_not_the_selection() {
+        for p in [&DARK, &LIGHT] {
+            assert_ne!(p.computed, p.selection);
+            assert!(p.computed.a() < 255, "the tint must be translucent");
+        }
+    }
+}

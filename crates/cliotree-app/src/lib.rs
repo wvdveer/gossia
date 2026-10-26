@@ -23,6 +23,7 @@ pub mod schema;
 mod schema_tests;
 pub mod schema_view;
 pub mod status;
+pub mod style;
 pub mod table;
 pub mod table_view;
 pub mod tables;
