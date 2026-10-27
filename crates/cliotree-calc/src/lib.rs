@@ -22,8 +22,8 @@ mod trie;
 
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, EditError,
-    Effective, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleStatus, SchemaFormat, Setting,
-    TrustStore, Unit, WorkbookSettings,
+    Effective, ExportFormat, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleStatus,
+    SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,

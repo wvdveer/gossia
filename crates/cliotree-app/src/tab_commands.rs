@@ -507,6 +507,7 @@ impl ClioApp {
         self.delete_tab_window(ctx);
         self.bind_tab_window(ctx);
         self.import_window(ctx);
+        self.export_window(ctx);
     }
 
     /// The items for tabs, in the Edit menu and a sheet tab's context menu.
@@ -520,6 +521,10 @@ impl ClioApp {
             }
             if ui.button("Import...").clicked() {
                 self.begin_import();
+                ui.close();
+            }
+            if ui.button("Export...").clicked() {
+                self.begin_export(tab);
                 ui.close();
             }
             ui.separator();

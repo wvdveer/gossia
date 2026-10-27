@@ -26,7 +26,7 @@ use crate::view::named;
 
 /// A file browser that draws what the window's fonts have: the Phosphor icons
 /// instead of the emoji and symbols it was written with.
-fn new_browser() -> Browser {
+pub(crate) fn new_browser() -> Browser {
     use crate::icons as i;
     let with = |icon: &str, text: &str| format!("{icon}  {text}");
     let labels = FileDialogLabels {
@@ -148,6 +148,8 @@ pub enum Browsing {
     SaveAs,
     /// A JSON, XML or text file to import as tabs.
     Import,
+    /// The file a tab is exported to.
+    Export,
 }
 
 /// What the file commands keep between frames.
@@ -447,7 +449,7 @@ impl ClioApp {
     }
 
     /// The folder the browser starts in: where the workbook is, or here.
-    fn start_folder(&self) -> std::path::PathBuf {
+    pub(crate) fn start_folder(&self) -> std::path::PathBuf {
         self.doc
             .path
             .as_deref()
@@ -564,6 +566,7 @@ impl ClioApp {
             Browsing::SaveAs => self.save_as(&path),
             Browsing::Open => self.open_path(&path),
             Browsing::Import => self.begin_import_path(&path),
+            Browsing::Export => self.export_to(&path),
         };
         if let Err(e) = done {
             dialog.error = Some(e);
@@ -611,6 +614,7 @@ impl ClioApp {
                 Browsing::SaveAs => "Save As",
                 Browsing::Open => "Open a workbook",
                 Browsing::Import => "Import a file",
+                Browsing::Export => "Export",
             })
             .open(&mut open)
             .collapsible(false)
@@ -632,6 +636,7 @@ impl ClioApp {
                             Browsing::SaveAs => "Save",
                             Browsing::Open => "Open",
                             Browsing::Import => "Import",
+                            Browsing::Export => "Export",
                         })
                         .clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -698,6 +703,7 @@ impl ClioApp {
                 Browsing::Open => self.open_path(&path),
                 Browsing::SaveAs => self.save_as(&path),
                 Browsing::Import => self.begin_import_path(&path),
+                Browsing::Export => self.export_to(&path),
             };
             if let Err(error) = done {
                 self.files.dialog = Some(FileDialog {

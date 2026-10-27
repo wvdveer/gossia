@@ -8,6 +8,7 @@ pub mod control_server;
 pub mod edit;
 #[cfg(test)]
 mod edit_tests;
+pub mod export;
 pub mod file;
 pub mod form;
 pub mod form_layout;
@@ -159,6 +160,8 @@ mod workbook_file_tests;
 #[cfg(test)]
 mod workbook_state_tests;
 
+#[cfg(test)]
+mod export_tests;
 #[cfg(test)]
 mod tab_commands_tests;
 #[cfg(test)]

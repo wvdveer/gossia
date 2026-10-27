@@ -87,6 +87,10 @@ pub use modules::ModuleStatus;
 mod settings;
 pub use settings::{Ceilings, Effective, Setting, Unit, WorkbookSettings};
 
+#[path = "export.rs"]
+mod export;
+pub use export::ExportFormat;
+
 #[path = "tabs.rs"]
 mod tabs;
 pub use tabs::Mentions;

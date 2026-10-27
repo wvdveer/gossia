@@ -290,6 +290,14 @@ impl ClioApp {
                     self.begin_import();
                     ui.close();
                 }
+                if ui
+                    .add_enabled(self.editing.is_none(), egui::Button::new("Export..."))
+                    .clicked()
+                {
+                    let tab = self.sheet.clone();
+                    self.begin_export(&tab);
+                    ui.close();
+                }
                 ui.separator();
                 if ui
                     .add_enabled(self.editing.is_none(), egui::Button::new("Save"))

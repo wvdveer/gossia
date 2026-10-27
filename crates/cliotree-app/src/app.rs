@@ -116,6 +116,8 @@ pub struct ClioApp {
     pub tab_dialogs: crate::tab_commands::TabDialogs,
     /// Files read for importing, each waiting for its dialog in turn.
     pub imports: crate::import::Imports,
+    /// The export dialog, while it is open.
+    pub export: Option<crate::export::ExportPlan>,
     /// The settings the evaluation thread was last given.
     pub applied: Option<Effective>,
 }
@@ -186,6 +188,7 @@ impl ClioApp {
             rename_tab: None,
             tab_dialogs: crate::tab_commands::TabDialogs::default(),
             imports: crate::import::Imports::new(),
+            export: None,
             applied,
         }
     }

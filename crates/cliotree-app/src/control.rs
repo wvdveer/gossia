@@ -104,6 +104,38 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.refresh_rows();
             Ok(json!({ "tab": plan.name, "schema": schema, "report": plan.report() }))
         }
+        // Exports a tab (`tab`, or the current one) to `path`, with what the
+        // dialog starts with, or `format` (`json`, `xml` or `text`),
+        // `compact` and `schema` (also write the schema tab beside it).
+        "export" => {
+            let path = std::path::PathBuf::from(text_arg(args, "path")?);
+            let tab = match args.get("tab").and_then(Json::as_str) {
+                Some(tab) => tab.to_owned(),
+                None => app.sheet.clone(),
+            };
+            let mut plan = app.export_plan(&tab)?;
+            if let Some(format) = args.get("format").and_then(Json::as_str) {
+                plan.format = match format {
+                    "json" => cliotree_calc::ExportFormat::Json,
+                    "xml" => cliotree_calc::ExportFormat::Xml,
+                    "text" => cliotree_calc::ExportFormat::Text,
+                    other => return Err(format!("there is no format {other:?}")),
+                };
+                if !plan.formats.contains(&plan.format) {
+                    return Err(format!("tab {tab} cannot be exported as {format}"));
+                }
+            }
+            plan.pretty = !args.get("compact").and_then(Json::as_bool).unwrap_or(false);
+            plan.with_schema = args.get("schema").and_then(Json::as_bool).unwrap_or(false);
+            let schema = app
+                .export_schema_path(&plan, &path)
+                .map(|p| p.display().to_string());
+            app.export = Some(plan);
+            let done = app.export_to(&path);
+            app.export = None;
+            done?;
+            Ok(json!({ "schema": schema }))
+        }
         "select" => {
             let path = path_arg(args, "path")?;
             if app

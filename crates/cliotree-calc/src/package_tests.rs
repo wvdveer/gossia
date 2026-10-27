@@ -601,3 +601,119 @@ fn a_tab_name_that_breaks_the_naming_rules_opens_with_a_warning() {
     // It opens all the same.
     assert_eq!(opened.calc.sheet_names().count(), 2);
 }
+
+// ------------------------------------------------------------------ export
+
+#[test]
+fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
+    let mut calc = book();
+    calc.set_formula("Orders", &p("ratio"), "1 / 0").unwrap();
+    run(&mut calc);
+    assert_eq!(
+        calc.export_formats("Orders"),
+        [crate::ExportFormat::Json],
+        "an object is not lines of text"
+    );
+    let text = calc
+        .export_text("Orders", crate::ExportFormat::Json, true)
+        .unwrap();
+    assert!(text.ends_with("}\n"), "{text}");
+    assert!(text.contains("\n  \"customer\": \"Acme\""), "{text}");
+    let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(back["items"][0]["total"], 3.0);
+    assert_eq!(back["sum"], 9.0);
+    // The errored node is absent, and no formula is written.
+    assert!(back.get("ratio").is_none(), "{text}");
+    assert!(!text.contains("parent.qty"), "{text}");
+    // Compact is one line.
+    let compact = calc
+        .export_text("Orders", crate::ExportFormat::Json, false)
+        .unwrap();
+    assert_eq!(compact.lines().count(), 1, "{compact}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&compact).unwrap(),
+        back
+    );
+    // The schema tab beside it, and none beside a schema tab.
+    assert_eq!(calc.export_schema("Orders"), Some("OrdersSchema"));
+    assert_eq!(calc.export_schema("OrdersSchema"), None);
+    let schema = calc
+        .export_text("OrdersSchema", crate::ExportFormat::Json, true)
+        .unwrap();
+    jsonschema::lower_str(&schema).unwrap();
+}
+
+#[test]
+fn an_exported_xml_tab_and_its_xsd_read_back() {
+    let calc = book();
+    assert_eq!(calc.export_format("Note"), Some(crate::ExportFormat::Xml));
+    assert_eq!(calc.export_formats("Note"), [crate::ExportFormat::Xml]);
+    assert_eq!(calc.export_schema("Note"), Some("NoteSchema"));
+    assert_eq!(
+        calc.export_format("NoteSchema"),
+        Some(crate::ExportFormat::Xml)
+    );
+    let xsd_text = calc
+        .export_text("NoteSchema", crate::ExportFormat::Xml, true)
+        .unwrap();
+    let spec = xsd::lower_str(&xsd_text).unwrap();
+    let text = calc
+        .export_text("Note", crate::ExportFormat::Xml, true)
+        .unwrap();
+    assert!(text.contains("\n  <to>Ward</to>"), "{text}");
+    let back = xml::parse(&text, &spec).unwrap();
+    assert_eq!(
+        back.node.get(&p("size")).map(|n| n.value().clone()),
+        Some(Value::Int(3))
+    );
+    let compact = calc
+        .export_text("Note", crate::ExportFormat::Xml, false)
+        .unwrap();
+    assert!(
+        compact.contains("<note id=\"7\"><to>Ward</to>"),
+        "{compact}"
+    );
+    // XML is not written as JSON.
+    let error = calc
+        .export_text("Note", crate::ExportFormat::Json, true)
+        .unwrap_err();
+    assert!(error.contains("XML"), "{error}");
+}
+
+#[test]
+fn an_array_of_strings_exports_as_lines_of_text() {
+    const LINES: &str = r#"{"type": "array", "items": {"type": "string"}}"#;
+    let mut calc = Calc::new(syntax());
+    calc.add_sheet(
+        "Lines",
+        jsonschema::lower_str(LINES).unwrap(),
+        json::parse(r#"["one", "", "three", "four"]"#).unwrap().node,
+    )
+    .unwrap();
+    calc.set_formula("Lines", &p("[3]"), "1 / 0").unwrap();
+    run(&mut calc);
+    assert_eq!(
+        calc.export_formats("Lines"),
+        [crate::ExportFormat::Json, crate::ExportFormat::Text]
+    );
+    // The errored item is left out, as it is from JSON.
+    assert_eq!(
+        calc.export_text("Lines", crate::ExportFormat::Text, true)
+            .unwrap(),
+        "one\n\nthree\n"
+    );
+    // What text import reads back is the same array.
+    let back = cliotree_core::infer::text_lines("one\n\nthree\n").data;
+    assert_eq!(
+        json::to_string(&back, false).unwrap(),
+        r#"["one","","three"]"#
+    );
+    // A line break inside a string cannot be written as lines.
+    calc.set_value("Lines", &p("[0]"), Value::Str("a\nb".into()))
+        .unwrap();
+    assert_eq!(calc.export_formats("Lines"), [crate::ExportFormat::Json]);
+    let error = calc
+        .export_text("Lines", crate::ExportFormat::Text, true)
+        .unwrap_err();
+    assert!(error.contains("line break"), "{error}");
+}
