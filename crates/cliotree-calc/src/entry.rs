@@ -144,10 +144,35 @@ pub fn enter(
     text: &str,
     typing: bool,
 ) -> Result<(), EntryError> {
+    enter_with(calc, sheet, path, text, typing, false)
+}
+
+/// As [`enter`], but a formula replaces the formulas inside the node instead
+/// of being refused for them (the author said yes to that).
+pub fn enter_replacing(
+    calc: &mut Calc,
+    sheet: &str,
+    path: &Path,
+    text: &str,
+) -> Result<(), EntryError> {
+    enter_with(calc, sheet, path, text, false, true)
+}
+
+fn enter_with(
+    calc: &mut Calc,
+    sheet: &str,
+    path: &Path,
+    text: &str,
+    typing: bool,
+    replace: bool,
+) -> Result<(), EntryError> {
     let spec = calc
         .spec(sheet)
         .ok_or_else(|| EntryError::Refused(EditError::NoSheet(sheet.to_owned())))?;
     match classify(spec, path, text)? {
+        Entered::Formula(formula) if replace => {
+            calc.set_formula_replacing(sheet, path, &formula)?
+        }
         Entered::Formula(formula) => calc.set_formula(sheet, path, &formula)?,
         Entered::Literal(value) => {
             if typing {
@@ -171,10 +196,36 @@ pub fn enter_column(
     field: &str,
     text: &str,
 ) -> Result<(), EntryError> {
+    enter_column_with(calc, sheet, array, field, text, false)
+}
+
+/// As [`enter_column`], but the formula replaces the formulas inside the
+/// field of the items instead of being refused for them.
+pub fn enter_column_replacing(
+    calc: &mut Calc,
+    sheet: &str,
+    array: &Path,
+    field: &str,
+    text: &str,
+) -> Result<(), EntryError> {
+    enter_column_with(calc, sheet, array, field, text, true)
+}
+
+fn enter_column_with(
+    calc: &mut Calc,
+    sheet: &str,
+    array: &Path,
+    field: &str,
+    text: &str,
+    replace: bool,
+) -> Result<(), EntryError> {
     let spec = calc
         .spec(sheet)
         .ok_or_else(|| EntryError::Refused(EditError::NoSheet(sheet.to_owned())))?;
     match classify(spec, &array.index(0).key(field), text)? {
+        Entered::Formula(formula) if replace => {
+            calc.set_column_formula_replacing(sheet, array, field, &formula)?
+        }
         Entered::Formula(formula) => calc.set_column_formula(sheet, array, field, &formula)?,
         Entered::Clear => {
             calc.remove_column_formula(sheet, array, field)?;

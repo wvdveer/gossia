@@ -380,7 +380,7 @@ impl OptionsDialog {
 }
 
 impl ClioApp {
-    /// File > Options, on a page, or on the page it was last left on.
+    /// Tools > Options, on a page, or on the page it was last left on.
     pub fn begin_options(&mut self, page: Option<Page>) {
         let page = page.unwrap_or(self.options_page);
         self.options = Some(OptionsDialog::new(

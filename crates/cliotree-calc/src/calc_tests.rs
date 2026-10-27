@@ -676,6 +676,39 @@ fn a_formula_on_a_node_with_formulas_inside_is_refused() {
     assert!(matches!(err, EditError::ContainsFormulas { .. }), "{err}");
 }
 
+/// Formulas, "A formula over formulas inside": with the author's yes, the
+/// formulas inside go and the formula goes on, as one undoable entry.
+#[test]
+fn a_formula_can_replace_the_formulas_inside_and_undo_brings_them_back() {
+    let mut b = Book::new();
+    b.formula("list[2]", "S.a + 10");
+    b.run();
+    assert_eq!(b.get("list[2]"), Some(Value::Int(11)));
+    b.calc
+        .set_formula_replacing("S", &p("list"), "S.copy")
+        .unwrap();
+    assert_eq!(b.calc.formula_text("S", &p("list[2]")), None);
+    assert_eq!(
+        b.calc.formula_text("S", &p("list")).as_deref(),
+        Some("S.copy")
+    );
+    b.run();
+    assert_eq!(b.get("list"), Some(Value::Array(Vec::new())));
+
+    assert_eq!(
+        b.calc.undo().unwrap().as_deref(),
+        Some("Set formula at S.list")
+    );
+    assert_eq!(b.calc.formula_text("S", &p("list")), None);
+    assert_eq!(
+        b.calc.formula_text("S", &p("list[2]")).as_deref(),
+        Some("S.a + 10")
+    );
+    assert_eq!(b.get("list[2]"), Some(Value::Int(11)));
+    b.calc.redo().unwrap();
+    assert_eq!(b.calc.formula_text("S", &p("list[2]")), None);
+}
+
 /// Formulas, "Array and object formulas": items may carry formulas when the
 /// array itself is not computed.
 #[test]
@@ -994,4 +1027,26 @@ proptest! {
         step_by_step.run();
         prop_assert_eq!(outcome_of(&step_by_step.calc), before);
     }
+}
+
+/// Formulas, "A formula over what is inside": what a formula on a node would
+/// erase is the values inside it and the formulas inside it.
+#[test]
+fn the_detail_inside_a_node_counts_values_and_formulas() {
+    let mut b = Book::new();
+    let detail = b.calc.detail_inside("S", &p("list"));
+    assert_eq!((detail.values, detail.formulas.len()), (6, 0));
+    assert!(b.calc.detail_inside("S", &p("copy")).is_empty());
+    assert!(b.calc.detail_inside("S", &p("a")).is_empty());
+
+    b.formula("list[2]", "S.a + 10");
+    let detail = b.calc.detail_inside("S", &p("list"));
+    assert_eq!(detail.values, 5);
+    assert_eq!(detail.formulas, [p("list[2]")]);
+
+    // A node with a formula holds only its results.
+    b.calc
+        .set_formula_replacing("S", &p("list"), "S.copy")
+        .unwrap();
+    assert!(b.calc.detail_inside("S", &p("list")).is_empty());
 }

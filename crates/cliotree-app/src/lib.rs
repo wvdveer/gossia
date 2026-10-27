@@ -2,6 +2,10 @@
 //! can be driven by tests.
 
 pub mod app;
+pub mod code;
+pub mod code_text;
+#[cfg(test)]
+mod code_text_tests;
 pub mod control;
 #[cfg(feature = "test-control")]
 pub mod control_server;
@@ -19,6 +23,7 @@ pub mod import;
 pub mod options;
 pub mod prefs;
 pub mod raw;
+pub mod replace_inside;
 pub mod rows;
 pub mod sample;
 pub mod schema;

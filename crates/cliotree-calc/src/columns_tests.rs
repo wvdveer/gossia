@@ -326,3 +326,80 @@ fn a_column_item_in_error_is_saved_with_its_error() {
     );
     assert_eq!(back.formulas("Orders").len(), 3);
 }
+
+/// Formulas, "A formula over formulas inside": when the author says yes, a
+/// formula on the array replaces the column formula inside it, as one entry
+/// that undo takes back whole.
+#[test]
+fn a_formula_can_replace_the_column_formula_inside_it_and_undo_restores_both() {
+    let mut calc = book();
+    column(&mut calc);
+    assert!(matches!(
+        calc.set_formula("Orders", &p("items"), "[]"),
+        Err(EditError::ContainsFormulas { .. })
+    ));
+    assert_eq!(calc.formulas_inside("Orders", &p("items")).len(), 3);
+    calc.set_formula_replacing("Orders", &p("items"), "[]")
+        .unwrap();
+    assert!(calc.column_formulas("Orders").is_empty());
+    assert_eq!(calc.formulas("Orders").len(), 1);
+    assert_eq!(
+        calc.formula_text("Orders", &p("items")).as_deref(),
+        Some("[]")
+    );
+    run(&mut calc);
+    assert_eq!(value(&calc, "items"), Some(Value::Array(Vec::new())));
+
+    calc.undo().unwrap();
+    assert_eq!(calc.formula_text("Orders", &p("items")), None);
+    assert_eq!(
+        calc.column_formula("Orders", &p("items"), "total"),
+        Some(TOTAL)
+    );
+    assert_eq!(calc.formulas("Orders").len(), 3);
+    assert_eq!(number(&calc, "items[1].qty"), 3.0);
+    calc.redo().unwrap();
+    assert!(calc.column_formulas("Orders").is_empty());
+    assert_eq!(calc.formulas("Orders").len(), 1);
+}
+
+/// Replacing one item's formulas leaves the column formula of the others as
+/// ordinary formulas, as entering anything else in one item does.
+#[test]
+fn a_formula_on_one_item_can_replace_the_formula_inside_it() {
+    let mut calc = book();
+    column(&mut calc);
+    calc.set_formula_replacing("Orders", &p("items[1]"), "{'qty': 1, 'price': 1.0}")
+        .unwrap();
+    assert!(calc.column_formulas("Orders").is_empty());
+    assert_eq!(calc.formula_text("Orders", &p("items[1].total")), None);
+    assert!(calc.formula_text("Orders", &p("items[0].total")).is_some());
+    assert!(calc.formula_text("Orders", &p("items[2].total")).is_some());
+    calc.undo().unwrap();
+    assert_eq!(
+        calc.column_formula("Orders", &p("items"), "total"),
+        Some(TOTAL)
+    );
+    assert!(calc.formula_text("Orders", &p("items[1].total")).is_some());
+}
+
+/// What a column formula would erase: the values the items hold in the field,
+/// not the formulas of a column formula already there.
+#[test]
+fn the_detail_inside_a_column_is_its_values_but_not_its_own_formulas() {
+    let mut calc = book();
+    let detail = calc.detail_inside_column("Orders", &p("items"), "total");
+    assert_eq!((detail.values, detail.formulas.len()), (1, 0));
+    assert!(
+        calc.detail_inside_column("Orders", &p("items"), "qty")
+            .values
+            == 3
+    );
+    column(&mut calc);
+    assert!(
+        calc.detail_inside_column("Orders", &p("items"), "total")
+            .is_empty()
+    );
+    let detail = calc.detail_inside("Orders", &p("items"));
+    assert_eq!((detail.values, detail.formulas.len()), (6, 3));
+}

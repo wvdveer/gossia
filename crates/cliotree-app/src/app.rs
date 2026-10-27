@@ -88,6 +88,9 @@ pub struct ClioApp {
     pub insert_function: Option<InsertFunction>,
     pub summary: Summary,
     pub show_issues: bool,
+    /// A formula waiting for the answer to whether it may erase what is
+    /// inside its node.
+    pub replace_inside: Option<crate::replace_inside::ReplaceInside>,
     /// The tabular view of arrays: which arrays, and the view state of each.
     pub tables: Tables,
     /// A field command waiting for a name or a confirmation.
@@ -125,6 +128,8 @@ pub struct ClioApp {
     pub appearance_applied: Option<crate::prefs::Appearance>,
     /// The settings the evaluation thread was last given.
     pub applied: Option<Effective>,
+    /// The code editor's window and the modules open in it.
+    pub code: crate::code::CodeEditor,
 }
 
 impl ClioApp {
@@ -179,6 +184,7 @@ impl ClioApp {
             insert_function: None,
             summary: Summary::default(),
             show_issues: false,
+            replace_inside: None,
             tables: Tables::default(),
             schema_dialog: None,
             scroll_to: None,
@@ -198,6 +204,7 @@ impl ClioApp {
             options_page: crate::options::Page::General,
             appearance_applied: None,
             applied,
+            code: crate::code::CodeEditor::default(),
         }
     }
 

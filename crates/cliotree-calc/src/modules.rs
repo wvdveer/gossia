@@ -129,15 +129,42 @@ impl Calc {
 
     // ------------------------------------------------------------ editing
 
-    /// Adds a module. Its name must be valid, not reserved, and different from
-    /// every module and tab, ignoring case.
+    /// Adds a module after the others. Its name must be valid, not reserved,
+    /// and different from every module and tab, ignoring case. One entry in
+    /// the history.
     pub fn add_module(&mut self, name: &str, source: &str) -> Result<(), EditError> {
         self.check_module_name(name, None)?;
-        self.module_generation += 1;
-        let module = Module::new(source, self.module_generation, self);
-        self.modules.insert(name.to_owned(), module);
-        self.module_changed(name, &[]);
+        let position = self.modules.len();
+        self.store_add_module(name, source, position);
+        self.history.record(
+            format!("Insert module {name}"),
+            vec![Op::AddModule {
+                name: name.to_owned(),
+                source: source.to_owned(),
+                position,
+            }],
+            None,
+        );
         Ok(())
+    }
+
+    /// The first free name of the form `Module1`, `Module2`, ..., for
+    /// *Insert > Module*, as Excel names them.
+    pub fn new_module_name(&self) -> String {
+        (1..)
+            .map(|n| format!("Module{n}"))
+            .find(|name| self.check_module_name(name, None).is_ok())
+            .expect("some number is free")
+    }
+
+    /// Why `name` cannot be given to a module (`renaming` is the module being
+    /// renamed, if any), or `None` if it can.
+    pub fn module_name_problem(&self, name: &str, renaming: Option<&str>) -> Option<String> {
+        match self.check_module_name(name, renaming) {
+            Ok(()) => None,
+            Err(EditError::BadName(why)) => Some(why),
+            Err(other) => Some(other.to_string()),
+        }
     }
 
     /// Replaces the source of a module. One entry in the history.
@@ -162,9 +189,67 @@ impl Calc {
         Ok(())
     }
 
-    /// Takes a module away. Formulas that used it show `#NAME!`. Not undoable,
-    /// like removing a tab.
+    /// Takes a module away. Formulas that used it show `#NAME!`. One entry in
+    /// the history, which puts it back in its place.
     pub fn remove_module(&mut self, name: &str) -> Result<(), EditError> {
+        let Some(position) = self.modules.get_index_of(name) else {
+            return Err(EditError::NoModule(name.to_owned()));
+        };
+        let source = self.modules[position].source.to_string();
+        self.store_remove_module(name)?;
+        self.history.record(
+            format!("Remove module {name}"),
+            vec![Op::RemoveModule {
+                name: name.to_owned(),
+                source,
+                position,
+            }],
+            None,
+        );
+        Ok(())
+    }
+
+    /// Gives a module another name. Formulas that used the old name show
+    /// `#NAME!`; names in formulas are never rewritten. One entry in the
+    /// history; a name equal to the current one is no edit.
+    pub fn rename_module(&mut self, from: &str, to: &str) -> Result<(), EditError> {
+        if !self.modules.contains_key(from) {
+            return Err(EditError::NoModule(from.to_owned()));
+        }
+        if from == to {
+            return Ok(());
+        }
+        self.check_module_name(to, Some(from))?;
+        self.store_rename_module(from, to)?;
+        self.history.record(
+            format!("Rename module {from} to {to}"),
+            vec![Op::RenameModule {
+                from: from.to_owned(),
+                to: to.to_owned(),
+            }],
+            None,
+        );
+        Ok(())
+    }
+
+    /// The module renames done since the last call, oldest first, undoing and
+    /// redoing included, so that the window can follow them.
+    pub fn take_module_renames(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.module_renames)
+    }
+
+    /// Puts a module in at `position`, for adding one and for undoing a
+    /// removal.
+    pub(super) fn store_add_module(&mut self, name: &str, source: &str, position: usize) {
+        self.module_generation += 1;
+        let module = Module::new(source, self.module_generation, self);
+        self.modules.insert(name.to_owned(), module);
+        let last = self.modules.len() - 1;
+        self.modules.move_index(last, position.min(last));
+        self.module_changed(name, &[]);
+    }
+
+    pub(super) fn store_remove_module(&mut self, name: &str) -> Result<(), EditError> {
         let Some(module) = self.modules.shift_remove(name) else {
             return Err(EditError::NoModule(name.to_owned()));
         };
@@ -173,13 +258,10 @@ impl Calc {
         Ok(())
     }
 
-    /// Gives a module another name. Formulas that used the old name show
-    /// `#NAME!`; names in formulas are never rewritten.
-    pub fn rename_module(&mut self, from: &str, to: &str) -> Result<(), EditError> {
+    pub(super) fn store_rename_module(&mut self, from: &str, to: &str) -> Result<(), EditError> {
         if !self.modules.contains_key(from) {
             return Err(EditError::NoModule(from.to_owned()));
         }
-        self.check_module_name(to, Some(from))?;
         let position = self.modules.get_index_of(from).unwrap_or(0);
         let mut module = self.modules.shift_remove(from).expect("checked above");
         let old = module.public_functions();
@@ -191,6 +273,7 @@ impl Calc {
         let last = self.modules.len() - 1;
         self.modules.move_index(last, position);
         self.module_changed(to, &[]);
+        self.module_renames.push((from.to_owned(), to.to_owned()));
         Ok(())
     }
 

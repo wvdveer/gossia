@@ -321,6 +321,7 @@ impl ClioApp {
             };
         }
         fresh.show_issues = self.show_issues;
+        fresh.code = self.code.for_next_workbook();
         fresh.files.browse = self.files.browse;
         fresh.files.quit_confirmed = false;
         if !warnings.is_empty() {
@@ -367,6 +368,8 @@ impl ClioApp {
     }
 
     fn write_to(&mut self, path: &Path) -> Result<(), String> {
+        // What was typed in the code editor is saved too.
+        self.commit_code();
         // Saving waits for what is still being calculated.
         if !self.session.wait_idle(Duration::from_secs(60)) {
             return Err("the workbook is still calculating; try again in a moment".to_owned());
@@ -426,6 +429,7 @@ impl ClioApp {
 
     /// File > Open: asks first about unsaved changes.
     pub fn begin_open(&mut self) {
+        self.commit_code();
         if self.is_dirty() {
             self.files.confirm = Some(Pending::Open);
         } else {
@@ -435,6 +439,7 @@ impl ClioApp {
 
     /// File > Open Recent: asks first about unsaved changes.
     pub fn begin_open_recent(&mut self, path: &Path) {
+        self.commit_code();
         if self.is_dirty() {
             self.files.confirm = Some(Pending::OpenRecent(path.to_path_buf()));
         } else {
@@ -444,6 +449,7 @@ impl ClioApp {
 
     /// File > New: asks first about unsaved changes.
     pub fn begin_new(&mut self) {
+        self.commit_code();
         if self.is_dirty() {
             self.files.confirm = Some(Pending::New);
         } else {
@@ -547,6 +553,7 @@ impl ClioApp {
     /// File > Quit, or the window being closed: asks first about unsaved
     /// changes.
     pub fn request_quit(&mut self, ctx: &egui::Context) {
+        self.commit_code();
         if self.is_dirty() && !self.files.quit_confirmed {
             self.files.confirm = Some(Pending::Quit);
         } else {
@@ -736,6 +743,9 @@ impl ClioApp {
 
     /// Asks to close the window while there are unsaved changes.
     pub(crate) fn handle_close_request(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.commit_code();
+        }
         if ctx.input(|i| i.viewport().close_requested())
             && self.is_dirty()
             && !self.files.quit_confirmed

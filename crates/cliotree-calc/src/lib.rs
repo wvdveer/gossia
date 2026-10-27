@@ -21,7 +21,7 @@ mod session;
 mod trie;
 
 pub use calc::{
-    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, EditError,
+    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, EditError,
     Effective, ExportFormat, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleStatus,
     SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings,
 };

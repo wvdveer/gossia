@@ -430,6 +430,66 @@ fn removing_and_renaming_a_module_leave_names_in_formulas_alone() {
 }
 
 #[test]
+fn inserting_removing_and_renaming_a_module_are_undoable() {
+    let mut b = book_with(&[("A", ""), ("Tax", TAX), ("C", "")]);
+    b.formula("x", "Tax.vat(100)");
+    b.calc.mark_saved();
+    b.run();
+
+    b.calc.remove_module("Tax").unwrap();
+    assert!(
+        b.calc.is_modified(),
+        "removing a module is a change to save"
+    );
+    assert_eq!(b.calc.undo_label(), Some("Remove module Tax"));
+    b.run();
+    assert_eq!(b.error("x"), Some(ErrorKind::Name));
+    b.calc.undo().unwrap();
+    b.run();
+    assert_eq!(b.calc.module_names().collect::<Vec<_>>(), ["A", "Tax", "C"]);
+    assert_eq!(b.calc.module_source("Tax"), Some(TAX));
+    assert_eq!(b.get("x"), Some(Value::Float(21.0)));
+    assert!(!b.calc.is_modified());
+
+    b.calc.rename_module("Tax", "Vat").unwrap();
+    assert_eq!(b.calc.undo_label(), Some("Rename module Tax to Vat"));
+    b.calc.undo().unwrap();
+    assert_eq!(b.calc.module_names().collect::<Vec<_>>(), ["A", "Tax", "C"]);
+    b.calc.redo().unwrap();
+    assert_eq!(b.calc.module_names().collect::<Vec<_>>(), ["A", "Vat", "C"]);
+    // The window follows renames, undone and redone ones included.
+    assert_eq!(
+        b.calc.take_module_renames(),
+        [
+            ("Tax".to_owned(), "Vat".to_owned()),
+            ("Vat".to_owned(), "Tax".to_owned()),
+            ("Tax".to_owned(), "Vat".to_owned()),
+        ]
+    );
+
+    b.calc.add_module("Extra", "y = 1\n").unwrap();
+    assert_eq!(b.calc.undo_label(), Some("Insert module Extra"));
+    b.calc.undo().unwrap();
+    assert_eq!(b.calc.module_names().collect::<Vec<_>>(), ["A", "Vat", "C"]);
+}
+
+#[test]
+fn a_new_module_takes_the_first_free_number_and_names_are_checked() {
+    let mut b = book_with(&[("Module1", ""), ("module3", "")]);
+    assert_eq!(b.calc.new_module_name(), "Module2");
+    b.calc.add_module("Module2", "").unwrap();
+    // Names ignore case, so Module3 is taken by module3.
+    assert_eq!(b.calc.new_module_name(), "Module4");
+    assert!(b.calc.module_name_problem("Module1", None).is_some());
+    assert_eq!(b.calc.module_name_problem("Module1", Some("Module1")), None);
+    assert!(b.calc.module_name_problem("not a name", None).is_some());
+    // Renaming to the same name is no edit.
+    let label = b.calc.undo_label().map(str::to_owned);
+    b.calc.rename_module("Module1", "Module1").unwrap();
+    assert_eq!(b.calc.undo_label().map(str::to_owned), label);
+}
+
+#[test]
 fn modules_keep_their_order_when_one_is_renamed() {
     let mut b = book_with(&[("A", ""), ("B", ""), ("C", "")]);
     b.calc.rename_module("B", "Bb").unwrap();

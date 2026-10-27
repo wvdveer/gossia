@@ -76,6 +76,55 @@ impl Calc {
         field: &str,
         text: &str,
     ) -> Result<(), EditError> {
+        self.put_column_formula(sheet, array, field, text, false)
+    }
+
+    /// As [`Calc::set_column_formula`], but formulas inside the field of the
+    /// items are removed first instead of refusing the formula.
+    pub fn set_column_formula_replacing(
+        &mut self,
+        sheet: &str,
+        array: &Path,
+        field: &str,
+        text: &str,
+    ) -> Result<(), EditError> {
+        self.put_column_formula(sheet, array, field, text, true)
+    }
+
+    /// What a column formula on the field would erase: the values the items
+    /// hold there and the formulas in and inside it, apart from those of a
+    /// column formula already there, which it replaces as a whole.
+    pub fn detail_inside_column(&self, sheet: &str, array: &Path, field: &str) -> Detail {
+        let mut detail = Detail::default();
+        let Some(s) = self.sheets.get(sheet) else {
+            return detail;
+        };
+        let length = self.column_length(sheet, array, field).unwrap_or(0);
+        let rule = ColumnFormula {
+            array: array.clone(),
+            field: field.to_owned(),
+            text: String::new(),
+        };
+        for index in 0..length {
+            let place = rule.place(index);
+            if self.column_of(sheet, &place).is_some() {
+                continue;
+            }
+            if let Some(node) = s.data.get(&place) {
+                collect_detail(s, &place, node, &mut detail);
+            }
+        }
+        detail
+    }
+
+    fn put_column_formula(
+        &mut self,
+        sheet: &str,
+        array: &Path,
+        field: &str,
+        text: &str,
+        replace: bool,
+    ) -> Result<(), EditError> {
         let length = self.column_length(sheet, array, field)?;
         let rule = ColumnFormula {
             array: array.clone(),
@@ -83,11 +132,14 @@ impl Calc {
             text: text.to_owned(),
         };
         for index in 0..length {
-            self.check_formula_place(sheet, &rule.place(index))?;
+            self.check_formula_place(sheet, &rule.place(index), replace)?;
         }
         let before = self.column_formula(sheet, array, field).map(str::to_owned);
         let mut ops = vec![self.store_column(sheet, array, field, Some(text), before)];
         for index in 0..length {
+            if replace {
+                ops.extend(self.clear_formulas_below(sheet, &rule.place(index)));
+            }
             ops.push(self.formula_op(sheet, &rule.place(index), text));
         }
         self.history.record(

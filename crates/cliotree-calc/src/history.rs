@@ -48,6 +48,22 @@ pub(crate) enum Op {
         before: String,
         after: String,
     },
+    /// A module comes into being at `position` in the order of modules. The
+    /// reverse of [`Op::RemoveModule`].
+    AddModule {
+        name: String,
+        source: String,
+        position: usize,
+    },
+    /// A module goes away, with its source and its place, so that undoing it
+    /// puts it back.
+    RemoveModule {
+        name: String,
+        source: String,
+        position: usize,
+    },
+    /// A module is renamed.
+    RenameModule { from: String, to: String },
     /// The auto-update switch of a schema tab is turned on or off.
     AutoUpdate {
         sheet: String,
@@ -119,8 +135,10 @@ impl Op {
             | Op::Bind { .. }
             | Op::Column { .. }
             | Op::Settings { .. }
-            | Op::RenameSheet { .. } => 1,
+            | Op::RenameSheet { .. }
+            | Op::RenameModule { .. } => 1,
             Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
+            Op::AddModule { source, .. } | Op::RemoveModule { source, .. } => 1 + source.len() / 64,
             Op::Formula { value, .. } => {
                 1 + value
                     .as_ref()

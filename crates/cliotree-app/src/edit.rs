@@ -9,6 +9,7 @@ use cliotree_calc::python::completion::complete;
 use cliotree_core::{Kind, Num, Path, Segment, TypeId, TypeSpec, Value};
 
 use crate::app::{ClioApp, CompletionUi, Editing, Focus, InsertFunction};
+use crate::replace_inside::Target;
 use crate::rows::{Row, RowKind, display};
 
 impl ClioApp {
@@ -121,6 +122,13 @@ impl ClioApp {
     }
 
     pub fn cancel_editing(&mut self) {
+        if self
+            .replace_inside
+            .as_ref()
+            .is_some_and(|ask| !ask.from_form)
+        {
+            self.replace_inside = None;
+        }
         self.editing = None;
         self.notice = None;
         self.completion = CompletionUi::default();
@@ -132,6 +140,18 @@ impl ClioApp {
         let Some(editing) = self.editing.take() else {
             return true;
         };
+        // A formula that would erase what is inside its node waits for the
+        // answer to the question about it.
+        let target = match &editing.column {
+            Some((array, field)) => Target::Column(array.clone(), field.clone()),
+            None => Target::Node(editing.path.clone()),
+        };
+        let sheet = editing.sheet.clone();
+        let text = editing.text.clone();
+        if self.replace_inside.is_some() || self.ask_before_erasing(&sheet, target, &text, false) {
+            self.editing = Some(editing);
+            return false;
+        }
         let result = match &editing.column {
             Some((array, field)) => entry::enter_column(
                 self.session.calc_mut(),
@@ -317,6 +337,8 @@ impl ClioApp {
         if self.editing.is_some() || self.session.running_procedure().is_some() {
             return;
         }
+        // What was typed in the code editor is the entry undone first.
+        self.commit_code();
         match self.session.calc_mut().undo() {
             Ok(_) => self.notice = None,
             Err(e) => self.notice = Some(e.to_string()),
@@ -329,6 +351,8 @@ impl ClioApp {
         if self.editing.is_some() || self.session.running_procedure().is_some() {
             return;
         }
+        // Typing ends what can be redone, as any edit does.
+        self.commit_code();
         match self.session.calc_mut().redo() {
             Ok(_) => self.notice = None,
             Err(e) => self.notice = Some(e.to_string()),

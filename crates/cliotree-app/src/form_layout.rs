@@ -1262,6 +1262,17 @@ impl ClioApp {
     /// Enters the formula of a node, or removes it when the text is empty.
     pub fn commit_formula(&mut self, path: &Path, text: &str) {
         let sheet = self.sheet.clone();
+        let formula = format!("={}", text.trim());
+        if !text.trim().is_empty()
+            && self.ask_before_erasing(
+                &sheet,
+                crate::replace_inside::Target::Node(path.clone()),
+                &formula,
+                true,
+            )
+        {
+            return;
+        }
         let result = if text.trim().is_empty() {
             self.session
                 .calc_mut()
@@ -1269,24 +1280,24 @@ impl ClioApp {
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         } else {
-            entry::enter(
-                self.session.calc_mut(),
-                &sheet,
-                path,
-                &format!("={}", text.trim()),
-                false,
-            )
-            .map_err(|e| e.to_string())
+            entry::enter(self.session.calc_mut(), &sheet, path, &formula, false)
+                .map_err(|e| e.to_string())
         };
         match result {
             Ok(()) => {
                 self.notice = None;
-                if let Some(layout) = self.form.layout.as_mut() {
-                    layout.formula = None;
-                }
+                self.clear_form_formula();
                 self.session.tick();
             }
             Err(message) => self.notice = Some(message),
+        }
+    }
+
+    /// Lets the formula box of the form designer show the node's formula
+    /// again, instead of what was typed.
+    pub(crate) fn clear_form_formula(&mut self) {
+        if let Some(layout) = self.form.layout.as_mut() {
+            layout.formula = None;
         }
     }
 

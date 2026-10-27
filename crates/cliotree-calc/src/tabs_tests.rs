@@ -149,6 +149,7 @@ fn names_that_break_the_rules_or_clash_are_refused() {
     b.calc
         .add_module("Tax", "def vat(x):\n    return x\n")
         .unwrap();
+    b.calc.clear_history();
     for (name, word) in [
         ("", "needs a name"),
         ("2nd", "not a valid"),

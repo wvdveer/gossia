@@ -224,7 +224,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             if app.commit_editing() {
                 Ok(Json::Null)
             } else {
-                let why = app.notice.clone().unwrap_or_default();
+                let why = why_not_entered(app);
                 app.cancel_editing();
                 Err(why)
             }
@@ -368,6 +368,16 @@ fn path_arg(args: &Json, name: &str) -> Result<Path, String> {
         .map_err(|e| format!("the argument {name} is not a path: {e}"))
 }
 
+/// Why what was typed was not entered: the refusal, or the question it waits
+/// for.
+fn why_not_entered(app: &ClioApp) -> String {
+    match (&app.notice, &app.replace_inside) {
+        (Some(notice), _) => notice.clone(),
+        (None, Some(ask)) => ask.question(),
+        (None, None) => String::new(),
+    }
+}
+
 /// A key the window handles by itself, as a chord such as `ctrl+z`.
 fn key(app: &mut ClioApp, chord: &str) -> Result<Json, String> {
     match chord {
@@ -375,7 +385,7 @@ fn key(app: &mut ClioApp, chord: &str) -> Result<Json, String> {
         "ctrl+y" | "ctrl+shift+z" => app.redo(),
         "enter" => {
             if !app.commit_editing() {
-                return Err(app.notice.clone().unwrap_or_default());
+                return Err(why_not_entered(app));
             }
         }
         "escape" => app.cancel_editing(),

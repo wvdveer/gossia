@@ -152,6 +152,21 @@ impl fmt::Display for EditError {
 
 impl std::error::Error for EditError {}
 
+/// What a formula on a node would erase: the formulas inside it, and the
+/// values inside it that no formula computes ([`Calc::detail_inside`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Detail {
+    pub formulas: Vec<Path>,
+    /// Values typed or imported: leaves that are not null.
+    pub values: usize,
+}
+
+impl Detail {
+    pub fn is_empty(&self) -> bool {
+        self.formulas.is_empty() && self.values == 0
+    }
+}
+
 /// What [`Calc::apply`] did with an evaluation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Applied {
@@ -216,6 +231,8 @@ pub struct Calc {
     settings: WorkbookSettings,
     /// The renames not yet taken by [`Calc::take_renames`].
     renames: Vec<(String, String)>,
+    /// The module renames not yet taken by [`Calc::take_module_renames`].
+    module_renames: Vec<(String, String)>,
     /// The tabs taken out since the last [`Calc::take_removed`].
     removed: Vec<String>,
 }
@@ -241,6 +258,7 @@ impl Calc {
             forms_version: 0,
             settings: WorkbookSettings::default(),
             renames: Vec::new(),
+            module_renames: Vec::new(),
             removed: Vec::new(),
         }
     }
@@ -587,9 +605,36 @@ impl Calc {
     /// Text that does not parse is kept: the node holds `#SYNTAX!` and the text
     /// stays for the author to correct (DESIGN.md, "Syntax errors").
     pub fn set_formula(&mut self, sheet: &str, path: &Path, text: &str) -> Result<(), EditError> {
-        self.check_formula_place(sheet, path)?;
+        self.put_formula(sheet, path, text, false)
+    }
+
+    /// As [`Calc::set_formula`], but formulas inside the node are removed
+    /// first instead of refusing the formula ([`EditError::ContainsFormulas`]):
+    /// the author chose the formula over them. Column formulas they belong to
+    /// end. One entry in the history, which undo takes back whole.
+    pub fn set_formula_replacing(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        text: &str,
+    ) -> Result<(), EditError> {
+        self.put_formula(sheet, path, text, true)
+    }
+
+    fn put_formula(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        text: &str,
+        replace: bool,
+    ) -> Result<(), EditError> {
+        self.check_formula_place(sheet, path, replace)?;
         let loc = Loc::new(sheet, path.clone());
-        let mut ops = Vec::new();
+        let mut ops = if replace {
+            self.clear_formulas_below(sheet, path)
+        } else {
+            Vec::new()
+        };
         // A different formula on one item of a column ends the column formula.
         if self.column_of(sheet, path).is_some_and(|c| c.text != text) {
             ops.extend(self.release_column(sheet, path));
@@ -600,8 +645,65 @@ impl Calc {
         Ok(())
     }
 
-    /// Whether a formula can go on the node.
-    fn check_formula_place(&self, sheet: &str, path: &Path) -> Result<(), EditError> {
+    /// The formulas strictly inside the node, which a formula on it would
+    /// replace.
+    pub fn formulas_inside(&self, sheet: &str, path: &Path) -> Vec<Path> {
+        self.sheets
+            .get(sheet)
+            .map(|s| s.formulas.below(path))
+            .unwrap_or_default()
+    }
+
+    /// What a formula on the node would erase. A node that has a formula, or
+    /// is inside the result of one, holds only results: nothing.
+    pub fn detail_inside(&self, sheet: &str, path: &Path) -> Detail {
+        let mut detail = Detail::default();
+        let Some(s) = self.sheets.get(sheet) else {
+            return detail;
+        };
+        if s.formulas.by_path.contains_key(path) || s.formulas.computed_by(path).is_some() {
+            return detail;
+        }
+        if let Some(node) = s.data.get(path) {
+            for (child, node) in children(path, node) {
+                collect_detail(s, &child, node, &mut detail);
+            }
+        }
+        detail
+    }
+
+    /// Removes the formulas strictly inside the node, ending the column
+    /// formulas they belong to, and returns the operations that did it. The
+    /// values they produced stay. Nothing is recorded: the caller does that.
+    pub(super) fn clear_formulas_below(&mut self, sheet: &str, path: &Path) -> Vec<Op> {
+        let mut ops = Vec::new();
+        for place in self.formulas_inside(sheet, path) {
+            ops.extend(self.release_column(sheet, &place));
+            let Some(text) = self.formula_text(sheet, &place) else {
+                continue;
+            };
+            if self.drop_formula(sheet, &place) {
+                self.changed(sheet, &place);
+                ops.push(Op::Formula {
+                    sheet: sheet.to_owned(),
+                    path: place,
+                    before: Some(text),
+                    after: None,
+                    value: None,
+                });
+            }
+        }
+        ops
+    }
+
+    /// Whether a formula can go on the node. With `replace`, formulas inside
+    /// it do not stand in the way.
+    fn check_formula_place(
+        &self,
+        sheet: &str,
+        path: &Path,
+        replace: bool,
+    ) -> Result<(), EditError> {
         let loc = Loc::new(sheet, path.clone());
         let s = self
             .sheets
@@ -613,7 +715,9 @@ impl Calc {
         if let Some(formula) = s.formulas.computed_by(path) {
             return Err(EditError::InsideComputed { node: loc, formula });
         }
-        if let Some(formula) = s.formulas.below(path).into_iter().next() {
+        if let Some(formula) = s.formulas.below(path).into_iter().next()
+            && !replace
+        {
             return Err(EditError::ContainsFormulas { node: loc, formula });
         }
         Ok(())
@@ -838,6 +942,29 @@ impl Calc {
                 after,
             } => {
                 self.store_module_source(name, if forward { after } else { before })?;
+            }
+            Op::AddModule {
+                name,
+                source,
+                position,
+            }
+            | Op::RemoveModule {
+                name,
+                source,
+                position,
+            } => {
+                if matches!(op, Op::AddModule { .. }) == forward {
+                    self.store_add_module(name, source, *position);
+                } else {
+                    self.store_remove_module(name)?;
+                }
+            }
+            Op::RenameModule { from, to } => {
+                if forward {
+                    self.store_rename_module(from, to)?;
+                } else {
+                    self.store_rename_module(to, from)?;
+                }
             }
             Op::AutoUpdate {
                 sheet,
@@ -1303,5 +1430,39 @@ impl Calc {
                 }
             }
         }
+    }
+}
+
+/// The children of a node with their paths.
+fn children<'a>(path: &Path, node: &'a Node) -> Vec<(Path, &'a Node)> {
+    match node.value() {
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (path.index(i), n))
+            .collect(),
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(k, n)| (path.key(k.clone()), n))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Adds what the node at `path` holds to `detail`: its formula, or the
+/// values and formulas inside it.
+fn collect_detail(s: &Sheet, path: &Path, node: &Node, detail: &mut Detail) {
+    if s.formulas.by_path.contains_key(path) {
+        detail.formulas.push(path.clone());
+        return;
+    }
+    match node.value() {
+        Value::Array(_) | Value::Object(_) => {
+            for (child, node) in children(path, node) {
+                collect_detail(s, &child, node, detail);
+            }
+        }
+        Value::Null => {}
+        _ => detail.values += 1,
     }
 }

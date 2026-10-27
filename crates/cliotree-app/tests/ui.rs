@@ -443,6 +443,10 @@ fn a_column_formula_is_typed_in_the_formula_bar_and_one_undo_takes_it_back() {
         .type_text("=parent.price * 2");
     harness.run();
     press(&mut harness, Key::Enter);
+    // The quantities typed in the items would be erased, so it asks first.
+    let question = harness.state().replace_inside.as_ref().unwrap().question();
+    assert!(question.contains("3 values"), "{question}");
+    click(&mut harness, "Yes");
     settle(&mut harness);
     // Every item has the formula and shows its result.
     let calc = harness.state().calc();
@@ -920,7 +924,7 @@ fn a_tab_is_added_with_the_plus_and_deleted_from_its_menu() {
 #[test]
 fn the_options_dialog_changes_a_workbook_setting_on_ok() {
     let mut harness = window();
-    click(&mut harness, "File");
+    click(&mut harness, "Tools");
     click(&mut harness, "Options...");
     harness.get_by_label("ClioTree Options");
     click(&mut harness, "Evaluation");
@@ -964,7 +968,7 @@ fn the_options_dialog_changes_a_workbook_setting_on_ok() {
 #[test]
 fn every_options_page_fits_the_dialog() {
     let mut harness = window();
-    click(&mut harness, "File");
+    click(&mut harness, "Tools");
     // A trusted workbook in a deep folder, listed on the Trust page.
     let user = &mut harness.state_mut().user;
     user.trust.trust(
@@ -996,4 +1000,66 @@ fn every_options_page_fits_the_dialog() {
         widths.iter().all(|(_, w)| *w == 740.0),
         "every page should be as wide as the dialog: {widths:?}"
     );
+}
+
+/// Formulas, "A formula over what is inside": a formula on a node that holds
+/// values or formulas asks first. No keeps them and drops the formula; Yes
+/// enters it and erases them, and undo brings them back.
+#[test]
+fn a_formula_that_would_erase_what_is_inside_asks_first() {
+    let mut harness = window();
+    let items: cliotree_core::Path = "items".parse().unwrap();
+    let enter = |harness: &mut Harness<'_, ClioApp>| {
+        let app = harness.state_mut();
+        assert!(app.begin_editing(&items, true, Some("=[]".to_owned())));
+        assert!(!app.commit_editing(), "it waits for the answer");
+        harness.run();
+    };
+    let formula = |harness: &Harness<'_, ClioApp>| {
+        harness
+            .state()
+            .calc()
+            .formula_text("Orders", &"items".parse().unwrap())
+    };
+
+    enter(&mut harness);
+    assert!(has(&harness, "Erase what is inside?"));
+    let question = harness.state().replace_inside.as_ref().unwrap().question();
+    assert!(question.contains("Orders.items[0].total"), "{question}");
+    assert!(question.contains("values"), "{question}");
+    click(&mut harness, "No");
+    assert!(!has(&harness, "Erase what is inside?"));
+    assert!(harness.state().editing.is_none());
+    assert_eq!(formula(&harness), None);
+    assert!(
+        harness
+            .state()
+            .calc()
+            .column_formula("Orders", &"items".parse().unwrap(), "total")
+            .is_some()
+    );
+
+    enter(&mut harness);
+    click(&mut harness, "Yes");
+    settle(&mut harness);
+    assert!(!has(&harness, "Erase what is inside?"));
+    assert_eq!(formula(&harness).as_deref(), Some("[]"));
+    assert!(harness.state().calc().column_formulas("Orders").is_empty());
+
+    ctrl(&mut harness, Key::Z);
+    settle(&mut harness);
+    assert_eq!(formula(&harness), None);
+    assert!(
+        harness
+            .state()
+            .calc()
+            .column_formula("Orders", &"items".parse().unwrap(), "total")
+            .is_some()
+    );
+
+    // A formula on an empty node, or a plain value, does not ask.
+    let app = harness.state_mut();
+    let rate: cliotree_core::Path = "tax_rate".parse().unwrap();
+    assert!(app.begin_editing(&rate, true, Some("=0.1".to_owned())));
+    assert!(app.commit_editing());
 }

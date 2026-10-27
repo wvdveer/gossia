@@ -217,7 +217,7 @@ fn the_options_dialog() {
     }
     let mut results = SnapshotResults::new();
     let mut harness = window();
-    click(&mut harness, "File");
+    click(&mut harness, "Tools");
     click(&mut harness, "Options...");
     click(&mut harness, "Evaluation");
     // A workbook value above its ceiling, which the page explains.
@@ -229,4 +229,35 @@ fn the_options_dialog() {
     check(&mut harness, "options_evaluation", &mut results);
     click(&mut harness, "About");
     check(&mut harness, "options_about", &mut results);
+}
+
+#[test]
+fn the_code_editor() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut app = ClioApp::sample();
+    let calc = app.session.calc_mut();
+    calc.add_module(
+        "Tax",
+        "import math\n\n\ndef vat(x, rate=0.21):\n    \"\"\"The VAT on an amount.\"\"\"\n    return round(x * rate, 2)\n\n\ndef gross(x):\n    # The amount with VAT.\n    return x + vat(x)\n",
+    )
+    .unwrap();
+    calc.add_module("Broken", "def oops(:\n    pass\n").unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .wgpu()
+        .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), app);
+    settle(&mut harness);
+    harness.key_combination_modifiers(Modifiers::ALT, &[Key::F11]);
+    harness.run();
+    // No blinking cursor in the image.
+    harness.ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
+    harness.run();
+    check(&mut harness, "code_editor", &mut results);
 }

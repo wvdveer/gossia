@@ -62,6 +62,7 @@ fn calc() -> Calc {
 fn session_with(source: &str, settings: EvalSettings) -> Session {
     let mut calc = calc();
     calc.add_module("procs", source).unwrap();
+    calc.clear_history();
     Session::new(
         calc,
         Evaluator::new(python::factory(PythonSettings::default()), settings),

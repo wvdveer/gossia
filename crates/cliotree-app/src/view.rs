@@ -88,6 +88,8 @@ impl ClioApp {
         self.session.tick();
         self.collect_procedures();
         self.follow_tabs();
+        let now = ui.input(|i| i.time);
+        self.sync_code(now);
         if !self.session.is_idle() {
             ui.ctx().request_repaint_after(Duration::from_millis(30));
         }
@@ -175,7 +177,9 @@ impl ClioApp {
         self.tab_windows(ui.ctx());
         self.file_windows(ui.ctx());
         self.options_window(ui.ctx());
+        self.replace_inside_window(ui.ctx());
         self.drop_hint(ui.ctx());
+        self.code_window(ui.ctx());
     }
 
     // ------------------------------------------------------------- keys
@@ -191,6 +195,10 @@ impl ClioApp {
         let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
         let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
         let new = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
+        let code_editor = KeyboardShortcut::new(Modifiers::ALT, Key::F11);
+        if ui.input_mut(|i| i.consume_shortcut(&code_editor)) {
+            self.open_code_editor();
+        }
         if ui.input_mut(|i| i.consume_shortcut(&save_as)) {
             self.begin_save_as();
         } else if ui.input_mut(|i| i.consume_shortcut(&save)) {
@@ -314,11 +322,6 @@ impl ClioApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Options...").clicked() {
-                    self.begin_options(None);
-                    ui.close();
-                }
-                ui.separator();
                 if ui.button("Quit").clicked() {
                     let ctx = ui.ctx().clone();
                     self.request_quit(&ctx);
@@ -387,6 +390,20 @@ impl ClioApp {
                         set.insert(root);
                     }
                     self.expansion_rev += 1;
+                    ui.close();
+                }
+            });
+            ui.menu_button("Tools", |ui| {
+                if ui
+                    .add(egui::Button::new("Code editor").shortcut_text("Alt+F11"))
+                    .clicked()
+                {
+                    self.open_code_editor();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Options...").clicked() {
+                    self.begin_options(None);
                     ui.close();
                 }
             });
