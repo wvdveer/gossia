@@ -118,6 +118,11 @@ pub struct ClioApp {
     pub imports: crate::import::Imports,
     /// The export dialog, while it is open.
     pub export: Option<crate::export::ExportPlan>,
+    /// The Options dialog, while it is open, and the page it was last left on.
+    pub options: Option<crate::options::OptionsDialog>,
+    pub options_page: crate::options::Page,
+    /// The theme and scale the window was last given.
+    pub appearance_applied: Option<crate::prefs::Appearance>,
     /// The settings the evaluation thread was last given.
     pub applied: Option<Effective>,
 }
@@ -189,6 +194,9 @@ impl ClioApp {
             tab_dialogs: crate::tab_commands::TabDialogs::default(),
             imports: crate::import::Imports::new(),
             export: None,
+            options: None,
+            options_page: crate::options::Page::General,
+            appearance_applied: None,
             applied,
         }
     }

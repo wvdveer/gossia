@@ -13,6 +13,7 @@
 //! by reading the file again, applying the change to what it holds, and writing
 //! it back.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cliotree_calc::{Ceilings, Fingerprint, Setting, TrustStore};
@@ -163,13 +164,74 @@ fn object_at<'a>(object: &'a Map<String, Json>, key: &str) -> Option<&'a Map<Str
     object.get(key).and_then(Json::as_object)
 }
 
+/// Which theme the window uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeChoice {
+    /// The operating system's.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    pub const ALL: [ThemeChoice; 3] = [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "system",
+            ThemeChoice::Light => "light",
+            ThemeChoice::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "Follow system",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::Dark => "Dark",
+        }
+    }
+
+    fn from_key(key: &str) -> Option<ThemeChoice> {
+        ThemeChoice::ALL.into_iter().find(|t| t.key() == key)
+    }
+}
+
+/// The look of the window (Options, General).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Appearance {
+    pub theme: ThemeChoice,
+    /// The interface scale, in percent.
+    pub scale_percent: u64,
+}
+
+/// The range of the interface scale, in percent.
+pub const SCALE_RANGE: (u64, u64) = (50, 300);
+
+impl Default for Appearance {
+    fn default() -> Appearance {
+        Appearance {
+            theme: ThemeChoice::System,
+            scale_percent: 100,
+        }
+    }
+}
+
+/// The default for the largest file that is imported.
+pub const DEFAULT_MAX_IMPORT_BYTES: u64 = 512 << 20;
+
 /// The application preferences.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Preferences {
+    /// The theme and the scale of the window.
+    pub appearance: Appearance,
     /// The most each workbook setting may be.
     pub ceilings: Ceilings,
     /// What a workbook file may hold when it is read.
     pub limits: Limits,
+    /// The largest file that is imported.
+    pub max_import_bytes: u64,
     /// The bounds of the undo history: entries, and a rough weight.
     pub history_entries: usize,
     pub history_weight: usize,
@@ -183,8 +245,10 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Preferences {
         Preferences {
+            appearance: Appearance::default(),
             ceilings: Ceilings::default(),
             limits: Limits::default(),
+            max_import_bytes: DEFAULT_MAX_IMPORT_BYTES,
             history_entries: cliotree_calc::DEFAULT_MAX_ENTRIES,
             history_weight: cliotree_calc::DEFAULT_MAX_WEIGHT,
             recent: Vec::new(),
@@ -236,6 +300,44 @@ impl Preferences {
                 warnings,
             ),
         };
+        let max_import_bytes = number(
+            files,
+            "files",
+            "max_import_bytes",
+            1,
+            defaults.max_import_bytes,
+            warnings,
+        );
+        let section = object_at(&raw, "appearance");
+        let theme = match section.and_then(|o| o.get("theme")) {
+            None => ThemeChoice::default(),
+            Some(value) => match value.as_str().and_then(ThemeChoice::from_key) {
+                Some(theme) => theme,
+                None => {
+                    warnings.push(format!(
+                        "In {PREFERENCES_FILE}, appearance.theme is {value}, which cannot be \
+                         used; the theme follows the system."
+                    ));
+                    ThemeChoice::default()
+                }
+            },
+        };
+        let mut scale_percent = number(
+            section,
+            "appearance",
+            "scale_percent",
+            SCALE_RANGE.0,
+            100,
+            warnings,
+        );
+        if scale_percent > SCALE_RANGE.1 {
+            warnings.push(format!(
+                "In {PREFERENCES_FILE}, appearance.scale_percent is {scale_percent}, more than \
+                 {}; the default 100 is used.",
+                SCALE_RANGE.1
+            ));
+            scale_percent = 100;
+        }
         let undo = object_at(&raw, "undo");
         let history_entries = number(
             undo,
@@ -266,8 +368,13 @@ impl Preferences {
             })
             .unwrap_or_default();
         Preferences {
+            appearance: Appearance {
+                theme,
+                scale_percent,
+            },
             ceilings,
             limits,
+            max_import_bytes,
             history_entries,
             history_weight,
             recent,
@@ -280,33 +387,41 @@ impl Preferences {
     fn to_object(&self) -> Map<String, Json> {
         let mut out = self.raw.clone();
         out.insert("version".to_owned(), json!(version_of(&self.raw)));
-        let mut section = |key: &str, values: Vec<(&str, u64)>| {
+        let mut section = |key: &str, values: Vec<(&str, Json)>| {
             let mut object = object_at(&self.raw, key).cloned().unwrap_or_default();
             for (name, value) in values {
-                object.insert(name.to_owned(), json!(value));
+                object.insert(name.to_owned(), value);
             }
             out.insert(key.to_owned(), Json::Object(object));
         };
         section(
+            "appearance",
+            vec![
+                ("theme", json!(self.appearance.theme.key())),
+                ("scale_percent", json!(self.appearance.scale_percent)),
+            ],
+        );
+        section(
             "ceilings",
             Setting::ALL
                 .iter()
-                .map(|s| (s.key(), self.ceilings.get(*s)))
+                .map(|s| (s.key(), json!(self.ceilings.get(*s))))
                 .collect(),
         );
         section(
             "files",
             vec![
-                ("max_zip_entries", self.limits.entries as u64),
-                ("max_total_bytes", self.limits.total),
-                ("max_entry_bytes", self.limits.entry),
+                ("max_zip_entries", json!(self.limits.entries)),
+                ("max_total_bytes", json!(self.limits.total)),
+                ("max_entry_bytes", json!(self.limits.entry)),
+                ("max_import_bytes", json!(self.max_import_bytes)),
             ],
         );
         section(
             "undo",
             vec![
-                ("max_entries", self.history_entries as u64),
-                ("max_weight", self.history_weight as u64),
+                ("max_entries", json!(self.history_entries)),
+                ("max_weight", json!(self.history_weight)),
             ],
         );
         out.insert(
@@ -345,6 +460,18 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 // ------------------------------------------------------------------- trust
 
+/// The file each trusted workbook was last seen in, from `trust.json`.
+fn trust_files(object: &Map<String, Json>) -> BTreeMap<String, PathBuf> {
+    object_at(object, "workbooks")
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, record)| {
+            let file = record.get("file").and_then(Json::as_str)?;
+            Some((id.clone(), PathBuf::from(file)))
+        })
+        .collect()
+}
+
 fn trust_from_object(object: &Map<String, Json>, warnings: &mut Vec<String>) -> TrustStore {
     let mut store = TrustStore::default();
     let Some(workbooks) = object_at(object, "workbooks") else {
@@ -375,12 +502,22 @@ fn trust_from_object(object: &Map<String, Json>, warnings: &mut Vec<String>) -> 
     store
 }
 
-fn trust_to_object(store: &TrustStore, raw: &Map<String, Json>) -> Map<String, Json> {
+fn trust_to_object(
+    store: &TrustStore,
+    files: &BTreeMap<String, PathBuf>,
+    raw: &Map<String, Json>,
+) -> Map<String, Json> {
     let mut out = raw.clone();
     out.insert("version".to_owned(), json!(version_of(raw)));
     let workbooks: Map<String, Json> = store
         .records()
-        .map(|(id, f)| (id.to_owned(), json!({ "hash": f.hash, "items": f.items })))
+        .map(|(id, f)| {
+            let mut record = json!({ "hash": f.hash, "items": f.items });
+            if let Some(file) = files.get(id) {
+                record["file"] = json!(file.display().to_string());
+            }
+            (id.to_owned(), record)
+        })
         .collect();
     out.insert("workbooks".to_owned(), Json::Object(workbooks));
     out
@@ -395,6 +532,10 @@ pub struct User {
     pub prefs: Preferences,
     /// The workbooks the user has trusted.
     pub trust: TrustStore,
+    /// The file each trusted workbook was last seen in, for the list on the
+    /// Trust and security page. A workbook trusted before it had a file has
+    /// none.
+    pub trust_files: BTreeMap<String, PathBuf>,
     /// `trust.json` as it was read, for what this version does not know.
     trust_raw: Map<String, Json>,
 }
@@ -435,10 +576,12 @@ impl User {
         match self.config.read(TRUST_FILE, warnings) {
             Some(raw) => {
                 self.trust = trust_from_object(&raw, warnings);
+                self.trust_files = trust_files(&raw);
                 self.trust_raw = raw;
             }
             None => {
                 self.trust = TrustStore::default();
+                self.trust_files = BTreeMap::new();
                 self.trust_raw = Map::new();
             }
         }
@@ -448,22 +591,42 @@ impl User {
     /// window recorded is kept, the change is made, and the file is written.
     /// The change is made in memory even if the file cannot be written.
     pub fn change_trust(&mut self, change: impl FnOnce(&mut TrustStore)) -> Result<(), String> {
+        self.change_trust_seen(change, None)
+    }
+
+    /// Changes the trust record as [`User::change_trust`] does, and notes the
+    /// file that workbook `seen.0` is in, if it is trusted.
+    pub fn change_trust_seen(
+        &mut self,
+        change: impl FnOnce(&mut TrustStore),
+        seen: Option<(&str, &Path)>,
+    ) -> Result<(), String> {
         let mut ignored = Vec::new();
         if self.config.dir.is_some() {
             match self.config.read(TRUST_FILE, &mut ignored) {
                 Some(raw) => {
                     self.trust = trust_from_object(&raw, &mut ignored);
+                    self.trust_files = trust_files(&raw);
                     self.trust_raw = raw;
                 }
                 None => {
                     self.trust = TrustStore::default();
+                    self.trust_files = BTreeMap::new();
                     self.trust_raw = Map::new();
                 }
             }
         }
         change(&mut self.trust);
-        self.config
-            .write(TRUST_FILE, trust_to_object(&self.trust, &self.trust_raw))
+        if let Some((id, path)) = seen {
+            let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+            self.trust_files.insert(id.to_owned(), path);
+        }
+        let trust = &self.trust;
+        self.trust_files.retain(|id, _| trust.is_recorded(id));
+        self.config.write(
+            TRUST_FILE,
+            trust_to_object(&self.trust, &self.trust_files, &self.trust_raw),
+        )
     }
 
     /// Changes the preferences, in the same way as [`User::change_trust`].
@@ -570,7 +733,7 @@ mod tests {
         let (mut user, warnings) = User::load(Config::at(&folder.0));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(user.prefs.ceilings.get(Setting::FormulaTimeLimit), 5000);
-        assert_eq!(user.prefs.ceilings.get(Setting::MaxRange), 100_000_000);
+        assert_eq!(user.prefs.ceilings.get(Setting::MaxRange), 1_000_000);
         assert_eq!(user.prefs.history_entries, 50);
 
         user.change_prefs(|p| p.add_recent(Path::new("/books/a.clio")))
@@ -598,7 +761,7 @@ mod tests {
         let (user, warnings) = User::load(Config::at(&folder.0));
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].contains("ceilings.max_range_length"));
-        assert_eq!(user.prefs.ceilings.get(Setting::MaxRange), 100_000_000);
+        assert_eq!(user.prefs.ceilings.get(Setting::MaxRange), 1_000_000);
         assert_eq!(user.prefs.limits, Limits::default());
     }
 

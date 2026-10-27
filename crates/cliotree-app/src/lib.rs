@@ -16,6 +16,7 @@ pub mod form_layout;
 mod form_layout_tests;
 pub mod icons;
 pub mod import;
+pub mod options;
 pub mod prefs;
 pub mod raw;
 pub mod rows;
@@ -162,6 +163,8 @@ mod workbook_state_tests;
 
 #[cfg(test)]
 mod export_tests;
+#[cfg(test)]
+mod options_tests;
 #[cfg(test)]
 mod tab_commands_tests;
 #[cfg(test)]

@@ -83,6 +83,7 @@ impl ClioApp {
     /// One frame of the window.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         crate::style::prepare(ui.ctx());
+        self.apply_appearance(ui.ctx());
         self.apply_settings();
         self.session.tick();
         self.collect_procedures();
@@ -173,6 +174,7 @@ impl ClioApp {
         self.rename_tab_window(ui.ctx());
         self.tab_windows(ui.ctx());
         self.file_windows(ui.ctx());
+        self.options_window(ui.ctx());
         self.drop_hint(ui.ctx());
     }
 
@@ -206,7 +208,8 @@ impl ClioApp {
                 self.undo();
             }
         }
-        if typing_somewhere || self.editing.is_some() || !self.in_tree() {
+        // While the Options dialog is open, keys are for it, not the grid.
+        if typing_somewhere || self.editing.is_some() || !self.in_tree() || self.options.is_some() {
             return;
         }
         let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
@@ -308,6 +311,11 @@ impl ClioApp {
                 }
                 if ui.button("Save As...").clicked() {
                     self.begin_save_as();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Options...").clicked() {
+                    self.begin_options(None);
                     ui.close();
                 }
                 ui.separator();
@@ -1174,7 +1182,19 @@ impl ClioApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(evaluation_text(&self.session.status()));
+            let status = self.session.status();
+            if status.suspended {
+                // The Evaluation page has the limit and *Save and restart*.
+                if ui
+                    .link(evaluation_text(&status))
+                    .on_hover_text("Options: Evaluation")
+                    .clicked()
+                {
+                    self.begin_options(Some(crate::options::Page::Evaluation));
+                }
+            } else {
+                ui.label(evaluation_text(&status));
+            }
             ui.separator();
             ui.label(problems_text(self.summary.errors, self.summary.invalid));
             if !self.calc().is_trusted() {

@@ -209,3 +209,24 @@ fn layout_mode_and_a_custom_form() {
     harness.run();
     check(&mut harness, "two_column_form_orders", &mut results);
 }
+
+#[test]
+fn the_options_dialog() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    click(&mut harness, "File");
+    click(&mut harness, "Options...");
+    click(&mut harness, "Evaluation");
+    // A workbook value above its ceiling, which the page explains.
+    harness.state_mut().options.as_mut().unwrap().texts.insert(
+        cliotree_app::options::Field::Workbook(cliotree_calc::Setting::FormulaTimeLimit),
+        "90".to_owned(),
+    );
+    harness.run();
+    check(&mut harness, "options_evaluation", &mut results);
+    click(&mut harness, "About");
+    check(&mut harness, "options_about", &mut results);
+}

@@ -200,7 +200,7 @@ pub fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
 impl ClioApp {
     /// Reads a file and opens the import dialog for it.
     pub fn begin_import_path(&mut self, path: &FsPath) -> Result<(), String> {
-        let limit = self.user.prefs.limits.entry;
+        let limit = self.user.prefs.max_import_bytes;
         if let Ok(meta) = std::fs::metadata(path)
             && meta.len() > limit
         {
@@ -238,7 +238,7 @@ impl ClioApp {
 
     /// Reads a file for importing. Nothing is added to the workbook.
     pub fn plan_import(&self, file: &str, bytes: &[u8]) -> Result<ImportPlan, String> {
-        let limit = self.user.prefs.limits.entry;
+        let limit = self.user.prefs.max_import_bytes;
         if bytes.len() as u64 > limit {
             return Err(too_large(file, limit));
         }

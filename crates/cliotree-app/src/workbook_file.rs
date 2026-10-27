@@ -401,7 +401,10 @@ impl ClioApp {
     /// Changes the trust record on disk. If it cannot be written the change
     /// still holds for this session, and the notice says so.
     pub(crate) fn change_trust(&mut self, change: impl FnOnce(&mut TrustStore)) {
-        if let Err(e) = self.user.change_trust(change) {
+        let id = self.doc.workbook_id.clone();
+        let path = self.doc.path.clone();
+        let seen = path.as_deref().map(|p| (id.as_str(), p));
+        if let Err(e) = self.user.change_trust_seen(change, seen) {
             self.notice = Some(format!(
                 "The trust decision holds until ClioTree ends, but it could not be kept: {e}"
             ));

@@ -22,7 +22,7 @@ const MAX_WAIT: Duration = Duration::from_secs(120);
 
 /// Commands of the protocol that need a workbook layer, which does not exist
 /// yet.
-const WAIT_FOR_WORKBOOKS: &[&str] = &["close", "menu", "context_menu", "set_option", "grant"];
+const WAIT_FOR_WORKBOOKS: &[&str] = &["close", "menu", "context_menu", "grant"];
 
 /// Does one command. `args` is the `args` object of the request (or `null`).
 pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
@@ -103,6 +103,34 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.import(&plan)?;
             app.refresh_rows();
             Ok(json!({ "tab": plan.name, "schema": schema, "report": plan.report() }))
+        }
+        // Sets one option as the Options dialog does and presses OK: `name`
+        // (see `options::Field::key`, or `theme`) and `value` (a number in the
+        // dialog's unit, or text as typed; for `theme`, `system`, `light` or
+        // `dark`). A workbook setting is an undoable entry.
+        "set_option" => {
+            let name = text_arg(args, "name")?;
+            let value = args.get("value").ok_or("set_option needs a value")?;
+            let text = match value {
+                Json::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            app.begin_options(None);
+            let dialog = app.options.as_mut().expect("the dialog was opened");
+            if name == "theme" {
+                dialog.theme = crate::prefs::ThemeChoice::ALL
+                    .into_iter()
+                    .find(|t| t.key() == text)
+                    .ok_or_else(|| format!("there is no theme {text:?}"))?;
+            } else {
+                let field = crate::options::Field::from_key(name)
+                    .ok_or_else(|| format!("there is no option {name:?}"))?;
+                dialog.texts.insert(field, text);
+            }
+            let done = app.apply_options();
+            app.options = None;
+            done?;
+            Ok(Json::Null)
         }
         // Exports a tab (`tab`, or the current one) to `path`, with what the
         // dialog starts with, or `format` (`json`, `xml` or `text`),

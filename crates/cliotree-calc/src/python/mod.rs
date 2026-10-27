@@ -99,7 +99,7 @@ pub struct PythonSettings {
 impl Default for PythonSettings {
     fn default() -> Self {
         PythonSettings {
-            max_range: 10_000_000,
+            max_range: 1_000_000,
         }
     }
 }

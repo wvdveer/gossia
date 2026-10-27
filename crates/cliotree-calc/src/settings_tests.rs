@@ -191,7 +191,7 @@ fn the_defaults_are_the_ones_the_design_gives() {
         (Setting::RecalcTimeLimit, 10_000, 600_000),
         (Setting::CancelGrace, 500, 10_000),
         (Setting::MaxAbandoned, 20, 100),
-        (Setting::MaxRange, 10_000_000, 100_000_000),
+        (Setting::MaxRange, 1_000_000, 1_000_000),
         (Setting::SourceTimeout, 30_000, 300_000),
         (Setting::MaxResponse, 16 << 20, 256 << 20),
     ] {

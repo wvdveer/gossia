@@ -916,3 +916,84 @@ fn a_tab_is_added_with_the_plus_and_deleted_from_its_menu() {
             .is_none()
     );
 }
+
+#[test]
+fn the_options_dialog_changes_a_workbook_setting_on_ok() {
+    let mut harness = window();
+    click(&mut harness, "File");
+    click(&mut harness, "Options...");
+    harness.get_by_label("ClioTree Options");
+    click(&mut harness, "Evaluation");
+    harness.get_by_label("Applies to this workbook, and is stored in it.");
+    harness.get_by_label("Time limits");
+    // "1" becomes "10" seconds.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::TextInput, "Formula time limit")
+        .click();
+    harness.run();
+    press(&mut harness, Key::End);
+    type_into_selected_cell(&mut harness, "0");
+    assert_eq!(
+        harness
+            .state()
+            .calc()
+            .settings()
+            .get(cliotree_calc::Setting::FormulaTimeLimit),
+        1_000,
+        "nothing changes before OK"
+    );
+    click(&mut harness, "OK");
+    settle(&mut harness);
+    let state = harness.state();
+    assert!(
+        state.options.is_none(),
+        "{:?} {:?}",
+        state.options.as_ref().map(|d| d.problems()),
+        state.notice
+    );
+    assert_eq!(
+        harness
+            .state()
+            .calc()
+            .settings()
+            .get(cliotree_calc::Setting::FormulaTimeLimit),
+        10_000
+    );
+}
+
+#[test]
+fn every_options_page_fits_the_dialog() {
+    let mut harness = window();
+    click(&mut harness, "File");
+    // A trusted workbook in a deep folder, listed on the Trust page.
+    let user = &mut harness.state_mut().user;
+    user.trust.trust(
+        "0123456789abcdef",
+        cliotree_calc::Fingerprint {
+            hash: "h".to_owned(),
+            items: Default::default(),
+        },
+    );
+    user.trust_files.insert(
+        "0123456789abcdef".to_owned(),
+        std::path::PathBuf::from(format!(
+            "/{}book.clio",
+            "a very long folder name/".repeat(8)
+        )),
+    );
+    click(&mut harness, "Options...");
+    let mut widths = Vec::new();
+    for page in cliotree_app::options::Page::ALL {
+        harness.state_mut().options.as_mut().unwrap().page = page;
+        harness.run();
+        let width = harness.get_by_label("ClioTree Options").rect().width();
+        widths.push((page, width.round()));
+    }
+    // A page wider than the dialog made the window wider than its title bar.
+    // Content wider than the space inside the frame also widened the frame past
+    // the title bar, leaving a strip beside it: the window keeps its 740 points.
+    assert!(
+        widths.iter().all(|(_, w)| *w == 740.0),
+        "every page should be as wide as the dialog: {widths:?}"
+    );
+}

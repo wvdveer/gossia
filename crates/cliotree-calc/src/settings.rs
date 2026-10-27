@@ -91,7 +91,7 @@ impl Setting {
             Setting::RecalcTimeLimit => 10_000,
             Setting::CancelGrace => 500,
             Setting::MaxAbandoned => 20,
-            Setting::MaxRange => 10_000_000,
+            Setting::MaxRange => 1_000_000,
             Setting::SourceTimeout => 30_000,
             Setting::MaxResponse => 16 << 20,
         }
@@ -105,7 +105,7 @@ impl Setting {
             Setting::RecalcTimeLimit => 600_000,
             Setting::CancelGrace => 10_000,
             Setting::MaxAbandoned => 100,
-            Setting::MaxRange => 100_000_000,
+            Setting::MaxRange => 1_000_000,
             Setting::SourceTimeout => 300_000,
             Setting::MaxResponse => 256 << 20,
         }

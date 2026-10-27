@@ -28,6 +28,25 @@ fn p(text: &str) -> Path {
 }
 
 fn session(settings: EvalSettings) -> Session {
+    session_with(settings, PythonSettings::default())
+}
+
+/// A session whose `range` allows `LONG_CALL`, which is above the default
+/// maximum range length.
+fn long_call_session(settings: EvalSettings) -> Session {
+    session_with(
+        settings,
+        PythonSettings {
+            max_range: 10_i64.pow(7),
+        },
+    )
+}
+
+/// One long call into the interpreter's own code: nothing looks at signals
+/// while it runs.
+const LONG_CALL: &str = "sum(range(10 ** 7)) + sum(range(10 ** 7)) + sum(range(10 ** 7))";
+
+fn session_with(settings: EvalSettings, python: PythonSettings) -> Session {
     let mut calc = Calc::new(std::sync::Arc::new(PythonSyntax));
     calc.add_sheet(
         "S",
@@ -35,10 +54,7 @@ fn session(settings: EvalSettings) -> Session {
         json::parse(DATA).unwrap().node,
     )
     .unwrap();
-    Session::new(
-        calc,
-        Evaluator::new(python::factory(PythonSettings::default()), settings),
-    )
+    Session::new(calc, Evaluator::new(python::factory(python), settings))
 }
 
 fn quick() -> EvalSettings {
@@ -200,20 +216,12 @@ fn a_pass_that_runs_out_of_time_gives_timeout_to_the_formulas_it_did_not_reach()
 /// thread is counted until it ends.
 #[test]
 fn a_formula_that_cannot_be_stopped_is_abandoned_and_a_new_thread_takes_over() {
-    let mut s = session(EvalSettings {
+    let mut s = long_call_session(EvalSettings {
         formula_limit: Some(Duration::from_millis(50)),
         grace: Duration::from_millis(50),
         ..quick()
     });
-    // One long call into the interpreter's own code: nothing looks at signals
-    // while it runs.
-    s.calc_mut()
-        .set_formula(
-            "S",
-            &p("a"),
-            "sum(range(10 ** 7)) + sum(range(10 ** 7)) + sum(range(10 ** 7))",
-        )
-        .unwrap();
+    s.calc_mut().set_formula("S", &p("a"), LONG_CALL).unwrap();
     s.calc_mut().set_formula("S", &p("b"), "40 + 2").unwrap();
     assert!(s.wait_idle(LONG));
     assert_eq!(kind(&s, "a"), Some(ErrorKind::Timeout));
@@ -242,19 +250,13 @@ fn a_formula_that_cannot_be_stopped_is_abandoned_and_a_new_thread_takes_over() {
 /// by itself when they end.
 #[test]
 fn too_many_abandoned_threads_suspend_evaluation_until_they_end() {
-    let mut s = session(EvalSettings {
+    let mut s = long_call_session(EvalSettings {
         formula_limit: Some(Duration::from_millis(50)),
         grace: Duration::from_millis(50),
         max_abandoned: 1,
         ..quick()
     });
-    s.calc_mut()
-        .set_formula(
-            "S",
-            &p("a"),
-            "sum(range(10 ** 7)) + sum(range(10 ** 7)) + sum(range(10 ** 7))",
-        )
-        .unwrap();
+    s.calc_mut().set_formula("S", &p("a"), LONG_CALL).unwrap();
     s.tick();
     let waited = Instant::now();
     while !s.evaluator().suspended() && waited.elapsed() < LONG {
