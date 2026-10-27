@@ -2,6 +2,9 @@
 //! export", "Importing a file"): from File > Import..., and by dropping files
 //! on the window.
 //!
+//! Pasting in the Raw view imports the pasted text as if it were a file, its
+//! format told from the text itself.
+//!
 //! A file is read into an [`ImportPlan`] first, which nothing in the workbook
 //! sees until the user confirms the dialog. The plan has every schema tab the
 //! data could be given, with how much of the data would not fit each one, and
@@ -16,7 +19,7 @@ use cliotree_calc::names::{self, Subject};
 use cliotree_core::infer::{self, JsonInference};
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
-use cliotree_core::{Node, json, metaschema, xml, xmltree, xsd};
+use cliotree_core::{Node, delimited, json, metaschema, xml, xmltree, xsd};
 
 use crate::app::ClioApp;
 use crate::view::{error_color, named};
@@ -26,8 +29,25 @@ use crate::view::{error_color, named};
 pub enum ImportFormat {
     Json,
     Xml,
+    /// Comma-separated values: an array with an object for each row.
+    Csv,
+    /// Tab-separated values, read as CSV is.
+    Tsv,
     /// Anything else: an array of its lines.
     Text,
+}
+
+impl ImportFormat {
+    /// What the format is called in messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            ImportFormat::Json => "JSON",
+            ImportFormat::Xml => "XML",
+            ImportFormat::Csv => "comma-separated values",
+            ImportFormat::Tsv => "tab-separated values",
+            ImportFormat::Text => "lines of text",
+        }
+    }
 }
 
 /// The schema inferred from the data, ready to be a schema tab.
@@ -82,6 +102,9 @@ pub enum SchemaChoice {
     Inferred,
     /// A schema tab that is there already.
     Existing(String),
+    /// No new tab: the text replaces the data of this tab, if it conforms to
+    /// its schema. Offered for a paste in the tab's own format.
+    Replace(String),
 }
 
 /// A file read for importing, and the choices of the dialog.
@@ -107,6 +130,8 @@ pub struct ImportPlan {
     /// The name of the schema tab, for an inferred schema.
     pub schema_name: String,
     pub choice: SchemaChoice,
+    /// The tab whose data a paste may replace instead.
+    pub replace: Option<String>,
     /// Why the last attempt was refused.
     pub error: Option<String>,
 }
@@ -133,6 +158,7 @@ impl ImportPlan {
                     ));
                 }
             }
+            SchemaChoice::Replace(_) => {}
         }
         lines
     }
@@ -154,9 +180,34 @@ pub fn format_of(file: &str) -> ImportFormat {
     match extension.as_deref() {
         Some("json") => ImportFormat::Json,
         Some("xml") => ImportFormat::Xml,
+        Some("csv") => ImportFormat::Csv,
+        Some("tsv" | "tab") => ImportFormat::Tsv,
         _ => ImportFormat::Text,
     }
 }
+
+/// The format of pasted text, from the text: `{` or `[` first is JSON, `<`
+/// is XML, a tab in the first line is tab-separated values (what a copied
+/// range of a spreadsheet is), a comma comma-separated values, and anything
+/// else lines of text.
+pub fn format_of_text(text: &str) -> ImportFormat {
+    let text = text.trim_start_matches('\u{FEFF}').trim_start();
+    let first_line = text.lines().next().unwrap_or_default();
+    if text.starts_with(['{', '[']) {
+        ImportFormat::Json
+    } else if text.starts_with('<') {
+        ImportFormat::Xml
+    } else if first_line.contains('\t') {
+        ImportFormat::Tsv
+    } else if first_line.contains(',') {
+        ImportFormat::Csv
+    } else {
+        ImportFormat::Text
+    }
+}
+
+/// What the dialog and the undo entry call a paste.
+pub const PASTED: &str = "the pasted text";
 
 /// A valid tab name made from a file name: characters a name cannot have
 /// become `_`, a name that would start with a digit or `_` gets `Data` in
@@ -238,21 +289,61 @@ impl ClioApp {
 
     /// Reads a file for importing. Nothing is added to the workbook.
     pub fn plan_import(&self, file: &str, bytes: &[u8]) -> Result<ImportPlan, String> {
+        self.plan_import_as(file, file, format_of(file), bytes)
+    }
+
+    /// Reads pasted text for importing, as a file of the format the text
+    /// shows. The tab is called `Pasted`. When the text is in the format of
+    /// the tab shown, the dialog also offers to replace that tab's data.
+    pub fn plan_paste(&self, text: &str) -> Result<ImportPlan, String> {
+        let format = format_of_text(text);
+        let mut plan = self.plan_import_as(PASTED, "Pasted", format, text.as_bytes())?;
+        let tab_is_xml = self.calc().spec(&self.sheet).map(|s| s.xml().is_some());
+        let same_format = match format {
+            ImportFormat::Json => tab_is_xml == Some(false),
+            ImportFormat::Xml => tab_is_xml == Some(true),
+            _ => false,
+        };
+        if same_format && !self.calc().is_schema_sheet(&self.sheet) {
+            plan.replace = Some(self.sheet.clone());
+        }
+        Ok(plan)
+    }
+
+    /// Opens the import dialog for pasted text, or says why it cannot be read.
+    pub fn begin_paste(&mut self, text: &str) -> Result<(), String> {
+        let plan = self.plan_paste(text)?;
+        self.imports.push_back(plan);
+        Ok(())
+    }
+
+    /// Reads `bytes` as `format`; `file` names it in messages and `name_from`
+    /// gives the tab its name.
+    fn plan_import_as(
+        &self,
+        file: &str,
+        name_from: &str,
+        format: ImportFormat,
+        bytes: &[u8],
+    ) -> Result<ImportPlan, String> {
         let limit = self.user.prefs.max_import_bytes;
         if bytes.len() as u64 > limit {
             return Err(too_large(file, limit));
         }
         let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-        let text = String::from_utf8(bytes.to_vec())
-            .map_err(|_| format!("{file} is not UTF-8 text, so it cannot be imported."))?;
-        let format = format_of(file);
+        let text = String::from_utf8(bytes.to_vec()).map_err(|_| {
+            format!(
+                "{} is not UTF-8 text, so it cannot be imported.",
+                capital(file)
+            )
+        })?;
         let calc = self.calc();
         let mut notes = Vec::new();
         let (data, inferred, candidates) = match format {
-            ImportFormat::Json | ImportFormat::Text => {
+            ImportFormat::Json | ImportFormat::Text | ImportFormat::Csv | ImportFormat::Tsv => {
                 let inference = if format == ImportFormat::Json {
                     let parsed = json::parse_lenient(&text)
-                        .map_err(|e| format!("{file} is not JSON: {e}"))?;
+                        .map_err(|e| format!("{} is not JSON: {e}", capital(file)))?;
                     notes.extend(parsed.warnings.iter().map(|w| {
                         if w.path.is_root() {
                             format!("{}.", w.message)
@@ -261,6 +352,10 @@ impl ClioApp {
                         }
                     }));
                     infer::infer_json(&parsed.node)
+                } else if format == ImportFormat::Csv {
+                    delimited::infer_delimited(&text, ',')
+                } else if format == ImportFormat::Tsv {
+                    delimited::infer_delimited(&text, '\t')
                 } else {
                     infer::text_lines(&text)
                 };
@@ -272,7 +367,7 @@ impl ClioApp {
             }
             ImportFormat::Xml => {
                 let doc = xmltree::parse(&text)
-                    .map_err(|e| format!("{file} is not well-formed XML: {e}"))?;
+                    .map_err(|e| format!("{} is not well-formed XML: {e}", capital(file)))?;
                 let inferred = infer::infer_xsd(&doc).and_then(|inference| {
                     let spec = xsd::lower_str(&inference.text).map_err(|e| e.to_string())?;
                     let schema = xml::parse(&inference.text, metaschema::xsd_meta())
@@ -295,7 +390,7 @@ impl ClioApp {
             }
         };
         let taken = |n: &str| calc.tab_name_problem(n, None).is_some();
-        let name = name_from_file(file, taken);
+        let name = name_from_file(name_from, taken);
         let schema_name = unique(&format!("{name}Schema"), |n| {
             taken(n) || n.eq_ignore_ascii_case(&name)
         });
@@ -323,6 +418,7 @@ impl ClioApp {
             name,
             schema_name,
             choice,
+            replace: None,
             error: None,
         })
     }
@@ -353,6 +449,9 @@ impl ClioApp {
 
     /// Why the plan cannot be imported as it is, or None.
     pub fn import_problem(&self, plan: &ImportPlan) -> Option<String> {
+        if let SchemaChoice::Replace(_) = plan.choice {
+            return None;
+        }
         let name = plan.name.trim();
         if let Some(why) = self.calc().tab_name_problem(name, None) {
             return Some(format!("The tab name: {why}."));
@@ -385,6 +484,11 @@ impl ClioApp {
         if let Some(why) = self.import_problem(plan) {
             return Err(why);
         }
+        if let SchemaChoice::Replace(tab) = &plan.choice {
+            let tab = tab.clone();
+            self.show_tab(&tab);
+            return self.paste_document(&plan.text);
+        }
         let name = plan.name.trim();
         let schema_name = plan.schema_name.trim();
         let before = self.calc().history_len().0;
@@ -407,6 +511,7 @@ impl ClioApp {
                     )
                 }),
             (SchemaChoice::Inferred, Err(why)) => Err(cliotree_calc::EditError::Path(why.clone())),
+            (SchemaChoice::Replace(_), _) => unreachable!("replacing returned above"),
             (SchemaChoice::Existing(schema), _) => match &plan.data {
                 Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
                 None => calc
@@ -450,9 +555,14 @@ impl ClioApp {
             .min_width(460.0)
             .max_width(560.0)
             .show(ctx, |ui| {
+                if plan.file == PASTED {
+                    ui.weak(format!("Read as {}.", plan.format.label()));
+                }
+                let replacing = matches!(plan.choice, SchemaChoice::Replace(_));
                 ui.horizontal(|ui| {
                     ui.label("Tab name");
-                    let response = ui.text_edit_singleline(&mut plan.name);
+                    let response =
+                        ui.add_enabled(!replacing, egui::TextEdit::singleline(&mut plan.name));
                     named(&response, "Import tab name");
                 });
                 ui.add_space(4.0);
@@ -498,6 +608,18 @@ impl ClioApp {
                                 format!("No schema can be inferred: {why}"),
                             ),
                         );
+                    }
+                }
+                if let Some(tab) = plan.replace.clone() {
+                    let chosen = plan.choice == SchemaChoice::Replace(tab.clone());
+                    if ui
+                        .radio(
+                            chosen,
+                            format!("No new tab: replace the data of {tab} with it"),
+                        )
+                        .clicked()
+                    {
+                        plan.choice = SchemaChoice::Replace(tab);
                     }
                 }
                 if let (SchemaChoice::Inferred, Ok(inferred)) = (&plan.choice, &plan.inferred) {
@@ -592,9 +714,19 @@ impl ClioApp {
 
 fn too_large(file: &str, limit: u64) -> String {
     format!(
-        "{file} is larger than the limit for a file of {} MB, so it is not imported.",
+        "{} is larger than the limit for a file of {} MB, so it is not imported.",
+        capital(file),
         limit >> 20
     )
+}
+
+/// A file name as it starts a sentence: as it is, but "The pasted text".
+fn capital(file: &str) -> String {
+    if file == PASTED {
+        "The pasted text".to_owned()
+    } else {
+        file.to_owned()
+    }
 }
 
 /// The imports waiting for their dialog.

@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::ClioApp;
 use crate::control;
-use crate::import::{ImportFormat, SchemaChoice, format_of, name_from_file};
+use crate::import::{ImportFormat, SchemaChoice, format_of, format_of_text, name_from_file};
 use crate::tab_commands::NewSchema;
 use crate::workbook_file::new_workbook_id;
 
@@ -204,6 +204,96 @@ fn names_are_made_from_the_file_name() {
     assert_eq!(format_of("A.JSON"), ImportFormat::Json);
     assert_eq!(format_of("a.xml"), ImportFormat::Xml);
     assert_eq!(format_of("notes.txt"), ImportFormat::Text);
+    assert_eq!(format_of("Sales.CSV"), ImportFormat::Csv);
+    assert_eq!(format_of("sales.tsv"), ImportFormat::Tsv);
+    assert_eq!(format_of("sales.tab"), ImportFormat::Tsv);
+}
+
+#[test]
+fn pasted_text_is_read_as_the_format_it_shows() {
+    assert_eq!(format_of_text("  {\"a\": 1}"), ImportFormat::Json);
+    assert_eq!(format_of_text("[1, 2]"), ImportFormat::Json);
+    assert_eq!(format_of_text("\u{FEFF}<a/>"), ImportFormat::Xml);
+    assert_eq!(format_of_text("sku\tqty\nA\t2"), ImportFormat::Tsv);
+    assert_eq!(format_of_text("sku,qty\nA,2"), ImportFormat::Csv);
+    assert_eq!(format_of_text("one\ntwo"), ImportFormat::Text);
+}
+
+/// Import and export, "CSV and TSV": a CSV file is an array of objects with a
+/// schema inferred for it, the header row naming the fields.
+#[test]
+fn a_csv_file_is_imported_as_an_array_of_rows() {
+    let mut app = sample();
+    let text = "sku,qty,price\nA-1,2,9.5\nB-2,1,24\n";
+    let plan = app.plan_import("stock.csv", text.as_bytes()).unwrap();
+    assert_eq!(plan.choice, SchemaChoice::Inferred);
+    assert_eq!(plan.name, "stock");
+    assert!(plan.replace.is_none());
+    assert_eq!(
+        plan.report(),
+        ["The first row is taken as the names of the columns."]
+    );
+    app.import(&plan).unwrap();
+    let data = json::to_string(app.calc().data("stock").unwrap(), false).unwrap();
+    assert_eq!(
+        data,
+        r#"[{"sku":"A-1","qty":2,"price":9.5},{"sku":"B-2","qty":1,"price":24.0}]"#
+    );
+    assert!(valid(&app, "stock"));
+    assert_eq!(app.calc().undo_label(), Some("Import stock.csv"));
+
+    // A TSV file without a header row: its first row has a number in it.
+    let plan = app
+        .plan_import("more.tsv", b"A-3\t5\t1.25\nA-4\t6\t2\n")
+        .unwrap();
+    app.import(&plan).unwrap();
+    let data = json::to_string(app.calc().data("more").unwrap(), false).unwrap();
+    assert_eq!(
+        data,
+        r#"[{"column_1":"A-3","column_2":5,"column_3":1.25},{"column_1":"A-4","column_2":6,"column_3":2.0}]"#
+    );
+}
+
+/// A paste in the Raw view is imported as a file is: a tab called Pasted. In
+/// the tab's own format it may replace the tab's data instead.
+#[test]
+fn a_paste_is_imported_and_may_replace_the_tab_in_its_own_format() {
+    let mut app = sample();
+    let plan = app.plan_paste("sku\tqty\nA\t2\n").unwrap();
+    assert_eq!(plan.format, ImportFormat::Tsv);
+    assert_eq!(plan.name, "Pasted");
+    assert!(plan.replace.is_none(), "TSV is not the format of Orders");
+    app.import(&plan).unwrap();
+    assert_eq!(app.sheet, "Pasted");
+    assert_eq!(app.calc().undo_label(), Some("Import the pasted text"));
+
+    app.show_tab("Orders");
+    let orders = json::to_string(app.calc().data("Orders").unwrap(), true).unwrap();
+    let mut plan = app
+        .plan_paste(&orders.replace("Acme Ltd", "Globex"))
+        .unwrap();
+    assert_eq!(plan.replace.as_deref(), Some("Orders"));
+    assert_eq!(plan.name, "Pasted2");
+    assert_eq!(
+        plan.choice,
+        SchemaChoice::Existing("Orders_schema".to_owned()),
+        "a new tab is the default"
+    );
+    let before = tabs(&app).len();
+    plan.choice = SchemaChoice::Replace("Orders".to_owned());
+    app.import(&plan).unwrap();
+    assert_eq!(
+        app.calc()
+            .data("Orders")
+            .unwrap()
+            .get(&p("customer.name"))
+            .map(|n| n.value().clone()),
+        Some(Value::Str("Globex".into()))
+    );
+    assert_eq!(tabs(&app).len(), before, "no tab is added for a replace");
+
+    let error = app.plan_paste("{nope").unwrap_err();
+    assert!(error.starts_with("The pasted text is not JSON"), "{error}");
 }
 
 #[test]

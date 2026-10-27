@@ -368,12 +368,20 @@ fn the_raw_view_shows_the_document_and_a_paste_replaces_it() {
     assert!(shown.contains("\"name\": \"Acme Ltd\""), "{shown}");
     assert!(shown.contains("\"total\": 62.92"), "{shown}");
     assert!(shown.contains('\n'));
-    // A document that conforms is accepted, as one undoable edit.
+    // A paste opens the import dialog. A document of the tab's format can
+    // replace its data there, if it conforms, as one undoable edit.
     let mut doc = shown.replace("Acme Ltd", "Globex");
     doc = doc.replace("\"tax_rate\": 0.21", "\"tax_rate\": 0.5");
     harness.event(egui::Event::Paste(doc));
     harness.run();
+    assert!(has(&harness, "Import the pasted text"));
+    click(
+        &mut harness,
+        "No new tab: replace the data of Orders with it",
+    );
+    click(&mut harness, "Import");
     settle(&mut harness);
+    assert!(!has(&harness, "Import the pasted text"));
     assert_eq!(
         value(&harness, "Orders", "customer.name"),
         Some(Value::Str("Globex".into()))
@@ -401,6 +409,11 @@ fn a_paste_that_does_not_conform_is_refused_with_the_reasons() {
         r#"{"customer": {"name": "X", "status": "paid"}, "tax_rate": 7}"#.to_owned(),
     ));
     harness.run();
+    click(
+        &mut harness,
+        "No new tab: replace the data of Orders with it",
+    );
+    click(&mut harness, "Import");
     assert!(
         harness
             .query_all_by_label_contains("does not conform")
@@ -413,12 +426,13 @@ fn a_paste_that_does_not_conform_is_refused_with_the_reasons() {
             .next()
             .is_some()
     );
+    click(&mut harness, "Cancel");
     // Text that is not JSON at all.
     harness.event(egui::Event::Paste("{not json".to_owned()));
     harness.run();
     assert!(
         harness
-            .query_all_by_label_contains("not valid JSON")
+            .query_all_by_label_contains("The pasted text is not JSON")
             .next()
             .is_some()
     );

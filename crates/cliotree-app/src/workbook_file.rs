@@ -487,16 +487,21 @@ impl ClioApp {
         });
     }
 
-    /// File > Import...: a JSON, XML or text file, as tabs of this workbook.
+    /// File > Import...: a JSON, XML, CSV, TSV or text file, as tabs of this
+    /// workbook.
     pub fn begin_import(&mut self) {
         if self.files.browse {
             self.files.browser = new_browser()
                 .title("Import a file")
                 .initial_directory(self.start_folder())
-                .add_file_filter_extensions("JSON and XML", vec!["json", "xml"])
+                .add_file_filter_extensions(
+                    "JSON, XML, CSV and TSV",
+                    vec!["json", "xml", "csv", "tsv", "tab"],
+                )
                 .add_file_filter_extensions("JSON", vec!["json"])
                 .add_file_filter_extensions("XML", vec!["xml"])
-                .default_file_filter("JSON and XML");
+                .add_file_filter_extensions("CSV and TSV", vec!["csv", "tsv", "tab"])
+                .default_file_filter("JSON, XML, CSV and TSV");
             self.files.browser.pick_file();
             self.files.browsing = Some(Browsing::Import);
             return;

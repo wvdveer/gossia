@@ -1,8 +1,9 @@
 //! The Raw view of a Data Tab: the tab's data as the pretty-printed JSON or
-//! XML document it is stored as. The text can be selected and copied, and a
-//! whole document can be pasted over it. A paste is checked against the
-//! tab's schema first, and refused with the reason if the document does not
-//! conform: nothing is changed then.
+//! XML document it is stored as. The text can be selected and copied. A paste
+//! is imported as a dropped file is (`import.rs`); the import dialog can also
+//! put a document in place of the tab's data, which is checked against the
+//! tab's schema first and refused with the reason if it does not conform:
+//! nothing is changed then.
 
 use cliotree_core::validate::validate;
 use cliotree_core::{Path, json, xml};
@@ -115,20 +116,32 @@ impl ClioApp {
 
     /// The Raw view, filling the central panel.
     pub(crate) fn raw_view(&mut self, ui: &mut egui::Ui) {
-        // A paste over the view is a paste of the whole document.
-        let pasted = ui.input_mut(|i| {
-            let mut found = None;
-            i.events.retain(|e| match e {
-                egui::Event::Paste(text) => {
-                    found = Some(text.clone());
-                    false
-                }
-                _ => true,
-            });
-            found
-        });
+        // A paste over the view is a paste of the whole document, unless
+        // another text box (the import dialog's, say) has the keyboard.
+        let document = egui::Id::unique("raw_document");
+        let elsewhere = ui
+            .ctx()
+            .memory(|m| m.focused())
+            .is_some_and(|id| id != document);
+        let pasted = (!elsewhere)
+            .then(|| {
+                ui.input_mut(|i| {
+                    let mut found = None;
+                    i.events.retain(|e| match e {
+                        egui::Event::Paste(text) => {
+                            found = Some(text.clone());
+                            false
+                        }
+                        _ => true,
+                    });
+                    found
+                })
+            })
+            .flatten();
+        // A paste is imported as a dropped file is: the import dialog opens
+        // for it, which can also put it in place of this tab's data.
         if let Some(text) = pasted {
-            let _ = self.paste_document(&text);
+            self.raw.error = self.begin_paste(&text).err();
         }
         let format = if self.raw_is_xml() { "XML" } else { "JSON" };
         let text = self.raw_text().to_owned();
@@ -141,7 +154,7 @@ impl ClioApp {
             {
                 ui.ctx().copy_text(text.clone());
             }
-            ui.weak("Press Ctrl+V to replace the document with the clipboard.");
+            ui.weak("Press Ctrl+V to import the clipboard: JSON, XML, CSV or TSV.");
         });
         if let Some(error) = &self.raw.error {
             let color = error_color(ui);
@@ -155,6 +168,7 @@ impl ClioApp {
                 let mut shown = text.as_str();
                 let response = ui.add(
                     egui::TextEdit::multiline(&mut shown)
+                        .id(document)
                         .code_editor()
                         .desired_width(f32::INFINITY),
                 );

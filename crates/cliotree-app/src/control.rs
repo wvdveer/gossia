@@ -98,7 +98,8 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             }
             let schema = match &plan.choice {
                 crate::import::SchemaChoice::Inferred => plan.schema_name.clone(),
-                crate::import::SchemaChoice::Existing(s) => s.clone(),
+                crate::import::SchemaChoice::Existing(s)
+                | crate::import::SchemaChoice::Replace(s) => s.clone(),
             };
             app.import(&plan)?;
             app.refresh_rows();
