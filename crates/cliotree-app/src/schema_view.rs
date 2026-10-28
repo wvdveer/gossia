@@ -132,7 +132,14 @@ impl ClioApp {
                         name,
                         kind,
                         required,
+                        attribute,
                     } => {
+                        if dialog.xml {
+                            ui.horizontal(|ui| {
+                                ui.radio_value(attribute, false, "Element");
+                                ui.radio_value(attribute, true, "Attribute");
+                            });
+                        }
                         ui.label("Name");
                         let response = ui.text_edit_singleline(name);
                         named(&response, "Field name");
@@ -215,13 +222,15 @@ impl ClioApp {
                     name: String::new(),
                     kind: FieldKind::Text,
                     required: false,
+                    attribute: false,
                 },
             ),
             Action::RenameField(object, name) => self.start_schema_command(
                 &object,
                 SchemaCommand::Rename {
-                    from: name.clone(),
-                    to: name,
+                    // An attribute's new name is typed without its `@`.
+                    to: name.strip_prefix('@').unwrap_or(&name).to_owned(),
+                    from: name,
                 },
             ),
             Action::DeleteField(object, name) => {

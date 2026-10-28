@@ -64,6 +64,9 @@ enum SchemaRole {
 mod schema;
 pub use schema::{FieldKind, FieldPlaces, SchemaFormat};
 
+#[path = "xsd_fields.rs"]
+mod xsd_fields;
+
 #[path = "package.rs"]
 mod package;
 pub use package::{

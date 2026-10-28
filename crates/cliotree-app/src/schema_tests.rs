@@ -163,6 +163,7 @@ fn adding_a_field_checks_the_name_in_the_dialog_and_shows_a_new_column() {
         name: name.into(),
         kind: cliotree_calc::FieldKind::Integer,
         required: false,
+        attribute: false,
     };
     app.start_schema_command(&p("items[0]"), add(""));
     app.apply_schema_dialog();
@@ -283,5 +284,55 @@ fn a_column_knows_its_record_and_field() {
     assert_eq!(
         app.column_owner(&p("items"), column),
         Some((p("items[0]"), "price".to_owned()))
+    );
+}
+
+#[test]
+fn on_an_xml_tab_a_new_field_is_an_element_or_an_attribute() {
+    let mut app = app();
+    let text = r#"<catalog><book id="b1"><title>Dune</title></book><book id="b2"><title>Emma</title></book></catalog>"#;
+    let plan = app.plan_import("catalog.xml", text.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    app.switch_to("catalog");
+    app.set_auto_update("catalogSchema", true);
+    assert!(app.notice.is_none(), "{:?}", app.notice);
+    settle(&mut app);
+    let book_fields = |app: &ClioApp| {
+        app.calc()
+            .field_places("catalog", &p("book[0]"))
+            .unwrap()
+            .fields
+    };
+    assert_eq!(book_fields(&app), ["@id", "title"]);
+
+    let add = |name: &str, attribute: bool| SchemaCommand::Add {
+        name: name.into(),
+        kind: cliotree_calc::FieldKind::Integer,
+        required: false,
+        attribute,
+    };
+    app.start_schema_command(&p("book[0]"), add("year", false));
+    assert!(app.schema_dialog.as_ref().unwrap().xml);
+    app.apply_schema_dialog();
+    assert!(app.schema_dialog.is_none(), "{:?}", app.schema_dialog);
+    // An attribute's name is typed without its @.
+    app.start_schema_command(&p("book[1]"), add("pages", true));
+    app.apply_schema_dialog();
+    assert!(app.schema_dialog.is_none(), "{:?}", app.schema_dialog);
+    assert_eq!(book_fields(&app), ["@id", "@pages", "title", "year"]);
+
+    // Renaming an attribute keeps it one.
+    app.start_schema_command(&p("book[0]"), rename("@id", "code"));
+    app.apply_schema_dialog();
+    assert!(app.schema_dialog.is_none(), "{:?}", app.schema_dialog);
+    settle(&mut app);
+    assert_eq!(book_fields(&app), ["@code", "@pages", "title", "year"]);
+    assert_eq!(
+        app.calc()
+            .data("catalog")
+            .unwrap()
+            .get(&p("book[1][\"@code\"]"))
+            .map(|n| n.value().clone()),
+        Some(Value::Str("b2".into()))
     );
 }

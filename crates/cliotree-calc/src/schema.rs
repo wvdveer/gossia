@@ -12,6 +12,7 @@ use cliotree_core::xml::XmlDocument;
 use cliotree_core::{Kind, TypeId, jsonschema, metaschema, xsd};
 use indexmap::IndexMap;
 
+use super::xsd_fields::XsdChange;
 use super::*;
 
 /// The type of a field that a command adds. Only simple types: anything more
@@ -93,6 +94,9 @@ pub struct FieldPlaces {
     /// like `Orders.billing` or `Orders.items[]` (`[]` is each item), because a
     /// command on a shared type changes all of them.
     pub also_used_at: Vec<String>,
+    /// The schema tab is an XSD: the type is a `complexType`, and attribute
+    /// fields are named with a leading `@`.
+    pub xsd: bool,
 }
 
 impl Calc {
@@ -379,12 +383,7 @@ impl Calc {
                  changed from here"
             )));
         };
-        if self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd) {
-            return Err(EditError::Path(format!(
-                "{schema_sheet} is an XSD; changing an XML schema from {sheet} is not supported \
-                 yet, so edit {schema_sheet} itself"
-            )));
-        }
+        let is_xsd = self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd);
         if !self.auto_update(schema_sheet) {
             return Err(EditError::Path(format!(
                 "switch on auto-update on {schema_sheet} to change the schema from {sheet}"
@@ -406,7 +405,15 @@ impl Calc {
                 "{at} is not a record, so it has no fields to change"
             )));
         };
-        let document_path = pointer_to_path(&spec.get(ty).source).ok_or_else(|| {
+        let source = &spec.get(ty).source;
+        let document_path = if is_xsd {
+            self.sheets
+                .get(schema_sheet)
+                .and_then(|d| xsd_fields::xsd_type_path(&d.data, source))
+        } else {
+            pointer_to_path(source)
+        }
+        .ok_or_else(|| {
             EditError::Path(format!("cannot tell where {at} is written in the schema"))
         })?;
         let document_ok = self
@@ -442,6 +449,7 @@ impl Calc {
             fields: fields.iter().map(|f| f.name.clone()).collect(),
             objects,
             also_used_at,
+            xsd: is_xsd,
         })
     }
 
@@ -510,21 +518,29 @@ impl Calc {
         if order == places.fields.as_slice() {
             return Ok(());
         }
+        if places.xsd {
+            // Checked before anything changes.
+            self.xsd_edited_type(&places, &XsdChange::Reorder { order })?;
+        }
         self.check_objects_free(sheet, &places)?;
         let what = format!(
             "Reorder fields of {sheet}{}",
             location_of(self.spec_of(sheet)?, object)
         );
         self.entry(&what, |calc| {
-            let document = calc.edited_type(&places, |props, _| {
-                let mut ordered = IndexMap::new();
-                for name in order {
-                    if let Some(node) = props.get(name) {
-                        ordered.insert(name.clone(), node.clone());
+            let document = if places.xsd {
+                calc.xsd_edited_type(&places, &XsdChange::Reorder { order })?
+            } else {
+                calc.edited_type(&places, |props, _| {
+                    let mut ordered = IndexMap::new();
+                    for name in order {
+                        if let Some(node) = props.get(name) {
+                            ordered.insert(name.clone(), node.clone());
+                        }
                     }
-                }
-                *props = ordered;
-            })?;
+                    *props = ordered;
+                })?
+            };
             calc.put(&places.schema_sheet, &places.document_path, document)?;
             for place in &places.objects {
                 calc.rewrite_object(sheet, place, |map| {
@@ -562,13 +578,26 @@ impl Calc {
             )));
         }
         let what = format!("Add field \"{name}\"");
+        let change = XsdChange::Add {
+            name,
+            kind,
+            required,
+        };
+        let xsd_document = if places.xsd {
+            Some(self.xsd_edited_type(&places, &change)?)
+        } else {
+            None
+        };
         self.entry(&what, |calc| {
-            let document = calc.edited_type(&places, |props, required_list| {
-                props.insert(name.to_owned(), kind.schema());
-                if required {
-                    required_list.push(text(name));
-                }
-            })?;
+            let document = match xsd_document {
+                Some(document) => document,
+                None => calc.edited_type(&places, |props, required_list| {
+                    props.insert(name.to_owned(), kind.schema());
+                    if required {
+                        required_list.push(text(name));
+                    }
+                })?,
+            };
             calc.put(&places.schema_sheet, &places.document_path, document)
         })
     }
@@ -596,6 +625,11 @@ impl Calc {
                 "there is a field called {to} already"
             )));
         }
+        let xsd_document = if places.xsd {
+            Some(self.xsd_edited_type(&places, &XsdChange::Rename { from, to })?)
+        } else {
+            None
+        };
         self.check_objects_free(sheet, &places)?;
         let what = format!("Rename field \"{from}\" to \"{to}\"");
         let renamed = |key: &String| {
@@ -606,14 +640,17 @@ impl Calc {
             }
         };
         self.entry(&what, |calc| {
-            let document = calc.edited_type(&places, |props, required_list| {
-                *props = props.iter().map(|(k, v)| (renamed(k), v.clone())).collect();
-                for entry in required_list.iter_mut() {
-                    if entry.value().as_str() == Some(from) {
-                        *entry.value_mut() = Value::Str(to.to_owned());
+            let document = match xsd_document {
+                Some(document) => document,
+                None => calc.edited_type(&places, |props, required_list| {
+                    *props = props.iter().map(|(k, v)| (renamed(k), v.clone())).collect();
+                    for entry in required_list.iter_mut() {
+                        if entry.value().as_str() == Some(from) {
+                            *entry.value_mut() = Value::Str(to.to_owned());
+                        }
                     }
-                }
-            })?;
+                })?,
+            };
             // The formulas on the field, found before the data changes.
             let mut moves = Vec::new();
             for place in &places.objects {
@@ -659,13 +696,21 @@ impl Calc {
                 "a record must keep at least one field".to_owned(),
             ));
         }
+        let xsd_document = if places.xsd {
+            Some(self.xsd_edited_type(&places, &XsdChange::Delete { name })?)
+        } else {
+            None
+        };
         self.check_objects_free(sheet, &places)?;
         let what = format!("Delete field \"{name}\"");
         self.entry(&what, |calc| {
-            let document = calc.edited_type(&places, |props, required_list| {
-                props.shift_remove(name);
-                required_list.retain(|n| n.value().as_str() != Some(name));
-            })?;
+            let document = match xsd_document {
+                Some(document) => document,
+                None => calc.edited_type(&places, |props, required_list| {
+                    props.shift_remove(name);
+                    required_list.retain(|n| n.value().as_str() != Some(name));
+                })?,
+            };
             for place in &places.objects {
                 let field = place.key(name);
                 for path in formulas_at_or_below(&calc.sheets[sheet], &field) {

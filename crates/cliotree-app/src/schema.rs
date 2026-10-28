@@ -18,6 +18,9 @@ pub enum SchemaCommand {
         name: String,
         kind: FieldKind,
         required: bool,
+        /// On an XML tab: an attribute rather than an element. Its name is
+        /// typed without the `@`.
+        attribute: bool,
     },
     Rename {
         from: String,
@@ -44,6 +47,30 @@ pub struct SchemaDialog {
     pub values: usize,
     pub formulas: usize,
     pub error: Option<String>,
+    /// The schema tab is an XSD, so a new field is an element or an attribute.
+    pub xml: bool,
+}
+
+impl SchemaCommand {
+    /// The name the field is to have, as the calculation layer writes it: an
+    /// attribute's starts with `@`, whether or not it was typed.
+    pub fn new_name(&self) -> Option<String> {
+        let at = |attribute: bool, name: &str| {
+            let name = name.trim();
+            if attribute && !name.starts_with('@') {
+                format!("@{name}")
+            } else {
+                name.to_owned()
+            }
+        };
+        match self {
+            SchemaCommand::Add {
+                name, attribute, ..
+            } => Some(at(*attribute, name)),
+            SchemaCommand::Rename { from, to } => Some(at(from.starts_with('@'), to)),
+            _ => None,
+        }
+    }
 }
 
 impl ClioApp {
@@ -142,6 +169,7 @@ impl ClioApp {
             values,
             formulas,
             error: None,
+            xml: places.xsd,
         };
         self.schema_dialog = Some(dialog);
         if !asks {
@@ -196,24 +224,23 @@ impl ClioApp {
         // The names of the columns of every table before, so that what was
         // set on a column can follow it to its new name.
         let before = self.table_column_names();
+        let new_name = command.new_name().unwrap_or_default();
         let calc = self.session.calc_mut();
         match command {
-            SchemaCommand::Add {
-                name,
-                kind,
-                required,
-            } => calc.add_field(&sheet, object, name.trim(), *kind, *required),
-            SchemaCommand::Rename { from, to } => {
-                calc.rename_field(&sheet, object, from, to.trim())
+            SchemaCommand::Add { kind, required, .. } => {
+                calc.add_field(&sheet, object, &new_name, *kind, *required)
+            }
+            SchemaCommand::Rename { from, .. } => {
+                calc.rename_field(&sheet, object, from, &new_name)
             }
             SchemaCommand::Delete { name } => calc.delete_field(&sheet, object, name),
             SchemaCommand::Reorder { order } => calc.reorder_fields(&sheet, object, order),
         }
         .map_err(|e| e.to_string())?;
         match command {
-            SchemaCommand::Rename { from, to } => {
+            SchemaCommand::Rename { from, .. } => {
                 for place in &places.objects {
-                    self.move_view_of_node(&place.key(from), Some(&place.key(to.trim())));
+                    self.move_view_of_node(&place.key(from), Some(&place.key(&new_name)));
                 }
             }
             SchemaCommand::Delete { name } => {

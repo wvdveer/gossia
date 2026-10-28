@@ -8,7 +8,7 @@ use cliotree_core::{Path, Value, metaschema, validate, xml, xsd};
 
 use super::PythonEngine;
 use super::syntax::PythonSyntax;
-use crate::{Calc, EditError, SchemaFormat};
+use crate::{Calc, SchemaFormat};
 
 const XSD: &str = r#"<?xml version="1.0"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -235,17 +235,11 @@ fn an_xsd_that_cannot_be_lowered_says_why_and_leaves_the_tab_as_it_was() {
 }
 
 #[test]
-fn changing_an_xml_schema_from_a_data_tab_is_not_supported_yet_and_says_so() {
+fn the_field_commands_work_on_an_xml_tab_once_auto_update_is_on() {
     let mut b = Book::new();
     b.calc.set_auto_update("OrderSchema", true).unwrap();
-    let e = b.calc.field_places("Orders", &Path::root()).unwrap_err();
-    let EditError::Path(message) = e else {
-        panic!("{e:?}")
-    };
-    assert!(
-        message.contains("XSD") && message.contains("not supported yet"),
-        "{message}"
-    );
+    let places = b.calc.field_places("Orders", &Path::root()).unwrap();
+    assert!(places.xsd);
 }
 
 #[test]
