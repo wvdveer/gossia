@@ -69,7 +69,7 @@ fn a_new_form_starts_from_the_generated_one_and_is_shown() {
         .iter()
         .map(|v| v.label().to_owned())
         .collect();
-    assert_eq!(names, ["Data tree", "Default", "Packing", "Raw"]);
+    assert_eq!(names, ["Data tree", "Raw", "Default", "Packing"]);
     // Other tabs have only their own forms.
     app.switch_to("Prices");
     let names: Vec<_> = app
@@ -77,7 +77,7 @@ fn a_new_form_starts_from_the_generated_one_and_is_shown() {
         .iter()
         .map(|v| v.label().to_owned())
         .collect();
-    assert_eq!(names, ["Data tree", "Default", "Raw"]);
+    assert_eq!(names, ["Data tree", "Raw", "Default"]);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn a_form_is_duplicated_renamed_and_deleted() {
         .iter()
         .map(|v| v.label().to_owned())
         .collect();
-    assert_eq!(names, ["Data tree", "Default", "Packing", "Copy", "Raw"]);
+    assert_eq!(names, ["Data tree", "Raw", "Default", "Packing", "Copy"]);
 
     app.delete_form().unwrap();
     assert_eq!(app.form_name(), DEFAULT_FORM);

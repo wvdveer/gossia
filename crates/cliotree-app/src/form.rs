@@ -120,9 +120,10 @@ impl ClioApp {
         matches!(self.current_view(), View::Form(_))
     }
 
-    /// The names of the views of the current tab, the data tree first.
+    /// The names of the views of the current tab: the data tree and the raw
+    /// text, which every Data Tab has, then its forms.
     pub fn view_names(&self) -> Vec<View> {
-        let mut views = vec![View::Tree];
+        let mut views = vec![View::Tree, View::Raw];
         views.extend(
             self.calc()
                 .forms()
@@ -130,7 +131,6 @@ impl ClioApp {
                 .into_iter()
                 .map(View::Form),
         );
-        views.push(View::Raw);
         views
     }
 

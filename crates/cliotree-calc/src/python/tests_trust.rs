@@ -40,6 +40,79 @@ fn data_does_not_change_the_digest_but_executable_content_does() {
     assert_ne!(b.calc.fingerprint().hash, with_module.hash);
 }
 
+/// Trust model: the forms run Python too. What a button runs and the
+/// expressions of controls and of table columns are content; the rest of a
+/// design (labels, layout) is not. A form changed outside the application is
+/// listed by its place.
+#[test]
+fn the_procedures_and_expressions_of_forms_are_content() {
+    use cliotree_core::form::{ColumnDesign, Control, ControlKind, FormDesign};
+    let mut b = Book::new();
+    let design = |controls: Vec<Control>| FormDesign {
+        controls,
+        ..FormDesign::default()
+    };
+    let none = b.calc.fingerprint();
+    let mut button = Control::new(ControlKind::Button);
+    button.label = Some("Go".into());
+    b.calc
+        .forms_mut()
+        .set("S", "Entry", design(vec![button.clone()]));
+    assert_eq!(
+        b.calc.fingerprint(),
+        none,
+        "a button with no procedure runs nothing"
+    );
+
+    let changed = |b: &mut Book, edit: &dyn Fn(&mut Control)| {
+        let before = b.calc.fingerprint();
+        let mut design = b.calc.forms().get("S", "Entry").unwrap().clone();
+        edit(&mut design.controls[0]);
+        b.calc.forms_mut().set("S", "Entry", design);
+        b.calc.fingerprint() != before
+    };
+    assert!(changed(&mut b, &|c| c.procedure = Some("go".into())));
+    assert!(changed(&mut b, &|c| c.visible_when = Some("S.a > 1".into())));
+    assert!(changed(&mut b, &|c| c.enabled_when = Some("True".into())));
+    assert!(changed(&mut b, &|c| c.text_colour = Some("'red'".into())));
+    assert!(changed(&mut b, &|c| c.fill_colour = Some("'red'".into())));
+    let mut column = ColumnDesign::named("qty");
+    column.fill_colour = Some("'red' if this > 5 else None".into());
+    assert!(changed(&mut b, &|c| c.table_columns = vec![column.clone()]));
+    assert!(
+        !changed(&mut b, &|c| c.label = Some("Run".into())),
+        "a label is not"
+    );
+    assert!(
+        !changed(&mut b, &|c| c.font_size = Some(20)),
+        "nor is a font"
+    );
+
+    let store = trusted_store(&b);
+    let mut design = b.calc.forms().get("S", "Entry").unwrap().clone();
+    design.controls[0].visible_when = Some("__import__('os')".into());
+    design.controls[0].procedure = None;
+    b.calc.forms_mut().set("S", "Entry", design);
+    let Decision::Changed(changes) = store.decide("id-1", &b.calc.fingerprint()) else {
+        panic!("not changed");
+    };
+    let kind = |item: &str| {
+        changes
+            .iter()
+            .find(|c| c.item == item)
+            .unwrap_or_else(|| panic!("{item} not listed in {changes:?}"))
+            .kind
+    };
+    assert_eq!(
+        kind("form S/Entry control 0 visible when"),
+        ChangeKind::Edited
+    );
+    assert_eq!(
+        kind("form S/Entry control 0 procedure"),
+        ChangeKind::Removed
+    );
+}
+
 #[test]
 fn the_digest_does_not_depend_on_the_order_things_were_added() {
     let mut one = Book::new();

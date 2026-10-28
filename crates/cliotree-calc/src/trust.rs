@@ -251,6 +251,47 @@ impl Calc {
             let order: Vec<&str> = self.modules.keys().map(String::as_str).collect();
             items.insert("order of modules".to_string(), digest_of(&order.join("\n")));
         }
+        // The forms: what a button runs, and the expressions of the controls
+        // and of the columns of their tables, all of which run Python.
+        for (tab, form, design) in self.forms.iter() {
+            for (at, control) in design.walk() {
+                let place = format!(
+                    "form {tab}/{form} control {}",
+                    at.iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(".")
+                );
+                let own = [
+                    ("procedure", &control.procedure),
+                    ("visible when", &control.visible_when),
+                    ("enabled when", &control.enabled_when),
+                    ("text colour", &control.text_colour),
+                    ("fill colour", &control.fill_colour),
+                ];
+                for (what, text) in own {
+                    if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+                        items.insert(format!("{place} {what}"), digest_of(text));
+                    }
+                }
+                for column in &control.table_columns {
+                    let exprs = [
+                        ("visible when", &column.visible_when),
+                        ("enabled when", &column.enabled_when),
+                        ("text colour", &column.text_colour),
+                        ("fill colour", &column.fill_colour),
+                    ];
+                    for (what, text) in exprs {
+                        if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+                            items.insert(
+                                format!("{place} column {} {what}", column.name),
+                                digest_of(text),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         // The settings govern how the code runs. Default settings are no item,
         // so a workbook with no code still has no executable content.
         if let Some(text) = self.settings.to_json() {

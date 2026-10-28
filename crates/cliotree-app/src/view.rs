@@ -377,7 +377,13 @@ impl ClioApp {
             ui.menu_button("View", |ui| {
                 // How the current tab is shown.
                 ui.menu_button("Show as", |ui| {
+                    // The views every tab has, a line, then its forms.
+                    let mut forms_begun = false;
                     for view in self.view_names() {
+                        if matches!(view, crate::form::View::Form(_)) && !forms_begun {
+                            forms_begun = true;
+                            ui.separator();
+                        }
                         let chosen = self.current_view() == &view;
                         if ui.radio(chosen, view.label()).clicked() {
                             self.set_view(view);
