@@ -8,7 +8,7 @@
 //! workbook's undo history, like module edits and tab operations; layout mode
 //! has its own undo and redo, which last while it is on.
 
-use cliotree_calc::entry;
+use cliotree_calc::{ExprKind, entry};
 use cliotree_core::form::{
     self as design, Address, Alignment, ColumnDesign, Control, ControlKind, Editor, FormDesign,
     RepeaterMode,
@@ -952,43 +952,21 @@ impl ClioApp {
         if kind != ControlKind::Separator {
             font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
         }
-        if option_text(
-            ui,
-            "Visible when",
-            &mut edited.visible_when,
-            "expression",
-            false,
-        ) {
-            merge = Some(key("visible_when"));
-        }
-        if option_text(
-            ui,
-            "Enabled when",
-            &mut edited.enabled_when,
-            "expression",
-            false,
-        ) {
-            merge = Some(key("enabled_when"));
-        }
-        if kind != ControlKind::Separator {
-            if option_text(
-                ui,
-                "Text colour",
-                &mut edited.text_colour,
-                "expression giving a colour",
-                false,
-            ) {
-                merge = Some(key("text_colour"));
+        let coloured = kind != ControlKind::Separator;
+        let fields = [
+            (ExprKind::Visible, &mut edited.visible_when, true),
+            (ExprKind::Enabled, &mut edited.enabled_when, true),
+            (ExprKind::TextColour, &mut edited.text_colour, coloured),
+            (ExprKind::FillColour, &mut edited.fill_colour, coloured),
+        ];
+        for (expr, value, shown) in fields {
+            if !shown {
+                continue;
             }
-            if option_text(
-                ui,
-                "Fill colour",
-                &mut edited.fill_colour,
-                "expression giving a colour",
-                false,
-            ) {
-                merge = Some(key("fill_colour"));
+            if option_text(ui, expr_label(expr), value, expr_hint(expr), false) {
+                merge = Some(key(expr_property(expr)));
             }
+            self.expression_error(ui, at, None, expr);
         }
         ui.weak(
             "Python expressions, run where the control is bound. A colour is a name, \
@@ -1238,35 +1216,16 @@ impl ClioApp {
         );
         if !row_number {
             let fields = [
-                (
-                    "Visible when",
-                    &mut edited.visible_when,
-                    "visible_when",
-                    "expression",
-                ),
-                (
-                    "Enabled when",
-                    &mut edited.enabled_when,
-                    "enabled_when",
-                    "expression",
-                ),
-                (
-                    "Text colour",
-                    &mut edited.text_colour,
-                    "text_colour",
-                    "expression giving a colour",
-                ),
-                (
-                    "Fill colour",
-                    &mut edited.fill_colour,
-                    "fill_colour",
-                    "expression giving a colour",
-                ),
+                (ExprKind::Visible, &mut edited.visible_when),
+                (ExprKind::Enabled, &mut edited.enabled_when),
+                (ExprKind::TextColour, &mut edited.text_colour),
+                (ExprKind::FillColour, &mut edited.fill_colour),
             ];
-            for (label, value, name, hint) in fields {
-                if option_text(ui, label, value, hint, false) {
-                    merge = Some(key(name));
+            for (expr, value) in fields {
+                if option_text(ui, expr_label(expr), value, expr_hint(expr), false) {
+                    merge = Some(key(expr_property(expr)));
                 }
+                self.expression_error(ui, at, Some(&column.name), expr);
             }
             ui.weak(
                 "Visible when runs once, where the table is bound, and hides the whole \
@@ -1278,6 +1237,50 @@ impl ClioApp {
         if edited != column {
             self.set_column(merge, at, edited);
         }
+    }
+
+    /// Under the field of an expression of the control at `at`, or of its
+    /// column `column`: why it failed, the first line of the message, with
+    /// the full message on hover. For one that runs for each row, the first
+    /// row that failed. Nothing before it has run, when it worked, or in a
+    /// workbook that is not trusted.
+    fn expression_error(
+        &self,
+        ui: &mut egui::Ui,
+        at: &Address,
+        column: Option<&str>,
+        kind: ExprKind,
+    ) {
+        let calc = self.calc();
+        let form = self.form_name();
+        let sheet = &self.sheet;
+        let failed = |state: Option<cliotree_calc::ExprState>| state?.result?.err();
+        let error = match column {
+            None => failed(calc.control_expression(sheet, &form, at, kind)).map(|e| (None, e)),
+            Some(name) if kind == ExprKind::Visible => {
+                failed(calc.column_expression(sheet, &form, at, name, None, kind))
+                    .map(|e| (None, e))
+            }
+            Some(name) => (0..)
+                .map_while(|row| {
+                    calc.column_expression(sheet, &form, at, name, Some(row), kind)
+                        .map(|state| (row, state))
+                })
+                .find_map(|(row, state)| Some((Some(row), failed(Some(state))?))),
+        };
+        let Some((row, message)) = error else {
+            return;
+        };
+        let first = message.lines().next().unwrap_or_default();
+        let text = match row {
+            Some(row) => format!("Row [{row}]: {first}"),
+            None => first.to_owned(),
+        };
+        let color = error_color(ui);
+        let response = ui.add(egui::Label::new(
+            egui::RichText::new(text).small().color(color),
+        ));
+        response.on_hover_text(message);
     }
 
     /// The formula of the node a field is bound to, edited here, since a form
@@ -1639,6 +1642,34 @@ fn format_properties(
 
 /// A labelled text field for an optional property: empty is absent. Returns
 /// whether it was typed into.
+/// The name of an expression's field on the property page.
+fn expr_label(kind: ExprKind) -> &'static str {
+    match kind {
+        ExprKind::Visible => "Visible when",
+        ExprKind::Enabled => "Enabled when",
+        ExprKind::TextColour => "Text colour",
+        ExprKind::FillColour => "Fill colour",
+    }
+}
+
+fn expr_hint(kind: ExprKind) -> &'static str {
+    match kind {
+        ExprKind::Visible | ExprKind::Enabled => "expression",
+        ExprKind::TextColour | ExprKind::FillColour => "expression giving a colour",
+    }
+}
+
+/// The property an expression is stored in, for merging the typing in its
+/// field into one change of the design.
+fn expr_property(kind: ExprKind) -> &'static str {
+    match kind {
+        ExprKind::Visible => "visible_when",
+        ExprKind::Enabled => "enabled_when",
+        ExprKind::TextColour => "text_colour",
+        ExprKind::FillColour => "fill_colour",
+    }
+}
+
 /// The procedure of a button, chosen from the functions of the modules. A
 /// name that no module has any more stays chosen, marked, until another is
 /// chosen, so that fixing the module brings the button back.

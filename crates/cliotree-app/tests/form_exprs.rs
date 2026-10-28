@@ -264,3 +264,60 @@ fn the_expressions_of_a_column_do_not_run_in_a_workbook_that_is_not_trusted() {
     assert!(g.why[0].contains("trusted"), "{:?}", g.why);
     assert_eq!(cell(&harness, &at, "qty", 2).fill, None);
 }
+
+// --------------------------------------------------- errors on the property page
+
+fn type_expression(harness: &mut Harness<'_, ClioApp>, field: &str, text: &str) {
+    let role = egui::accesskit::Role::TextInput;
+    harness.get_by_role_and_label(role, field).click();
+    harness.run();
+    harness.get_by_role_and_label(role, field).type_text(text);
+    harness.run();
+    settle(harness);
+    harness.run();
+}
+
+fn error_shown(harness: &Harness<'_, ClioApp>, text: &str) -> bool {
+    harness.query_by_label_contains(text).is_some()
+}
+
+/// A colour typed without quotes is a Python name, which fails: the property
+/// page says so under the field, and says nothing once it works.
+#[test]
+fn the_property_page_shows_why_an_expression_failed() {
+    let (mut harness, _) = form(Vec::new());
+    harness.get_by_label("Edit form").click();
+    harness.run();
+    harness.get_by_label("Field customer.name").click();
+    harness.run();
+    assert!(!error_shown(&harness, "NameError"));
+    type_expression(&mut harness, "Text colour", "red");
+    assert!(error_shown(
+        &harness,
+        "#NAME!: NameError: name 'red' is not defined"
+    ));
+    // Only the first line; the traceback is on hover.
+    assert!(!error_shown(&harness, "Traceback"));
+
+    harness.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
+    type_expression(&mut harness, "Text colour", "'red'");
+    assert!(!error_shown(&harness, "NameError"));
+}
+
+/// For a column, the first row that failed.
+#[test]
+fn the_property_page_of_a_column_names_the_row_that_failed() {
+    let columns = vec![column("note", |c| {
+        c.text_colour = Some("'red' if this.startswith('g') else None".into());
+    })];
+    let (mut harness, _) = with_columns(columns);
+    harness.get_by_label("Edit form").click();
+    harness.run();
+    harness
+        .get_by_label("Column note of Repeater items")
+        .click();
+    harness.run();
+    // The first item has no note: None has no startswith.
+    assert!(error_shown(&harness, "Row [0]: "));
+    assert!(error_shown(&harness, "startswith"));
+}
