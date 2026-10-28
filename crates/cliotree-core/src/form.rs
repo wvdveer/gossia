@@ -416,6 +416,13 @@ pub struct Control {
     pub visible_when: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_when: Option<String>,
+    /// Python expressions giving the colour of the control's text and of its
+    /// background: a name, `#rrggbb` or an `(r, g, b)` tuple, or `None` for
+    /// the usual look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_colour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_colour: Option<String>,
     /// The typeface of the control's text. Absent: the one of the group it is
     /// in, or the interface font.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -462,6 +469,8 @@ impl Control {
             procedure: None,
             visible_when: None,
             enabled_when: None,
+            text_colour: None,
+            fill_colour: None,
             font: None,
             font_size: None,
             title_font: None,
@@ -631,6 +640,8 @@ pub fn form_schema_source() -> &'static str {
         "procedure": {"type": "string"},
         "visible_when": {"type": "string"},
         "enabled_when": {"type": "string"},
+        "text_colour": {"type": "string"},
+        "fill_colour": {"type": "string"},
         "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "title_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},

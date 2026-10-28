@@ -42,6 +42,15 @@ impl FormStore {
         names
     }
 
+    /// Every stored design, by tab and form name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str, &FormDesign)> {
+        self.by_tab.iter().flat_map(|(tab, forms)| {
+            forms
+                .iter()
+                .map(move |(name, design)| (tab.as_str(), name.as_str(), design))
+        })
+    }
+
     pub fn get(&self, tab: &str, name: &str) -> Option<&FormDesign> {
         self.by_tab.get(tab)?.get(name)
     }

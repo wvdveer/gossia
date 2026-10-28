@@ -531,6 +531,12 @@ impl Calc {
     /// Takes what the engine found out about loading the modules. A report for
     /// a generation that has been replaced is ignored.
     pub(super) fn apply_module_reports(&mut self, reports: Vec<ModuleReport>) {
+        // An expression on a control may call a function of a module: once
+        // the modules as they are now have been loaded, each runs again.
+        if !reports.is_empty() && self.exprs.modules_seen != self.module_generation {
+            self.exprs.modules_seen = self.module_generation;
+            self.exprs.mark_all_stale();
+        }
         let mut any = false;
         for report in reports {
             let Some(module) = self.modules.get_mut(&report.name) else {

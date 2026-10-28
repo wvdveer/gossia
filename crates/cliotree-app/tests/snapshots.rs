@@ -160,6 +160,32 @@ fn a_schema_tab_and_its_field_dialog() {
     check(&mut harness, "add_field_dialog", &mut results);
 }
 
+/// The Default form of Orders with its first control coloured by expressions
+/// and the second hidden by one.
+#[test]
+fn a_form_with_expressions_on_its_controls() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    {
+        let app = harness.state_mut();
+        let mut design = app.design_of("Default");
+        design.controls[0].fill_colour =
+            Some("'#fff2cc' if Orders.customer.vip else None".to_owned());
+        design.controls[0].text_colour = Some("'darkred'".to_owned());
+        design.controls[1].visible_when = Some("not Orders.customer.vip".to_owned());
+        app.session
+            .calc_mut()
+            .forms_mut()
+            .set("Orders", "Default", design);
+    }
+    show_as(&mut harness, "Default");
+    settle(&mut harness);
+    check(&mut harness, "form_expressions", &mut results);
+}
+
 #[test]
 fn the_default_form() {
     if !enabled() {

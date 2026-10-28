@@ -27,6 +27,7 @@ use std::sync::Arc;
 use cliotree_core::{ErrorKind, ErrorValue, Node, Path, TypeSpec};
 use indexmap::IndexSet;
 
+use crate::calc::{ExprJob, ExprOutcome};
 use crate::check::{Computed, finish, store};
 use crate::engine::{
     Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleReport, ModuleSpec,
@@ -50,6 +51,9 @@ pub struct Snapshot {
     pub(crate) modules: Arc<Vec<ModuleSpec>>,
     pub(crate) sheets: HashMap<String, SheetSnap>,
     pub(crate) dirty: Vec<Loc>,
+    /// The expressions on controls that are out of date, run after the
+    /// formulas so that they read fresh values.
+    pub(crate) exprs: Vec<ExprJob>,
 }
 
 /// What one formula came to.
@@ -70,6 +74,7 @@ pub struct Evaluation {
     pub(crate) outcomes: Vec<Outcome>,
     /// What loading the modules came to, if the evaluation loaded any.
     pub(crate) modules: Vec<ModuleReport>,
+    pub(crate) exprs: Vec<ExprOutcome>,
 }
 
 /// What running a button procedure came to: the writes it made, not yet
@@ -171,6 +176,11 @@ impl Snapshot {
         self.dirty.len()
     }
 
+    /// Whether there is anything to run: formulas or expressions on controls.
+    pub fn has_work(&self) -> bool {
+        !self.dirty.is_empty() || !self.exprs.is_empty()
+    }
+
     /// Runs every formula in the list, and those that depend on them.
     pub fn evaluate(&self, engine: &dyn Engine) -> Evaluation {
         self.evaluate_with(engine, &mut NoHooks)
@@ -200,10 +210,19 @@ impl Snapshot {
         for loc in run.visiting_order(&dirty) {
             run.drive(loc);
         }
+        let mut exprs = Vec::new();
+        for job in &self.exprs {
+            // Out of time: the rest stay out of date, for the next pass.
+            if !run.hooks.before(&job.loc) {
+                break;
+            }
+            exprs.push(run.expression(job));
+        }
         Evaluation {
             base: self.version,
             outcomes: run.outcomes,
             modules,
+            exprs,
         }
     }
 }
@@ -520,25 +539,7 @@ impl Run<'_> {
         };
         let text = formula.text.clone();
         let spec = Arc::clone(&snap.spec);
-        let ctx = Rc::new(EvalContext {
-            loc: loc.clone(),
-            data: self
-                .sheets
-                .iter()
-                .map(|(name, s)| (name.clone(), s.data.clone()))
-                .collect(),
-            specs: self
-                .sheets
-                .iter()
-                .map(|(name, s)| (name.clone(), Arc::clone(&s.spec)))
-                .collect(),
-            names: self
-                .sheets
-                .keys()
-                .map(|name| (name.clone(), Rc::from(name.as_str())))
-                .collect(),
-            reads: RefCell::new(Vec::new()),
-        });
+        let ctx = self.context(loc);
         let result = self.engine.eval(&text, ctx.clone());
         let reads = ctx.reads.take();
         drop(ctx);
@@ -584,6 +585,58 @@ impl Run<'_> {
         let (computed, traceback) = finish(&spec, loc, result);
         self.record(loc, computed, traceback, deps);
         Attempt::Finished
+    }
+
+    /// A context at `loc` that sees the results so far.
+    fn context(&self, loc: &Loc) -> Rc<EvalContext> {
+        Rc::new(EvalContext {
+            loc: loc.clone(),
+            data: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), s.data.clone()))
+                .collect(),
+            specs: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), Arc::clone(&s.spec)))
+                .collect(),
+            names: self
+                .sheets
+                .keys()
+                .map(|name| (name.clone(), Rc::from(name.as_str())))
+                .collect(),
+            reads: RefCell::new(Vec::new()),
+        })
+    }
+
+    /// Runs an expression of a control against the values as they are once
+    /// the formulas have run, and records what it read.
+    fn expression(&self, job: &ExprJob) -> ExprOutcome {
+        let ctx = self.context(&job.loc);
+        let result = self.engine.eval(&job.text, ctx.clone());
+        let reads = ctx.reads.take();
+        drop(ctx);
+        let mut deps: IndexSet<Dep> = IndexSet::new();
+        for (sheet, path, depth) in reads {
+            deps.insert(Dep {
+                loc: Loc::new(&*sheet, path),
+                shallow: depth == Depth::Shallow,
+            });
+        }
+        let result = match result {
+            Ok(cliotree_core::Value::Error(error)) => {
+                Err(format!("{}: {}", error.kind, error.message))
+            }
+            Ok(value) => Ok(value),
+            Err(failure) => Err(failure_text(&failure)),
+        };
+        ExprOutcome {
+            key: job.key.clone(),
+            text: job.text.clone(),
+            result,
+            deps: deps.into_iter().collect(),
+        }
     }
 
     /// Stores a finished result in the working tree, so that formulas that read

@@ -970,7 +970,30 @@ impl ClioApp {
         ) {
             merge = Some(key("enabled_when"));
         }
-        ui.weak("These two are kept with the form but are not evaluated yet.");
+        if kind != ControlKind::Separator {
+            if option_text(
+                ui,
+                "Text colour",
+                &mut edited.text_colour,
+                "expression giving a colour",
+                false,
+            ) {
+                merge = Some(key("text_colour"));
+            }
+            if option_text(
+                ui,
+                "Fill colour",
+                &mut edited.fill_colour,
+                "expression giving a colour",
+                false,
+            ) {
+                merge = Some(key("fill_colour"));
+            }
+        }
+        ui.weak(
+            "Python expressions, run where the control is bound. A colour is a name, \
+             \"#rrggbb\" or (r, g, b); None is the usual colour.",
+        );
 
         if kind == ControlKind::Field {
             self.formula_editor(ui, &edited);

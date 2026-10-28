@@ -438,6 +438,7 @@ impl Evaluator {
                 deps: Vec::new(),
             }],
             modules: Vec::new(),
+            exprs: Vec::new(),
         });
     }
 
@@ -656,6 +657,7 @@ impl Session {
     /// interface knows to redraw.
     pub fn tick(&mut self) -> bool {
         let mut changed = false;
+        self.calc.sync_expressions();
         for evaluation in self.evaluator.poll() {
             let applied = self.calc.apply(evaluation);
             changed |= !applied.applied.is_empty() || !applied.discarded.is_empty();
@@ -669,7 +671,9 @@ impl Session {
         let answers = self.evaluator.take_immediate();
         changed |= !answers.is_empty();
         self.immediate_results.extend(answers);
-        let work = self.calc.pending() > 0 || self.calc.pending_modules() > 0;
+        let work = self.calc.pending() > 0
+            || self.calc.pending_modules() > 0
+            || self.calc.pending_expressions() > 0;
         if !self.evaluator.is_running() && !self.evaluator.suspended() {
             if work {
                 let _ = self.evaluator.submit(self.calc.snapshot());
@@ -722,6 +726,7 @@ impl Session {
     pub fn is_idle(&self) -> bool {
         self.calc.pending() == 0
             && self.calc.pending_modules() == 0
+            && self.calc.pending_expressions() == 0
             && !self.evaluator.is_running()
             && self.queued.is_none()
             && self.queued_immediate.is_none()

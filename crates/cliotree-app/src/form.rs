@@ -19,6 +19,7 @@ use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
+use crate::form_exprs::Gate;
 use crate::form_layout::{ColumnEdit, ControlAction, FormDialog, LayoutState};
 use crate::icons;
 use crate::rows::display;
@@ -331,6 +332,7 @@ impl ClioApp {
             if let (Some(spec), Some(data)) = (calc.spec(&self.sheet), calc.data(&self.sheet)) {
                 let mut painter = Painter {
                     app: self,
+                    form: &name,
                     spec,
                     data,
                     drafts: &mut drafts,
@@ -569,6 +571,8 @@ fn hint(kind: &Kind) -> &'static str {
 
 struct Painter<'a> {
     app: &'a ClioApp,
+    /// The name of the form, for the results of its expressions.
+    form: &'a str,
     spec: &'a TypeSpec,
     data: &'a Node,
     drafts: &'a mut HashMap<(String, Path), Draft>,
@@ -641,9 +645,87 @@ impl Painter<'_> {
         }
     }
 
+    /// A control as its expressions say: hidden, disabled, in its colours,
+    /// with the pending marker while one is waiting to run again. In layout
+    /// mode every control is drawn as designed.
+    fn control(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        if self.layout.is_some() {
+            self.control_in_style(ui, c, slot);
+            return;
+        }
+        let gate = crate::form_exprs::gate(self.app.calc(), &self.app.sheet, self.form, &slot.at);
+        if gate == Gate::default() {
+            self.control_in_style(ui, c, slot);
+            return;
+        }
+        if gate.hidden {
+            return;
+        }
+        let response = ui
+            .scope(|ui| {
+                // On a fill with no text colour of its own, text is black or
+                // white, whichever reads on it.
+                let text = gate
+                    .text
+                    .or_else(|| gate.fill.map(crate::form_exprs::readable_on));
+                if let Some(text) = text {
+                    let visuals = ui.visuals_mut();
+                    visuals.override_text_color = Some(text);
+                    // Titles are drawn in the strong colour, and the tick of a
+                    // check box and the arrow of a drop-down in the colour of
+                    // a widget at rest.
+                    visuals.widgets.active.fg_stroke.color = text;
+                    visuals.widgets.inactive.fg_stroke.color = text;
+                }
+                let body = |this: &mut Self, ui: &mut egui::Ui| {
+                    ui.add_enabled_ui(!gate.disabled, |ui| this.control_in_style(ui, c, slot));
+                };
+                match gate.fill {
+                    Some(fill) => {
+                        // A text box draws its own background.
+                        ui.visuals_mut().extreme_bg_color = fill;
+                        ui.visuals_mut().text_edit_bg_color = Some(fill);
+                        // So do buttons, check boxes and drop-downs at rest.
+                        let widgets = &mut ui.visuals_mut().widgets;
+                        let outline = widgets.noninteractive.bg_stroke.color;
+                        widgets.inactive.bg_fill = fill;
+                        widgets.inactive.weak_bg_fill = fill;
+                        if widgets.inactive.bg_stroke.width == 0.0 {
+                            widgets.inactive.bg_stroke = Stroke::new(1.0, outline);
+                        }
+                        egui::Frame::new()
+                            .fill(fill)
+                            .corner_radius(3.0)
+                            .inner_margin(2.0)
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                body(self, ui);
+                            });
+                    }
+                    None => body(self, ui),
+                }
+            })
+            .response;
+        if gate.pending {
+            // In the top-right corner of the control, over what is there.
+            let side = 10.0;
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(response.rect.right() - side, response.rect.top()),
+                egui::vec2(side, side),
+            );
+            ui.put(rect, |ui: &mut egui::Ui| crate::style::pending_marker(ui))
+                .on_hover_text("Waiting to be calculated");
+        }
+        if !gate.why.is_empty() {
+            let why = gate.why.join("\n");
+            response.clone().on_hover_text(&why);
+            response.on_disabled_hover_text(why);
+        }
+    }
+
     /// A control, in its font: its own, or else the one of the group it is
     /// in, for the typeface and the size separately.
-    fn control(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+    fn control_in_style(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
         if c.font.is_none() && c.font_size.is_none() {
             self.control_in_font(ui, c, slot);
             return;

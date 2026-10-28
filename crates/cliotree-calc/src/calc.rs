@@ -67,6 +67,11 @@ pub use schema::{FieldKind, FieldPlaces, SchemaFormat};
 #[path = "xsd_fields.rs"]
 mod xsd_fields;
 
+#[path = "control_exprs.rs"]
+mod control_exprs;
+pub(crate) use control_exprs::{ExprJob, ExprOutcome};
+pub use control_exprs::{ExprKey, ExprKind, ExprState};
+
 #[path = "package.rs"]
 mod package;
 pub use package::{
@@ -242,6 +247,8 @@ pub struct Calc {
     module_renames: Vec<(String, String)>,
     /// The tabs taken out since the last [`Calc::take_removed`].
     removed: Vec<String>,
+    /// The expressions on the controls of the forms, and what they came to.
+    exprs: control_exprs::ControlExprs,
 }
 
 impl Calc {
@@ -267,6 +274,7 @@ impl Calc {
             renames: Vec::new(),
             module_renames: Vec::new(),
             removed: Vec::new(),
+            exprs: control_exprs::ControlExprs::default(),
         }
     }
 
@@ -280,6 +288,7 @@ impl Calc {
     /// in the undo history and do not recalculate anything.
     pub fn forms_mut(&mut self) -> &mut crate::forms::FormStore {
         self.forms_version += 1;
+        self.exprs.resync = true;
         &mut self.forms
     }
 
@@ -1242,6 +1251,11 @@ impl Calc {
             } else {
                 Vec::new()
             },
+            exprs: if trusted {
+                self.exprs.stale_jobs()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -1271,6 +1285,20 @@ impl Calc {
                     .sheets
                     .get(&loc.sheet)
                     .is_some_and(|s| s.formulas.by_path.contains_key(&loc.path));
+            if overtaken
+                && !self
+                    .sheets
+                    .get(&loc.sheet)
+                    .is_some_and(|s| s.formulas.by_path.contains_key(&loc.path))
+            {
+                // What was running when the thread was given up may have been
+                // an expression on a control there, not a formula.
+                if let Computed::Error(error) = &outcome.computed
+                    && error.kind == ErrorKind::Timeout
+                {
+                    self.exprs.fail_stale_at(&loc, &error.message);
+                }
+            }
             if overtaken {
                 dropped
                     .entry(loc.sheet.clone())
@@ -1294,7 +1322,13 @@ impl Calc {
             self.dirty.swap_remove(&loc);
             applied.applied.push(loc);
         }
-        if !applied.applied.is_empty() {
+        // Expressions that read a result that changed are out of date, unless
+        // this evaluation ran them after it.
+        for loc in &applied.applied {
+            self.exprs.mark_stale(&loc.sheet, &loc.path);
+        }
+        let exprs_changed = self.apply_expr_outcomes(evaluation.base, evaluation.exprs, &dropped);
+        if !applied.applied.is_empty() || exprs_changed {
             self.revision += 1;
         }
         applied
@@ -1304,11 +1338,14 @@ impl Calc {
     /// this thread. Returns how many formulas were run.
     pub fn recalc(&mut self, engine: &dyn Engine) -> usize {
         let mut run = 0;
-        while !self.dirty.is_empty() || self.pending_modules() > 0 {
+        self.sync_expressions();
+        while !self.dirty.is_empty() || self.pending_modules() > 0 || self.pending_expressions() > 0
+        {
             let evaluation = self.snapshot().evaluate(engine);
             run += evaluation.outcomes.len();
+            let ran_exprs = !evaluation.exprs.is_empty();
             let applied = self.apply(evaluation);
-            if applied.applied.is_empty() && self.pending_modules() == 0 {
+            if applied.applied.is_empty() && self.pending_modules() == 0 && !ran_exprs {
                 break;
             }
         }
@@ -1394,6 +1431,7 @@ impl Calc {
             }
         }
         self.mark_dirty_from(sheet, path);
+        self.exprs.mark_stale(sheet, path);
     }
 
     /// Whether an edit made after `base` concerns a read of `loc`: for a deep

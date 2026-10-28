@@ -22,8 +22,9 @@ mod trie;
 
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, EditError,
-    Effective, ExportFormat, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleProblem,
-    ModuleStatus, SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings, comment_text_problem,
+    Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind, FieldPlaces, Fingerprint,
+    Mentions, ModuleProblem, ModuleStatus, SchemaFormat, Setting, TrustStore, Unit,
+    WorkbookSettings, comment_text_problem,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -79,6 +80,10 @@ mod package_tests;
 #[cfg(test)]
 #[path = "xsd_fields_tests.rs"]
 mod xsd_fields_tests;
+
+#[cfg(test)]
+#[path = "control_exprs_tests.rs"]
+mod control_exprs_tests;
 
 #[cfg(test)]
 #[path = "columns_tests.rs"]

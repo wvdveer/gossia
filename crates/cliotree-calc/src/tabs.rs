@@ -173,6 +173,7 @@ impl Calc {
             }
         }
         self.forms.rename_tab(from, to);
+        self.exprs.resync = true;
         self.forms_version += 1;
         self.renames.push((from.to_owned(), to.to_owned()));
         // What read the old name now finds nothing, what looked for the new
@@ -345,6 +346,7 @@ impl Calc {
             self.dirty.swap_remove(&loc);
         }
         self.forms.take_tab(name);
+        self.exprs.resync = true;
         self.forms_version += 1;
         self.removed.push(name.to_owned());
         // What read the tab now finds nothing.
@@ -371,6 +373,7 @@ impl Calc {
             self.dirty.insert(loc);
         }
         self.forms.put_tab(&name, forms);
+        self.exprs.resync = true;
         self.forms_version += 1;
         self.changed(&name, &Path::root());
     }
