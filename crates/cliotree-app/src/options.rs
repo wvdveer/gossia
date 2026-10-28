@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use cliotree_calc::{Ceilings, Setting, Unit, WorkbookSettings};
 
 use crate::app::ClioApp;
-use crate::prefs::{Appearance, Preferences, SCALE_RANGE, ThemeChoice};
+use crate::prefs::{
+    Appearance, CODE_FONT_RANGE, CodePrefs, IMMEDIATE_ENTRIES_RANGE, IMMEDIATE_OUTPUT_RANGE,
+    INDENT_RANGE, Preferences, SCALE_RANGE, ThemeChoice,
+};
 use crate::view::error_color;
 
 // `LIBRARIES`: the main third-party libraries, from Cargo.lock (build.rs).
@@ -24,6 +27,7 @@ include!(concat!(env!("OUT_DIR"), "/libraries.rs"));
 pub enum Page {
     General,
     Editing,
+    CodeEditor,
     Evaluation,
     DataSources,
     Trust,
@@ -32,9 +36,10 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [
+    pub const ALL: [Page; 8] = [
         Page::General,
         Page::Editing,
+        Page::CodeEditor,
         Page::Evaluation,
         Page::DataSources,
         Page::Trust,
@@ -46,6 +51,7 @@ impl Page {
         match self {
             Page::General => "General",
             Page::Editing => "Editing",
+            Page::CodeEditor => "Code editor",
             Page::Evaluation => "Evaluation",
             Page::DataSources => "Data sources",
             Page::Trust => "Trust and security",
@@ -70,6 +76,10 @@ pub enum Field {
     Scale,
     UndoEntries,
     UndoWeight,
+    CodeFontSize,
+    IndentWidth,
+    ImmediateEntries,
+    ImmediateOutput,
     ZipEntries,
     TotalBytes,
     EntryBytes,
@@ -85,6 +95,10 @@ pub enum Shown {
     Megabytes,
     Count,
     Percent,
+    /// Points, of a font.
+    Points,
+    /// Bytes, shown in kilobytes (KB of 1,024 bytes).
+    Kilobytes,
 }
 
 impl Shown {
@@ -101,7 +115,8 @@ impl Shown {
         match self {
             Shown::Seconds => 1_000,
             Shown::Megabytes => 1 << 20,
-            Shown::Count | Shown::Percent => 1,
+            Shown::Kilobytes => 1 << 10,
+            Shown::Count | Shown::Percent | Shown::Points => 1,
         }
     }
 
@@ -111,6 +126,8 @@ impl Shown {
             Shown::Megabytes => "MB",
             Shown::Count => "",
             Shown::Percent => "%",
+            Shown::Points => "pt",
+            Shown::Kilobytes => "KB",
         }
     }
 
@@ -158,7 +175,15 @@ impl Shown {
 impl Field {
     /// Every number, in the order of the pages.
     pub fn all() -> Vec<Field> {
-        let mut fields = vec![Field::Scale, Field::UndoEntries, Field::UndoWeight];
+        let mut fields = vec![
+            Field::Scale,
+            Field::UndoEntries,
+            Field::UndoWeight,
+            Field::CodeFontSize,
+            Field::IndentWidth,
+            Field::ImmediateEntries,
+            Field::ImmediateOutput,
+        ];
         fields.extend(Setting::ALL.map(Field::Workbook));
         fields.extend(Setting::ALL.map(Field::Ceiling));
         fields.extend([
@@ -179,6 +204,10 @@ impl Field {
             Field::Scale => "scale_percent".to_owned(),
             Field::UndoEntries => "undo.max_entries".to_owned(),
             Field::UndoWeight => "undo.max_weight".to_owned(),
+            Field::CodeFontSize => "code_editor.font_size".to_owned(),
+            Field::IndentWidth => "code_editor.indent_width".to_owned(),
+            Field::ImmediateEntries => "code_editor.immediate_history_entries".to_owned(),
+            Field::ImmediateOutput => "code_editor.immediate_max_output_bytes".to_owned(),
             Field::ZipEntries => "files.max_zip_entries".to_owned(),
             Field::TotalBytes => "files.max_total_bytes".to_owned(),
             Field::EntryBytes => "files.max_entry_bytes".to_owned(),
@@ -196,6 +225,10 @@ impl Field {
             Field::Scale => "Interface scale",
             Field::UndoEntries => "Most entries kept",
             Field::UndoWeight => "Memory budget (rough units)",
+            Field::CodeFontSize => "Font size",
+            Field::IndentWidth => "Indent width (spaces)",
+            Field::ImmediateEntries => "History entries kept",
+            Field::ImmediateOutput => "Largest result shown",
             Field::ZipEntries => "Most entries in a workbook",
             Field::TotalBytes => "Largest workbook, uncompressed",
             Field::EntryBytes => "Largest entry, uncompressed",
@@ -207,7 +240,13 @@ impl Field {
         match self {
             Field::Workbook(s) | Field::Ceiling(s) => Shown::of(s.unit()),
             Field::Scale => Shown::Percent,
-            Field::UndoEntries | Field::UndoWeight | Field::ZipEntries => Shown::Count,
+            Field::CodeFontSize => Shown::Points,
+            Field::ImmediateOutput => Shown::Kilobytes,
+            Field::UndoEntries
+            | Field::UndoWeight
+            | Field::ZipEntries
+            | Field::IndentWidth
+            | Field::ImmediateEntries => Shown::Count,
             Field::TotalBytes | Field::EntryBytes | Field::ImportBytes => Shown::Megabytes,
         }
     }
@@ -217,6 +256,10 @@ impl Field {
         match self {
             Field::Workbook(s) | Field::Ceiling(s) => (s.minimum(), u64::MAX),
             Field::Scale => SCALE_RANGE,
+            Field::CodeFontSize => CODE_FONT_RANGE,
+            Field::IndentWidth => INDENT_RANGE,
+            Field::ImmediateEntries => IMMEDIATE_ENTRIES_RANGE,
+            Field::ImmediateOutput => IMMEDIATE_OUTPUT_RANGE,
             // The history and file limits are sizes in memory.
             _ => (1, usize::MAX as u64),
         }
@@ -230,6 +273,10 @@ impl Field {
             Field::Scale => Appearance::default().scale_percent,
             Field::UndoEntries => defaults.history_entries as u64,
             Field::UndoWeight => defaults.history_weight as u64,
+            Field::CodeFontSize => defaults.code.font_size,
+            Field::IndentWidth => defaults.code.indent,
+            Field::ImmediateEntries => defaults.code.history_entries,
+            Field::ImmediateOutput => defaults.code.max_output,
             Field::ZipEntries => defaults.limits.entries as u64,
             Field::TotalBytes => defaults.limits.total,
             Field::EntryBytes => defaults.limits.entry,
@@ -256,6 +303,10 @@ impl Field {
             Field::Scale => prefs.appearance.scale_percent,
             Field::UndoEntries => prefs.history_entries as u64,
             Field::UndoWeight => prefs.history_weight as u64,
+            Field::CodeFontSize => prefs.code.font_size,
+            Field::IndentWidth => prefs.code.indent,
+            Field::ImmediateEntries => prefs.code.history_entries,
+            Field::ImmediateOutput => prefs.code.max_output,
             Field::ZipEntries => prefs.limits.entries as u64,
             Field::TotalBytes => prefs.limits.total,
             Field::EntryBytes => prefs.limits.entry,
@@ -276,6 +327,12 @@ pub struct OptionsDialog {
     pub theme: ThemeChoice,
     /// The trusted workbooks to forget on OK.
     pub revoke: BTreeSet<String>,
+    /// The code editor's yes-or-no options.
+    pub line_numbers: bool,
+    pub highlighting: bool,
+    pub wrap: bool,
+    /// Clear the Immediate window's history on OK.
+    pub clear_history: bool,
 }
 
 impl OptionsDialog {
@@ -294,6 +351,10 @@ impl OptionsDialog {
             start,
             theme: prefs.appearance.theme,
             revoke: BTreeSet::new(),
+            line_numbers: prefs.code.line_numbers,
+            highlighting: prefs.code.highlighting,
+            wrap: prefs.code.wrap,
+            clear_history: false,
         }
     }
 
@@ -372,6 +433,15 @@ impl OptionsDialog {
         prefs.ceilings = self.ceilings();
         prefs.history_entries = get(Field::UndoEntries) as usize;
         prefs.history_weight = get(Field::UndoWeight) as usize;
+        prefs.code = CodePrefs {
+            font_size: get(Field::CodeFontSize),
+            indent: get(Field::IndentWidth),
+            line_numbers: self.line_numbers,
+            highlighting: self.highlighting,
+            wrap: self.wrap,
+            history_entries: get(Field::ImmediateEntries),
+            max_output: get(Field::ImmediateOutput),
+        };
         prefs.limits.entries = get(Field::ZipEntries) as usize;
         prefs.limits.total = get(Field::TotalBytes);
         prefs.limits.entry = get(Field::EntryBytes);
@@ -408,6 +478,15 @@ impl ClioApp {
             self.user.prefs.history_weight,
         );
         self.session.calc_mut().set_history_limits(entries, weight);
+        // The history keeps no more than it may now, and is cleared if asked.
+        let kept = if dialog.clear_history {
+            self.user.clear_immediate()
+        } else {
+            self.user.keep_immediate()
+        };
+        if let Err(e) = kept {
+            self.notice = Some(format!("The Immediate window's history: {e}"));
+        }
         if !dialog.revoke.is_empty() {
             let revoke = dialog.revoke.clone();
             self.change_trust(|t| {
@@ -607,6 +686,52 @@ impl ClioApp {
                     number(ui, dialog, Field::UndoEntries, None);
                     number(ui, dialog, Field::UndoWeight, None);
                 });
+            }
+            Page::CodeEditor => {
+                section(ui, "Editor", |ui| {
+                    ui.label("Font");
+                    ui.label("Geist Mono");
+                    ui.end_row();
+                    number(ui, dialog, Field::CodeFontSize, None);
+                    number(ui, dialog, Field::IndentWidth, None);
+                    ui.label("");
+                    ui.checkbox(&mut dialog.line_numbers, "Show line numbers");
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut dialog.highlighting, "Syntax highlighting");
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut dialog.wrap, "Wrap long lines");
+                    ui.end_row();
+                });
+                section(ui, "Immediate window", |ui| {
+                    number(ui, dialog, Field::ImmediateEntries, None);
+                    number(ui, dialog, Field::ImmediateOutput, None);
+                    ui.label("History");
+                    ui.horizontal(|ui| {
+                        let kept = self.user.immediate.len();
+                        if dialog.clear_history {
+                            ui.label(format!("{kept} entries, cleared on OK"));
+                            if ui.small_button("Keep history").clicked() {
+                                dialog.clear_history = false;
+                            }
+                        } else {
+                            ui.label(format!("{kept} entries"));
+                            if ui
+                                .add_enabled(kept > 0, egui::Button::new("Clear history").small())
+                                .clicked()
+                            {
+                                dialog.clear_history = true;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                });
+                note(
+                    ui,
+                    "The history is kept for you, not in the workbook, in immediate-history.json \
+                     beside the preferences.",
+                );
             }
             Page::Evaluation => {
                 let ceilings = dialog.ceilings();

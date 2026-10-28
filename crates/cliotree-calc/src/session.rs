@@ -23,11 +23,11 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use cliotree_core::{ErrorKind, ErrorValue};
+use cliotree_core::{ErrorKind, ErrorValue, Path};
 
 use crate::calc::Calc;
 use crate::check::Computed;
-use crate::engine::{Call, Engine, Failure};
+use crate::engine::{Call, Engine, Failure, Immediate, ImmediateResult};
 use crate::eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 use crate::model::Loc;
 
@@ -75,12 +75,27 @@ enum Job {
         snapshot: Snapshot,
         call: Call,
     },
+    Immediate {
+        snapshot: Snapshot,
+        immediate: Immediate,
+    },
+}
+
+impl Job {
+    fn into_snapshot(self) -> Snapshot {
+        match self {
+            Job::Evaluate { snapshot, .. }
+            | Job::Call { snapshot, .. }
+            | Job::Immediate { snapshot, .. } => snapshot,
+        }
+    }
 }
 
 /// What the evaluation thread sends back.
 enum Done {
     Evaluation(Evaluation),
     Procedure(ProcedureResult),
+    Immediate(ImmediateResult),
 }
 
 /// What the evaluation thread is doing, for the thread that watches it.
@@ -119,6 +134,8 @@ struct Running {
     version: u64,
     /// The procedure that is running, if it is one.
     call: Option<Call>,
+    /// The expression of the Immediate window that is running, if it is one.
+    immediate: Option<Immediate>,
 }
 
 /// The handle the interface thread uses to run evaluations.
@@ -131,6 +148,7 @@ pub struct Evaluator {
     abandoned: Arc<AtomicUsize>,
     done: VecDeque<Evaluation>,
     finished_calls: VecDeque<ProcedureResult>,
+    finished_immediate: VecDeque<ImmediateResult>,
     /// The worker was made with settings that have changed since: it is let
     /// go when what it is running comes back.
     retire: bool,
@@ -146,6 +164,7 @@ impl Evaluator {
             abandoned: Arc::new(AtomicUsize::new(0)),
             done: VecDeque::new(),
             finished_calls: VecDeque::new(),
+            finished_immediate: VecDeque::new(),
             retire: false,
         }
     }
@@ -216,15 +235,14 @@ impl Evaluator {
                 self.running = Some(Running {
                     version,
                     call: None,
+                    immediate: None,
                 });
                 Ok(())
             }
             Err(mpsc::SendError(job)) => {
                 // The thread is gone; the next try makes a new one.
                 self.worker = None;
-                match job {
-                    Job::Evaluate { snapshot, .. } | Job::Call { snapshot, .. } => Err(snapshot),
-                }
+                Err(job.into_snapshot())
             }
         }
     }
@@ -248,16 +266,60 @@ impl Evaluator {
                 self.running = Some(Running {
                     version,
                     call: Some(call),
+                    immediate: None,
                 });
                 Ok(())
             }
             Err(mpsc::SendError(job)) => {
                 self.worker = None;
-                match job {
-                    Job::Evaluate { snapshot, .. } | Job::Call { snapshot, .. } => Err(snapshot),
-                }
+                Err(job.into_snapshot())
             }
         }
+    }
+
+    /// Starts an expression of the Immediate window on the snapshot. Gives the
+    /// snapshot back if something is running already or evaluation is
+    /// suspended.
+    pub fn submit_immediate(
+        &mut self,
+        snapshot: Snapshot,
+        immediate: Immediate,
+    ) -> Result<(), Snapshot> {
+        if self.running.is_some() || self.suspended() {
+            return Err(snapshot);
+        }
+        if self.worker.is_none() {
+            self.worker = Some(self.spawn_worker());
+        }
+        let worker = self.worker.as_ref().expect("a worker was just made");
+        let version = snapshot.version();
+        match worker.jobs.send(Job::Immediate {
+            snapshot,
+            immediate: immediate.clone(),
+        }) {
+            Ok(()) => {
+                self.running = Some(Running {
+                    version,
+                    call: None,
+                    immediate: Some(immediate),
+                });
+                Ok(())
+            }
+            Err(mpsc::SendError(job)) => {
+                self.worker = None;
+                Err(job.into_snapshot())
+            }
+        }
+    }
+
+    /// The expression of the Immediate window that is running, if one is.
+    pub fn running_immediate(&self) -> Option<&Immediate> {
+        self.running.as_ref().and_then(|r| r.immediate.as_ref())
+    }
+
+    /// Takes the expressions of the Immediate window that have finished.
+    pub fn take_immediate(&mut self) -> Vec<ImmediateResult> {
+        self.finished_immediate.drain(..).collect()
     }
 
     /// The procedure that is running, if one is.
@@ -291,6 +353,7 @@ impl Evaluator {
         match done {
             Done::Evaluation(evaluation) => self.done.push_back(evaluation),
             Done::Procedure(result) => self.finished_calls.push_back(result),
+            Done::Immediate(result) => self.finished_immediate.push_back(result),
         }
     }
 
@@ -330,6 +393,7 @@ impl Evaluator {
         };
         let version = running.version;
         let call = running.call.clone();
+        let immediate = running.immediate.clone();
         if let Some(worker) = self.worker.take() {
             // The thread ends when it finishes what it is doing and finds that
             // nobody wants the answer.
@@ -339,6 +403,18 @@ impl Evaluator {
         self.running = None;
         // The next worker is made with the settings as they are now.
         self.retire = false;
+        if let Some(immediate) = immediate {
+            self.finished_immediate.push_back(ImmediateResult {
+                id: immediate.id,
+                text: immediate.text,
+                result: Err(
+                    "#TIMEOUT!: the expression did not stop when its time ran out and was \
+                     abandoned"
+                        .to_owned(),
+                ),
+            });
+            return;
+        }
         if let Some(call) = call {
             let failure = Failure::new(
                 ErrorKind::Timeout,
@@ -399,6 +475,21 @@ impl Evaluator {
                             }
                             Done::Procedure(snapshot.run_call(&*engine, &call))
                         }
+                        Job::Immediate {
+                            snapshot,
+                            immediate,
+                        } => {
+                            if let Ok(mut current) = watched.current.lock() {
+                                *current = Some((
+                                    Loc::new(immediate.sheet.clone(), immediate.path.clone()),
+                                    Instant::now(),
+                                ));
+                            }
+                            let done = snapshot.run_immediate(&*engine, &immediate);
+                            // The formulas' own limit again.
+                            engine.set_time_limit(settings.formula_limit);
+                            Done::Immediate(done)
+                        }
                     };
                     if let Ok(mut current) = watched.current.lock() {
                         *current = None;
@@ -455,6 +546,11 @@ pub struct Session {
     /// reads what is on the screen.
     queued: Option<Call>,
     finished: Vec<Finished>,
+    /// An expression of the Immediate window waiting its turn, as a procedure
+    /// does.
+    queued_immediate: Option<Immediate>,
+    immediate_results: Vec<ImmediateResult>,
+    next_immediate: u64,
 }
 
 impl Session {
@@ -464,7 +560,51 @@ impl Session {
             evaluator,
             queued: None,
             finished: Vec::new(),
+            queued_immediate: None,
+            immediate_results: Vec::new(),
+            next_immediate: 0,
         }
+    }
+
+    /// Asks for an expression of the Immediate window to run, as a formula on
+    /// the node `path` of `sheet` would, under the formula time limit. It
+    /// waits its turn as a procedure does; the answer is in
+    /// [`Session::take_immediate`]. Gives the number that tells the answer.
+    pub fn run_immediate(&mut self, text: &str, sheet: &str, path: &Path) -> Result<u64, String> {
+        if !self.calc.is_trusted() {
+            return Err(
+                "the Immediate window runs Python, so the workbook has to be trusted first"
+                    .to_owned(),
+            );
+        }
+        if self.running_immediate().is_some() {
+            return Err("an expression is running; wait for it to finish".to_owned());
+        }
+        self.calc
+            .syntax()
+            .check(text)
+            .map_err(|e| format!("syntax error: {e}"))?;
+        self.next_immediate += 1;
+        self.queued_immediate = Some(Immediate {
+            id: self.next_immediate,
+            text: text.trim().to_owned(),
+            sheet: sheet.to_owned(),
+            path: path.clone(),
+            time_limit: self.evaluator.settings().formula_limit,
+        });
+        Ok(self.next_immediate)
+    }
+
+    /// The expression of the Immediate window that is waiting or running.
+    pub fn running_immediate(&self) -> Option<&Immediate> {
+        self.queued_immediate
+            .as_ref()
+            .or_else(|| self.evaluator.running_immediate())
+    }
+
+    /// Takes the answers of the Immediate window since the last call.
+    pub fn take_immediate(&mut self) -> Vec<ImmediateResult> {
+        std::mem::take(&mut self.immediate_results)
     }
 
     /// Asks for a button procedure to run. It waits its turn: evaluation that
@@ -526,6 +666,9 @@ impl Session {
             self.finished.push(Finished { call, outcome });
             changed = true;
         }
+        let answers = self.evaluator.take_immediate();
+        changed |= !answers.is_empty();
+        self.immediate_results.extend(answers);
         let work = self.calc.pending() > 0 || self.calc.pending_modules() > 0;
         if !self.evaluator.is_running() && !self.evaluator.suspended() {
             if work {
@@ -543,6 +686,22 @@ impl Session {
                     .submit_call(self.calc.snapshot(), call.clone())
                 {
                     self.queued = Some(call);
+                }
+            } else if let Some(immediate) = self.queued_immediate.take() {
+                if !self.calc.is_trusted() {
+                    self.immediate_results.push(ImmediateResult {
+                        id: immediate.id,
+                        text: immediate.text,
+                        result: Err(
+                            "the workbook is no longer trusted, so it did not run".to_owned()
+                        ),
+                    });
+                    changed = true;
+                } else if let Err(_snapshot) = self
+                    .evaluator
+                    .submit_immediate(self.calc.snapshot(), immediate.clone())
+                {
+                    self.queued_immediate = Some(immediate);
                 }
             }
         }
@@ -565,6 +724,7 @@ impl Session {
             && self.calc.pending_modules() == 0
             && !self.evaluator.is_running()
             && self.queued.is_none()
+            && self.queued_immediate.is_none()
     }
 
     /// Waits until the workbook is idle, for tests and for saving. Returns

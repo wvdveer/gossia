@@ -25,6 +25,8 @@ use crate::file::{Limits, save_atomic};
 pub const CONFIG_VERSION: u64 = 1;
 pub const PREFERENCES_FILE: &str = "preferences.json";
 pub const TRUST_FILE: &str = "trust.json";
+/// The history of the code editor's Immediate window.
+pub const IMMEDIATE_FILE: &str = "immediate-history.json";
 /// How many recent files are listed.
 pub const MAX_RECENT: usize = 10;
 /// Names the directory instead of the operating system's usual place, for
@@ -160,6 +162,49 @@ fn number(
     }
 }
 
+/// A whole number from `range.0` to `range.1` at `key`, or the default with a
+/// warning.
+fn number_in(
+    object: Option<&Map<String, Json>>,
+    section: &str,
+    key: &str,
+    range: (u64, u64),
+    default: u64,
+    warnings: &mut Vec<String>,
+) -> u64 {
+    let n = number(object, section, key, range.0, default, warnings);
+    if n > range.1 {
+        warnings.push(format!(
+            "In {PREFERENCES_FILE}, {section}.{key} is {n}, more than {}; the default \
+             {default} is used.",
+            range.1
+        ));
+        return default;
+    }
+    n
+}
+
+/// A yes or no at `key`, or the default with a warning.
+fn flag(
+    object: Option<&Map<String, Json>>,
+    section: &str,
+    key: &str,
+    default: bool,
+    warnings: &mut Vec<String>,
+) -> bool {
+    match object.and_then(|o| o.get(key)) {
+        None => default,
+        Some(Json::Bool(b)) => *b,
+        Some(value) => {
+            warnings.push(format!(
+                "In {PREFERENCES_FILE}, {section}.{key} is {value}, which cannot be used; \
+                 the default {default} is used."
+            ));
+            default
+        }
+    }
+}
+
 fn object_at<'a>(object: &'a Map<String, Json>, key: &str) -> Option<&'a Map<String, Json>> {
     object.get(key).and_then(Json::as_object)
 }
@@ -221,6 +266,97 @@ impl Default for Appearance {
 /// The default for the largest file that is imported.
 pub const DEFAULT_MAX_IMPORT_BYTES: u64 = 512 << 20;
 
+/// The sizes of the code editor's font, in points.
+pub const CODE_FONT_RANGE: (u64, u64) = (8, 32);
+/// The indent widths, in spaces.
+pub const INDENT_RANGE: (u64, u64) = (2, 8);
+/// How many entries of the Immediate window's history may be kept.
+pub const IMMEDIATE_ENTRIES_RANGE: (u64, u64) = (0, 10_000);
+/// The largest result of the Immediate window that may be asked for, in
+/// bytes: from 1 KB to 16 MB.
+pub const IMMEDIATE_OUTPUT_RANGE: (u64, u64) = (1 << 10, 16 << 20);
+
+/// The code editor and its Immediate window (Options, Code editor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodePrefs {
+    /// The size of the editor's font, in points. Its family is Geist Mono.
+    pub font_size: u64,
+    /// Spaces per level of indentation.
+    pub indent: u64,
+    pub line_numbers: bool,
+    pub highlighting: bool,
+    /// Wrap long lines at the width of the pane, instead of scrolling.
+    pub wrap: bool,
+    /// The most expressions the Immediate window's history keeps.
+    pub history_entries: u64,
+    /// The longest result of one expression shown, in bytes; the rest is
+    /// cut off with a notice.
+    pub max_output: u64,
+}
+
+impl Default for CodePrefs {
+    fn default() -> CodePrefs {
+        CodePrefs {
+            font_size: 13,
+            indent: 4,
+            line_numbers: true,
+            highlighting: true,
+            wrap: false,
+            history_entries: 100,
+            max_output: 64 << 10,
+        }
+    }
+}
+
+impl CodePrefs {
+    fn from_object(section: Option<&Map<String, Json>>, warnings: &mut Vec<String>) -> CodePrefs {
+        let d = CodePrefs::default();
+        let s = "code_editor";
+        CodePrefs {
+            font_size: number_in(
+                section,
+                s,
+                "font_size",
+                CODE_FONT_RANGE,
+                d.font_size,
+                warnings,
+            ),
+            indent: number_in(section, s, "indent_width", INDENT_RANGE, d.indent, warnings),
+            line_numbers: flag(section, s, "line_numbers", d.line_numbers, warnings),
+            highlighting: flag(section, s, "syntax_highlighting", d.highlighting, warnings),
+            wrap: flag(section, s, "wrap_long_lines", d.wrap, warnings),
+            history_entries: number_in(
+                section,
+                s,
+                "immediate_history_entries",
+                IMMEDIATE_ENTRIES_RANGE,
+                d.history_entries,
+                warnings,
+            ),
+            max_output: number_in(
+                section,
+                s,
+                "immediate_max_output_bytes",
+                IMMEDIATE_OUTPUT_RANGE,
+                d.max_output,
+                warnings,
+            ),
+        }
+    }
+
+    fn values(&self) -> Vec<(&'static str, Json)> {
+        vec![
+            ("font_size", json!(self.font_size)),
+            ("indent_width", json!(self.indent)),
+            ("line_numbers", json!(self.line_numbers)),
+            ("syntax_highlighting", json!(self.highlighting)),
+            ("wrap_long_lines", json!(self.wrap)),
+            ("immediate_history_entries", json!(self.history_entries)),
+            ("immediate_max_output_bytes", json!(self.max_output)),
+        ]
+    }
+}
+
 /// The application preferences.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Preferences {
@@ -235,6 +371,8 @@ pub struct Preferences {
     /// The bounds of the undo history: entries, and a rough weight.
     pub history_entries: usize,
     pub history_weight: usize,
+    /// The code editor and its Immediate window.
+    pub code: CodePrefs,
     /// The workbooks opened or saved last, the most recent first.
     pub recent: Vec<PathBuf>,
     /// The file as it was read, so that what this version does not know is
@@ -251,6 +389,7 @@ impl Default for Preferences {
             max_import_bytes: DEFAULT_MAX_IMPORT_BYTES,
             history_entries: cliotree_calc::DEFAULT_MAX_ENTRIES,
             history_weight: cliotree_calc::DEFAULT_MAX_WEIGHT,
+            code: CodePrefs::default(),
             recent: Vec::new(),
             raw: Map::new(),
         }
@@ -355,6 +494,7 @@ impl Preferences {
             defaults.history_weight as u64,
             warnings,
         ) as usize;
+        let code = CodePrefs::from_object(object_at(&raw, "code_editor"), warnings);
         let recent = raw
             .get("recent_files")
             .and_then(Json::as_array)
@@ -377,6 +517,7 @@ impl Preferences {
             max_import_bytes,
             history_entries,
             history_weight,
+            code,
             recent,
             raw,
         }
@@ -424,6 +565,7 @@ impl Preferences {
                 ("max_weight", json!(self.history_weight)),
             ],
         );
+        section("code_editor", self.code.values());
         out.insert(
             "recent_files".to_owned(),
             Json::Array(
@@ -538,6 +680,8 @@ pub struct User {
     pub trust_files: BTreeMap<String, PathBuf>,
     /// `trust.json` as it was read, for what this version does not know.
     trust_raw: Map<String, Json>,
+    /// What was typed in the Immediate window, the oldest first.
+    pub immediate: Vec<String>,
 }
 
 impl User {
@@ -585,6 +729,63 @@ impl User {
                 self.trust_raw = Map::new();
             }
         }
+        self.immediate = self.read_immediate(warnings);
+    }
+
+    /// The Immediate window's history as the file has it.
+    fn read_immediate(&self, warnings: &mut Vec<String>) -> Vec<String> {
+        self.config
+            .read(IMMEDIATE_FILE, warnings)
+            .and_then(|raw| {
+                raw.get("entries").and_then(Json::as_array).map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Json::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Adds an expression to the end of the Immediate window's history, which
+    /// keeps at most the number of entries of the preferences: the file is
+    /// read again first, so that what another window added is kept. The same
+    /// text typed again moves to the end instead of being kept twice.
+    pub fn add_immediate(&mut self, text: &str) -> Result<(), String> {
+        self.change_immediate(|entries| {
+            entries.retain(|e| e != text);
+            entries.push(text.to_owned());
+        })
+    }
+
+    /// Drops the oldest entries of the Immediate window's history past the
+    /// number the preferences keep, if there are any.
+    pub fn keep_immediate(&mut self) -> Result<(), String> {
+        if self.immediate.len() as u64 <= self.prefs.code.history_entries {
+            return Ok(());
+        }
+        self.change_immediate(|_| {})
+    }
+
+    /// *Clear history* on the Code editor page.
+    pub fn clear_immediate(&mut self) -> Result<(), String> {
+        self.change_immediate(Vec::clear)
+    }
+
+    fn change_immediate(&mut self, change: impl FnOnce(&mut Vec<String>)) -> Result<(), String> {
+        if self.config.dir.is_some() {
+            let mut ignored = Vec::new();
+            self.immediate = self.read_immediate(&mut ignored);
+        }
+        change(&mut self.immediate);
+        let keep = usize::try_from(self.prefs.code.history_entries).unwrap_or(usize::MAX);
+        let extra = self.immediate.len().saturating_sub(keep);
+        self.immediate.drain(..extra);
+        let mut object = Map::new();
+        object.insert("version".to_owned(), json!(CONFIG_VERSION));
+        object.insert("entries".to_owned(), json!(self.immediate));
+        self.config.write(IMMEDIATE_FILE, object)
     }
 
     /// Changes the trust record: the file is read again, so that what another

@@ -373,3 +373,59 @@ fn the_about_page_lists_the_libraries_with_their_versions_from_the_lock_file() {
         "quick-xml {version} is not the version cliotree-core uses"
     );
 }
+
+/// The Code editor page: its numbers and yes-or-no options are preferences,
+/// and *Clear history* clears the Immediate window's history on OK.
+#[test]
+fn the_code_editor_page_sets_the_editor_and_clears_the_immediate_history() {
+    let folder = Folder::new("code");
+    let mut app = sample();
+    app.user = folder.user();
+    app.user.add_immediate("1 + 1").unwrap();
+    app.user.add_immediate("Orders").unwrap();
+    app.user.add_immediate("1 + 1").unwrap();
+    assert_eq!(
+        app.user.immediate,
+        ["Orders", "1 + 1"],
+        "no repeats, newest last"
+    );
+
+    app.begin_options(Some(Page::CodeEditor));
+    let dialog = app.options.as_mut().unwrap();
+    dialog.set(Field::CodeFontSize, 15);
+    dialog.set(Field::IndentWidth, 9);
+    assert_eq!(
+        dialog.problems(),
+        [(Field::IndentWidth, "The largest allowed is 8.".to_owned())]
+    );
+    dialog.set(Field::IndentWidth, 2);
+    dialog.set(Field::ImmediateOutput, 2 << 10);
+    dialog.wrap = true;
+    dialog.line_numbers = false;
+    dialog.clear_history = true;
+    app.apply_options().unwrap();
+    let code = app.user.prefs.code;
+    assert_eq!(
+        (code.font_size, code.indent, code.max_output),
+        (15, 2, 2048)
+    );
+    assert!(code.wrap && !code.line_numbers && code.highlighting);
+    assert!(app.user.immediate.is_empty());
+
+    // Both are on disk for the next session.
+    let next = folder.user();
+    assert_eq!(next.prefs.code, code);
+    assert!(next.immediate.is_empty());
+
+    // Fewer entries kept drops the oldest.
+    app.user.add_immediate("a").unwrap();
+    app.user.add_immediate("b").unwrap();
+    app.user.add_immediate("c").unwrap();
+    app.begin_options(Some(Page::CodeEditor));
+    app.options
+        .as_mut()
+        .unwrap()
+        .set(Field::ImmediateEntries, 2);
+    app.apply_options().unwrap();
+    assert_eq!(folder.user().immediate, ["b", "c"]);
+}

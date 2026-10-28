@@ -92,11 +92,12 @@ fn lines_and_their_numbers() {
     assert_eq!(start_of_line(text, 1), 2);
     assert_eq!(start_of_line(text, 2), 5);
     assert_eq!(start_of_line(text, 9), 6);
-    assert_eq!(line_numbers(""), "1");
-    assert_eq!(
-        line_numbers(&"x\n".repeat(10)),
-        " 1\n 2\n 3\n 4\n 5\n 6\n 7\n 8\n 9\n10\n11"
-    );
+    assert_eq!(line_count(""), 1);
+    assert_eq!(line_count(&"x\n".repeat(10)), 11);
+    // A place in a line, kept within it.
+    assert_eq!(place(text, 1, 1), 3);
+    assert_eq!(place(text, 1, 9), 4);
+    assert_eq!(place("é\nab", 1, 1), 3);
     // Characters, not bytes.
     assert_eq!(byte_of("é=1", 1), 2);
 }

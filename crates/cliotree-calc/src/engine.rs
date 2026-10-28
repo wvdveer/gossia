@@ -123,6 +123,8 @@ pub trait Context {
 pub struct ModuleInfo {
     /// The first part of each name imported at the top level, in order.
     pub imports: Vec<String>,
+    /// Where each of `imports` is: its line and column, 1-based.
+    pub import_at: Vec<(usize, usize)>,
     /// The functions defined at the top level, in order, private ones too.
     pub functions: Vec<String>,
 }
@@ -159,6 +161,37 @@ pub trait Syntax: Send + Sync {
     fn module_info(&self, _source: &str) -> Result<ModuleInfo, SyntaxError> {
         Ok(ModuleInfo::default())
     }
+
+    /// The standard library modules a workbook module may import, if the
+    /// language knows them without running anything; `None` if it does not,
+    /// and then an import is not checked before the module is loaded.
+    fn standard_modules(&self) -> Option<&'static [&'static str]> {
+        None
+    }
+}
+
+/// An expression typed in the Immediate window of the code editor (DESIGN.md,
+/// "Python modules"). It runs as a formula on the node `path` of `sheet`
+/// would, so `this` is that node, but nothing it reads is recorded and its
+/// result is shown, not stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Immediate {
+    /// Tells the answers apart.
+    pub id: u64,
+    pub text: String,
+    pub sheet: String,
+    pub path: Path,
+    /// The longest it may run: the formula time limit.
+    pub time_limit: Option<std::time::Duration>,
+}
+
+/// What an expression of the Immediate window came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImmediateResult {
+    pub id: u64,
+    pub text: String,
+    /// The result in its Python form (`repr`), or the error.
+    pub result: Result<String, String>,
 }
 
 /// What a button procedure does to a tab, collected while it runs and applied
@@ -206,6 +239,18 @@ pub trait Engine {
     /// data (a formula such as `=Orders.total` whose source has failed) is
     /// returned as `Ok(Value::Error(..))`.
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure>;
+
+    /// Runs an expression of the Immediate window against what `ctx` reads,
+    /// within `limit`, and gives its result as text. Reads are not recorded.
+    fn immediate(
+        &self,
+        text: &str,
+        ctx: Rc<dyn Context>,
+        limit: Option<std::time::Duration>,
+    ) -> Result<String, Failure> {
+        self.set_time_limit(limit);
+        self.eval(text, ctx).map(|value| format!("{value:?}"))
+    }
 
     /// Runs a button procedure against what `ctx` reads, and gives the writes
     /// it made, which are not applied here. Reads are not recorded as

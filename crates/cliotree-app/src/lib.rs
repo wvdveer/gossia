@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod code;
+pub mod code_check;
 pub mod code_text;
 #[cfg(test)]
 mod code_text_tests;
@@ -19,6 +20,7 @@ pub mod form_layout;
 #[cfg(test)]
 mod form_layout_tests;
 pub mod icons;
+pub mod immediate;
 pub mod import;
 pub mod options;
 pub mod prefs;

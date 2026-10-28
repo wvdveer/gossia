@@ -22,8 +22,8 @@ mod trie;
 
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, EditError,
-    Effective, ExportFormat, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleStatus,
-    SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings,
+    Effective, ExportFormat, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleProblem,
+    ModuleStatus, SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -31,8 +31,8 @@ pub use calc::{
 };
 pub use check::Computed;
 pub use engine::{
-    Call, Context, Depth, Engine, Failure, ModuleInfo, ModuleReport, ModuleSpec, Read, Syntax,
-    SyntaxError, Write, WriteOp,
+    Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleInfo, ModuleReport,
+    ModuleSpec, Read, Syntax, SyntaxError, Write, WriteOp,
 };
 pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};

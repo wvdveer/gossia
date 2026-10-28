@@ -46,6 +46,10 @@ impl Syntax for PythonSyntax {
     fn module_info(&self, source: &str) -> Result<ModuleInfo, SyntaxError> {
         PythonSyntax::read_module(source)
     }
+
+    fn standard_modules(&self) -> Option<&'static [&'static str]> {
+        Some(super::MODULES)
+    }
 }
 
 impl PythonSyntax {
@@ -67,17 +71,24 @@ impl PythonSyntax {
             ));
         }
         let first = |name: &str| name.split('.').next().unwrap_or_default().to_owned();
+        let index = LineIndex::from_source_text(source);
+        let at = |offset: TextSize| {
+            let place = index.line_column(offset, source);
+            (place.line.get(), place.column.get())
+        };
         let mut info = ModuleInfo::default();
         for stmt in body {
             match stmt {
                 Stmt::Import(import) => {
                     for alias in &import.names {
                         info.imports.push(first(alias.name.as_str()));
+                        info.import_at.push(at(alias.start()));
                     }
                 }
                 Stmt::ImportFrom(import) if import.level == 0 => {
                     if let Some(module) = &import.module {
                         info.imports.push(first(module.as_str()));
+                        info.import_at.push(at(module.start()));
                     }
                 }
                 Stmt::FunctionDef(function) => {

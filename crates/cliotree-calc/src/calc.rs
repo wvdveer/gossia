@@ -81,7 +81,7 @@ mod procedure;
 #[path = "modules.rs"]
 mod modules;
 use modules::Module;
-pub use modules::ModuleStatus;
+pub use modules::{ModuleProblem, ModuleStatus};
 
 #[path = "settings.rs"]
 mod settings;

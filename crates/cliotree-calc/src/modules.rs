@@ -34,6 +34,25 @@ pub enum ModuleStatus {
     Untrusted,
 }
 
+/// A problem that *Compile* finds in a module (DESIGN.md, "Python modules").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleProblem {
+    /// Where it is, 1-based, if that is known.
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+    pub message: String,
+}
+
+impl ModuleProblem {
+    fn at(line: usize, column: usize, message: String) -> ModuleProblem {
+        ModuleProblem {
+            line: Some(line),
+            column: Some(column),
+            message,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Module {
     pub source: Arc<str>,
@@ -114,6 +133,69 @@ impl Calc {
                 _ => None,
             })
             .collect()
+    }
+
+    /// What *Compile* finds in a module: a syntax error (then nothing more),
+    /// an import of a module that is on a cycle of imports, an import of
+    /// something that is neither a workbook module nor a standard library
+    /// module formulas may use, and what loading it came to if it failed.
+    /// Each has its line and column where they are known. `None` if there is
+    /// no such module.
+    pub fn module_problems(&self, name: &str) -> Option<Vec<ModuleProblem>> {
+        let module = self.modules.get(name)?;
+        let info = match &module.info {
+            Ok(info) => info,
+            Err(e) => {
+                return Some(vec![ModuleProblem::at(
+                    e.line,
+                    e.column,
+                    format!("syntax error: {}", e.message),
+                )]);
+            }
+        };
+        let mut problems = Vec::new();
+        let cycle = self.import_cycles().remove(name);
+        // The module this one imports on the way round the cycle.
+        let next = cycle.as_ref().and_then(|message| {
+            message
+                .trim_start_matches("import cycle: ")
+                .split(" -> ")
+                .nth(1)
+                .map(str::to_owned)
+        });
+        let standard = self.syntax.standard_modules();
+        let mut unknown = false;
+        for (i, import) in info.imports.iter().enumerate() {
+            let (line, column) = info.import_at.get(i).copied().unwrap_or((1, 1));
+            if self.modules.contains_key(import) {
+                if next.as_deref() == Some(import.as_str())
+                    && let Some(message) = &cycle
+                {
+                    problems.push(ModuleProblem::at(line, column, message.clone()));
+                }
+            } else if standard.is_some_and(|known| !known.contains(&import.as_str())) {
+                unknown = true;
+                problems.push(ModuleProblem::at(
+                    line,
+                    column,
+                    format!(
+                        "no module named {import} is available: only the workbook's modules \
+                         and the standard library modules formulas can use can be imported"
+                    ),
+                ));
+            }
+        }
+        if let ModuleStatus::Failed(why) = &module.status
+            && cycle.is_none()
+            && !(unknown && why.contains("no module named"))
+        {
+            problems.push(ModuleProblem {
+                line: line_in(why),
+                column: None,
+                message: why.clone(),
+            });
+        }
+        Some(problems)
     }
 
     /// How many modules have a source that is not loaded yet.
@@ -470,4 +552,10 @@ impl Calc {
             self.revision += 1;
         }
     }
+}
+
+/// The line a load error names at its end, as `... (line 3)`.
+fn line_in(message: &str) -> Option<usize> {
+    let rest = message.rsplit_once("(line ")?.1;
+    rest.strip_suffix(')')?.trim().parse().ok()
 }

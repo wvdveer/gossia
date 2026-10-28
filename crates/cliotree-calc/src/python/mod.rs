@@ -248,13 +248,22 @@ impl PythonEngine {
         *self.sheets.borrow_mut() = names;
     }
 
-    fn compiled(&self, vm: &VirtualMachine, text: &str) -> Result<PyRef<PyCode>, Failure> {
+    /// The compiled formula. Formulas are kept compiled; an expression of the
+    /// Immediate window (`keep` false) is not, since it is typed once.
+    fn compiled(
+        &self,
+        vm: &VirtualMachine,
+        text: &str,
+        keep: bool,
+    ) -> Result<PyRef<PyCode>, Failure> {
         if let Some(code) = self.code.borrow().get(text) {
             return Ok(code.clone());
         }
         match vm.compile(text, Mode::Eval, "<formula>".to_owned()) {
             Ok(code) => {
-                self.code.borrow_mut().insert(text.to_owned(), code.clone());
+                if keep {
+                    self.code.borrow_mut().insert(text.to_owned(), code.clone());
+                }
                 Ok(code)
             }
             Err(error) => Err(Failure::new(ErrorKind::Syntax, error.to_string())),
@@ -267,7 +276,24 @@ impl PythonEngine {
         text: &str,
         ctx: &Rc<dyn Context>,
     ) -> Result<Value, Failure> {
-        let code = self.compiled(vm, text)?;
+        let result = self.run_object(vm, text, ctx, true)?;
+        match convert::to_value(&self.shared, vm, &result) {
+            Ok(value) => Ok(value),
+            Err(convert::Bad::Value(kind, message)) => Err(Failure::new(kind, message)),
+            Err(convert::Bad::Raised(exc)) => Err(convert::failure(&self.shared, vm, &exc)),
+        }
+    }
+
+    /// Runs the text as a formula on the node of `ctx`, and gives the Python
+    /// object it came to.
+    fn run_object(
+        &self,
+        vm: &VirtualMachine,
+        text: &str,
+        ctx: &Rc<dyn Context>,
+        keep: bool,
+    ) -> Result<PyObjectRef, Failure> {
+        let code = self.compiled(vm, text, keep)?;
         self.record_module_use(text, ctx);
         let locals = vm.ctx.new_dict();
         let sheet: Rc<str> = Rc::from(ctx.sheet());
@@ -286,11 +312,7 @@ impl PythonEngine {
             self.globals.clone(),
         );
         match vm.run_code_obj(code, scope) {
-            Ok(result) => match convert::to_value(&self.shared, vm, &result) {
-                Ok(value) => Ok(value),
-                Err(convert::Bad::Value(kind, message)) => Err(Failure::new(kind, message)),
-                Err(convert::Bad::Raised(exc)) => Err(convert::failure(&self.shared, vm, &exc)),
-            },
+            Ok(result) => Ok(result),
             Err(exc) => {
                 // A name that is not defined may be a tab that does not exist
                 // yet. Looking for it is a dependency, so that adding the tab
@@ -435,6 +457,40 @@ impl Engine for PythonEngine {
             let writes = self.shared.writes.borrow_mut().take();
             self.shared.end();
             result.map(|()| writes.unwrap_or_default())
+        })
+    }
+
+    fn immediate(
+        &self,
+        text: &str,
+        ctx: Rc<dyn Context>,
+        limit: Option<Duration>,
+    ) -> Result<String, Failure> {
+        let text = text.trim();
+        self.interp.enter(|vm| {
+            self.sync_sheets(vm, &*ctx);
+            self.shared.begin(ctx.clone());
+            if let Some(limit) = limit {
+                self.watchdog.start(limit);
+            }
+            let result = self.run_object(vm, text, &ctx, false).and_then(|object| {
+                // A node is shown as the plain lists, dicts and values it
+                // holds, in Python's own form.
+                let plain = self
+                    .prelude
+                    .get_item("PLAIN", vm)
+                    .and_then(|plain| plain.call((object.clone(),), vm))
+                    .unwrap_or(object);
+                plain
+                    .repr(vm)
+                    .map(|text| text.to_string_lossy().into_owned())
+                    .map_err(|exc| convert::failure(&self.shared, vm, &exc))
+            });
+            if limit.is_some() {
+                self.watchdog.stop();
+            }
+            self.shared.end();
+            result
         })
     }
 

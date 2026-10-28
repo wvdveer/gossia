@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use cliotree_app::ClioApp;
-use cliotree_app::code::{PAUSE, TITLE};
+use cliotree_app::code::{CodeItem, PAUSE, TITLE};
 use cliotree_calc::ModuleStatus;
 use egui::{Key, Modifiers};
 use egui_kittest::Harness;
@@ -203,7 +203,7 @@ fn the_procedure_box_follows_the_cursor_and_jumps() {
     assert_eq!(code(&harness), TAX);
     let procedure = |h: &Harness<'_, ClioApp>| h.get_by_label("Procedure box").value();
     assert_eq!(procedure(&harness).as_deref(), Some("vat"));
-    harness.state_mut().code.jump = Some(4);
+    harness.state_mut().code.jump = Some((4, 0));
     harness.run();
     assert_eq!(procedure(&harness).as_deref(), Some("half"));
 }
@@ -228,8 +228,8 @@ fn modules_are_renamed_and_removed_from_the_explorer_and_undo_brings_them_back()
     click(&mut harness, "Rename");
     assert_eq!(modules(&harness), ["Vat"]);
     assert_eq!(
-        harness.state().code.tabs[0].module,
-        "Vat",
+        harness.state().code.tabs[0].item,
+        CodeItem::Module("Vat".to_owned()),
         "the tab follows"
     );
 
@@ -283,4 +283,183 @@ fn the_status_line_says_what_loading_came_to() {
     harness.run();
     harness.state_mut().commit_code();
     assert!(source(&harness, "Tax").starts_with("# note"));
+}
+
+/// The title of the tab shown.
+fn shown(harness: &Harness<'_, ClioApp>) -> String {
+    harness
+        .state()
+        .code
+        .current_tab()
+        .map(|t| t.item.title())
+        .unwrap_or_default()
+}
+
+/// *Debug > Compile* lists the problems of the module shown, each a link to
+/// its place, and the list follows the module as it is fixed.
+#[test]
+fn compile_lists_the_problems_and_a_click_goes_to_the_line() {
+    let mut harness = window_with(&[("Tax", "import math\nimport os\n\ndef f():\n    return 1\n")]);
+    open_editor(&mut harness);
+    assert_eq!(shown(&harness), "Tax");
+    menu(&mut harness, "Debug");
+    click(&mut harness, "Compile Tax");
+    settle(&mut harness);
+    harness.get_by_label("Compile Tax: 1 problem");
+    harness
+        .get(by().label_contains("Line 2, column 8: no module named os"))
+        .click();
+    harness.run();
+    harness.run();
+    assert!(harness.get_by_label("Code").is_focused());
+
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_module_source("Tax", "import math\n\ndef f():\n    return 1\n")
+        .unwrap();
+    settle(&mut harness);
+    harness.get_by_label("Compile Tax: no problems");
+    click(&mut harness, "Close the list");
+    assert!(harness.state().code.compiled.is_none());
+}
+
+/// A module goes out as a `.py` file and comes back in as a new module, named
+/// after the file, with a number while the name is taken.
+#[test]
+fn a_module_is_exported_to_a_py_file_and_imported_from_one() {
+    let mut harness = window_with(&[("Tax", TAX)]);
+    harness.state_mut().files.browse = false;
+    open_editor(&mut harness);
+    let path = std::env::temp_dir().join(format!(
+        "export_tax_{}_{}.py",
+        std::process::id(),
+        cliotree_app::workbook_file::new_workbook_id()
+    ));
+    menu(&mut harness, "File");
+    click(&mut harness, "Export Tax...");
+    harness.state_mut().code.files.dialog.as_mut().unwrap().text = path.display().to_string();
+    harness.run();
+    click(&mut harness, "Export");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), TAX);
+
+    menu(&mut harness, "File");
+    click(&mut harness, "Import module...");
+    harness.state_mut().code.files.dialog.as_mut().unwrap().text = path.display().to_string();
+    harness.run();
+    click(&mut harness, "Import");
+    let stem = path
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .replace('-', "_");
+    assert_eq!(modules(&harness), ["Tax".to_owned(), stem.clone()]);
+    assert_eq!(source(&harness, &stem), TAX);
+    assert_eq!(shown(&harness), stem, "the new module is open");
+    assert_eq!(
+        harness.state().calc().undo_label(),
+        Some(format!("Insert module {stem}").as_str())
+    );
+
+    // Again: the name is taken now.
+    let name = harness.state_mut().import_module_from(&path).unwrap();
+    assert_eq!(name, format!("{stem}2"));
+    std::fs::remove_file(&path).unwrap();
+    // A file that is not there says so, and nothing is added.
+    assert!(harness.state_mut().import_module_from(&path).is_err());
+    assert_eq!(modules(&harness).len(), 3);
+}
+
+/// The *Forms* branch shows the design of a customised form as JSON: a text
+/// that is a design becomes the form's design, one that is not leaves the
+/// form as it was and says why.
+#[test]
+fn a_customised_form_is_shown_as_json_and_its_text_becomes_its_design() {
+    let mut harness = window_with(&[]);
+    open_editor(&mut harness);
+    harness.get_by_label("No customised forms");
+    let spec = harness.state().calc().spec("Orders").unwrap().clone();
+    let design = cliotree_core::form::generate(&spec);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .forms_mut()
+        .set("Orders", "Entry", design.clone());
+    harness.run();
+    click(&mut harness, "Entry");
+    assert_eq!(shown(&harness), "Orders: Entry");
+    assert_eq!(code(&harness), design.to_json());
+
+    let set_text = |harness: &mut Harness<'_, ClioApp>, text: &str| {
+        let app = harness.state_mut();
+        let current = app.code.current;
+        let tab = &mut app.code.tabs[current];
+        tab.text = text.to_owned();
+        tab.typed_at = Some(0.0);
+        app.commit_code();
+        harness.run();
+    };
+    set_text(&mut harness, "{\"version\": 1");
+    harness.get(by().label_contains("Form Entry of Orders keeps its design until this is fixed"));
+    assert_eq!(
+        harness.state().calc().forms().get("Orders", "Entry"),
+        Some(&design)
+    );
+    assert_eq!(code(&harness), "{\"version\": 1", "the text stays as typed");
+
+    let mut titled = design.clone();
+    titled.title = Some("New order".to_owned());
+    set_text(&mut harness, &titled.to_json());
+    assert_eq!(
+        harness.state().calc().forms().get("Orders", "Entry"),
+        Some(&titled)
+    );
+    harness.get_by_label("Form Entry of Orders: this is its design");
+}
+
+/// The Immediate window runs an expression on the evaluation thread, with
+/// `this` at the node selected in the workbook, and Up brings it back.
+#[test]
+fn the_immediate_window_shows_a_result_and_recalls_what_was_typed() {
+    let mut harness = window_with(&[("Tax", TAX)]);
+    open_editor(&mut harness);
+    harness.get_by_label("this is Orders");
+    harness.get_by_label("Immediate expression").click();
+    harness.run();
+    harness
+        .get_by_label("Immediate expression")
+        .type_text("Tax.half(7)");
+    harness.key_press(Key::Enter);
+    harness.run();
+    settle(&mut harness);
+    harness.get_by_label("> Tax.half(7)");
+    harness.get_by_label("3.5");
+    harness
+        .get_by_label("Immediate expression")
+        .type_text("1 / 0");
+    harness.key_press(Key::Enter);
+    harness.run();
+    settle(&mut harness);
+    harness.get(by().label_contains("#DIV/0!"));
+    assert_eq!(harness.state().user.immediate, ["Tax.half(7)", "1 / 0"]);
+
+    harness.key_press(Key::ArrowUp);
+    harness.run();
+    harness.key_press(Key::ArrowUp);
+    harness.run();
+    assert_eq!(harness.state().code.immediate.input, "Tax.half(7)");
+    harness.key_press(Key::ArrowDown);
+    harness.run();
+    harness.key_press(Key::ArrowDown);
+    harness.run();
+    assert_eq!(harness.state().code.immediate.input, "");
+
+    // Not in a workbook that is not trusted.
+    harness.state_mut().session.calc_mut().set_trusted(false);
+    harness.run();
+    harness.get_by_label(
+        "The Immediate window runs Python, so it works once the workbook is trusted.",
+    );
 }

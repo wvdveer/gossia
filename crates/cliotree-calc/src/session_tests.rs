@@ -329,3 +329,64 @@ fn settings_changed_while_running_apply_after_the_evaluation_comes_back() {
     assert!(s.wait_idle(LONG));
     assert_eq!(kind(&s, "c"), Some(ErrorKind::Value));
 }
+
+fn immediate(s: &mut Session, text: &str, path: &str) -> Result<String, String> {
+    let id = s.run_immediate(text, "S", &p(path))?;
+    assert!(s.wait_idle(LONG));
+    let mut answers = s.take_immediate();
+    assert_eq!(answers.len(), 1, "{answers:?}");
+    let answer = answers.remove(0);
+    assert_eq!(answer.id, id);
+    answer.result
+}
+
+/// The Immediate window: an expression runs on the evaluation thread as a
+/// formula on the node would, and its result is shown in Python's own form.
+#[test]
+fn an_immediate_expression_runs_on_the_thread_and_shows_its_python_form() {
+    let mut s = session(quick());
+    s.calc_mut()
+        .add_module("Tax", "def vat(x):\n    return x * 2\n")
+        .unwrap();
+    assert_eq!(immediate(&mut s, "S.a + S.b", ""), Ok("3".to_owned()));
+    // `this` is the node it is asked on.
+    assert_eq!(immediate(&mut s, "parent.a + 2", "b"), Ok("3".to_owned()));
+    // A node is shown as the plain values it holds; modules are there.
+    assert_eq!(immediate(&mut s, "S.list[:2]", ""), Ok("[0, 0]".to_owned()));
+    assert_eq!(immediate(&mut s, "Tax.vat(S.b)", ""), Ok("4".to_owned()));
+    assert_eq!(immediate(&mut s, "'x'", ""), Ok("'x'".to_owned()));
+    assert_eq!(
+        immediate(&mut s, "len", ""),
+        Ok("<built-in function len>".to_owned())
+    );
+    // An error is the error code and the message.
+    let error = immediate(&mut s, "1 / 0", "").unwrap_err();
+    assert!(error.starts_with("#DIV/0!"), "{error}");
+    // Text that does not parse is refused before it runs, and so is the
+    // double-underscore access the formulas may not use.
+    let refused = s.run_immediate("1 +", "S", &Path::root()).unwrap_err();
+    assert!(refused.starts_with("syntax error"), "{refused}");
+    assert!(s.run_immediate("S.__class__", "S", &Path::root()).is_err());
+    // Nothing was written, and no formula depends on what it read.
+    assert_eq!(s.calc().pending(), 0);
+    assert_eq!(get(&s, "a"), Some(Value::Int(1)));
+}
+
+#[test]
+fn an_immediate_expression_has_the_formula_time_limit_and_needs_trust() {
+    let mut settings = quick();
+    settings.formula_limit = Some(Duration::from_millis(200));
+    let mut s = session(settings);
+    let started = Instant::now();
+    let error = immediate(&mut s, "[x for x in iter(int, 1)]", "").unwrap_err();
+    assert!(error.starts_with("#TIMEOUT!"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // One at a time.
+    s.run_immediate("1", "S", &Path::root()).unwrap();
+    assert!(s.run_immediate("2", "S", &Path::root()).is_err());
+    assert!(s.wait_idle(LONG));
+    s.take_immediate();
+    s.calc_mut().set_trusted(false);
+    let refused = s.run_immediate("1", "S", &Path::root()).unwrap_err();
+    assert!(refused.contains("trusted"), "{refused}");
+}

@@ -195,12 +195,15 @@ pub fn functions(source: &str) -> Vec<(String, usize)> {
         .collect()
 }
 
-/// The text of the line numbers beside `text`: one per line, right-aligned.
-pub fn line_numbers(text: &str) -> String {
-    let count = text.matches('\n').count() + 1;
-    let digits = count.to_string().len();
-    (1..=count)
-        .map(|n| format!("{n:>digits$}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// How many lines `text` has: one more than its line breaks.
+pub fn line_count(text: &str) -> usize {
+    text.matches('\n').count() + 1
+}
+
+/// The character offset of 0-based `column` of 0-based `line`, kept within
+/// the line.
+pub fn place(text: &str, line: usize, column: usize) -> usize {
+    let start = start_of_line(text, line);
+    let length = text.chars().skip(start).take_while(|c| *c != '\n').count();
+    start + column.min(length)
 }

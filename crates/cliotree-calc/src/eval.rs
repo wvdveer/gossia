@@ -28,7 +28,10 @@ use cliotree_core::{ErrorKind, ErrorValue, Node, Path, TypeSpec};
 use indexmap::IndexSet;
 
 use crate::check::{Computed, finish, store};
-use crate::engine::{Call, Context, Depth, Engine, Failure, ModuleReport, ModuleSpec, Read, Write};
+use crate::engine::{
+    Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleReport, ModuleSpec,
+    Read, Write,
+};
 use crate::model::{Dep, Formulas, Loc};
 
 /// One tab as the evaluator sees it.
@@ -112,11 +115,38 @@ impl Snapshot {
     /// Runs a button procedure against this snapshot. Nothing it reads is
     /// recorded, and what it writes is returned, not applied.
     pub fn run_call(&self, engine: &dyn Engine, call: &Call) -> ProcedureResult {
+        let ctx = self.loose_context(engine, Loc::new(call.sheet.clone(), Path::root()));
+        let result = engine.call(call, ctx);
+        ProcedureResult {
+            base: self.version,
+            call: call.clone(),
+            result,
+        }
+    }
+
+    /// Runs an expression of the Immediate window against this snapshot, as a
+    /// formula on its node would run. Nothing it reads is recorded.
+    pub fn run_immediate(&self, engine: &dyn Engine, immediate: &Immediate) -> ImmediateResult {
+        let loc = Loc::new(immediate.sheet.clone(), immediate.path.clone());
+        let ctx = self.loose_context(engine, loc);
+        let result = engine
+            .immediate(&immediate.text, ctx, immediate.time_limit)
+            .map_err(|failure| failure_text(&failure));
+        ImmediateResult {
+            id: immediate.id,
+            text: immediate.text.clone(),
+            result,
+        }
+    }
+
+    /// A context at `loc` whose reads are not dependencies of anything, with
+    /// the modules loaded first: a fresh engine (after one was abandoned) has
+    /// none yet.
+    fn loose_context(&self, engine: &dyn Engine, loc: Loc) -> Rc<EvalContext> {
         let tabs: Vec<String> = self.sheets.keys().cloned().collect();
-        // A fresh engine (after one was abandoned) has no modules yet.
         let _ = engine.sync_modules(&self.modules, &tabs);
-        let ctx = Rc::new(EvalContext {
-            loc: Loc::new(call.sheet.clone(), Path::root()),
+        Rc::new(EvalContext {
+            loc,
             data: self
                 .sheets
                 .iter()
@@ -133,13 +163,7 @@ impl Snapshot {
                 .map(|name| (name.clone(), Rc::from(name.as_str())))
                 .collect(),
             reads: RefCell::new(Vec::new()),
-        });
-        let result = engine.call(call, ctx);
-        ProcedureResult {
-            base: self.version,
-            call: call.clone(),
-            result,
-        }
+        })
     }
 
     /// How many formulas are to be run.
@@ -673,4 +697,15 @@ impl Context for EvalContext {
     fn sheets(&self) -> Vec<String> {
         self.data.keys().cloned().collect()
     }
+}
+
+/// A failure in words: the error code and the message, and the engine's own
+/// account (a traceback) below, if it gave one.
+fn failure_text(failure: &Failure) -> String {
+    let mut text = format!("{}: {}", failure.error.kind, failure.error.message);
+    if let Some(traceback) = failure.traceback.as_deref().filter(|t| !t.is_empty()) {
+        text.push('\n');
+        text.push_str(traceback.trim_end());
+    }
+    text
 }

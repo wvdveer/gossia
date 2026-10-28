@@ -526,3 +526,52 @@ fn completion_offers_the_workbook_modules_and_their_functions() {
     let labels: Vec<_> = c.items.iter().map(|i| i.label.as_str()).collect();
     assert_eq!(labels, ["vat"]);
 }
+
+// ------------------------------------------------------------------ compile
+
+fn problems(b: &Book, name: &str) -> Vec<(Option<usize>, Option<usize>, String)> {
+    b.calc
+        .module_problems(name)
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.line, p.column, p.message))
+        .collect()
+}
+
+/// *Compile* lists each problem of a module with where it is.
+#[test]
+fn compile_lists_the_problems_of_a_module_with_their_line_and_column() {
+    let mut b = book_with(&[
+        ("Good", TAX),
+        ("A", "import math\nimport B\n"),
+        ("B", "x = 1\nfrom A import y\n"),
+        ("Odd", "import math, os\n\ndef f():\n    return 1\n"),
+        ("Bad", "def f():\n    return 1\n\nx = 1 / 0\n"),
+        ("Broken", "def f(:\n    pass\n"),
+    ]);
+    b.run();
+    assert!(problems(&b, "Good").is_empty());
+    assert!(b.calc.module_problems("Nothing").is_none());
+    // The import that closes the cycle, in each module on it.
+    let a = problems(&b, "A");
+    assert_eq!(a.len(), 1, "{a:?}");
+    assert_eq!((a[0].0, a[0].1), (Some(2), Some(8)));
+    assert!(a[0].2.contains("A -> B -> A"), "{}", a[0].2);
+    let at_b = problems(&b, "B");
+    assert_eq!((at_b[0].0, at_b[0].1), (Some(2), Some(6)));
+    // An import that cannot be served: once, not again as the load failure.
+    let odd = problems(&b, "Odd");
+    assert_eq!(odd.len(), 1, "{odd:?}");
+    assert_eq!((odd[0].0, odd[0].1), (Some(1), Some(14)));
+    assert!(odd[0].2.contains("no module named os"), "{}", odd[0].2);
+    // A failure at load, with the line it names.
+    let bad = problems(&b, "Bad");
+    assert_eq!(bad.len(), 1, "{bad:?}");
+    assert_eq!((bad[0].0, bad[0].1), (Some(4), None));
+    assert!(bad[0].2.contains("ZeroDivisionError"), "{}", bad[0].2);
+    // A syntax error is the only problem.
+    let broken = problems(&b, "Broken");
+    assert_eq!(broken.len(), 1, "{broken:?}");
+    assert_eq!(broken[0].0, Some(1));
+    assert!(broken[0].2.starts_with("syntax error"), "{}", broken[0].2);
+}
