@@ -122,6 +122,26 @@ impl Calc {
             .unwrap_or_default()
     }
 
+    /// The names a button can run, for the property page's list: the public
+    /// functions of the modules, in module order, by bare name. Read from
+    /// the source, so it needs neither trust nor a loaded module. A module
+    /// that does not parse, or that failed to load (a clash of names among
+    /// them), gives none; a name is listed once.
+    pub fn procedure_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for m in self.modules.values() {
+            if matches!(m.status, ModuleStatus::Failed(_)) {
+                continue;
+            }
+            for function in m.public_functions() {
+                if !names.contains(&function) {
+                    names.push(function);
+                }
+            }
+        }
+        names
+    }
+
     /// Each module that has failed, and why, for the list of problems.
     pub fn module_issues(&self) -> Vec<(String, String)> {
         self.modules

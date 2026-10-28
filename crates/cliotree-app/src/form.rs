@@ -344,6 +344,7 @@ impl ClioApp {
                     font: (None, None),
                     column,
                     column_targets: Vec::new(),
+                    at: Vec::new(),
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -591,6 +592,9 @@ struct Painter<'a> {
     /// In layout mode: the titles of the columns of the table being drawn,
     /// which select the column when clicked.
     column_targets: Vec<(String, egui::Rect)>,
+    /// Where the control being drawn is in the design, for the expressions
+    /// of the columns of its table.
+    at: Address,
 }
 
 /// How the control of a node wants it drawn, beyond what its type calls for.
@@ -661,6 +665,22 @@ impl Painter<'_> {
         if gate.hidden {
             return;
         }
+        self.styled(ui, &gate, false, |this, ui| {
+            this.control_in_style(ui, c, slot)
+        });
+    }
+
+    /// Draws `body` as a gate says: disabled, in its colours, with the
+    /// pending marker in the top-right corner and the reasons on hover. The
+    /// fill of a control is a frame around it; the fill of a cell of a table
+    /// is the whole cell.
+    fn styled(
+        &mut self,
+        ui: &mut egui::Ui,
+        gate: &Gate,
+        cell: bool,
+        body: impl FnOnce(&mut Self, &mut egui::Ui),
+    ) {
         let response = ui
             .scope(|ui| {
                 // On a fill with no text colour of its own, text is black or
@@ -677,8 +697,8 @@ impl Painter<'_> {
                     visuals.widgets.active.fg_stroke.color = text;
                     visuals.widgets.inactive.fg_stroke.color = text;
                 }
-                let body = |this: &mut Self, ui: &mut egui::Ui| {
-                    ui.add_enabled_ui(!gate.disabled, |ui| this.control_in_style(ui, c, slot));
+                let inner = |this: &mut Self, ui: &mut egui::Ui| {
+                    ui.add_enabled_ui(!gate.disabled, |ui| body(this, ui));
                 };
                 match gate.fill {
                     Some(fill) => {
@@ -693,22 +713,27 @@ impl Painter<'_> {
                         if widgets.inactive.bg_stroke.width == 0.0 {
                             widgets.inactive.bg_stroke = Stroke::new(1.0, outline);
                         }
-                        egui::Frame::new()
-                            .fill(fill)
-                            .corner_radius(3.0)
-                            .inner_margin(2.0)
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                body(self, ui);
-                            });
+                        if cell {
+                            ui.painter().rect_filled(ui.max_rect(), 0.0, fill);
+                            inner(self, ui);
+                        } else {
+                            egui::Frame::new()
+                                .fill(fill)
+                                .corner_radius(3.0)
+                                .inner_margin(2.0)
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    inner(self, ui);
+                                });
+                        }
                     }
-                    None => body(self, ui),
+                    None => inner(self, ui),
                 }
             })
             .response;
         if gate.pending {
-            // In the top-right corner of the control, over what is there.
-            let side = 10.0;
+            // In the top-right corner, over what is there.
+            let side = if cell { 7.0 } else { 10.0 };
             let rect = egui::Rect::from_min_size(
                 egui::pos2(response.rect.right() - side, response.rect.top()),
                 egui::vec2(side, side),
@@ -741,6 +766,7 @@ impl Painter<'_> {
     }
 
     fn control_in_font(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        self.at = slot.at.clone();
         if c.kind == ControlKind::Group {
             self.group(ui, c, slot);
         } else if self.layout.is_none() {
@@ -1445,14 +1471,8 @@ impl Painter<'_> {
                         .id_salt(("form_table_scroll", path.to_string()))
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
-                            self.table(
-                                ui,
-                                path,
-                                items.len(),
-                                &columns,
-                                control.is_some(),
-                                header_font,
-                            );
+                            let at = control.map(|_| self.at.clone());
+                            self.table(ui, path, items.len(), &columns, at, header_font);
                         });
                 }
                 Some(_) => {}
@@ -1462,17 +1482,43 @@ impl Painter<'_> {
     }
 
     /// A table of the items of an array: its columns that are shown, in their
-    /// order, each with its own properties. `designed` says the table is a
-    /// control's, whose columns can be selected in layout mode.
+    /// order, each with its own properties. `at` is the address of the
+    /// control the table is of: its columns can be selected in layout mode,
+    /// and out of it their expressions hide a column or colour a cell.
     fn table(
         &mut self,
         ui: &mut egui::Ui,
         array: &Path,
         len: usize,
         columns: &[(ColumnDesign, Option<Column>)],
-        designed: bool,
+        at: Option<Address>,
         header_font: Option<ColumnFont>,
     ) {
+        let designed = at.is_some();
+        // The expressions of the columns, out of layout mode: a column whose
+        // *visible when* is false is left out; what the others say about the
+        // column as a whole goes to each of its cells.
+        let gated = at.filter(|_| self.layout.is_none());
+        let mut shown = Vec::new();
+        let mut heads = Vec::new();
+        for (design, column) in columns {
+            let head = match (&gated, column) {
+                (Some(at), Some(_)) => crate::form_exprs::column_gate(
+                    self.app.calc(),
+                    &self.app.sheet,
+                    self.form,
+                    at,
+                    &design.name,
+                    None,
+                ),
+                _ => Gate::default(),
+            };
+            if !head.hidden {
+                shown.push((design.clone(), column.clone()));
+                heads.push(head);
+            }
+        }
+        let columns = &shown[..];
         let editable = self.app.can_reorder(array);
         let sortable = editable
             && columns
@@ -1549,7 +1595,7 @@ impl Painter<'_> {
             .body(|body| {
                 body.rows(row_height, len, |mut row| {
                     let index = row.index();
-                    for ((design, column), font) in columns.iter().zip(&fonts) {
+                    for (((design, column), font), head) in columns.iter().zip(&fonts).zip(&heads) {
                         row.col(|ui| {
                             in_font(ui, *font, |ui| {
                                 aligned(ui, design.align, |ui| match column {
@@ -1574,7 +1620,37 @@ impl Painter<'_> {
                                             format: design.format(),
                                         };
                                         let outer = self.look.replace((cell.clone(), look));
-                                        self.editor(ui, &cell, column.ty, column.required, true);
+                                        let gate = match &gated {
+                                            Some(at) => cell_gate(
+                                                self.app.calc(),
+                                                &self.app.sheet,
+                                                self.form,
+                                                at,
+                                                &design.name,
+                                                index,
+                                                head,
+                                            ),
+                                            None => Gate::default(),
+                                        };
+                                        if gate == Gate::default() {
+                                            self.editor(
+                                                ui,
+                                                &cell,
+                                                column.ty,
+                                                column.required,
+                                                true,
+                                            );
+                                        } else {
+                                            self.styled(ui, &gate, true, |this, ui| {
+                                                this.editor(
+                                                    ui,
+                                                    &cell,
+                                                    column.ty,
+                                                    column.required,
+                                                    true,
+                                                );
+                                            });
+                                        }
                                         self.look = outer;
                                     }
                                 });
@@ -1726,6 +1802,25 @@ impl Painter<'_> {
             }
         });
     }
+}
+
+/// How a cell of a column is drawn: its row's expressions, with what the
+/// column's *visible when* said when it could not hide the column (an error,
+/// or not run yet).
+fn cell_gate(
+    calc: &cliotree_calc::Calc,
+    tab: &str,
+    form: &str,
+    at: &[usize],
+    column: &str,
+    row: usize,
+    head: &Gate,
+) -> Gate {
+    let mut gate = crate::form_exprs::column_gate(calc, tab, form, at, column, Some(row));
+    gate.disabled |= head.disabled;
+    gate.pending |= head.pending;
+    gate.why.extend(head.why.iter().cloned());
+    gate
 }
 
 fn count_text(n: usize) -> String {

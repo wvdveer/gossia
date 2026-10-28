@@ -936,16 +936,16 @@ impl ClioApp {
                 }
             }
             ControlKind::Button => {
-                if option_text(
-                    ui,
-                    "Procedure",
-                    &mut edited.procedure,
-                    "module function",
-                    false,
-                ) {
-                    merge = Some(key("procedure"));
+                let names = self.calc().procedure_names();
+                procedure_choice(ui, &mut edited.procedure, &names);
+                if names.is_empty() {
+                    ui.weak(
+                        "No module has a function yet. Write one, def name(form, ctx):, \
+                         in the code editor (Alt+F11).",
+                    );
+                } else {
+                    ui.weak("A function of a module, called as name(form, ctx).");
                 }
-                ui.weak("Buttons are drawn but do not run yet.");
             }
             ControlKind::Separator => {}
         }
@@ -1236,6 +1236,44 @@ impl ClioApp {
             "Cell ",
             "cells",
         );
+        if !row_number {
+            let fields = [
+                (
+                    "Visible when",
+                    &mut edited.visible_when,
+                    "visible_when",
+                    "expression",
+                ),
+                (
+                    "Enabled when",
+                    &mut edited.enabled_when,
+                    "enabled_when",
+                    "expression",
+                ),
+                (
+                    "Text colour",
+                    &mut edited.text_colour,
+                    "text_colour",
+                    "expression giving a colour",
+                ),
+                (
+                    "Fill colour",
+                    &mut edited.fill_colour,
+                    "fill_colour",
+                    "expression giving a colour",
+                ),
+            ];
+            for (label, value, name, hint) in fields {
+                if option_text(ui, label, value, hint, false) {
+                    merge = Some(key(name));
+                }
+            }
+            ui.weak(
+                "Visible when runs once, where the table is bound, and hides the whole \
+                 column. The others run for each row, with this as the cell and parent \
+                 as the row.",
+            );
+        }
         ui.weak("Where the column is, and whether it is shown, are properties of the table.");
         if edited != column {
             self.set_column(merge, at, edited);
@@ -1601,6 +1639,48 @@ fn format_properties(
 
 /// A labelled text field for an optional property: empty is absent. Returns
 /// whether it was typed into.
+/// The procedure of a button, chosen from the functions of the modules. A
+/// name that no module has any more stays chosen, marked, until another is
+/// chosen, so that fixing the module brings the button back.
+fn procedure_choice(ui: &mut egui::Ui, procedure: &mut Option<String>, names: &[String]) {
+    let missing = procedure
+        .as_ref()
+        .filter(|name| {
+            // `module.name`, written by hand, runs too.
+            let function = name.rsplit_once('.').map_or(name.as_str(), |(_, f)| f);
+            !names.iter().any(|n| n == function)
+        })
+        .cloned();
+    let shown = match (&*procedure, &missing) {
+        (_, Some(name)) => format!("{name} (not in any module)"),
+        (Some(name), None) => name.clone(),
+        (None, _) => "(none)".to_owned(),
+    };
+    ui.horizontal(|ui| {
+        ui.label("Procedure");
+        let response = egui::ComboBox::from_id_salt("property_procedure")
+            .selected_text(shown)
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(procedure, None, "(none)");
+                if let Some(name) = &missing {
+                    ui.selectable_value(
+                        procedure,
+                        Some(name.clone()),
+                        format!("{name} (not in any module)"),
+                    );
+                }
+                for name in names {
+                    ui.selectable_value(procedure, Some(name.clone()), name);
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Procedure of the button")
+        });
+    });
+}
+
 fn option_text(
     ui: &mut egui::Ui,
     label: &str,

@@ -236,3 +236,206 @@ fn an_expression_inside_a_group_and_on_a_renamed_tab() {
             .is_some()
     );
 }
+
+// ------------------------------------------------------- columns of a table
+
+mod columns {
+    use std::sync::Arc;
+
+    use cliotree_core::form::{ColumnDesign, Control, ControlKind, FormDesign};
+    use cliotree_core::{Path, Value, json, jsonschema};
+
+    use crate::python::{PythonEngine, PythonSyntax};
+    use crate::{Calc, ExprKind};
+
+    const SCHEMA: &str = r#"{
+      "type": "object",
+      "properties": {
+        "trade": {"type": "boolean"},
+        "items": {"type": "array", "items": {
+          "type": "object",
+          "properties": {
+            "qty": {"type": "integer"},
+            "size": {"type": "object", "properties": {"w": {"type": "number"}}}
+          }
+        }},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      }
+    }"#;
+
+    const DATA: &str = r#"{"trade": false,
+      "items": [{"qty": 1, "size": {"w": 2}}, {"qty": 5, "size": {"w": 9}}],
+      "tags": ["a", "bb"]}"#;
+
+    fn p(text: &str) -> Path {
+        text.parse().unwrap()
+    }
+
+    struct Book {
+        calc: Calc,
+        engine: PythonEngine,
+    }
+
+    /// A table of `items` with these columns, and one of `tags`.
+    fn book(columns: Vec<ColumnDesign>, tags: Vec<ColumnDesign>) -> Book {
+        let mut calc = Calc::new(Arc::new(PythonSyntax));
+        calc.add_sheet(
+            "Order",
+            jsonschema::lower_str(SCHEMA).unwrap(),
+            json::parse(DATA).unwrap().node,
+        )
+        .unwrap();
+        let mut items = Control::bound(ControlKind::Repeater, &p("items"));
+        items.table_columns = columns;
+        let mut list = Control::bound(ControlKind::Repeater, &p("tags"));
+        list.table_columns = tags;
+        calc.forms_mut().set(
+            "Order",
+            "Entry",
+            FormDesign {
+                controls: vec![items, list],
+                ..FormDesign::default()
+            },
+        );
+        Book {
+            calc,
+            engine: PythonEngine::new(),
+        }
+    }
+
+    impl Book {
+        fn run(&mut self) {
+            self.calc.recalc(&self.engine);
+        }
+
+        fn result(
+            &self,
+            at: usize,
+            column: &str,
+            row: Option<usize>,
+            kind: ExprKind,
+        ) -> Option<Result<Value, String>> {
+            self.calc
+                .column_expression("Order", "Entry", &[at], column, row, kind)
+                .and_then(|s| s.result)
+        }
+    }
+
+    fn column(name: &str, set: impl FnOnce(&mut ColumnDesign)) -> ColumnDesign {
+        let mut c = ColumnDesign::named(name);
+        set(&mut c);
+        c
+    }
+
+    fn red() -> Option<Result<Value, String>> {
+        Some(Ok(Value::Str("red".into())))
+    }
+
+    #[test]
+    fn a_colour_runs_for_each_row_at_its_cell_and_follows_the_rows() {
+        let qty = column("qty", |c| {
+            c.fill_colour = Some("'red' if this > 2 else None".into());
+            c.enabled_when = Some("parent.size.w < 5".into());
+        });
+        let mut b = book(vec![qty], Vec::new());
+        b.run();
+        assert_eq!(
+            b.result(0, "qty", Some(0), ExprKind::FillColour),
+            Some(Ok(Value::Null))
+        );
+        assert_eq!(b.result(0, "qty", Some(1), ExprKind::FillColour), red());
+        assert_eq!(
+            b.result(0, "qty", Some(1), ExprKind::Enabled),
+            Some(Ok(Value::Bool(false)))
+        );
+        // An edit of one row runs that row again.
+        b.calc
+            .set_value("Order", &p("items[0].qty"), Value::Int(7))
+            .unwrap();
+        b.run();
+        assert_eq!(b.result(0, "qty", Some(0), ExprKind::FillColour), red());
+
+        // A new row gets its own; a removed one goes.
+        b.calc
+            .insert_item(
+                "Order",
+                &p("items"),
+                2,
+                json::parse(r#"{"qty": 3}"#).unwrap().node.value().clone(),
+            )
+            .unwrap();
+        b.run();
+        assert_eq!(b.result(0, "qty", Some(2), ExprKind::FillColour), red());
+        b.calc.remove("Order", &p("items[2]")).unwrap();
+        b.calc.remove("Order", &p("items[1]")).unwrap();
+        b.run();
+        assert!(
+            b.calc
+                .column_expression("Order", "Entry", &[0], "qty", Some(1), ExprKind::FillColour)
+                .is_none()
+        );
+        assert_eq!(b.result(0, "qty", Some(0), ExprKind::FillColour), red());
+    }
+
+    #[test]
+    fn visible_when_runs_once_for_the_column_at_the_array() {
+        let qty = column("qty", |c| {
+            c.visible_when = Some("len(this) > 1 and root.trade".into());
+        });
+        let mut b = book(vec![qty], Vec::new());
+        b.run();
+        assert_eq!(
+            b.result(0, "qty", None, ExprKind::Visible),
+            Some(Ok(Value::Bool(false)))
+        );
+        // Asked for with a row, it is the same one.
+        assert_eq!(
+            b.result(0, "qty", Some(1), ExprKind::Visible),
+            Some(Ok(Value::Bool(false)))
+        );
+        b.calc
+            .set_value("Order", &p("trade"), Value::Bool(true))
+            .unwrap();
+        b.run();
+        assert_eq!(
+            b.result(0, "qty", None, ExprKind::Visible),
+            Some(Ok(Value::Bool(true)))
+        );
+    }
+
+    #[test]
+    fn a_dotted_column_and_a_column_of_plain_items_find_their_cells() {
+        let w = column("size.w", |c| {
+            c.text_colour = Some("'red' if this > 5 else None".into());
+        });
+        let value = column("value", |c| {
+            c.text_colour = Some("'red' if len(this) > 1 else None".into());
+        });
+        // Not columns of the items: nothing is run for them.
+        let nothing = column("nothing", |c| c.text_colour = Some("'red'".into()));
+        let rows = column("#", |c| c.text_colour = Some("'red'".into()));
+        let hidden = column("qty", |c| {
+            c.hidden = true;
+            c.text_colour = Some("'red'".into());
+        });
+        let mut b = book(vec![w, nothing, rows, hidden], vec![value]);
+        b.run();
+        assert_eq!(
+            b.result(0, "size.w", Some(0), ExprKind::TextColour),
+            Some(Ok(Value::Null))
+        );
+        assert_eq!(b.result(0, "size.w", Some(1), ExprKind::TextColour), red());
+        assert_eq!(
+            b.result(1, "value", Some(0), ExprKind::TextColour),
+            Some(Ok(Value::Null))
+        );
+        assert_eq!(b.result(1, "value", Some(1), ExprKind::TextColour), red());
+        for name in ["nothing", "#", "qty"] {
+            assert_eq!(
+                b.result(0, name, Some(0), ExprKind::TextColour),
+                None,
+                "{name}"
+            );
+        }
+    }
+}

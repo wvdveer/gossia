@@ -214,6 +214,44 @@ fn buttons_are_disabled_while_the_workbook_is_not_trusted() {
     );
 }
 
+/// The property page offers the functions of the modules; a name no module
+/// has is kept and marked until another is chosen.
+#[test]
+fn the_procedure_of_a_button_is_chosen_from_the_functions_of_the_modules() {
+    let mut harness = form();
+    click(&mut harness, "Edit form");
+    click(&mut harness, "Button Nothing");
+    let combo = harness.get_by_label("Procedure of the button");
+    assert_eq!(
+        combo.value().as_deref(),
+        Some("missing (not in any module)")
+    );
+    combo.click();
+    harness.run();
+    for name in ["(none)", "mark_shipped", "fail", "bad_write"] {
+        harness.get_by_label(name);
+    }
+    click(&mut harness, "shout_city");
+    let design = harness.state().design_of("Default");
+    let nothing = design
+        .walk()
+        .into_iter()
+        .map(|(_, c)| c.clone())
+        .find(|c| c.label.as_deref() == Some("Nothing"))
+        .unwrap();
+    assert_eq!(nothing.procedure.as_deref(), Some("shout_city"));
+
+    // Out of layout mode the button runs it.
+    click(&mut harness, "Edit form");
+    click(&mut harness, "Nothing");
+    settle(&mut harness);
+    let name = value(&harness, "customer.name").unwrap();
+    assert!(
+        matches!(&name, Value::Str(s) if s.ends_with('!')),
+        "{name:?}"
+    );
+}
+
 #[test]
 fn a_button_with_no_procedure_is_disabled() {
     let harness = form();

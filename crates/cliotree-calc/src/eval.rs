@@ -152,6 +152,7 @@ impl Snapshot {
         let _ = engine.sync_modules(&self.modules, &tabs);
         Rc::new(EvalContext {
             loc,
+            this_by_value: false,
             data: self
                 .sheets
                 .iter()
@@ -539,7 +540,7 @@ impl Run<'_> {
         };
         let text = formula.text.clone();
         let spec = Arc::clone(&snap.spec);
-        let ctx = self.context(loc);
+        let ctx = self.context(loc, false);
         let result = self.engine.eval(&text, ctx.clone());
         let reads = ctx.reads.take();
         drop(ctx);
@@ -587,10 +588,12 @@ impl Run<'_> {
         Attempt::Finished
     }
 
-    /// A context at `loc` that sees the results so far.
-    fn context(&self, loc: &Loc) -> Rc<EvalContext> {
+    /// A context at `loc` that sees the results so far. `this_by_value` for
+    /// an expression of a control.
+    fn context(&self, loc: &Loc, this_by_value: bool) -> Rc<EvalContext> {
         Rc::new(EvalContext {
             loc: loc.clone(),
+            this_by_value,
             data: self
                 .sheets
                 .iter()
@@ -613,7 +616,7 @@ impl Run<'_> {
     /// Runs an expression of a control against the values as they are once
     /// the formulas have run, and records what it read.
     fn expression(&self, job: &ExprJob) -> ExprOutcome {
-        let ctx = self.context(&job.loc);
+        let ctx = self.context(&job.loc, true);
         let result = self.engine.eval(&job.text, ctx.clone());
         let reads = ctx.reads.take();
         drop(ctx);
@@ -705,6 +708,7 @@ struct EvalContext {
     /// Tab names, shared, so that a read does not have to make a string.
     names: HashMap<String, Rc<str>>,
     reads: RefCell<Vec<(Rc<str>, Path, Depth)>>,
+    this_by_value: bool,
 }
 
 impl EvalContext {
@@ -720,6 +724,10 @@ impl EvalContext {
 impl Context for EvalContext {
     fn sheet(&self) -> &str {
         &self.loc.sheet
+    }
+
+    fn this_by_value(&self) -> bool {
+        self.this_by_value
     }
 
     fn path(&self) -> &Path {

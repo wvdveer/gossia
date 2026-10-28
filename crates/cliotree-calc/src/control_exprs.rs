@@ -4,9 +4,13 @@
 //! control is bound to (the root for a control that is not bound), and what
 //! they read is recorded so that an edit there runs them again. Their results
 //! are kept here, in memory: they are not data, and they are not saved.
+//!
+//! The columns of a repeater's table have them too. A column's *visible
+//! when* runs once, at the array; the others run for each row, at the cell,
+//! so their list follows the number of items.
 
-use cliotree_core::form::Control;
-use cliotree_core::{Path, Value};
+use cliotree_core::form::{ColumnDesign, Control, ControlKind, RepeaterMode};
+use cliotree_core::{Kind, Path, Value};
 use indexmap::IndexMap;
 
 use super::*;
@@ -39,6 +43,22 @@ impl ExprKind {
         .map(str::trim)
         .filter(|t| !t.is_empty())
     }
+
+    fn column_text(self, column: &ColumnDesign) -> Option<&str> {
+        match self {
+            ExprKind::Visible => column.visible_when.as_deref(),
+            ExprKind::Enabled => column.enabled_when.as_deref(),
+            ExprKind::TextColour => column.text_colour.as_deref(),
+            ExprKind::FillColour => column.fill_colour.as_deref(),
+        }
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    }
+
+    /// Whether, on a column, it runs for each row rather than once.
+    fn per_row(self) -> bool {
+        self != ExprKind::Visible
+    }
 }
 
 /// One expression of one control of one form.
@@ -48,6 +68,10 @@ pub struct ExprKey {
     pub form: String,
     /// Where the control is in the design.
     pub at: Vec<usize>,
+    /// For a column of the control's table: its name, and for an expression
+    /// that runs for each row, the row.
+    pub column: Option<String>,
+    pub row: Option<usize>,
     pub kind: ExprKind,
 }
 
@@ -96,6 +120,9 @@ pub(crate) struct ControlExprs {
     pub resync: bool,
     /// The generation of the modules when they were last loaded.
     pub modules_seen: u64,
+    /// Some column has an expression for each row, so a change to the data
+    /// may change the list.
+    pub has_rows: bool,
 }
 
 impl ControlExprs {
@@ -161,6 +188,7 @@ impl Calc {
         }
         self.exprs.resync = false;
         let mut wanted: Vec<(ExprKey, String, Loc)> = Vec::new();
+        let mut has_rows = false;
         for (tab, form, design) in self.forms.iter() {
             let mut stack: Vec<(Vec<usize>, &Control)> = design
                 .controls
@@ -169,19 +197,62 @@ impl Calc {
                 .map(|(i, c)| (vec![i], c))
                 .collect();
             while let Some((at, control)) = stack.pop() {
+                let key = |kind, column: Option<&str>, row| ExprKey {
+                    tab: tab.to_owned(),
+                    form: form.to_owned(),
+                    at: at.clone(),
+                    column: column.map(str::to_owned),
+                    row,
+                    kind,
+                };
                 let path = control.bound_path().unwrap_or_default();
                 for kind in ExprKind::ALL {
                     if let Some(text) = kind.text(control) {
                         wanted.push((
-                            ExprKey {
-                                tab: tab.to_owned(),
-                                form: form.to_owned(),
-                                at: at.clone(),
-                                kind,
-                            },
+                            key(kind, None, None),
                             text.to_owned(),
                             Loc::new(tab, path.clone()),
                         ));
+                    }
+                }
+                // The columns of its table.
+                if control.kind == ControlKind::Repeater
+                    && control.mode != Some(RepeaterMode::Stacked)
+                    && let Some(array) = control.bound_path()
+                {
+                    for column in &control.table_columns {
+                        if column.hidden || column.is_row_number() {
+                            continue;
+                        }
+                        let name = Some(column.name.as_str());
+                        if let Some(text) = ExprKind::Visible.column_text(column) {
+                            wanted.push((
+                                key(ExprKind::Visible, name, None),
+                                text.to_owned(),
+                                Loc::new(tab, array.clone()),
+                            ));
+                        }
+                        let each: Vec<(ExprKind, &str)> = ExprKind::ALL
+                            .into_iter()
+                            .filter(|k| k.per_row())
+                            .filter_map(|k| Some((k, k.column_text(column)?)))
+                            .collect();
+                        if each.is_empty() {
+                            continue;
+                        }
+                        has_rows = true;
+                        let Some(cells) = self.column_cells(tab, &array, &column.name) else {
+                            continue;
+                        };
+                        for (row, cell) in cells.into_iter().enumerate() {
+                            for (kind, text) in &each {
+                                wanted.push((
+                                    key(*kind, name, Some(row)),
+                                    (*text).to_owned(),
+                                    Loc::new(tab, cell.clone()),
+                                ));
+                            }
+                        }
                     }
                 }
                 for (i, child) in control.children.iter().enumerate() {
@@ -216,6 +287,33 @@ impl Calc {
             });
             self.exprs.by_key.insert(key, expr);
         }
+        self.exprs.has_rows = has_rows;
+    }
+
+    /// The cells of a column of the table of the array at `array`, one for
+    /// each item, as the form's table finds them: a column of items that are
+    /// objects is a field, dotted for a field of a field; the one column of
+    /// items that are not is the item. None if the column is not one of the
+    /// items' type.
+    fn column_cells(&self, tab: &str, array: &Path, name: &str) -> Option<Vec<Path>> {
+        let spec = self.spec(tab)?;
+        let Kind::Array { items, .. } = &spec.get(spec.resolve(array)?.ty).kind else {
+            return None;
+        };
+        let fields: Vec<&str> = match &spec.get(*items).kind {
+            Kind::Object { .. } => name.split('.').collect(),
+            Kind::Array { .. } | Kind::Map { .. } => return None,
+            _ if name == "value" => Vec::new(),
+            _ => return None,
+        };
+        let cell = |i: usize| fields.iter().fold(array.index(i), |p, f| p.key(*f));
+        spec.resolve(&cell(0))?;
+        let len = self
+            .data(tab)?
+            .get(array)
+            .and_then(|n| n.value().as_array())
+            .map_or(0, |items| items.len());
+        Some((0..len).map(cell).collect())
     }
 
     /// How many expressions on controls are out of date and will be run. None
@@ -237,13 +335,39 @@ impl Calc {
         at: &[usize],
         kind: ExprKind,
     ) -> Option<ExprState> {
-        let key = ExprKey {
+        self.expression_state(&ExprKey {
             tab: tab.to_owned(),
             form: form.to_owned(),
             at: at.to_vec(),
+            column: None,
+            row: None,
             kind,
-        };
-        let e = self.exprs.by_key.get(&key)?;
+        })
+    }
+
+    /// What an expression of a column of the table of the control at `at`
+    /// came to: *visible when* with no row, the others for the row.
+    pub fn column_expression(
+        &self,
+        tab: &str,
+        form: &str,
+        at: &[usize],
+        column: &str,
+        row: Option<usize>,
+        kind: ExprKind,
+    ) -> Option<ExprState> {
+        self.expression_state(&ExprKey {
+            tab: tab.to_owned(),
+            form: form.to_owned(),
+            at: at.to_vec(),
+            column: Some(column.to_owned()),
+            row: if kind.per_row() { row } else { None },
+            kind,
+        })
+    }
+
+    fn expression_state(&self, key: &ExprKey) -> Option<ExprState> {
+        let e = self.exprs.by_key.get(key)?;
         Some(ExprState {
             result: e.result.clone(),
             pending: e.stale && self.trusted,

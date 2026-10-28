@@ -3,7 +3,7 @@
 //! and the colours of its text and background. The expressions run on the
 //! evaluation thread; this reads their latest results.
 
-use cliotree_calc::{Calc, ExprKind};
+use cliotree_calc::{Calc, ExprKind, ExprState};
 use cliotree_core::Value;
 use egui::Color32;
 
@@ -23,10 +23,34 @@ pub struct Gate {
 
 /// What the expressions of the control at `at` of a form come to.
 pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize]) -> Gate {
+    gate_of(calc.is_trusted(), |kind| {
+        calc.control_expression(tab, form, at, kind)
+    })
+}
+
+/// What the expressions of a column of the table of the control at `at` come
+/// to: with no row, whether the column is shown (its *visible when*); for a
+/// row, how that cell is drawn (the others).
+pub fn column_gate(
+    calc: &Calc,
+    tab: &str,
+    form: &str,
+    at: &[usize],
+    column: &str,
+    row: Option<usize>,
+) -> Gate {
+    gate_of(calc.is_trusted(), |kind| {
+        if (kind == ExprKind::Visible) != row.is_none() {
+            return None;
+        }
+        calc.column_expression(tab, form, at, column, row, kind)
+    })
+}
+
+fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> Gate {
     let mut gate = Gate::default();
-    let trusted = calc.is_trusted();
     for kind in ExprKind::ALL {
-        let Some(state) = calc.control_expression(tab, form, at, kind) else {
+        let Some(state) = state_of(kind) else {
             continue;
         };
         gate.pending |= state.pending;

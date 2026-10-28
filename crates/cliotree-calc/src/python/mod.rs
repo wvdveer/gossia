@@ -31,7 +31,7 @@ use rustpython::vm::{
     AsObject, Interpreter, PyObjectRef, PyPayload, PyRef, PyResult, Settings, VirtualMachine,
 };
 
-use crate::engine::{Call, Context, Depth, Engine, Failure, Write};
+use crate::engine::{Call, Context, Depth, Engine, Failure, Read, Write};
 use shared::{Classes, Shared};
 use watchdog::Watchdog;
 
@@ -298,7 +298,10 @@ impl PythonEngine {
         let locals = vm.ctx.new_dict();
         let sheet: Rc<str> = Rc::from(ctx.sheet());
         let here = ctx.path();
-        let this = node::lazy_proxy(&self.shared, vm, &sheet, here.clone());
+        let this = match ctx.this_by_value() {
+            true => self.this_value(vm, &sheet, here, ctx),
+            false => node::lazy_proxy(&self.shared, vm, &sheet, here.clone()),
+        };
         let parent = match here.parent() {
             Some(path) => node::lazy_proxy(&self.shared, vm, &sheet, path),
             None => vm.ctx.none(),
@@ -332,6 +335,24 @@ impl PythonEngine {
 }
 
 impl PythonEngine {
+    /// `this` for an expression of a control: the value of a node that holds
+    /// one, the node itself for an object or an array, and `None` for an
+    /// optional field that is not there.
+    fn this_value(
+        &self,
+        vm: &VirtualMachine,
+        sheet: &Rc<str>,
+        here: &Path,
+        ctx: &Rc<dyn Context>,
+    ) -> PyObjectRef {
+        match ctx.read(sheet, here, Depth::Shallow) {
+            Read::Node(node) => convert::node_to_py(&self.shared, vm, sheet, here.clone(), &node)
+                .unwrap_or_else(|_| node::lazy_proxy(&self.shared, vm, sheet, here.clone())),
+            _ if ctx.absent_ok(sheet, here) => vm.ctx.none(),
+            _ => node::lazy_proxy(&self.shared, vm, sheet, here.clone()),
+        }
+    }
+
     /// The function a button names: one a workbook module defines, as `name`
     /// or `module.name`. Nothing else is run: not a built-in, not a tab.
     fn find_procedure(&self, vm: &VirtualMachine, name: &str) -> Result<PyObjectRef, Failure> {

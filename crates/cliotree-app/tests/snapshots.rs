@@ -187,6 +187,43 @@ fn a_form_with_expressions_on_its_controls() {
 }
 
 #[test]
+fn a_table_with_expressions_on_its_columns() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    {
+        let app = harness.state_mut();
+        let mut design = app.design_of("Default");
+        let at = design
+            .walk()
+            .into_iter()
+            .find(|(_, c)| c.kind == cliotree_core::form::ControlKind::Repeater)
+            .map(|(at, _)| at)
+            .unwrap();
+        let column = |name: &str| cliotree_core::form::ColumnDesign::named(name);
+        let mut qty = column("qty");
+        qty.fill_colour = Some("'#ffd6d6' if this > 5 else None".to_owned());
+        qty.text_colour = Some("'darkred' if this > 5 else None".to_owned());
+        let mut sku = column("sku");
+        sku.enabled_when = Some("parent.qty < 10".to_owned());
+        let mut note = column("note");
+        note.visible_when = Some("False".to_owned());
+        let mut total = column("total");
+        total.fill_colour = Some("'lightgreen' if this > 20 else None".to_owned());
+        design.get_mut(&at).unwrap().table_columns = vec![sku, qty, note, total];
+        app.session
+            .calc_mut()
+            .forms_mut()
+            .set("Orders", "Default", design);
+    }
+    show_as(&mut harness, "Default");
+    settle(&mut harness);
+    check(&mut harness, "table_column_expressions", &mut results);
+}
+
+#[test]
 fn the_default_form() {
     if !enabled() {
         return;

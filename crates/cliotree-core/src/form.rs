@@ -229,6 +229,18 @@ pub struct ColumnDesign {
     pub font: Option<FontFamily>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
+    /// Python expressions, without the `=`. *Visible when* runs once for the
+    /// table, at the array, and hides the whole column; the others run for
+    /// each row, at the cell (`this` is the cell, `parent` the item).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_when: Option<String>,
+    /// The colours of a cell's text and background, as for a control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_colour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_colour: Option<String>,
     /// For the row numbers: how they are written. Absent: `[0]`, `[1]`, ...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numbering: Option<Numbering>,
@@ -301,6 +313,10 @@ impl ColumnDesign {
             date_format: None,
             font: None,
             font_size: None,
+            visible_when: None,
+            enabled_when: None,
+            text_colour: None,
+            fill_colour: None,
             numbering: None,
             start: None,
         }
@@ -669,6 +685,10 @@ pub fn form_schema_source() -> &'static str {
         "date_format": {"type": "string", "minLength": 1},
         "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "visible_when": {"type": "string"},
+        "enabled_when": {"type": "string"},
+        "text_colour": {"type": "string"},
+        "fill_colour": {"type": "string"},
         "numbering": {"type": "string", "enum": ["index", "decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"]},
         "start": {"type": "integer"}
       },

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use cliotree_app::ClioApp;
 use cliotree_app::form::View;
-use cliotree_app::form_exprs::{Gate, gate};
-use cliotree_core::form::{Control, ControlKind};
+use cliotree_app::form_exprs::{Gate, column_gate, gate};
+use cliotree_core::form::{ColumnDesign, Control, ControlKind};
 use cliotree_core::{Path, Value};
 use egui::Color32;
 use egui_kittest::Harness;
@@ -157,4 +157,110 @@ fn in_a_workbook_that_is_not_trusted_nothing_runs() {
     let g = the_gate(&harness, first + 1);
     assert!(g.disabled);
     assert!(g.why[0].contains("trusted"), "{:?}", g.why);
+}
+
+// ------------------------------------------------------- columns of a table
+
+/// The Default form with the columns of the table of items given these
+/// designs; gives the address of the table's control.
+fn with_columns(columns: Vec<ColumnDesign>) -> (Harness<'static, ClioApp>, Vec<usize>) {
+    let (mut harness, _) = form(Vec::new());
+    let at;
+    {
+        let app = harness.state_mut();
+        let mut design = app.design_of("Default");
+        at = design
+            .walk()
+            .into_iter()
+            .find(|(_, c)| c.kind == ControlKind::Repeater && c.bound_path() == Some(p("items")))
+            .map(|(at, _)| at)
+            .expect("the Default form has a table of items");
+        design.get_mut(&at).unwrap().table_columns = columns;
+        app.session
+            .calc_mut()
+            .forms_mut()
+            .set("Orders", "Default", design);
+    }
+    settle(&mut harness);
+    (harness, at)
+}
+
+fn column(name: &str, set: impl FnOnce(&mut ColumnDesign)) -> ColumnDesign {
+    let mut c = ColumnDesign::named(name);
+    set(&mut c);
+    c
+}
+
+fn cell(harness: &Harness<'_, ClioApp>, at: &[usize], name: &str, row: usize) -> Gate {
+    column_gate(
+        harness.state().calc(),
+        "Orders",
+        "Default",
+        at,
+        name,
+        Some(row),
+    )
+}
+
+fn columns() -> Vec<ColumnDesign> {
+    vec![
+        column("sku", |c| c.enabled_when = Some("parent.qty < 10".into())),
+        column("qty", |c| {
+            c.fill_colour = Some("'red' if this > 5 else None".into());
+        }),
+        column("price", |c| {
+            c.visible_when = Some("Orders.customer.vip".into())
+        }),
+        // The first item has no note: `this` is None.
+        column("note", |c| {
+            c.text_colour = Some("'blue' if this else None".into());
+        }),
+    ]
+}
+
+#[test]
+fn the_expressions_of_a_column_run_for_each_cell() {
+    let (mut harness, at) = with_columns(columns());
+    let red = Some(Color32::from_rgb(255, 0, 0));
+    assert_eq!(cell(&harness, &at, "qty", 0).fill, None);
+    assert_eq!(cell(&harness, &at, "qty", 2).fill, red);
+    assert_eq!(cell(&harness, &at, "note", 0).text, None);
+    assert_eq!(
+        cell(&harness, &at, "note", 1).text,
+        Some(Color32::from_rgb(0, 0, 255))
+    );
+    assert!(!disabled(&harness, "Orders.items[0].sku"));
+    assert!(disabled(&harness, "Orders.items[2].sku"));
+    // Each cell follows its row.
+    set(&mut harness, "items[2].qty", Value::Int(3));
+    assert_eq!(cell(&harness, &at, "qty", 2).fill, None);
+    assert!(!disabled(&harness, "Orders.items[2].sku"));
+    set(&mut harness, "items[0].qty", Value::Int(30));
+    assert_eq!(cell(&harness, &at, "qty", 0).fill, red);
+    assert!(disabled(&harness, "Orders.items[0].sku"));
+}
+
+#[test]
+fn visible_when_on_a_column_hides_the_whole_column() {
+    let (mut harness, _) = with_columns(columns());
+    assert!(harness.query_by_label("Orders.items[0].price").is_some());
+    set(&mut harness, "customer.vip", Value::Bool(false));
+    for row in 0..3 {
+        let label = format!("Orders.items[{row}].price");
+        assert!(harness.query_by_label(&label).is_none(), "{label}");
+    }
+    assert!(harness.query_by_label("Orders.items[0].qty").is_some());
+    set(&mut harness, "customer.vip", Value::Bool(true));
+    assert!(harness.query_by_label("Orders.items[0].price").is_some());
+}
+
+#[test]
+fn the_expressions_of_a_column_do_not_run_in_a_workbook_that_is_not_trusted() {
+    let (mut harness, at) = with_columns(columns());
+    harness.state_mut().session.calc_mut().set_trusted(false);
+    settle(&mut harness);
+    assert!(disabled(&harness, "Orders.items[0].sku"));
+    let g = cell(&harness, &at, "sku", 0);
+    assert!(g.why[0].contains("trusted"), "{:?}", g.why);
+    assert_eq!(cell(&harness, &at, "qty", 2).fill, None);
 }

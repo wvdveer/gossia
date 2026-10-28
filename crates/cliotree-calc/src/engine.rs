@@ -116,6 +116,13 @@ pub trait Context {
     fn absent_ok(&self, sheet: &str, path: &Path) -> bool;
     /// The names of the tabs, for engines that make them available by name.
     fn sheets(&self) -> Vec<String>;
+    /// Whether `this` is the value of the node when it holds a single value,
+    /// rather than the node: for the expressions of form controls and table
+    /// cells, which compare it (`this > 0`). A formula keeps the node, since
+    /// reading its own value would make it depend on itself.
+    fn this_by_value(&self) -> bool {
+        false
+    }
 }
 
 /// What the source of a module says about itself, found without running it.

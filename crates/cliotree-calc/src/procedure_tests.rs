@@ -229,6 +229,35 @@ fn only_a_function_of_a_module_can_be_a_procedure() {
     assert_eq!(run(&mut s, "procs.go").outcome, Ok(()));
 }
 
+/// What the property page offers a button: the public functions of the
+/// modules by bare name, none from a module that does not parse or that
+/// failed to load. Each of them runs.
+#[test]
+fn the_names_a_button_can_run_are_listed() {
+    let mut s = session("def go(form, ctx):\n    pass\ndef _hidden(form, ctx):\n    pass\n");
+    let calc = s.calc_mut();
+    calc.add_module("extra", "def ship(form, ctx):\n    pass\n")
+        .unwrap();
+    // `go` clashes with procs, so this module fails when it is loaded.
+    calc.add_module(
+        "more",
+        "def go(form, ctx):\n    pass\ndef stop(form, ctx):\n    pass\n",
+    )
+    .unwrap();
+    calc.add_module("broken", "def half(:\n").unwrap();
+    assert_eq!(
+        calc.procedure_names(),
+        ["go", "ship", "stop"],
+        "not loaded yet"
+    );
+    assert_eq!(run(&mut s, "go").outcome, Ok(()));
+    let names = s.calc().procedure_names();
+    assert_eq!(names, ["go", "ship"]);
+    for name in names {
+        assert_eq!(run(&mut s, &name).outcome, Ok(()), "{name}");
+    }
+}
+
 #[test]
 fn a_formula_cannot_change_data() {
     let mut s = session("def poke():\n    S.count = 99\n    return 1\n");

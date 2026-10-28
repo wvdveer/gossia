@@ -1327,6 +1327,10 @@ impl Calc {
         for loc in &applied.applied {
             self.exprs.mark_stale(&loc.sheet, &loc.path);
         }
+        // A result may have changed how many rows a table has.
+        if self.exprs.has_rows && !applied.applied.is_empty() {
+            self.exprs.resync = true;
+        }
         let exprs_changed = self.apply_expr_outcomes(evaluation.base, evaluation.exprs, &dropped);
         if !applied.applied.is_empty() || exprs_changed {
             self.revision += 1;
@@ -1341,6 +1345,7 @@ impl Calc {
         self.sync_expressions();
         while !self.dirty.is_empty() || self.pending_modules() > 0 || self.pending_expressions() > 0
         {
+            self.sync_expressions();
             let evaluation = self.snapshot().evaluate(engine);
             run += evaluation.outcomes.len();
             let ran_exprs = !evaluation.exprs.is_empty();
@@ -1432,6 +1437,10 @@ impl Calc {
         }
         self.mark_dirty_from(sheet, path);
         self.exprs.mark_stale(sheet, path);
+        // An edit may have changed how many rows a table has.
+        if self.exprs.has_rows {
+            self.exprs.resync = true;
+        }
     }
 
     /// Whether an edit made after `base` concerns a read of `loc`: for a deep
