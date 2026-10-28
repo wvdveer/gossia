@@ -312,6 +312,12 @@ pub const TREE_INDENT_RANGE: (u64, u64) = (0, 64);
 pub const COLUMN_WIDTH_RANGE: (u64, u64) = (40, 1_000);
 /// The most lines the formula bar grows to.
 pub const FORMULA_BAR_LINES_RANGE: (u64, u64) = (1, 40);
+/// How long the pointer rests on a cell before its comment shows, in
+/// milliseconds.
+pub const COMMENT_DELAY_RANGE: (u64, u64) = (0, 5_000);
+/// The largest a comment popup is, in pixels.
+pub const COMMENT_WIDTH_RANGE: (u64, u64) = (120, 1_200);
+pub const COMMENT_HEIGHT_RANGE: (u64, u64) = (60, 1_200);
 
 /// The data views (Options, Display).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +329,13 @@ pub struct DisplayPrefs {
     pub formula_column: bool,
     /// The width a column of the tabular view starts at, in pixels.
     pub column_width: u64,
+    /// How long the pointer rests on a cell before its comment shows, in
+    /// milliseconds.
+    pub comment_delay: u64,
+    /// The largest a comment popup is, in pixels: its text wraps at the
+    /// width and scrolls past the height.
+    pub comment_width: u64,
+    pub comment_height: u64,
 }
 
 impl Default for DisplayPrefs {
@@ -333,6 +346,9 @@ impl Default for DisplayPrefs {
             type_column: true,
             formula_column: true,
             column_width: 120,
+            comment_delay: 500,
+            comment_width: 360,
+            comment_height: 240,
         }
     }
 }
@@ -383,6 +399,30 @@ impl DisplayPrefs {
                 d.column_width,
                 warnings,
             ),
+            comment_delay: number_in(
+                section,
+                s,
+                "comment_hover_delay_ms",
+                COMMENT_DELAY_RANGE,
+                d.comment_delay,
+                warnings,
+            ),
+            comment_width: number_in(
+                section,
+                s,
+                "comment_popup_width_px",
+                COMMENT_WIDTH_RANGE,
+                d.comment_width,
+                warnings,
+            ),
+            comment_height: number_in(
+                section,
+                s,
+                "comment_popup_height_px",
+                COMMENT_HEIGHT_RANGE,
+                d.comment_height,
+                warnings,
+            ),
         }
     }
 
@@ -393,6 +433,9 @@ impl DisplayPrefs {
             ("show_type_column", json!(self.type_column)),
             ("show_formula_column", json!(self.formula_column)),
             ("table_column_width_px", json!(self.column_width)),
+            ("comment_hover_delay_ms", json!(self.comment_delay)),
+            ("comment_popup_width_px", json!(self.comment_width)),
+            ("comment_popup_height_px", json!(self.comment_height)),
         ]
     }
 }

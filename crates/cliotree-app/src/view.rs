@@ -76,6 +76,9 @@ pub(crate) enum Action {
     RenameField(Path, String),
     DeleteField(Path, String),
     ReorderFields(Path, String, String),
+    // Comments, on XML tabs: the box opens at the place given.
+    EditComment(Path, egui::Pos2),
+    DeleteComment(Path),
 }
 
 impl ClioApp {
@@ -176,6 +179,7 @@ impl ClioApp {
         self.tab_windows(ui.ctx());
         self.file_windows(ui.ctx());
         self.options_window(ui.ctx());
+        self.comment_window(ui.ctx());
         self.replace_inside_window(ui.ctx());
         self.drop_hint(ui.ctx());
         self.code_window(ui.ctx());
@@ -216,7 +220,12 @@ impl ClioApp {
             }
         }
         // While the Options dialog is open, keys are for it, not the grid.
-        if typing_somewhere || self.editing.is_some() || !self.in_tree() || self.options.is_some() {
+        if typing_somewhere
+            || self.editing.is_some()
+            || !self.in_tree()
+            || self.options.is_some()
+            || self.comment_edit.is_some()
+        {
             return;
         }
         let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
@@ -789,6 +798,11 @@ impl ClioApp {
             Action::ShowAllHidden(array) => self.show_all_hidden(&array),
             Action::ShowRefusedRows => self.show_refused_rows(),
             Action::DismissRefusal => self.tables.refused = None,
+            Action::EditComment(path, at) => {
+                self.select(&path);
+                self.begin_comment(&path, at);
+            }
+            Action::DeleteComment(path) => self.delete_comment(&path),
             Action::AddField(..)
             | Action::RenameField(..)
             | Action::DeleteField(..)
@@ -949,6 +963,24 @@ impl ClioApp {
             _ => false,
         };
         let missing = row.node.is_none() && row.required && !row.unrecognised;
+        let cell = ui.max_rect();
+        self.comment_marks(ui, cell, &row.path);
+        // Behind what the cell shows, so that its widgets keep their clicks:
+        // a right click on the rest of the cell opens its comment menu, on an
+        // XML tab.
+        if calc.is_xml(&self.sheet) && row.node.is_some() {
+            let background = ui.interact(
+                cell,
+                ui.scope_id().with(("cell_menu", row.path.to_string())),
+                Sense::click(),
+            );
+            if background.clicked() {
+                actions.push(Action::Select(row.path.clone()));
+            }
+            background.context_menu(|ui| {
+                self.comment_menu_items(ui, &row.path, cell.right_top(), actions);
+            });
+        }
 
         if is_error {
             ui.painter()
@@ -1071,6 +1103,12 @@ impl ClioApp {
                 }
                 if response.double_clicked() && row.kind != RowKind::Scalar && !row.tabular {
                     actions.push(Action::Reveal(row.path.clone()));
+                }
+                if self.calc().is_xml(&self.sheet) {
+                    let at = ui.max_rect().right_top();
+                    response.context_menu(|ui| {
+                        self.comment_menu_items(ui, &row.path, at, actions);
+                    });
                 }
                 if let Value::Error(error) = value {
                     let trace = self
@@ -1214,6 +1252,10 @@ impl ClioApp {
             _ => None,
         };
         self.field_menu_items(ui, add_to.as_ref(), self.field_of(path).as_ref(), actions);
+        if row.node.is_some() {
+            let at = ui.ctx().pointer_interact_pos().unwrap_or_default();
+            self.comment_menu_items(ui, path, at, actions);
+        }
     }
 
     // ------------------------------------------------- tabs and status

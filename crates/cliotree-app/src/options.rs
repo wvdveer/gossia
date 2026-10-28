@@ -14,9 +14,10 @@ use cliotree_calc::{Ceilings, Setting, Unit, WorkbookSettings};
 
 use crate::app::ClioApp;
 use crate::prefs::{
-    Appearance, CODE_FONT_RANGE, COLUMN_WIDTH_RANGE, CodePrefs, Density, DisplayPrefs,
-    FORMULA_BAR_LINES_RANGE, IMMEDIATE_ENTRIES_RANGE, IMMEDIATE_OUTPUT_RANGE, INDENT_RANGE,
-    Preferences, SCALE_RANGE, TREE_INDENT_RANGE, ThemeChoice,
+    Appearance, CODE_FONT_RANGE, COLUMN_WIDTH_RANGE, COMMENT_DELAY_RANGE, COMMENT_HEIGHT_RANGE,
+    COMMENT_WIDTH_RANGE, CodePrefs, Density, DisplayPrefs, FORMULA_BAR_LINES_RANGE,
+    IMMEDIATE_ENTRIES_RANGE, IMMEDIATE_OUTPUT_RANGE, INDENT_RANGE, Preferences, SCALE_RANGE,
+    TREE_INDENT_RANGE, ThemeChoice,
 };
 use crate::view::error_color;
 
@@ -80,6 +81,9 @@ pub enum Field {
     Scale,
     TreeIndent,
     ColumnWidth,
+    CommentDelay,
+    CommentWidth,
+    CommentHeight,
     UndoEntries,
     UndoWeight,
     FormulaBarLines,
@@ -188,6 +192,9 @@ impl Field {
             Field::Scale,
             Field::TreeIndent,
             Field::ColumnWidth,
+            Field::CommentDelay,
+            Field::CommentWidth,
+            Field::CommentHeight,
             Field::UndoEntries,
             Field::UndoWeight,
             Field::FormulaBarLines,
@@ -216,6 +223,9 @@ impl Field {
             Field::Scale => "scale_percent".to_owned(),
             Field::TreeIndent => "display.tree_indent_px".to_owned(),
             Field::ColumnWidth => "display.table_column_width_px".to_owned(),
+            Field::CommentDelay => "display.comment_hover_delay_ms".to_owned(),
+            Field::CommentWidth => "display.comment_popup_width_px".to_owned(),
+            Field::CommentHeight => "display.comment_popup_height_px".to_owned(),
             Field::FormulaBarLines => "editing.formula_bar_lines".to_owned(),
             Field::UndoEntries => "undo.max_entries".to_owned(),
             Field::UndoWeight => "undo.max_weight".to_owned(),
@@ -240,6 +250,9 @@ impl Field {
             Field::Scale => "Interface scale",
             Field::TreeIndent => "Indentation per level",
             Field::ColumnWidth => "Default column width",
+            Field::CommentDelay => "Hover delay",
+            Field::CommentWidth => "Largest popup width",
+            Field::CommentHeight => "Largest popup height",
             Field::FormulaBarLines => "Most lines before it scrolls",
             Field::UndoEntries => "Most entries kept",
             Field::UndoWeight => "Memory budget (rough units)",
@@ -260,7 +273,10 @@ impl Field {
             Field::Scale => Shown::Percent,
             Field::CodeFontSize => Shown::Points,
             Field::ImmediateOutput => Shown::Kilobytes,
-            Field::TreeIndent | Field::ColumnWidth => Shown::Pixels,
+            Field::TreeIndent | Field::ColumnWidth | Field::CommentWidth | Field::CommentHeight => {
+                Shown::Pixels
+            }
+            Field::CommentDelay => Shown::Seconds,
             Field::UndoEntries
             | Field::UndoWeight
             | Field::ZipEntries
@@ -278,6 +294,9 @@ impl Field {
             Field::Scale => SCALE_RANGE,
             Field::TreeIndent => TREE_INDENT_RANGE,
             Field::ColumnWidth => COLUMN_WIDTH_RANGE,
+            Field::CommentDelay => COMMENT_DELAY_RANGE,
+            Field::CommentWidth => COMMENT_WIDTH_RANGE,
+            Field::CommentHeight => COMMENT_HEIGHT_RANGE,
             Field::FormulaBarLines => FORMULA_BAR_LINES_RANGE,
             Field::CodeFontSize => CODE_FONT_RANGE,
             Field::IndentWidth => INDENT_RANGE,
@@ -296,6 +315,9 @@ impl Field {
             Field::Scale => Appearance::default().scale_percent,
             Field::TreeIndent => defaults.display.indent,
             Field::ColumnWidth => defaults.display.column_width,
+            Field::CommentDelay => defaults.display.comment_delay,
+            Field::CommentWidth => defaults.display.comment_width,
+            Field::CommentHeight => defaults.display.comment_height,
             Field::FormulaBarLines => defaults.formula_bar_lines,
             Field::UndoEntries => defaults.history_entries as u64,
             Field::UndoWeight => defaults.history_weight as u64,
@@ -329,6 +351,9 @@ impl Field {
             Field::Scale => prefs.appearance.scale_percent,
             Field::TreeIndent => prefs.display.indent,
             Field::ColumnWidth => prefs.display.column_width,
+            Field::CommentDelay => prefs.display.comment_delay,
+            Field::CommentWidth => prefs.display.comment_width,
+            Field::CommentHeight => prefs.display.comment_height,
             Field::FormulaBarLines => prefs.formula_bar_lines,
             Field::UndoEntries => prefs.history_entries as u64,
             Field::UndoWeight => prefs.history_weight as u64,
@@ -476,6 +501,9 @@ impl OptionsDialog {
             type_column: self.type_column,
             formula_column: self.formula_column,
             column_width: get(Field::ColumnWidth),
+            comment_delay: get(Field::CommentDelay),
+            comment_width: get(Field::CommentWidth),
+            comment_height: get(Field::CommentHeight),
         };
         prefs.code = CodePrefs {
             font_size: get(Field::CodeFontSize),
@@ -749,6 +777,11 @@ impl ClioApp {
                 });
                 section(ui, "Tabular view", |ui| {
                     number(ui, dialog, Field::ColumnWidth, None);
+                });
+                section(ui, "Comments", |ui| {
+                    number(ui, dialog, Field::CommentDelay, None);
+                    number(ui, dialog, Field::CommentWidth, None);
+                    number(ui, dialog, Field::CommentHeight, None);
                 });
                 note(
                     ui,

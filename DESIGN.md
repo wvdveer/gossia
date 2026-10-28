@@ -410,6 +410,18 @@ A button runs a Python function `def my_procedure(form, ctx): ...` defined in a 
 
 ## Data sources
 
+**Direction agreed for step 6b (2026-10-28).** These notes come first: where the text below says otherwise, they win, and the section is rewritten to match when 6b is built.
+- **The kinds available depend on the target.** The desktop application has SQLite, PostgreSQL, MariaDB and HTTP/HTTPS; the web port has HTTP/HTTPS only (no raw database connections in a browser). A workbook that names a source of a kind its target lacks opens and works; calls to that source fail with `#SOURCE!` saying the kind is not available here.
+- **Definitions belong to the user and the machine, not to the workbook.** They are stored in the per-user configuration directory, where the trust record and the other security permissions are (beside `trust.json`), and a definition may hold its password, token or API key itself.
+- **A `.clio` file refers to data sources by name only.** It carries no connection details and no credentials.
+- **Another user or machine sets up the same names.** A workbook used elsewhere needs its data sources defined there under the names it uses; until then each missing one fails with `#SOURCE!` saying no data source of that name is defined on this computer, and the rest of the workbook works.
+- **The same name may point at a different instance.** A definition on another machine can name another server or database (a test copy, a local replica); the workbook works as long as the definition and the formulas that use it fit it. This is intended, not a fault.
+
+What this replaces below: the specification stored in the workbook file and the secret filed under the workbook id ("Specification", "Saving"); the target confirmation for a workbook that came from a file, which was a defence against a file pointing a specification elsewhere and is not needed when the file holds no specification; and "Opening a workbook on another machine", which becomes the missing-definition case above. Settled with the user on the same day:
+- **Secrets are kept in the definitions file itself,** not in the operating system's credential store. The file is in the per-user configuration directory, so it is as safe as that directory is: anything that runs as the user can read it.
+- **Grants are not per workbook.** A data source is referred to by name, and its definition on the machine is what is used; there is no per-workbook grant keyed by the workbook id. (How a source is allowed at all, given that an untrusted workbook runs no Python, is settled when 6b is designed in full.)
+- **Definitions cannot be exported** or imported. Each machine has its own, set up by hand.
+
 A **data source** is a named connection to something outside the workbook. v1 supports:
 - **Databases**: SQLite (a file), PostgreSQL, and MariaDB.
 - **HTTP / HTTPS endpoints**: a base URL.
@@ -1126,8 +1138,8 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
    - **5a. The Excel-named functions** *(done, apart from `XMLPATH`, which waits for the XML adapter of step 6)*: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `VLOOKUP`, `FILTER`, `SORT`, `UNIQUE`, `CONCAT`, `TEXTJOIN`, `TEXT` and `NA`, in `cliotree-std`.
    - **5b. Workbook modules** *(done as the engine and the workbook; the code editor, the file format and trust wait, as listed in the decisions below)*: loading, the namespaces, publishing, reloading, generations, the reserved names and the clash checks.
    - **5c. Trust** *(done as the digest, the record, untrusted mode and the banner; reading and writing the record and the workbook id wait for the workbook layer, as listed in the decisions below)*: the trust hash, untrusted mode, the banner, and the recorded decisions.
-6. **XSD** subset and XML adapter *(done as the XML reader and writer, the lowering, the data adapter, the built-in XSD meta-schema, XSD schema tabs and `XMLPATH`; the XML forms of the field commands, comments in the window and inference for import wait, as listed in the decisions below)*.
-6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB.
+6. **XSD** subset and XML adapter *(done as the XML reader and writer, the lowering, the data adapter, the built-in XSD meta-schema, XSD schema tabs and `XMLPATH`; comments in the window came later, and inference with import (8e); the XML forms of the field commands wait, as listed in the decisions below)*.
+6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB. *(Not started; see the direction agreed on 2026-10-28 at the top of Data sources: definitions per user and machine, referred to by name.)*
 7. **Views and forms**, in three parts:
    - **7a. The view selector and the generated Default form** *(done, apart from saving the view of each tab, which waits for the workbook layer, as listed in the decisions below)*: the view selector, the remembered view of each tab, the generated Default form with live read and write to the tab.
    - **7b. Named forms and customising** *(done, apart from saving designs in the workbook, evaluating visible-when and enabled-when, and drag and drop)*: the `builtin:form` schema, *New form...* and *Duplicate*, layout mode and the property page.
@@ -1140,7 +1152,7 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
    - **8d. Renaming a tab** *(done)*: see Renaming a tab.
    - **8e. Managing tabs and importing** *(done; export came with 8f)*: new, delete and change schema (see Managing tabs), import with schema inference, and dropping files on the window (see Import and export).
    - **8f. Export** *(done)*: *File > Export...* and a tab's *Export...*, with the schema beside the file (see Import and export).
-   - **8g. The Options dialog** *(done; the Code editor page came with 10c, the Display page later, and the comment popup options wait for comments in the window, as listed in the decisions below)*: see The Options dialog.
+   - **8g. The Options dialog** *(done; the Code editor page came with 10c, and the Display page, with its comment popup options, later, as listed in the decisions below)*: see The Options dialog.
 9. **Look and feel** *(the style file, the fonts, the grid, bars and tabs, the font of the data views and the font of form controls are done; a toolbar and a node inspector remain, as listed in the decisions below)*: see Look and feel.
 
 10. **The code editor** for modules, in three parts (see Python modules):
@@ -1570,9 +1582,21 @@ Deferred features, with what v1 does to keep them possible:
 - **A hidden column is left out of the grid,** not drawn at no width; with the Formula column hidden the Value column takes the rest of the width. The grid keeps the widths it was dragged to for each set of columns, so hiding one column does not give its width to another.
 - **The default column width is where a column starts.** A column that was dragged keeps its width; a new table, or a column first shown, takes the default.
 - **The formula bar's lines** (Editing, *Formula bar*, 1 to 40 [6]) are stored as `editing.formula_bar_lines`. While editing, the bar grows with the text to that many lines and then scrolls.
-- **The comment popup options** (hover delay, popup width and height) are not on the page yet: comments are not shown in the window yet (a leftover of step 6), and the options come with them.
+- **The comment popup options** (hover delay, popup width and height) came with comments in the window; see the decisions for comments.
 - **Control channel:** `set_option` takes `display.tree_indent_px`, `display.table_column_width_px`, `editing.formula_bar_lines`, and `display.row_density` with `compact`, `normal` or `comfortable`.
 - **Tests.** In `cliotree-app`, 1 in `options_tests.rs` (the page's values and their limits, what is written to `preferences.json` and read by the next session, `set_option`), and 1 window test in `tests/ui.rs` (a deeper indentation, the three row heights in order, and the grid without its Type and Formula columns).
+
+**Decisions made for comments in the window** (a leftover of step 6, 2026-10-28)
+- **What can have a comment** (`Calc::comment_refusal`): on an XML tab, the root and every element, including each item of a repeated element. Not an attribute (XML has no place for one), not an element's `#text`, not an array as a whole (its items are the elements), not a node that is absent, and not a node inside the result of a formula, which the formula replaces on every run. The node that holds a formula can have one: a result keeps the node's comment.
+- **An edit of its own** (`Calc::set_comment`, `Op::Comment`): inserting, editing and deleting are each one entry in the history (*Insert comment on Order.qty*), which marks the workbook as modified. Formulas cannot see comments, so nothing is recalculated, and undoing a comment on a formula's node leaves its result alone (an `Op::Replace` of the node would have put back the old value). Text that is only white space is no comment; Windows line ends become `\n`; the same text again is no edit. Text with `--` or ending with `-` is refused with the reason (`comment_text_problem`).
+- **The triangle** is drawn in the top-right corner of the Value cell, in the tree and in the tabular view alike, in the palette's warning colour (amber): red already marks invalid data and errors.
+- **The popup** opens beside the cell when the pointer has rested on it for the hover delay, wraps at the largest width and scrolls past the largest height. It stays while the pointer is on it, so that a long comment can be scrolled, and it is not shown while a menu is open, which it would cover, or while the comment's box is open.
+- **The commands** are in the menu of the Value cell (a right click anywhere on it; a click elsewhere on the cell selects it) and in the tree's row menu: *Insert Comment*, or *Edit Comment* and *Delete Comment*. On a node that cannot have one, *Insert Comment* is shown disabled, with the reason on hover. On a JSON tab there are none.
+- **The comment box** opens beside the cell with the comment's text. Enter adds a line break; Ctrl+Enter, or a click outside the box, saves; Esc cancels. Text that is refused keeps the box open with the reason under it. While it is open the grid takes no keys.
+- **Display options** (Options, Display, *Comments*): *Hover delay* (0 to 5 s [0.5 s]), *Largest popup width* (120 to 1,200 px [360]) and *Largest popup height* (60 to 1,200 px [240]), stored as `display.comment_hover_delay_ms`, `comment_popup_width_px` and `comment_popup_height_px`.
+- **Control channel:** `cell` returns `comment`; `set_comment` (`path`, `text`, absent or null to delete) does what the box does.
+- **Not done, and why.** A comment at the end of an element and a comment next to text are still dropped with a warning when a file is read (step 6): giving them a place needs a node that is not an element, which nothing shows yet. An errored or null node is absent from the XML written, and so is its comment, as the design says of errored nodes. Forms show no comments.
+- **Tests.** In `cliotree-calc`, 3 in `comments_tests.rs` (insert, edit, delete, undo and redo, and the history's words; what is refused and why, and a JSON tab; a comment through a formula's result, no recalculation, and the XML written). In `cliotree-app`, the Display test in `options_tests.rs` covers the three options, and 3 window tests in `tests/comments.rs` (the menu, the box, line breaks, a refused text, Esc, delete and undo; the popup on hover, an attribute's disabled item, a click outside saving; no commands on a JSON tab). One snapshot, `comments`: the triangle on two cells and one popup.
 
 **Decisions made for CSV, TSV and pasting** (2026-10-28)
 - **Our own reader, no new dependency.** RFC 4180 is small; `delimited::rows` reads it, and the rows become JSON-shaped data that the JSON inference types and checks as it does any other (`delimited::infer_delimited`). A quote left open makes the rest of the text one cell, with a line in the report.

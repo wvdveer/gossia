@@ -250,6 +250,18 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         }
         "key" => key(app, &text_arg(args, "chord")?.to_ascii_lowercase()),
         "cell" => cell(app, &path_arg(args, "path")?),
+        // Inserts, edits or deletes (`text` null or absent) the comment on a
+        // node of an XML tab, as the comment box does.
+        "set_comment" => {
+            let path = path_arg(args, "path")?;
+            let text = args.get("text").and_then(Json::as_str);
+            let sheet = app.sheet.clone();
+            app.session
+                .calc_mut()
+                .set_comment(&sheet, &path, text)
+                .map_err(|e| e.to_string())?;
+            Ok(Json::Null)
+        }
         "tree" => {
             let path = path_arg(args, "path")?;
             let depth = args.get("depth").and_then(Json::as_u64).unwrap_or(1) as usize;
@@ -431,6 +443,7 @@ fn cell(app: &ClioApp, path: &Path) -> Result<Json, String> {
         "stale": cell.stale,
         "computed_by": cell.computed_by.map(|p| p.to_string()),
         "edit_text": app.cell_text(path),
+        "comment": node.comment(),
     }))
 }
 

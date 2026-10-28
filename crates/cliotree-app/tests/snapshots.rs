@@ -261,3 +261,45 @@ fn the_code_editor() {
     harness.run();
     check(&mut harness, "code_editor", &mut results);
 }
+
+/// An XML tab with comments: the triangle on two cells, and the popup of
+/// one of them.
+#[test]
+fn comments_on_an_xml_tab() {
+    use cliotree_core::{metaschema, xml, xsd};
+    if !enabled() {
+        return;
+    }
+    const XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="order"><xs:complexType><xs:sequence>
+    <xs:element name="customer" type="xs:string"/>
+    <xs:element name="qty" type="xs:integer"/>
+    <xs:element name="note" type="xs:string"/>
+  </xs:sequence></xs:complexType></xs:element></xs:schema>"#;
+    const XML: &str = "<order><!--Who pays: the account holder, not the person who \
+        placed the order, unless the account says otherwise.--><customer>Acme</customer>\
+        <!--Boxes--><qty>2</qty><note>Leave at the door</note></order>";
+    let mut calc =
+        cliotree_calc::Calc::new(std::sync::Arc::new(cliotree_calc::python::PythonSyntax));
+    let spec = xsd::lower_str(XSD).unwrap();
+    let data = xml::parse(XML, &spec).unwrap();
+    calc.add_sheet("Order", spec, data.node).unwrap();
+    calc.set_xml_document("Order", data.document).unwrap();
+    let schema = xml::parse(XSD, metaschema::xsd_meta()).unwrap();
+    calc.add_xsd_sheet("S", schema.node, schema.document)
+        .unwrap();
+    calc.bind_schema("Order", "S").unwrap();
+    let mut app = ClioApp::new(calc);
+    app.user.prefs.display.comment_delay = 0;
+    app.user.prefs.display.comment_width = 260;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 500.0))
+        .wgpu()
+        .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), app);
+    settle(&mut harness);
+    harness.get_by_label("Acme").hover();
+    harness.run();
+    harness.run();
+    let mut results = SnapshotResults::new();
+    check(&mut harness, "comments", &mut results);
+}

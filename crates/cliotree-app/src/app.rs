@@ -130,6 +130,8 @@ pub struct ClioApp {
     pub applied: Option<Effective>,
     /// The code editor's window and the modules open in it.
     pub code: crate::code::CodeEditor,
+    /// The box a comment is written in, while it is open.
+    pub comment_edit: Option<crate::comments::CommentEdit>,
 }
 
 impl ClioApp {
@@ -205,6 +207,7 @@ impl ClioApp {
             appearance_applied: None,
             applied,
             code: crate::code::CodeEditor::default(),
+            comment_edit: None,
         }
     }
 

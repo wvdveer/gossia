@@ -419,7 +419,7 @@ impl Node {
     }
 
     /// Mutable access to the node at `path`, copying only the nodes on the way.
-    fn get_mut(&mut self, path: &Path) -> Option<&mut Node> {
+    pub fn get_mut(&mut self, path: &Path) -> Option<&mut Node> {
         let mut node = self;
         for segment in path.segments() {
             node = match (node.value_mut(), segment) {

@@ -459,12 +459,26 @@ fn the_display_page_sets_the_data_views_and_the_editing_page_the_formula_bar() {
     dialog.set(Field::ColumnWidth, 200);
     dialog.density = Density::Compact;
     dialog.formula_column = false;
+    // The hover delay is typed in seconds.
+    assert_eq!(dialog.texts[&Field::CommentDelay], "0.5");
+    dialog.texts.insert(Field::CommentDelay, "0.25".to_owned());
+    dialog.set(Field::CommentWidth, 100);
+    assert_eq!(
+        dialog.problems(),
+        [(
+            Field::CommentWidth,
+            "The smallest allowed is 120 px.".to_owned()
+        )]
+    );
+    dialog.set(Field::CommentWidth, 480);
     app.apply_options().unwrap();
     let display = app.user.prefs.display;
     assert_eq!((display.indent, display.column_width), (24, 200));
     assert_eq!(display.density, Density::Compact);
     assert!(display.type_column && !display.formula_column);
     assert_eq!(app.user.prefs.formula_bar_lines, 3);
+    assert_eq!((display.comment_delay, display.comment_width), (250, 480));
+    assert_eq!(display.comment_height, 240);
 
     // On disk, under the names of the file, for the next session.
     let text = std::fs::read_to_string(folder.file("config").join(PREFERENCES_FILE)).unwrap();
@@ -472,6 +486,8 @@ fn the_display_page_sets_the_data_views_and_the_editing_page_the_formula_bar() {
     assert_eq!(written["display"]["row_density"], "compact");
     assert_eq!(written["display"]["show_formula_column"], false);
     assert_eq!(written["editing"]["formula_bar_lines"], 3);
+    assert_eq!(written["display"]["comment_hover_delay_ms"], 250);
+    assert_eq!(written["display"]["comment_popup_width_px"], 480);
     let next = folder.user();
     assert_eq!(next.prefs.display, display);
     assert_eq!(next.prefs.formula_bar_lines, 3);

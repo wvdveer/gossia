@@ -78,6 +78,10 @@ pub use columns::ColumnFormula;
 #[path = "procedure.rs"]
 mod procedure;
 
+#[path = "comments.rs"]
+mod comments;
+pub use comments::comment_text_problem;
+
 #[path = "modules.rs"]
 mod modules;
 use modules::Module;
@@ -1014,6 +1018,15 @@ impl Calc {
                 self.sheet_mut(sheet)?;
                 let target = if forward { after } else { before };
                 self.put_column(sheet, array, field, target.as_deref());
+            }
+            Op::Comment {
+                sheet,
+                path,
+                before,
+                after,
+            } => {
+                let target = if forward { after } else { before };
+                self.put_comment(sheet, path, target.clone())?;
             }
             Op::Formula {
                 sheet,

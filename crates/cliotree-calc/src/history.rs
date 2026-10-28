@@ -96,6 +96,14 @@ pub(crate) enum Op {
         before_spec: std::sync::Arc<cliotree_core::TypeSpec>,
         after: String,
     },
+    /// The comment on the node at `path` changes. Formulas cannot see it,
+    /// so nothing is recalculated.
+    Comment {
+        sheet: String,
+        path: Path,
+        before: Option<String>,
+        after: Option<String>,
+    },
     /// The workbook settings change.
     Settings {
         before: Box<crate::calc::WorkbookSettings>,
@@ -138,6 +146,10 @@ impl Op {
             | Op::RenameSheet { .. }
             | Op::RenameModule { .. } => 1,
             Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
+            Op::Comment { before, after, .. } => {
+                1 + (before.as_ref().map_or(0, String::len) + after.as_ref().map_or(0, String::len))
+                    / 64
+            }
             Op::AddModule { source, .. } | Op::RemoveModule { source, .. } => 1 + source.len() / 64,
             Op::Formula { value, .. } => {
                 1 + value

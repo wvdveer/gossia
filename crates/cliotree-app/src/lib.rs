@@ -7,6 +7,7 @@ pub mod code_check;
 pub mod code_text;
 #[cfg(test)]
 mod code_text_tests;
+pub mod comments;
 pub mod control;
 #[cfg(feature = "test-control")]
 pub mod control_server;

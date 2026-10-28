@@ -23,7 +23,7 @@ mod trie;
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, EditError,
     Effective, ExportFormat, FieldKind, FieldPlaces, Fingerprint, Mentions, ModuleProblem,
-    ModuleStatus, SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings,
+    ModuleStatus, SchemaFormat, Setting, TrustStore, Unit, WorkbookSettings, comment_text_problem,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -46,6 +46,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(test)]
 #[path = "calc_tests.rs"]
 mod calc_tests;
+#[cfg(test)]
+#[path = "comments_tests.rs"]
+mod comments_tests;
 
 #[cfg(test)]
 mod tests {
