@@ -1063,3 +1063,40 @@ fn a_formula_that_would_erase_what_is_inside_asks_first() {
     assert!(app.begin_editing(&rate, true, Some("=0.1".to_owned())));
     assert!(app.commit_editing());
 }
+
+/// The Display options change the tree grid: the indentation, the height of
+/// the rows, and whether the Type and Formula columns are there.
+#[test]
+fn the_display_options_change_the_tree_grid() {
+    let mut harness = window();
+    let formula = "=round(sum(Orders.items.total), 2)";
+    assert!(has(&harness, "Type") && has(&harness, "Formula") && has(&harness, formula));
+    let left = |h: &Harness<'_, ClioApp>| h.get_by_label("customer").rect().left();
+    let step = |h: &Harness<'_, ClioApp>| {
+        h.get_by_label("items").rect().top() - h.get_by_label("customer").rect().top()
+    };
+    let (left_before, normal) = (left(&harness), step(&harness));
+
+    harness.state_mut().user.prefs.display.indent = 40;
+    harness.state_mut().user.prefs.display.density = cliotree_app::prefs::Density::Compact;
+    harness.run();
+    assert!(
+        (left(&harness) - left_before - 24.0).abs() < 0.5,
+        "one level deeper by 24 px"
+    );
+    let compact = step(&harness);
+    harness.state_mut().user.prefs.display.density = cliotree_app::prefs::Density::Comfortable;
+    harness.run();
+    let comfortable = step(&harness);
+    assert!(
+        compact < normal && normal < comfortable,
+        "{compact} {normal} {comfortable}"
+    );
+
+    harness.state_mut().user.prefs.display.type_column = false;
+    harness.state_mut().user.prefs.display.formula_column = false;
+    harness.run();
+    assert!(!has(&harness, "Type") && !has(&harness, "Formula") && !has(&harness, formula));
+    harness.get_by_label("Value");
+    harness.get_by_label("62.92");
+}

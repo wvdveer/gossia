@@ -263,6 +263,140 @@ impl Default for Appearance {
     }
 }
 
+/// How tall the rows of the tree grid and the tabular view are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Density {
+    Compact,
+    #[default]
+    Normal,
+    Comfortable,
+}
+
+impl Density {
+    pub const ALL: [Density; 3] = [Density::Compact, Density::Normal, Density::Comfortable];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Density::Compact => "compact",
+            Density::Normal => "normal",
+            Density::Comfortable => "comfortable",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Density::Compact => "Compact",
+            Density::Normal => "Normal",
+            Density::Comfortable => "Comfortable",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Density> {
+        Density::ALL.into_iter().find(|d| d.key() == key)
+    }
+
+    /// The space a row has above and below its text, together, and the
+    /// least height a row has, in points.
+    pub fn padding(self) -> (f32, f32) {
+        match self {
+            Density::Compact => (5.0, 22.0),
+            Density::Normal => (11.0, 28.0),
+            Density::Comfortable => (17.0, 34.0),
+        }
+    }
+}
+
+/// The indentation per level of the tree grid, in pixels.
+pub const TREE_INDENT_RANGE: (u64, u64) = (0, 64);
+/// The first width of a column of the tabular view, in pixels.
+pub const COLUMN_WIDTH_RANGE: (u64, u64) = (40, 1_000);
+/// The most lines the formula bar grows to.
+pub const FORMULA_BAR_LINES_RANGE: (u64, u64) = (1, 40);
+
+/// The data views (Options, Display).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayPrefs {
+    /// The indentation per level of the tree grid, in pixels.
+    pub indent: u64,
+    pub density: Density,
+    pub type_column: bool,
+    pub formula_column: bool,
+    /// The width a column of the tabular view starts at, in pixels.
+    pub column_width: u64,
+}
+
+impl Default for DisplayPrefs {
+    fn default() -> DisplayPrefs {
+        DisplayPrefs {
+            indent: 16,
+            density: Density::Normal,
+            type_column: true,
+            formula_column: true,
+            column_width: 120,
+        }
+    }
+}
+
+impl DisplayPrefs {
+    fn from_object(
+        section: Option<&Map<String, Json>>,
+        warnings: &mut Vec<String>,
+    ) -> DisplayPrefs {
+        let d = DisplayPrefs::default();
+        let s = "display";
+        let density = match section.and_then(|o| o.get("row_density")) {
+            None => d.density,
+            Some(value) => match value.as_str().and_then(Density::from_key) {
+                Some(density) => density,
+                None => {
+                    warnings.push(format!(
+                        "In {PREFERENCES_FILE}, display.row_density is {value}, which cannot be \
+                         used; the default normal is used."
+                    ));
+                    d.density
+                }
+            },
+        };
+        DisplayPrefs {
+            indent: number_in(
+                section,
+                s,
+                "tree_indent_px",
+                TREE_INDENT_RANGE,
+                d.indent,
+                warnings,
+            ),
+            density,
+            type_column: flag(section, s, "show_type_column", d.type_column, warnings),
+            formula_column: flag(
+                section,
+                s,
+                "show_formula_column",
+                d.formula_column,
+                warnings,
+            ),
+            column_width: number_in(
+                section,
+                s,
+                "table_column_width_px",
+                COLUMN_WIDTH_RANGE,
+                d.column_width,
+                warnings,
+            ),
+        }
+    }
+
+    fn values(&self) -> Vec<(&'static str, Json)> {
+        vec![
+            ("tree_indent_px", json!(self.indent)),
+            ("row_density", json!(self.density.key())),
+            ("show_type_column", json!(self.type_column)),
+            ("show_formula_column", json!(self.formula_column)),
+            ("table_column_width_px", json!(self.column_width)),
+        ]
+    }
+}
+
 /// The default for the largest file that is imported.
 pub const DEFAULT_MAX_IMPORT_BYTES: u64 = 512 << 20;
 
@@ -373,6 +507,10 @@ pub struct Preferences {
     pub history_weight: usize,
     /// The code editor and its Immediate window.
     pub code: CodePrefs,
+    /// The tree grid and the tabular view.
+    pub display: DisplayPrefs,
+    /// The most lines the formula bar grows to before it scrolls.
+    pub formula_bar_lines: u64,
     /// The workbooks opened or saved last, the most recent first.
     pub recent: Vec<PathBuf>,
     /// The file as it was read, so that what this version does not know is
@@ -390,6 +528,8 @@ impl Default for Preferences {
             history_entries: cliotree_calc::DEFAULT_MAX_ENTRIES,
             history_weight: cliotree_calc::DEFAULT_MAX_WEIGHT,
             code: CodePrefs::default(),
+            display: DisplayPrefs::default(),
+            formula_bar_lines: 6,
             recent: Vec::new(),
             raw: Map::new(),
         }
@@ -495,6 +635,15 @@ impl Preferences {
             warnings,
         ) as usize;
         let code = CodePrefs::from_object(object_at(&raw, "code_editor"), warnings);
+        let display = DisplayPrefs::from_object(object_at(&raw, "display"), warnings);
+        let formula_bar_lines = number_in(
+            object_at(&raw, "editing"),
+            "editing",
+            "formula_bar_lines",
+            FORMULA_BAR_LINES_RANGE,
+            defaults.formula_bar_lines,
+            warnings,
+        );
         let recent = raw
             .get("recent_files")
             .and_then(Json::as_array)
@@ -518,6 +667,8 @@ impl Preferences {
             history_entries,
             history_weight,
             code,
+            display,
+            formula_bar_lines,
             recent,
             raw,
         }
@@ -566,6 +717,11 @@ impl Preferences {
             ],
         );
         section("code_editor", self.code.values());
+        section("display", self.display.values());
+        section(
+            "editing",
+            vec![("formula_bar_lines", json!(self.formula_bar_lines))],
+        );
         out.insert(
             "recent_files".to_owned(),
             Json::Array(

@@ -1140,7 +1140,7 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
    - **8d. Renaming a tab** *(done)*: see Renaming a tab.
    - **8e. Managing tabs and importing** *(done; export came with 8f)*: new, delete and change schema (see Managing tabs), import with schema inference, and dropping files on the window (see Import and export).
    - **8f. Export** *(done)*: *File > Export...* and a tab's *Export...*, with the schema beside the file (see Import and export).
-   - **8g. The Options dialog** *(done for the settings that exist; the Display and Code editor pages wait for their features, as listed in the decisions below)*: see The Options dialog.
+   - **8g. The Options dialog** *(done; the Code editor page came with 10c, the Display page later, and the comment popup options wait for comments in the window, as listed in the decisions below)*: see The Options dialog.
 9. **Look and feel** *(the style file, the fonts, the grid, bars and tabs, the font of the data views and the font of form controls are done; a toolbar and a node inspector remain, as listed in the decisions below)*: see Look and feel.
 
 10. **The code editor** for modules, in three parts (see Python modules):
@@ -1563,6 +1563,16 @@ Deferred features, with what v1 does to keep them possible:
 - **The font is Geist Mono, the only monospace font bundled.** Any other monospace font would have to be found and loaded from the operating system, which nothing else does yet; the page shows the font so that the choice has its place when that comes.
 - **Line numbers are painted beside the rows of the text,** a number on the first row of each line, so that a wrapped line takes its rows without a number on each. A wrapped pane scrolls only up and down.
 - **Tests.** In `cliotree-calc`, 2 in `session_tests.rs` (results in Python's form, `this`, modules, errors, refusals before running, nothing pending afterwards; the time limit, one at a time, and trust). In `cliotree-app`, 1 in `options_tests.rs` (the page's options and history on disk, *Clear history*, fewer entries kept), 2 more checks in `code_text_tests.rs`, and 1 window test in `tests/code.rs` (a result, an error, the history file, Up and Down, untrusted). The `code_editor` snapshot shows the Immediate window and the *Debug* menu now.
+
+**Decisions made for the Display page** (a leftover of step 8g, 2026-10-28)
+- **The page comes after General,** as in the table above, with *Tree grid* (indentation per level, 0 to 64 px [16]; row density; *Show the Type column*; *Show the Formula column*) and *Tabular view* (*Default column width*, 40 to 1,000 px [120]). They are stored under `display` in `preferences.json`: `tree_indent_px`, `row_density` (`compact`, `normal` or `comfortable`), `show_type_column`, `show_formula_column`, `table_column_width_px`.
+- **Row density applies to the tabular view too,** so that a table opened inside the tree has rows of the same height as the tree around it. A row is its text's height plus 5, 11 or 17 points, and at least 22, 28 or 34 (`Density::padding`, `style::grid_row_height`); Normal is the height rows had before. Forms keep their own rows: their sizes are part of the form's design.
+- **A hidden column is left out of the grid,** not drawn at no width; with the Formula column hidden the Value column takes the rest of the width. The grid keeps the widths it was dragged to for each set of columns, so hiding one column does not give its width to another.
+- **The default column width is where a column starts.** A column that was dragged keeps its width; a new table, or a column first shown, takes the default.
+- **The formula bar's lines** (Editing, *Formula bar*, 1 to 40 [6]) are stored as `editing.formula_bar_lines`. While editing, the bar grows with the text to that many lines and then scrolls.
+- **The comment popup options** (hover delay, popup width and height) are not on the page yet: comments are not shown in the window yet (a leftover of step 6), and the options come with them.
+- **Control channel:** `set_option` takes `display.tree_indent_px`, `display.table_column_width_px`, `editing.formula_bar_lines`, and `display.row_density` with `compact`, `normal` or `comfortable`.
+- **Tests.** In `cliotree-app`, 1 in `options_tests.rs` (the page's values and their limits, what is written to `preferences.json` and read by the next session, `set_option`), and 1 window test in `tests/ui.rs` (a deeper indentation, the three row heights in order, and the grid without its Type and Formula columns).
 
 **Decisions made for CSV, TSV and pasting** (2026-10-28)
 - **Our own reader, no new dependency.** RFC 4180 is small; `delimited::rows` reads it, and the rows become JSON-shaped data that the JSON inference types and checks as it does any other (`delimited::infer_delimited`). A quote left open makes the rest of the text one cell, with a line in the report.

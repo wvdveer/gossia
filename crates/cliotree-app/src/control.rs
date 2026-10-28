@@ -108,7 +108,8 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         // Sets one option as the Options dialog does and presses OK: `name`
         // (see `options::Field::key`, or `theme`) and `value` (a number in the
         // dialog's unit, or text as typed; for `theme`, `system`, `light` or
-        // `dark`). A workbook setting is an undoable entry.
+        // `dark`; for `display.row_density`, `compact`, `normal` or
+        // `comfortable`). A workbook setting is an undoable entry.
         "set_option" => {
             let name = text_arg(args, "name")?;
             let value = args.get("value").ok_or("set_option needs a value")?;
@@ -123,6 +124,9 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                     .into_iter()
                     .find(|t| t.key() == text)
                     .ok_or_else(|| format!("there is no theme {text:?}"))?;
+            } else if name == "display.row_density" {
+                dialog.density = crate::prefs::Density::from_key(&text)
+                    .ok_or_else(|| format!("there is no row density {text:?}"))?;
             } else {
                 let field = crate::options::Field::from_key(name)
                     .ok_or_else(|| format!("there is no option {name:?}"))?;

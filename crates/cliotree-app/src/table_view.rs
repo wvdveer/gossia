@@ -162,7 +162,9 @@ impl ClioApp {
         egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let row_height = crate::style::row_height(ui);
+                let display = self.user.prefs.display;
+                let row_height = crate::style::grid_row_height(ui, display.density);
+                let width = display.column_width as f32;
                 let mut table = TableBuilder::new(ui)
                     .id_salt(("table", array.to_string()))
                     .striped(true)
@@ -171,7 +173,7 @@ impl ClioApp {
                     .max_scroll_height(f32::INFINITY)
                     .column(TableColumn::initial(64.0).at_least(40.0));
                 for _ in &shown {
-                    table = table.column(TableColumn::initial(120.0).at_least(40.0).clip(true));
+                    table = table.column(TableColumn::initial(width).at_least(40.0).clip(true));
                 }
                 table
                     .header(crate::style::HEADER_HEIGHT, |mut header| {

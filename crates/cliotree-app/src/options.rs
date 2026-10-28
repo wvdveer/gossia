@@ -14,8 +14,9 @@ use cliotree_calc::{Ceilings, Setting, Unit, WorkbookSettings};
 
 use crate::app::ClioApp;
 use crate::prefs::{
-    Appearance, CODE_FONT_RANGE, CodePrefs, IMMEDIATE_ENTRIES_RANGE, IMMEDIATE_OUTPUT_RANGE,
-    INDENT_RANGE, Preferences, SCALE_RANGE, ThemeChoice,
+    Appearance, CODE_FONT_RANGE, COLUMN_WIDTH_RANGE, CodePrefs, Density, DisplayPrefs,
+    FORMULA_BAR_LINES_RANGE, IMMEDIATE_ENTRIES_RANGE, IMMEDIATE_OUTPUT_RANGE, INDENT_RANGE,
+    Preferences, SCALE_RANGE, TREE_INDENT_RANGE, ThemeChoice,
 };
 use crate::view::error_color;
 
@@ -26,6 +27,7 @@ include!(concat!(env!("OUT_DIR"), "/libraries.rs"));
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     General,
+    Display,
     Editing,
     CodeEditor,
     Evaluation,
@@ -36,8 +38,9 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [
+    pub const ALL: [Page; 9] = [
         Page::General,
+        Page::Display,
         Page::Editing,
         Page::CodeEditor,
         Page::Evaluation,
@@ -50,6 +53,7 @@ impl Page {
     pub fn label(self) -> &'static str {
         match self {
             Page::General => "General",
+            Page::Display => "Display",
             Page::Editing => "Editing",
             Page::CodeEditor => "Code editor",
             Page::Evaluation => "Evaluation",
@@ -74,8 +78,11 @@ pub enum Field {
     /// The user's ceiling for a workbook setting.
     Ceiling(Setting),
     Scale,
+    TreeIndent,
+    ColumnWidth,
     UndoEntries,
     UndoWeight,
+    FormulaBarLines,
     CodeFontSize,
     IndentWidth,
     ImmediateEntries,
@@ -99,6 +106,7 @@ pub enum Shown {
     Points,
     /// Bytes, shown in kilobytes (KB of 1,024 bytes).
     Kilobytes,
+    Pixels,
 }
 
 impl Shown {
@@ -116,7 +124,7 @@ impl Shown {
             Shown::Seconds => 1_000,
             Shown::Megabytes => 1 << 20,
             Shown::Kilobytes => 1 << 10,
-            Shown::Count | Shown::Percent | Shown::Points => 1,
+            Shown::Count | Shown::Percent | Shown::Points | Shown::Pixels => 1,
         }
     }
 
@@ -128,6 +136,7 @@ impl Shown {
             Shown::Percent => "%",
             Shown::Points => "pt",
             Shown::Kilobytes => "KB",
+            Shown::Pixels => "px",
         }
     }
 
@@ -177,8 +186,11 @@ impl Field {
     pub fn all() -> Vec<Field> {
         let mut fields = vec![
             Field::Scale,
+            Field::TreeIndent,
+            Field::ColumnWidth,
             Field::UndoEntries,
             Field::UndoWeight,
+            Field::FormulaBarLines,
             Field::CodeFontSize,
             Field::IndentWidth,
             Field::ImmediateEntries,
@@ -202,6 +214,9 @@ impl Field {
             Field::Workbook(s) => s.key().to_owned(),
             Field::Ceiling(s) => format!("ceiling.{}", s.key()),
             Field::Scale => "scale_percent".to_owned(),
+            Field::TreeIndent => "display.tree_indent_px".to_owned(),
+            Field::ColumnWidth => "display.table_column_width_px".to_owned(),
+            Field::FormulaBarLines => "editing.formula_bar_lines".to_owned(),
             Field::UndoEntries => "undo.max_entries".to_owned(),
             Field::UndoWeight => "undo.max_weight".to_owned(),
             Field::CodeFontSize => "code_editor.font_size".to_owned(),
@@ -223,6 +238,9 @@ impl Field {
         match self {
             Field::Workbook(s) | Field::Ceiling(s) => s.label(),
             Field::Scale => "Interface scale",
+            Field::TreeIndent => "Indentation per level",
+            Field::ColumnWidth => "Default column width",
+            Field::FormulaBarLines => "Most lines before it scrolls",
             Field::UndoEntries => "Most entries kept",
             Field::UndoWeight => "Memory budget (rough units)",
             Field::CodeFontSize => "Font size",
@@ -242,10 +260,12 @@ impl Field {
             Field::Scale => Shown::Percent,
             Field::CodeFontSize => Shown::Points,
             Field::ImmediateOutput => Shown::Kilobytes,
+            Field::TreeIndent | Field::ColumnWidth => Shown::Pixels,
             Field::UndoEntries
             | Field::UndoWeight
             | Field::ZipEntries
             | Field::IndentWidth
+            | Field::FormulaBarLines
             | Field::ImmediateEntries => Shown::Count,
             Field::TotalBytes | Field::EntryBytes | Field::ImportBytes => Shown::Megabytes,
         }
@@ -256,6 +276,9 @@ impl Field {
         match self {
             Field::Workbook(s) | Field::Ceiling(s) => (s.minimum(), u64::MAX),
             Field::Scale => SCALE_RANGE,
+            Field::TreeIndent => TREE_INDENT_RANGE,
+            Field::ColumnWidth => COLUMN_WIDTH_RANGE,
+            Field::FormulaBarLines => FORMULA_BAR_LINES_RANGE,
             Field::CodeFontSize => CODE_FONT_RANGE,
             Field::IndentWidth => INDENT_RANGE,
             Field::ImmediateEntries => IMMEDIATE_ENTRIES_RANGE,
@@ -271,6 +294,9 @@ impl Field {
             Field::Workbook(s) => s.default_value(),
             Field::Ceiling(s) => s.default_ceiling(),
             Field::Scale => Appearance::default().scale_percent,
+            Field::TreeIndent => defaults.display.indent,
+            Field::ColumnWidth => defaults.display.column_width,
+            Field::FormulaBarLines => defaults.formula_bar_lines,
             Field::UndoEntries => defaults.history_entries as u64,
             Field::UndoWeight => defaults.history_weight as u64,
             Field::CodeFontSize => defaults.code.font_size,
@@ -301,6 +327,9 @@ impl Field {
             Field::Workbook(s) => settings.get(s),
             Field::Ceiling(s) => prefs.ceilings.get(s),
             Field::Scale => prefs.appearance.scale_percent,
+            Field::TreeIndent => prefs.display.indent,
+            Field::ColumnWidth => prefs.display.column_width,
+            Field::FormulaBarLines => prefs.formula_bar_lines,
             Field::UndoEntries => prefs.history_entries as u64,
             Field::UndoWeight => prefs.history_weight as u64,
             Field::CodeFontSize => prefs.code.font_size,
@@ -327,6 +356,10 @@ pub struct OptionsDialog {
     pub theme: ThemeChoice,
     /// The trusted workbooks to forget on OK.
     pub revoke: BTreeSet<String>,
+    /// The Display page's choices.
+    pub density: Density,
+    pub type_column: bool,
+    pub formula_column: bool,
     /// The code editor's yes-or-no options.
     pub line_numbers: bool,
     pub highlighting: bool,
@@ -351,6 +384,9 @@ impl OptionsDialog {
             start,
             theme: prefs.appearance.theme,
             revoke: BTreeSet::new(),
+            density: prefs.display.density,
+            type_column: prefs.display.type_column,
+            formula_column: prefs.display.formula_column,
             line_numbers: prefs.code.line_numbers,
             highlighting: prefs.code.highlighting,
             wrap: prefs.code.wrap,
@@ -433,6 +469,14 @@ impl OptionsDialog {
         prefs.ceilings = self.ceilings();
         prefs.history_entries = get(Field::UndoEntries) as usize;
         prefs.history_weight = get(Field::UndoWeight) as usize;
+        prefs.formula_bar_lines = get(Field::FormulaBarLines);
+        prefs.display = DisplayPrefs {
+            indent: get(Field::TreeIndent),
+            density: self.density,
+            type_column: self.type_column,
+            formula_column: self.formula_column,
+            column_width: get(Field::ColumnWidth),
+        };
         prefs.code = CodePrefs {
             font_size: get(Field::CodeFontSize),
             indent: get(Field::IndentWidth),
@@ -681,10 +725,44 @@ impl ClioApp {
                     "The font of the data views belongs to each workbook: View > Font.",
                 );
             }
+            Page::Display => {
+                section(ui, "Tree grid", |ui| {
+                    number(ui, dialog, Field::TreeIndent, None);
+                    ui.label("Row density");
+                    ui.horizontal(|ui| {
+                        for density in Density::ALL {
+                            if ui
+                                .radio(dialog.density == density, density.label())
+                                .clicked()
+                            {
+                                dialog.density = density;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut dialog.type_column, "Show the Type column");
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut dialog.formula_column, "Show the Formula column");
+                    ui.end_row();
+                });
+                section(ui, "Tabular view", |ui| {
+                    number(ui, dialog, Field::ColumnWidth, None);
+                });
+                note(
+                    ui,
+                    "The row density applies to the tabular view too. A column keeps the width \
+                     it was dragged to.",
+                );
+            }
             Page::Editing => {
                 section(ui, "Undo history", |ui| {
                     number(ui, dialog, Field::UndoEntries, None);
                     number(ui, dialog, Field::UndoWeight, None);
+                });
+                section(ui, "Formula bar", |ui| {
+                    number(ui, dialog, Field::FormulaBarLines, None);
                 });
             }
             Page::CodeEditor => {

@@ -429,3 +429,66 @@ fn the_code_editor_page_sets_the_editor_and_clears_the_immediate_history() {
     app.apply_options().unwrap();
     assert_eq!(folder.user().immediate, ["b", "c"]);
 }
+
+#[test]
+fn the_display_page_sets_the_data_views_and_the_editing_page_the_formula_bar() {
+    use crate::prefs::Density;
+    let folder = Folder::new("display");
+    let mut app = sample();
+    app.user = folder.user();
+    app.begin_options(Some(Page::Display));
+    let dialog = app.options.as_mut().unwrap();
+    assert_eq!(dialog.texts[&Field::TreeIndent], "16");
+    dialog.set(Field::TreeIndent, 65);
+    dialog.set(Field::FormulaBarLines, 0);
+    assert_eq!(
+        dialog.problems(),
+        [
+            (
+                Field::TreeIndent,
+                "The largest allowed is 64 px.".to_owned()
+            ),
+            (
+                Field::FormulaBarLines,
+                "The smallest allowed is 1.".to_owned()
+            ),
+        ]
+    );
+    dialog.set(Field::TreeIndent, 24);
+    dialog.set(Field::FormulaBarLines, 3);
+    dialog.set(Field::ColumnWidth, 200);
+    dialog.density = Density::Compact;
+    dialog.formula_column = false;
+    app.apply_options().unwrap();
+    let display = app.user.prefs.display;
+    assert_eq!((display.indent, display.column_width), (24, 200));
+    assert_eq!(display.density, Density::Compact);
+    assert!(display.type_column && !display.formula_column);
+    assert_eq!(app.user.prefs.formula_bar_lines, 3);
+
+    // On disk, under the names of the file, for the next session.
+    let text = std::fs::read_to_string(folder.file("config").join(PREFERENCES_FILE)).unwrap();
+    let written: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(written["display"]["row_density"], "compact");
+    assert_eq!(written["display"]["show_formula_column"], false);
+    assert_eq!(written["editing"]["formula_bar_lines"], 3);
+    let next = folder.user();
+    assert_eq!(next.prefs.display, display);
+    assert_eq!(next.prefs.formula_bar_lines, 3);
+
+    // The control channel sets them by the same names.
+    control::run(
+        &mut app,
+        "set_option",
+        &json!({"name": "display.row_density", "value": "comfortable"}),
+    )
+    .unwrap();
+    control::run(
+        &mut app,
+        "set_option",
+        &json!({"name": "display.tree_indent_px", "value": 8}),
+    )
+    .unwrap();
+    assert_eq!(app.user.prefs.display.density, Density::Comfortable);
+    assert_eq!(app.user.prefs.display.indent, 8);
+}

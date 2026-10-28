@@ -320,6 +320,13 @@ pub fn row_height(ui: &egui::Ui) -> f32 {
     (ui.text_style_height(&TextStyle::Body) + 11.0).max(ROW_HEIGHT)
 }
 
+/// The height of a row of the tree grid or the tabular view, at the row
+/// density of the Display options.
+pub fn grid_row_height(ui: &egui::Ui, density: crate::prefs::Density) -> f32 {
+    let (padding, least) = density.padding();
+    (ui.text_style_height(&TextStyle::Body) + padding).max(least)
+}
+
 /// The height of a row whose text is in a typeface and a size (each None for
 /// the interface's), as [`row_height`] gives it.
 pub fn row_height_in(ui: &egui::Ui, typeface: Option<Typeface>, size: Option<u32>) -> f32 {

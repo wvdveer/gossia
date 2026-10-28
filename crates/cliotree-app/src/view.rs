@@ -14,7 +14,6 @@ use crate::status::{evaluation_text, problems_text};
 
 pub(crate) use crate::style::ROW_HEIGHT;
 use crate::style::{HEADER_HEIGHT, Palette};
-const INDENT: f32 = 16.0;
 
 /// Gives a text field a name that a screen reader (and a test) can find it by.
 pub(crate) fn named(response: &egui::Response, name: &'static str) {
@@ -559,12 +558,24 @@ impl ClioApp {
         let Some(mut editing) = self.editing.take() else {
             return;
         };
-        let output = egui::TextEdit::multiline(&mut editing.text)
-            .id(id)
-            .desired_rows(1)
-            .desired_width(f32::INFINITY)
-            .code_editor()
-            .show(ui);
+        let lines = self.user.prefs.formula_bar_lines as f32;
+        let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        let margin = 2.0 * ui.spacing().button_padding.y + 4.0;
+        let output = egui::ScrollArea::vertical()
+            .id_salt("formula_bar_scroll")
+            .max_height(lines * line_height + margin)
+            // Only as tall as the text, up to the most lines.
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                egui::TextEdit::multiline(&mut editing.text)
+                    .id(id)
+                    .desired_rows(1)
+                    .desired_width(f32::INFINITY)
+                    .code_editor()
+                    .show(ui)
+            })
+            .inner;
         named(&output.response, "Formula bar");
         self.finish_text_widget(ui, id, &mut editing, &output);
         let rect = output.response.rect;
@@ -673,22 +684,38 @@ impl ClioApp {
         let mut actions: Vec<Action> = Vec::new();
         let scroll_to = self.scroll_to.take();
         {
-            let row_height = crate::style::row_height(ui);
+            let display = self.user.prefs.display;
+            let row_height = crate::style::grid_row_height(ui, display.density);
+            let mut titles = vec!["Name"];
             let mut table = TableBuilder::new(ui)
+                // The widths are kept for each set of columns, so that hiding
+                // one does not give its width to another.
+                .id_salt(("grid", display.type_column, display.formula_column))
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .max_scroll_height(f32::INFINITY)
-                .column(Column::initial(300.0).at_least(120.0).clip(true))
-                .column(Column::initial(130.0).at_least(60.0).clip(true))
-                .column(Column::initial(260.0).at_least(80.0).clip(true))
-                .column(Column::remainder().at_least(80.0).clip(true));
+                .column(Column::initial(300.0).at_least(120.0).clip(true));
+            if display.type_column {
+                titles.push("Type");
+                table = table.column(Column::initial(130.0).at_least(60.0).clip(true));
+            }
+            titles.push("Value");
+            table = table.column(if display.formula_column {
+                Column::initial(260.0).at_least(80.0).clip(true)
+            } else {
+                Column::remainder().at_least(80.0).clip(true)
+            });
+            if display.formula_column {
+                titles.push("Formula");
+                table = table.column(Column::remainder().at_least(80.0).clip(true));
+            }
             if let Some(index) = scroll_to {
                 table = table.scroll_to_row(index, Some(egui::Align::Center));
             }
             table
                 .header(HEADER_HEIGHT, |mut header| {
-                    for title in ["Name", "Type", "Value", "Formula"] {
+                    for title in titles {
                         header.col(|ui| {
                             column_title(ui, title);
                         });
@@ -782,14 +809,18 @@ impl ClioApp {
         let formula = cell.as_ref().and_then(|c| c.formula);
         let formula_error = cell.as_ref().and_then(|c| c.error);
         let computed_by = cell.as_ref().and_then(|c| c.computed_by.clone());
+        let display = self.user.prefs.display;
 
         // The name.
         let mut name_response = None;
         table_row.col(|ui| {
-            ui.add_space(row.depth as f32 * INDENT);
+            ui.add_space(row.depth as f32 * display.indent as f32);
             if row.expandable() {
                 let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(14.0, crate::style::row_height(ui) - 4.0),
+                    egui::vec2(
+                        14.0,
+                        crate::style::grid_row_height(ui, display.density) - 4.0,
+                    ),
                     Sense::CLICK,
                 );
                 paint_triangle(ui, rect, row.expanded, response.hovered());
@@ -819,6 +850,52 @@ impl ClioApp {
         });
 
         // The type, as a badge in the colour of its kind.
+        if display.type_column {
+            self.type_cell(table_row, row, actions);
+        }
+
+        // The value.
+        table_row.col(|ui| self.value_column(ui, row, selected, editing, actions));
+
+        // The formula.
+        if display.formula_column {
+            table_row.col(|ui| {
+                if let Some(text) = formula {
+                    let response = ui.add(
+                        egui::Label::new(RichText::new(format!("={text}")).monospace())
+                            .sense(Sense::CLICK)
+                            .truncate(),
+                    );
+                    if response.clicked() {
+                        actions.push(Action::Select(row.path.clone()));
+                    }
+                    if let Some(error) = formula_error {
+                        response.on_hover_text(format!("{} {}", error.kind.code(), error.message));
+                    }
+                } else if let Some(by) = &computed_by {
+                    ui.label(
+                        RichText::new(format!("computed by {}", self.name_of(by)))
+                            .weak()
+                            .italics(),
+                    );
+                }
+            });
+        }
+
+        // Right click.
+        if let Some(response) = name_response {
+            response.context_menu(|ui| self.row_menu(ui, row, actions));
+        }
+    }
+
+    /// The Type column's cell: a badge in the colour of the kind.
+    fn type_cell(
+        &self,
+        table_row: &mut egui_extras::TableRow<'_, '_>,
+        row: &Row,
+        actions: &mut Vec<Action>,
+    ) {
+        let calc = self.calc();
         table_row.col(|ui| {
             let kind = row
                 .ty
@@ -839,37 +916,6 @@ impl ClioApp {
                 actions.push(Action::Select(row.path.clone()));
             }
         });
-
-        // The value.
-        table_row.col(|ui| self.value_column(ui, row, selected, editing, actions));
-
-        // The formula.
-        table_row.col(|ui| {
-            if let Some(text) = formula {
-                let response = ui.add(
-                    egui::Label::new(RichText::new(format!("={text}")).monospace())
-                        .sense(Sense::CLICK)
-                        .truncate(),
-                );
-                if response.clicked() {
-                    actions.push(Action::Select(row.path.clone()));
-                }
-                if let Some(error) = formula_error {
-                    response.on_hover_text(format!("{} {}", error.kind.code(), error.message));
-                }
-            } else if let Some(by) = &computed_by {
-                ui.label(
-                    RichText::new(format!("computed by {}", self.name_of(by)))
-                        .weak()
-                        .italics(),
-                );
-            }
-        });
-
-        // Right click.
-        if let Some(response) = name_response {
-            response.context_menu(|ui| self.row_menu(ui, row, actions));
-        }
     }
 
     /// The value of a node, with the marks a cell can have: the tint of a
