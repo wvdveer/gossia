@@ -399,7 +399,7 @@ A Data Tab can be shown in more than one way. Each way is a **view** of the tab.
 A button runs a Python function `def my_procedure(form, ctx): ...` defined in a workbook module.
 - `form` is a view of the tab's data. Reading it gives the current values. Changes made to it are collected during the call.
 - `ctx` offers read access to the whole workbook through the same sheet proxies that formulas use, and it reports which form and which button were used (`ctx.form`, `ctx.button`), so one function can serve several buttons.
-- Procedures **obtain and send data to and from wherever needed**: they can read other tabs and `form`, and they can write to the form's tab through `form` or to other tabs through `ctx`. They can also use named data sources the user has granted (see Data sources). Writes to tabs are collected during the call and applied **atomically** when it returns.
+- Procedures **obtain and send data to and from wherever needed**: they can read other tabs and `form`, and they can write to the form's tab through `form` or to other tabs through `ctx`. They can also use the data sources defined on the computer, by name (see Data sources). Writes to tabs are collected during the call and applied **atomically** when it returns.
 - Every written value is validated against the schema of the tab it targets. If any write is invalid, or the procedure raises an exception, **none** of the writes are applied, the message is shown to the user, and the data is unchanged. Writing into a computed (formula-driven) node is refused in the same way.
 - The applied writes form one undoable edit and trigger normal recalculation.
 - Return values are ignored.
@@ -410,89 +410,78 @@ A button runs a Python function `def my_procedure(form, ctx): ...` defined in a 
 
 ## Data sources
 
-**Direction agreed for step 6b (2026-10-28).** These notes come first: where the text below says otherwise, they win, and the section is rewritten to match when 6b is built.
-- **The kinds available depend on the target.** The desktop application has SQLite, PostgreSQL, MariaDB and HTTP/HTTPS; the web port has HTTP/HTTPS only (no raw database connections in a browser). A workbook that names a source of a kind its target lacks opens and works; calls to that source fail with `#SOURCE!` saying the kind is not available here.
-- **Definitions belong to the user and the machine, not to the workbook.** They are stored in the per-user configuration directory, where the trust record and the other security permissions are (beside `trust.json`), and a definition may hold its password, token or API key itself.
-- **A `.clio` file refers to data sources by name only.** It carries no connection details and no credentials.
-- **Another user or machine sets up the same names.** A workbook used elsewhere needs its data sources defined there under the names it uses; until then each missing one fails with `#SOURCE!` saying no data source of that name is defined on this computer, and the rest of the workbook works.
-- **The same name may point at a different instance.** A definition on another machine can name another server or database (a test copy, a local replica); the workbook works as long as the definition and the formulas that use it fit it. This is intended, not a fault.
-
-What this replaces below: the specification stored in the workbook file and the secret filed under the workbook id ("Specification", "Saving"); the target confirmation for a workbook that came from a file, which was a defence against a file pointing a specification elsewhere and is not needed when the file holds no specification; and "Opening a workbook on another machine", which becomes the missing-definition case above. Settled with the user on the same day:
-- **Secrets are kept in the definitions file itself,** not in the operating system's credential store. The file is in the per-user configuration directory, so it is as safe as that directory is: anything that runs as the user can read it.
-- **Grants are not per workbook.** A data source is referred to by name, and its definition on the machine is what is used; there is no per-workbook grant keyed by the workbook id. (How a source is allowed at all, given that an untrusted workbook runs no Python, is settled when 6b is designed in full.)
-- **Definitions cannot be exported** or imported. Each machine has its own, set up by hand or by a module (below).
-- **Python can define a data source and check one** (asked for by the user on 2026-10-28). Two functions are available to module code:
-  - One **creates (or replaces) a definition** on this machine, taking every setting a definition has as arguments, the password, token or API key included: the name, the kind, and the kind's connection settings (host, port, database, user name and password; base URL, headers and authentication; the SQLite path; pooling). This lets a workbook carry its own setup: a button that, on a new machine, defines the sources the workbook uses.
-  - The other **says whether a named data source exists on this machine and whether it connects**, by running the same test as the definition form's *Test* button, and gives the reason when it does not.
-  - Proposed, to settle when 6b is built: they are `sources.define(...)` and `sources.check(name)`, the latter returning `.exists`, `.ok` and `.message`; both run only where side effects and waiting are allowed (button procedures and the Immediate window), not in formulas, which re-run on their own; replacing an existing definition needs an explicit `replace=True`; both obey the call timeout. Like all Python, they need a trusted workbook.
-  - **Where the password comes from is the module author's responsibility.** `sources.define` takes it as an argument and stores it in the definition; how it is kept before it reaches the call (written in the code, which is saved in the workbook, typed into a form field, which is tab data and saved too, or obtained some other way) is the author's choice, and ClioTree does not police it. A procedure can erase a field's value after the call. For typing a password into a form, a field control has a **masked** property (see Forms, Property page).
-
 A **data source** is a named connection to something outside the workbook. v1 supports:
 - **Databases**: SQLite (a file), PostgreSQL, and MariaDB.
 - **HTTP / HTTPS endpoints**: a base URL.
 
-Data sources are the only way Python code reaches outside the workbook. The sandbox still exposes no `socket`, `subprocess`, `os`, or file I/O modules; everything external goes through a named source and its explicit grant.
+Data sources are the only way Python code reaches outside the workbook. The sandbox still exposes no `socket`, `subprocess`, `os`, or file I/O modules; everything external goes through a named source.
 
-**Specification.** Each data source is one *specification*, and a specification is the unit that carries the **credentials**. It has a name, a kind, the connection details (SQLite path; database host, port, and name; endpoint base URL; default headers), the credentials to use (a user name and a password, or a token or API key), and optional pooling settings (see Connection pooling). The specifications are edited in a Data sources panel.
-- **Several specifications may point at the same database or endpoint**, each with its own credentials. This is how a workbook uses, for example, a read-only account for reports and a different account for writes: two specifications, two names, each separately granted.
-- **Secrets (passwords, tokens, API keys) are never stored in the workbook file.** The specification stored in the file holds the non-secret parts, including the user name. The secret itself lives in the operating system's credential store, filed under the workbook id and the specification's name, and belongs to that specification alone. Opening a workbook on another machine does not prompt for them: the specification is marked *credentials needed* until the user enters them in its form (see Creating a specification).
+*This section was rewritten for step 6b on 2026-10-29 from the direction agreed with the owner on 2026-10-28 and 2026-10-29. It replaces the first design, which stored the specification in the workbook, filed the secret in the operating system's credential store under the workbook id, granted each source to each workbook, and asked the user to confirm a target that came from a file.*
 
-**Creating a specification.** Credentials are not a separate step or dialog: they are **part of the settings entered when a specification is created**, in the same form. The form is opened from the Data sources panel (*New*, or *Edit* on an existing one).
-- **Fields** depend on the kind.
-  - *PostgreSQL and MariaDB:* name, host, port, database, user name, password, and optional pooling settings (see Connection pooling).
-  - *HTTP/HTTPS:* name, base URL, default headers, and the kind of authentication: none, basic (user name and password), bearer token, or API key (a header name or query parameter, and the key). It also has an optional *test path*.
-  - *SQLite:* name and file path. It has no credentials.
-- **Secret fields are masked.** When editing an existing specification the stored secret is never shown. A field offers *Change*, and leaving it alone keeps the stored value; *Clear* removes it.
-- **Test button.** The form has a **Test** button, which checks the settings as entered, before they are saved.
+**Definitions belong to the user and the machine, not to the workbook.**
+- They are kept in `data-sources.json` in the per-user configuration directory, beside `trust.json` (see Settings and limits, "Where preferences live"), passwords, tokens and API keys included. The file is as safe as that directory is: anything that runs as the user can read it. The operating system's credential store is not used.
+- **A `.clio` file refers to data sources by name only.** It carries no connection details and no credentials.
+- **Another user or machine sets up the same names.** A workbook used elsewhere needs its data sources defined there under the names it uses; until then each missing one fails with `#SOURCE!` saying no data source of that name is defined on this computer, and the rest of the workbook works.
+- **The same name may point at a different instance.** A definition on another machine can name another server or database (a test copy, a local replica); the workbook works as long as the definition and the formulas that use it fit it. This is intended, not a fault.
+- **Definitions cannot be exported** or imported. Each machine has its own, set up by hand or by a module (see Defining sources from Python).
+- **The kinds available depend on the target.** The desktop application has SQLite, PostgreSQL, MariaDB and HTTP/HTTPS; the web port has HTTP/HTTPS only. A workbook that names a source of a kind its target lacks opens and works; calls to that source fail with `#SOURCE!` saying the kind is not available here.
+- Another window may change the file while this one runs, so every read goes to the file and every change reads it again first. What a newer version wrote and this one does not know is kept, in the file and in each definition. A file that cannot be read is never overwritten (it holds passwords the user may still want); the panel says why and changes are refused until it is fixed or removed.
+
+**No grants.** **A workbook may use any data source defined on the machine** (settled with the owner on 2026-10-29). There is no per-workbook grant and no allow step. What still guards a source:
+- Python runs only in a trusted workbook (see Trust model), so an untrusted workbook reaches no source at all.
+- Each definition says whether the source may be written to (*Allow writes*, below).
+- The account in the definition is what the server enforces.
+
+**A definition** has a name, a kind, the connection details, the credentials, optional pooling (see Connection pooling), and *Allow writes*.
+- *PostgreSQL and MariaDB:* host, port (5432 and 3306 unless given), database, user name, password.
+- *HTTP/HTTPS:* base URL, default headers, and the kind of authentication: none, basic (user name and password), bearer token, or API key (in a header or a query parameter, with its name, and the key). An optional *test path* is what the Test fetches.
+- *SQLite:* the path of the file. No credentials and no pooling.
+- **Allow writes**, off unless ticked. Off: SQLite is opened read-only, database sessions use read-only transactions, and HTTP may only `GET`. This takes the place of the read and read-write levels of the old grants.
+- **Several definitions may point at the same database or endpoint**, each with its own credentials: for example a read-only account for reports and another, with *Allow writes*, for a procedure that saves.
+- **Names** are letters, digits and underscores, not starting with a digit, at most 64 characters. They are not Python names in the workbook's namespace: code reaches a source through `source("Sales")`, so a source name cannot clash with a tab, a module or a function, and which names exist may differ from machine to machine without changing what a formula means.
+
+**The Data sources panel** (*Tools > Data sources...*) lists the definitions: name, kind, where it goes, and whether writes are allowed. *New...*, *Edit...* (or a double click), *Copy...*, *Delete* (after asking) and *Test* act on the one chosen.
+- **The form** shows the fields of the kind chosen; what another kind uses is dropped on save, so a definition never carries a password typed for another kind.
+- **Secret fields are masked.** When an existing definition is edited the stored secret is never shown: the field says *Stored*, with *Change* (a password box) and *Clear*; leaving it alone keeps the stored value. A copy has the settings but not the credentials.
+- **The target is always shown in full** (for example `postgres://db.example.com:5432/sales as reporting_ro`), so the user can see where the secret is going.
+- **Test** checks the settings as entered, before they are saved, in the background with a spinner; it can be cancelled and obeys the data source call timeout (see Settings and limits). A passed test is not required to save, and saving after a failed test says so but is allowed. It is a Rust-side check that does not run Python, so it works in an untrusted workbook.
   - Databases: it opens a single throwaway connection (never one from a pool), authenticates, and runs a trivial read-only query. It reports success with the server version and the time taken, or the reason for failure (unreachable, authentication refused, TLS problem, unknown database).
-  - HTTP: it sends a `GET` to the test path (or the base URL), with the entered authentication. A 2xx or 3xx response is success; 401 or 403 is reported as an authentication failure; other statuses are shown as information.
+  - HTTP: it sends a `GET` to the test path (or the base URL), with the authentication. A 2xx or 3xx response is success; 401 or 403 is reported as an authentication failure; other statuses are shown as information.
   - SQLite: it checks that the file exists and can be opened read-only.
-  - The test runs in the background with a spinner, can be cancelled, and obeys the data source call timeout (see Settings and limits). It never blocks the form.
-  - The result stays on the form for the session. A passed test is not required to save, and saving after a failed test warns but is allowed.
-  - Test checks connectivity and the credentials only. It cannot show whether an account may write, so it says nothing about a read-write grant.
-  - It is a Rust-side check that does not run Python, so it works in an untrusted workbook. It does not need a grant and does not create one.
-- **The target is always shown in full** (for example `postgres://db.example.com:5432/sales as reporting_ro`), so the user can see where the secret is going. In a workbook that came from a file, secret fields stay disabled until the user has confirmed the target once, so that a file cannot quietly point a specification at another server and have a password typed into it.
-- **Saving** stores the non-secret part in the workbook and the secret in the operating system's credential store. It does not grant access. The user then grants the specification, choosing read or read-write, as a separate explicit step (see Explicit grants), which the panel offers straight after a successful save.
-- **Secrets are tied to the target.** A stored secret is filed with a hash of the specification's target and user name. If either changes, the stored secret is no longer used and the specification returns to *credentials needed*, so a saved password is never sent to a different server or account without being entered again. The form can offer to keep it after showing the new target.
-- **Rename, copy, and delete.** Renaming a specification moves its secret to the new name. Copying one copies the non-secret settings only; the copy needs its own credentials. Deleting one asks for confirmation and removes its secret.
-- **Credential store.** Secrets are kept through a `CredentialStore` interface with two implementations. The first uses the operating system's store through the `keyring` crate (Windows Credential Manager, macOS Keychain, and the Secret Service on Linux). The second keeps secrets **in memory for the current session only**.
-- **No credential store available** (for example a headless Linux session): the form says so, and the in-memory implementation is used. The secret is not persisted and must be entered again in each session.
-- **Testing.** Tests use the in-memory implementation, so they run unchanged on Linux CI. The `keyring` integration is covered by a small test that runs only where an OS store exists (the Windows job, or a developer's machine) and is skipped elsewhere.
-- **Credentials needed.** A specification without stored credentials on this computer is shown with a *credentials needed* badge in the panel. Nothing prompts when a workbook opens and nothing prompts during evaluation. Calls to such a source fail with `#SOURCE!` and a message saying that credentials have not been entered on this computer. Declining to enter them simply leaves that source unavailable; the rest of the workbook works.
+  - It cannot show whether an account may write.
+  - *Until each kind is built (6b parts 2 to 4), the Test checks what it can without the kind's client: that a server answers on its port, and that a SQLite file can be opened for reading.*
 
-**Names.** A source name is a Python identifier in the shared formula namespace, so it follows the rules in Names and reserved words and is available in formulas, button procedures, and report expressions as a global object.
-
-**Explicit grants.** Every source must be **explicitly granted by the user, one by one**. There is no blanket "allow network" setting.
-- A grant is recorded in user config, keyed by the workbook id, the source name, and a hash of the specification's connection definition (kind, host, port, database or path, base URL, and user name). Changing where a source points, or which account it uses, invalidates its grant, so an edited file cannot redirect an already-granted name to a different server or account. Two specifications to the same server are granted separately, each with its own level.
-- A grant has a level, **read** or **read-write**, chosen by the user when granting. The grant dialog states the exact target (for example `postgres://db.example.com:5432/sales`) and the level.
-- Granting needs the workbook itself to be trusted first. In an untrusted workbook no Python runs, so no source can be reached.
-- Grants are listed and revoked in settings and in the Data sources panel.
-- Grants are made only in that panel or settings. No dialog ever appears in the middle of an evaluation, because evaluation runs on a background thread. A call to an ungranted source fails with `#UNTRUSTED!` and a message naming the source.
+**Defining sources from Python** (asked for by the owner on 2026-10-28). Two functions are available to module code and the Immediate window:
+- `sources.define(name, kind, *, replace=False, **settings)` **creates (or replaces) a definition** on this machine. `kind` is `"http"`, `"sqlite"`, `"postgres"` or `"mariadb"`; the settings are those of the form: `host`, `port`, `database`, `user`, `password`, `url`, `headers` (a dict), `auth` (`"none"`, `"basic"`, `"bearer"`, `"key-header"`, `"key-query"`), `token`, `key_name`, `test_path`, `path`, `pool` and `writes`. An unknown setting is refused, so that a misspelt one does not go unnoticed, and so is a definition the form would refuse. A name that is already defined needs `replace=True`. This lets a workbook carry its own setup: a button that, on a new machine, defines the sources the workbook uses.
+- `sources.check(name)` **says whether a named source exists on this machine and whether it passes the Test**, as an object with `.exists`, `.ok` and `.message`, which is true when it passed.
+- Both run only where side effects and waiting are allowed (button procedures and the Immediate window), not in formulas, which re-run on their own; there they fail with `#SOURCE!`. Like all Python, they need a trusted workbook.
+- **Where the password comes from is the module author's responsibility.** `sources.define` takes it as an argument and stores it in the definition; how it is kept before it reaches the call (written in the code, which is saved in the workbook, typed into a form field, which is tab data and saved too, or obtained some other way) is the author's choice, and ClioTree does not police it. A procedure can erase a field's value after the call. For typing a password into a form, a field control has a **masked** property (see Forms, Property page).
 
 **Using a source from Python**
-- Databases: `Sales.query(sql, params)` returns a list of dicts, one per row. `Sales.execute(sql, params)` runs a statement that changes data and returns the number of rows affected. Parameters are always passed separately from the SQL text; there are no string-building helpers.
-- HTTP: `Api.get(path, params=None)` and, for read-write grants, `Api.post`, `Api.put`, `Api.patch`, `Api.delete`. A response has `.status`, `.headers`, `.text`, and `.json()`.
+- `source("Sales")` gives the source defined on this computer under that name, with `.name`, `.kind`, `.writes` and `.target`, never its secrets. A name that is not defined here raises `SourceError`, which a formula shows as `#SOURCE!`.
+- Databases: `source("Sales").query(sql, params)` returns a list of dicts, one per row. `.execute(sql, params)` runs a statement that changes data and returns the number of rows affected. Parameters are always passed separately from the SQL text; there are no string-building helpers.
+- HTTP: `source("Api").get(path, params=None)` and, when writes are allowed, `.post`, `.put`, `.patch`, `.delete`. A response has `.status`, `.headers`, `.text`, and `.json()`.
 - Values convert to Python types: integers, floats, strings, booleans, `date` / `datetime`, and `None` for SQL `NULL`. Result checking applies as usual when such a value reaches a node.
+- `source`, `sources` and `SourceError` are reserved names.
 
-**Read versus read-write is enforced by the connection, not by parsing SQL**
-- SQLite is opened read-only; PostgreSQL and MariaDB sessions use read-only transactions.
-- With a read grant, `execute` and non-read HTTP methods are refused. A read-write grant is required for them.
+**Read versus write is enforced by the connection, not by parsing SQL**
+- Without *Allow writes*, SQLite is opened read-only and PostgreSQL and MariaDB sessions use read-only transactions; `execute` and non-read HTTP methods are refused before anything is sent.
 
 **Where each kind of call may be used**
 - **Reads** (`query`, `get`) may be used in formulas, button procedures, and report expressions.
 - **Writes** (`execute`, `post`, `put`, `patch`, `delete`) are allowed **only in button procedures**, because formulas and reports re-run automatically and must not have side effects. Writes happen immediately during the call; they are not part of the atomic tab-write rule for procedures (see Forms), so a procedure that fails after a write does not undo it.
 - Reads in formulas are slow and not deterministic, so they are treated as **volatile**: their results are cached for a recalculation pass keyed by (source, call, parameters) and refresh only on a recalculation pass or explicit "Recalculate" (see Evaluation and scheduling). Editing a source node does not by itself re-run a query, unless the query's parameters depend on it.
 
-**Limits.** Waiting for I/O does not count against the per-formula CPU budget, but every call has its own timeout (default 30 seconds) and a maximum response size (default 16 MB), both workbook settings (see Settings and limits). A source failure (connection, authentication, SQL error, HTTP error status, timeout, oversize response) produces a new error kind, `#SOURCE!`, with the details in the message.
+**Limits.** Waiting for I/O does not count against the per-formula CPU budget, but every call has its own timeout (default 30 seconds) and a maximum response size (default 16 MB), both workbook settings (see Settings and limits). A source failure (not defined here, connection, authentication, SQL error, HTTP error status, timeout, oversize response) produces `#SOURCE!`, with the details in the message.
 
-**Connection pooling.** Pooling is a property of a specification, off unless the specification allows it.
+**Connection pooling.** Pooling is a property of a definition, off unless it allows it.
 - **Off (the default):** each call opens a connection, uses it, and closes it.
-- **On:** the specification states a **maximum connection count** (a whole number of at least 1; it is required when pooling is on). Connections are kept after use and reused, up to that many at once.
+- **On:** the definition states a **maximum connection count** (a whole number of at least 1). Connections are kept after use and reused, up to that many at once.
 - Calls that need a connection when all are in use wait for one to be returned, and fail with `#SOURCE!` if none is returned within the call timeout.
-- A pool belongs to one specification only. Two specifications to the same server never share connections, because their credentials differ.
+- A pool belongs to one definition only. Two definitions to the same server never share connections, because their credentials differ.
 - A connection is reset when it goes back into the pool (open transactions rolled back, session state discarded), and the read-only enforcement is applied again each time it is handed out.
-- Pools are closed when the workbook is closed, when the specification is edited or its grant revoked, and when the application exits.
-- **SQLite specifications cannot enable pooling**, as the database is a local file. For HTTP, pooling means keeping connections alive for reuse, up to the maximum.
+- Pools are closed when the definition is edited or deleted and when the application exits.
+- **SQLite definitions cannot enable pooling**, as the database is a local file. For HTTP, pooling means keeping connections alive for reuse, up to the maximum.
 - Evaluation is sequential in v1 (see Evaluation and scheduling), so a pool in practice holds about one connection in use. Its value is avoiding the cost of reconnecting. The maximum still limits the total number of connections to the server, including any held by abandoned evaluations (see Settings and limits): such a connection counts against the maximum until the abandoned call returns, and is then closed instead of being reused.
 
 **Web port** *(later version)*. Browsers cannot open raw database connections, so SQLite, PostgreSQL, and MariaDB sources will be unavailable on the web. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
@@ -515,7 +504,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - Reports show blocks that need no Python (static text) and an `#UNTRUSTED!` placeholder elsewhere.
 
 **What containment can and cannot do.** Trust is the real security boundary, and the trust banner says plainly that trusting a workbook allows it to run code. Containment is defence in depth against accidents and casual abuse, not a determined attacker, because sandboxing Python is notoriously leaky:
-- The Python engine is built without any operating-system access: no `os`, `subprocess`, `socket`, or file I/O modules exist in it (see Python engine for what this rests on). External access is only through named data sources, each separately granted by the user (see Data sources). Trusting a workbook does not by itself grant any source.
+- The Python engine is built without any operating-system access: no `os`, `subprocess`, `socket`, or file I/O modules exist in it (see Python engine for what this rests on). External access is only through named data sources (see Data sources), which a trusted workbook may use when they are defined on the machine.
 - `open`, `exec`, `eval`, `compile`, and `__import__` are removed from the builtins formulas see, and double-underscore attribute access is rejected when a formula is entered. These catch mistakes; they are not a boundary (see Python engine).
 
 **Resource limits.** Evaluation takes a **budget**: a deadline and optionally a step count. Exceeding it aborts the evaluation with a new error kind, `#TIMEOUT!`, distinct from other Python errors. The limits are user settings (defaults: 1 second per formula and 10 seconds per recalculation; see Settings and limits). A memory limit is not promised in v1. How the budget is enforced is described under Python engine.
@@ -666,8 +655,8 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 | Editing | All workbooks | *Undo history*: maximum number of entries and the memory budget. *Formula bar*: the most lines it grows to before it scrolls [6]. |
 | Code editor | All workbooks | *Editor*: font family (Geist Mono, the one monospace font bundled; see the 10c decisions) and size [13 pt]; indent width, 2 to 8 spaces [4]; show line numbers [on]; syntax highlighting [on]; wrap long lines [off]. *Immediate window*: history entries kept [100]; maximum output size of one result [64 KB]. |
 | Evaluation | This workbook | *Time limits*: formula time limit, button procedure time limit, recalculation time limit. *Cancellation*: cancel grace period; maximum abandoned threads, the number currently abandoned, and the *Save and restart* button. *Guards*: maximum range length. |
-| Data sources | This workbook | *Limits*: call timeout and maximum response size. *Specifications*: a *Manage data sources...* button that opens the Data sources panel, where specifications are created, edited, tested, and granted. |
-| Trust and security | All workbooks | *Trusted workbooks*: the list, each with *Revoke*. *Data source grants*: the list, each with *Revoke*. *Ceilings*: the maximum for each workbook setting (see below). |
+| Data sources | This workbook | *Limits*: call timeout and maximum response size. The definitions themselves are not workbook settings: they belong to the user and the machine, and are edited in *Tools > Data sources...* (see Data sources). |
+| Trust and security | All workbooks | *Trusted workbooks*: the list, each with *Revoke*. *Ceilings*: the maximum for each workbook setting (see below). |
 | Files and import | All workbooks | *Reading files*: maximum zip entries, maximum total uncompressed size, maximum nesting depth. *Import*: maximum import file size. |
 | About | All workbooks | The usual About box: the name, version, a line on what ClioTree is, its licence and repository; the main third-party libraries with their versions and licences (RustPython with its revision); the bundled fonts and their licences. |
 
@@ -689,7 +678,7 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 | Data source call timeout | 30 s | 300 s |
 | Maximum response size | 16 MB | 256 MB |
 
-**Where preferences live.** Application preferences are stored with the trust records and data source grants in one per-user configuration directory (the operating system's usual location for application settings), as a JSON file. The file carries a version number. Settings the application does not know (from a newer version) are kept unchanged when the file is saved, settings that are missing take their defaults, and a file from an older version is upgraded on load, so adding or removing a setting never loses the user's other settings.
+**Where preferences live.** Application preferences are stored with the trust records and the data source definitions (`data-sources.json`, see Data sources) in one per-user configuration directory (the operating system's usual location for application settings), as a JSON file. The file carries a version number. Settings the application does not know (from a newer version) are kept unchanged when the file is saved, settings that are missing take their defaults, and a file from an older version is upgraded on load, so adding or removing a setting never loses the user's other settings.
 
 **Changing a limit while something is running.** A new value applies to evaluations that start after OK. An evaluation already running keeps the deadline it started with. Lowering *Maximum abandoned threads* below the number currently abandoned simply suspends new evaluations until enough of them return.
 
@@ -701,7 +690,7 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 - literal values, and structural changes (inserting, removing, moving, or sorting items and map entries);
 - formulas, and comments (XML tabs);
 - tabs: adding, removing, renaming, reordering, and rebinding schemas;
-- Python modules, form designs, report designs, and data source definitions (not secrets and not grants);
+- Python modules, form designs, report designs, and the names of the data sources its code uses, inside that code (never their definitions or secrets);
 - schema sheet edits, which are ordinary tree edits, and schema edits made from the data tab that uses the schema (see Editing the schema from a data tab), each together with the data changes it causes, as one entry;
 - the table-wide edits made by paste, import, and button procedures.
 
@@ -709,7 +698,7 @@ The workbook keeps one **edit log** so that user edits can be undone and redone.
 - Computed results, error values, and pending state. They are derived, not authored. After an undo, the formulas affected are recalculated and the new results appear as usual.
 - View settings such as expanded nodes, column widths, and whether an array is shown as a table.
 - Effects outside the workbook. A procedure that writes to a database or HTTP endpoint cannot be undone; its workbook edits can.
-- Granting or revoking data-source access, and trust decisions.
+- Defining or deleting data sources, and trust decisions.
 
 **Entries.**
 - One user gesture is one entry: committing a field, a paste, running a button procedure (all of its writes together), an import, dragging items into a new order.
@@ -1004,7 +993,7 @@ The project has automated tests at several levels, and **all of them run in a CI
 6. **In-process UI tests.** The application's UI is written so that its top-level `update` function can be driven by `egui_kittest`, which runs egui headlessly and finds widgets through AccessKit, the way a screen reader would. This needs no display. Tests do what a user does: open a workbook, select a node, type `=...` into the formula bar and press Enter, wait until idle, and check the cell's text, error, and pending marker. Cases include the tabular view toggle from the context menu, undo and redo keys, the trust banner and untrusted mode, forms (field commits, button procedures), the code editor and the Immediate window, import and export dialogs, and the status bar. This is the main level for UI behaviour.
 7. **Visual snapshot tests** (`egui_kittest` with its `snapshot` and `wgpu` features). Key screens are rendered and compared with stored images with a small tolerance. On Linux CI the rendering uses a software Vulkan driver (Mesa lavapipe), so no GPU is needed. They run as a separate job and fail only on a clear difference; differences are uploaded as artifacts. Snapshots start as advisory and become a gate once they are stable.
 8. **End-to-end tests on the running application.** The real binary is started on Linux under a virtual display (`xvfb-run`) and driven through a **test control channel**: a loopback-only JSON command interface that exists only when the application is built with the `test-control` cargo feature, which release builds never enable. Commands include: open a workbook, select a node, enter text, press a key, read a cell's value, formula, error, and pending state, wait until idle, take a screenshot, and quit. Because the channel is compiled out of release builds, it adds no remote-control surface to the shipped product. A small number of tests, written as a Rust client against that channel, cover startup, open and save, edit-and-recalculate, and shutdown on the real windowing backend. Most behaviour is tested at level 6, which is faster and more stable.
-9. **Data source tests.** SQLite runs everywhere. PostgreSQL and MariaDB run in CI against service containers. HTTP uses a mock server started by the test on a local port. Cases include grants (an ungranted call gives `#UNTRUSTED!`), read versus read-write enforcement, `#SOURCE!` errors, timeouts, oversize responses, and a check that a saved `.clio` file contains no secrets. These are skipped locally unless the matching environment variable is set.
+9. **Data source tests.** SQLite runs everywhere. PostgreSQL and MariaDB run in CI against service containers. HTTP uses a mock server started by the test on a local port. Cases include a name not defined here (`#SOURCE!`), *Allow writes* off versus on, read versus read-write enforcement, `#SOURCE!` errors, timeouts, oversize responses, and a check that a saved `.clio` file contains no secrets. These are skipped locally unless the matching environment variable is set.
 10. **Security and robustness.** The hostile-file fixtures above; the sandbox probes; trust-hash tests (a change outside the application drops trust, a change inside keeps it); and **fuzzing** with `cargo-fuzz` on the parsers: JSON and XML import, zip reading, schema lowering, and formula parsing. Fuzzing runs on a nightly schedule and does not block merges; any crash found becomes a regression test.
 11. **Performance checks.** Benchmarks for the cases measured in the spike (a formula over 10,000 items, 10,000 separate formulas, loading and saving a large workbook) run on a schedule and report trends. They are not merge gates, because shared CI machines are noisy; a very generous threshold in an ordinary test catches only gross regressions.
 
@@ -1020,7 +1009,7 @@ The project has automated tests at several levels, and **all of them run in a CI
 | `tree` (a path and a depth) | Returns a snapshot of a subtree. |
 | `status` | Returns the status bar text, the pending count, and the abandoned-thread count. |
 | `wait_idle` (a timeout) | Waits until nothing is pending. |
-| `set_option`, `grant`, `trust` | Preferences, data source grants, and the trust decision, so tests can set up state without driving dialogs. |
+| `set_option`, `define_source`, `trust` | Preferences, data source definitions, and the trust decision, so tests can set up state without driving dialogs. |
 | `screenshot` (a path) | Saves an image of the window. |
 | `quit` | Exits cleanly. |
 
@@ -1144,7 +1133,11 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
    - **5b. Workbook modules** *(done as the engine and the workbook; the code editor, the file format and trust wait, as listed in the decisions below)*: loading, the namespaces, publishing, reloading, generations, the reserved names and the clash checks.
    - **5c. Trust** *(done as the digest, the record, untrusted mode and the banner; reading and writing the record and the workbook id wait for the workbook layer, as listed in the decisions below)*: the trust hash, untrusted mode, the banner, and the recorded decisions.
 6. **XSD** subset and XML adapter *(done as the XML reader and writer, the lowering, the data adapter, the built-in XSD meta-schema, XSD schema tabs and `XMLPATH`; comments in the window came later, and inference with import (8e); the XML forms of the field commands came later too)*.
-6b. **Data sources**: definitions panel, credential store, grants, HTTP first, then SQLite, PostgreSQL, MariaDB. *(Not started; see the direction agreed on 2026-10-28 at the top of Data sources: definitions per user and machine, referred to by name.)*
+6b. **Data sources**, in four parts (see Data sources; definitions per user and machine, referred to by name, no grants):
+   - **6b-1. Definitions** *(done)*: `data-sources.json`, the Data sources panel with its form and Test, `source(name)`, `sources.define` and `sources.check`. The Test checks only that a server answers or a file opens until each kind is built.
+   - **6b-2. HTTP/HTTPS.**
+   - **6b-3. SQLite.**
+   - **6b-4. PostgreSQL and MariaDB.**
 7. **Views and forms**, in three parts:
    - **7a. The view selector and the generated Default form** *(done, apart from saving the view of each tab, which waits for the workbook layer, as listed in the decisions below)*: the view selector, the remembered view of each tab, the generated Default form with live read and write to the tab.
    - **7b. Named forms and customising** *(done, apart from saving designs in the workbook and drag and drop; visible-when and enabled-when are evaluated since 2026-10-28)*: the `builtin:form` schema, *New form...* and *Duplicate*, layout mode and the property page.
@@ -1345,7 +1338,7 @@ Deferred features, with what v1 does to keep them possible:
   - **Reading and writing the record**, and the workbook id in the file: the record lives in the user's configuration directory and the id in the manifest; both wait for the preferences and the workbook layer. `TrustStore` is in memory and has no file format yet. The list of trusted workbooks and *Revoke* in the settings wait for the settings dialog.
   - **Opening a file** is where `decide` is called and `set_trusted` gets its answer, with the reasons in the banner.
   - **What does not exist yet and will be disabled when it does:** form buttons and control expressions (step 7), the Immediate window and Compile (the code editor), report placeholders (reports are deferred).
-  - **Data source grants** (step 6b) are separate from trust: trusting a workbook grants no source.
+  - **Data sources** (step 6b) have no grants: a trusted workbook may use any source defined on the machine (decided 2026-10-29).
 - **Tests.** 15 in `cliotree-calc` (`python/tests_trust.rs`: what the digest covers and ignores, order, undo, the record's three answers and the list of changes, update, carry and revoke, untrusted mode running nothing and keeping stored values, stale cells, trusting calculating what waited, modules not loading and loading again), 1 in the application for the wording, and 4 window tests (banner and badges, continuing read-only, editing data while untrusted, entering a formula while untrusted). The `trust` control command is used by them.
 
 **Decisions made while building step 6** (XSD, the XML adapter, `XMLPATH`)
@@ -1653,6 +1646,21 @@ Deferred features, with what v1 does to keep them possible:
 - **The paste is a plan like a file's** (`ClioApp::plan_paste`, `begin_paste`): the same dialog, limits, matching against the schema tabs and report. Its format is told from the text, since there is no extension. Replacing the tab's data stayed as a choice of that dialog (`SchemaChoice::Replace`) so that nothing the Raw view could do is lost; the control channel's `paste` still replaces directly. While another text box has the keyboard (the dialog's tab name), the Raw view leaves Ctrl+V to it.
 - *File > Import...* lists CSV and TSV beside JSON and XML.
 - **Tests.** In `cliotree-core`, 5 in `delimited_tests.rs` (the header and the typing of columns, a first row of data, quotes, empty cells and ragged rows with the column order, blank and repeated names). In `cliotree-app`, 3 more in `tab_commands_tests.rs` (the format of pasted text, CSV and TSV imported, a paste as a new tab and as a replace), and the two Raw view tests in `tests/forms.rs` now go through the dialog.
+
+**Decisions made for masked fields** (a leftover of step 6b's notes, 2026-10-29)
+- **A property of a field control, `masked`**, shown on the property page as *Masked* when the field is bound to a string (and kept visible while set, so it can be cleared after the schema changes). Table columns do not have it: a password belongs in a single field, not in a column of rows.
+- **Only the text box changes.** It is egui's password box: one line of dots, whatever the editor (*Multiline* is ignored while masked). The value is stored and saved as typed, shows in the data tree and the Raw view as it is, and is not kept out of undo. Clearing it after use is the procedure's job, as recorded under Data sources.
+- **Tests.** In `cliotree-core`, the design round-trip covers `masked`; in `cliotree-app`, the property-page unit test sets it, and 2 window tests in `tests/forms.rs` (dots shown and the typed value stored; the property offered for a string and not for a number). No snapshot.
+
+**Decisions made for data source definitions** (step 6b, part 1, 2026-10-29)
+- **The direction of 2026-10-28 is now the Data sources section**, rewritten: definitions per user and machine in `data-sources.json` beside `trust.json`, secrets in that file, referred to by name, not exportable. The keyring, the per-workbook grants and the target confirmation are gone.
+- **No grants** (owner, 2026-10-29): a workbook may use any source defined on the machine. **Writes are a tick box on the definition**, *Allow writes*, off by default (owner, same day), in place of the read and read-write grant levels.
+- **`source("Sales")`, not a bare global** (owner, same day): which names exist depends on the machine, so a global would turn a missing definition into a `NameError` and could clash with tabs and modules. `source`, `sources` and `SourceError` are reserved.
+- **Where it lives.** `cliotree-calc::sources` holds the definition, its checks and target, the store, and the Test; the store is shared by the window and the evaluation thread (`PythonSettings::sources`, from `User::python_settings`). Python reaches it through one native callable, `_source_access(op, payload)`, with JSON text both ways, and the prelude turns an error reply into `SourceError`, which `convert::failure` maps to `#SOURCE!`. `Shared::side_effects` is on only in procedures and the Immediate window, which is what keeps `define` and `check` out of formulas.
+- **The file.** Read on every use and read again before every change (another window may have changed it); written beside itself and moved over; unknown fields kept; an unreadable file never overwritten.
+- **The Test, for now,** opens a TCP connection to the server's port (the URL's for HTTP) or opens the SQLite file for reading, on a background thread, within the call timeout. Signing in and the trivial query come with each kind.
+- **The form keeps only what the kind uses** on save. A stored secret is *Keep*, *Change* or *Clear*; a copy has no credentials. The fields are named "... of the data source" for the screen reader and the tests, since "File" is also a menu.
+- **Tests.** In `cliotree-calc`, 5 in `sources_tests.rs` (checks and target, URLs, the file with unknown fields, renames and an unreadable file, Python settings, the Test against a file and a local listener) and 4 in `python/tests_sources.rs` (a formula finds a source and not its secret, `#SOURCE!` for a missing one, `define` and `check` refused in formulas, the Immediate window defining and checking, reserved names). In `cliotree-app`, 4 unit tests in `sources_ui_tests.rs` (secrets kept, changed and cleared; a copy; the kind's fields and the numbers; saving and renaming) and 3 window tests in `tests/sources.rs` (made and tested, a stored password never shown, delete after asking).
 
 **Risks that only building and measuring can settle**
 - **RustPython.** It is young and not production-ready by its own account, it builds only from a pinned git revision, and the single long builtin call cannot be interrupted. Mitigations: the `PythonEngine` trait, the pinned and vendored build, the abandoned-thread backstop, and the test-suite probes.

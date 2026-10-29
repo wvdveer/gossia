@@ -399,6 +399,22 @@ pub(super) fn failure(
             traceback: Some(traceback),
         };
     }
+    if object
+        .is_instance(&classes.source_error, vm)
+        .unwrap_or(false)
+    {
+        return Failure {
+            error: ErrorValue {
+                kind: ErrorKind::Source,
+                message: object
+                    .str(vm)
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                origin: None,
+            },
+            traceback: Some(traceback),
+        };
+    }
     if object.is_instance(&classes.timeout, vm).unwrap_or(false) {
         return Failure {
             error: ErrorValue {

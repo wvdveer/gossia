@@ -3,6 +3,8 @@
 # Python"). Run once when the engine starts. It is trusted code, so it may use
 # double-underscore names that formulas may not.
 
+import json as _json
+
 from _cliotree import Node, jsonpath as _jsonpath, xmlpath as _xmlpath
 
 
@@ -154,3 +156,89 @@ def range(*args):
             % _max_range
         )
     return result
+
+
+# Data sources (DESIGN.md, "Data sources"). The definitions belong to the user
+# and the machine; a workbook names a source and this computer's definition
+# says where it goes. `_source_access` is the native side (python/sources.rs).
+
+class SourceError(Exception):
+    """A data source could not be used. A formula that raises it is
+    `#SOURCE!`."""
+
+
+def _source_call(op, payload):
+    reply = _json.loads(_source_access(op, _json.dumps(payload)))
+    if 'error' in reply:
+        raise SourceError(reply['error'])
+    return reply['ok']
+
+
+class Source:
+    """A data source defined on this computer, as `source(name)` gives it: its
+    name, its kind, whether it may be written to, and where it goes. Never its
+    password, token or key."""
+
+    def __init__(self, info):
+        self.name = info['name']
+        self.kind = info['kind']
+        self.writes = info['writes']
+        self.target = info['target']
+
+    def __repr__(self):
+        return '<Source %s: %s>' % (self.name, self.target)
+
+
+def source(name):
+    """The data source called `name` on this computer. One that is not
+    defined here raises `SourceError`, which is `#SOURCE!` in a formula."""
+    if not isinstance(name, str):
+        raise TypeError('source() takes the name of a data source, as text')
+    return Source(_source_call('info', name))
+
+
+class SourceCheck:
+    """What `sources.check(name)` found: `exists`, `ok` and `message`. It is
+    true when the source is defined and the test passed."""
+
+    def __init__(self, exists, ok, message):
+        self.exists = exists
+        self.ok = ok
+        self.message = message
+
+    def __bool__(self):
+        return self.ok
+
+    def __repr__(self):
+        return '<SourceCheck exists=%r ok=%r: %s>' % (self.exists, self.ok, self.message)
+
+
+class _Sources:
+    """`sources`: defining and checking data sources on this computer, from a
+    button procedure or the Immediate window."""
+
+    def define(self, name, kind, *, replace=False, **settings):
+        """Defines (or, with `replace=True`, replaces) the data source `name`
+        on this computer. `kind` is "http", "sqlite", "postgres" or "mariadb";
+        the settings are those of the definition form: host, port, database,
+        user, password, url, headers, auth, token, key_name, test_path, path,
+        pool and writes."""
+        if not isinstance(name, str) or not isinstance(kind, str):
+            raise TypeError('sources.define() takes the name and the kind as text')
+        _source_call('define', {
+            'name': name, 'kind': kind, 'settings': settings, 'replace': bool(replace),
+        })
+
+    def check(self, name):
+        """Whether the data source `name` is defined on this computer and
+        passes the same test as the Test button, and why not."""
+        if not isinstance(name, str):
+            raise TypeError('sources.check() takes the name of a data source, as text')
+        found = _source_call('check', name)
+        return SourceCheck(found['exists'], found['ok'], found['message'])
+
+    def __repr__(self):
+        return '<data sources>'
+
+
+sources = _Sources()

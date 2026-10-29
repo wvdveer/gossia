@@ -38,6 +38,7 @@ fn long_call_session(settings: EvalSettings) -> Session {
         settings,
         PythonSettings {
             max_range: 10_i64.pow(7),
+            ..PythonSettings::default()
         },
     )
 }
@@ -300,8 +301,13 @@ fn a_new_range_limit_takes_effect_on_the_next_evaluation() {
     assert!(s.wait_idle(LONG));
     assert_eq!(get(&s, "c"), Some(Value::Int(1000)));
 
-    s.evaluator_mut()
-        .reconfigure(python::factory(PythonSettings { max_range: 10 }), quick());
+    s.evaluator_mut().reconfigure(
+        python::factory(PythonSettings {
+            max_range: 10,
+            ..PythonSettings::default()
+        }),
+        quick(),
+    );
     s.calc_mut().recalc_all();
     assert!(s.wait_idle(LONG));
     assert_eq!(kind(&s, "c"), Some(ErrorKind::Value));
@@ -320,8 +326,13 @@ fn settings_changed_while_running_apply_after_the_evaluation_comes_back() {
         .unwrap();
     s.tick();
     assert!(s.evaluator().is_running());
-    s.evaluator_mut()
-        .reconfigure(python::factory(PythonSettings { max_range: 10 }), quick());
+    s.evaluator_mut().reconfigure(
+        python::factory(PythonSettings {
+            max_range: 10,
+            ..PythonSettings::default()
+        }),
+        quick(),
+    );
     assert!(s.wait_idle(LONG));
     // That evaluation was made with the old engine.
     assert_eq!(get(&s, "c"), Some(Value::Int(1000)));

@@ -7,6 +7,7 @@ use std::rc::Rc;
 use rustpython::vm::PyObjectRef;
 
 use crate::engine::{Context, Write};
+use crate::sources::SourceStore;
 
 /// Python classes the Rust side needs to make or to recognise.
 pub(super) struct Classes {
@@ -19,6 +20,8 @@ pub(super) struct Classes {
     pub datetime: PyObjectRef,
     pub timezone: PyObjectRef,
     pub timedelta: PyObjectRef,
+    /// What a data source raises; a formula shows it as `#SOURCE!`.
+    pub source_error: PyObjectRef,
 }
 
 /// A workbook module as the importer serves it.
@@ -45,6 +48,13 @@ pub(super) struct Shared {
     /// The writes a button procedure has made so far. `None` while a formula
     /// runs, which cannot change data: the proxies refuse to be written to.
     pub writes: RefCell<Option<Vec<Write>>>,
+    /// The data source definitions of this user on this machine.
+    pub sources: RefCell<SourceStore>,
+    /// How long a call to a data source may wait.
+    pub source_timeout: Cell<std::time::Duration>,
+    /// Whether what runs may change things outside the workbook or wait: a
+    /// button procedure or the Immediate window, not a formula.
+    pub side_effects: Cell<bool>,
 }
 
 impl fmt::Debug for Shared {
@@ -64,6 +74,9 @@ impl Shared {
             modules: RefCell::new(std::collections::HashMap::new()),
             stdlib: RefCell::new(std::collections::HashMap::new()),
             writes: RefCell::new(None),
+            sources: RefCell::new(SourceStore::in_memory()),
+            source_timeout: Cell::new(std::time::Duration::from_secs(30)),
+            side_effects: Cell::new(false),
         })
     }
 

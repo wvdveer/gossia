@@ -179,6 +179,7 @@ impl ClioApp {
         self.tab_windows(ui.ctx());
         self.file_windows(ui.ctx());
         self.options_window(ui.ctx());
+        self.sources_window(ui.ctx());
         self.comment_window(ui.ctx());
         self.replace_inside_window(ui.ctx());
         self.drop_hint(ui.ctx());
@@ -413,6 +414,10 @@ impl ClioApp {
                     .clicked()
                 {
                     self.open_code_editor();
+                    ui.close();
+                }
+                if ui.button("Data sources...").clicked() {
+                    self.open_sources();
                     ui.close();
                 }
                 ui.separator();

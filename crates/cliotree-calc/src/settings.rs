@@ -316,6 +316,8 @@ impl Effective {
     pub fn python_settings(&self) -> PythonSettings {
         PythonSettings {
             max_range: i64::try_from(self.get(Setting::MaxRange)).unwrap_or(i64::MAX),
+            source_timeout: self.millis(Setting::SourceTimeout),
+            ..PythonSettings::default()
         }
     }
 }

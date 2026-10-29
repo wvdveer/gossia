@@ -237,6 +237,7 @@ fn a_field_can_be_given_a_label_an_editor_and_made_read_only() {
         c.label = Some("Customer".to_owned());
         c.editor = Some(Editor::Multiline);
         c.read_only = true;
+        c.masked = true;
         Some(Some(vec![0, 0]))
     });
     assert!(edited);
@@ -244,6 +245,7 @@ fn a_field_can_be_given_a_label_an_editor_and_made_read_only() {
     let c = design.get(&[0, 0]).unwrap();
     assert_eq!(c.label.as_deref(), Some("Customer"));
     assert!(c.read_only);
+    assert!(c.masked);
     // The document it is stored as round-trips.
     let text = design.to_json();
     assert_eq!(

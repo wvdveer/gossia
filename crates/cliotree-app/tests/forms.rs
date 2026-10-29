@@ -891,3 +891,42 @@ fn the_fonts_of_the_titles_are_the_tables_and_a_column_aligns_its_title() {
         "{title:?} against {cell:?}"
     );
 }
+
+#[test]
+fn a_masked_field_shows_dots_and_stores_what_is_typed() {
+    let mut harness = form();
+    harness.state_mut().edit_design(|d| {
+        let name = d.get_mut(&[0, 0])?;
+        assert_eq!(name.path.as_deref(), Some("customer.name"));
+        name.masked = true;
+        Some(None)
+    });
+    harness.run();
+    assert!(!text_of(&harness, "Orders.customer.name").contains("Acme"));
+    type_into(&mut harness, "Orders.customer.name", "s3cret");
+    settle(&mut harness);
+    assert_eq!(
+        value(&harness, "Orders", "customer.name"),
+        Some(Value::Str("s3cret".into()))
+    );
+    assert!(!text_of(&harness, "Orders.customer.name").contains("s3cret"));
+}
+
+#[test]
+fn masked_is_a_property_of_a_string_field() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Field customer.name");
+    click(&mut harness, "Masked");
+    assert!(
+        harness
+            .state()
+            .design_of("Default")
+            .get(&[0, 0])
+            .unwrap()
+            .masked
+    );
+    // A number cannot be dots.
+    click(&mut harness, "Field total");
+    assert!(!has(&harness, "Masked"));
+}

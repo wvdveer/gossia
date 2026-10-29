@@ -16,7 +16,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use cliotree_calc::{Ceilings, Fingerprint, Setting, TrustStore};
+use cliotree_calc::python::PythonSettings;
+use cliotree_calc::sources::{SOURCES_FILE, SourceStore};
+use cliotree_calc::{Ceilings, Effective, Fingerprint, Setting, TrustStore};
 use serde_json::{Map, Value as Json, json};
 
 use crate::file::{Limits, save_atomic};
@@ -881,12 +883,24 @@ pub struct User {
     trust_raw: Map<String, Json>,
     /// What was typed in the Immediate window, the oldest first.
     pub immediate: Vec<String>,
+    /// The data source definitions of this user on this machine, in
+    /// `data-sources.json` beside `trust.json` (DESIGN.md, "Data sources").
+    pub sources: SourceStore,
 }
 
 impl User {
     /// Nothing on disk: the in-process tests, and the sample.
     pub fn in_memory() -> User {
         User::default()
+    }
+
+    /// What the interpreter is made with: the settings in force, and this
+    /// user's data sources.
+    pub fn python_settings(&self, effective: &Effective) -> PythonSettings {
+        PythonSettings {
+            sources: self.sources.clone(),
+            ..effective.python_settings()
+        }
     }
 
     /// Reads the files of `config`. A missing file is the defaults; the
@@ -900,8 +914,13 @@ impl User {
                     .to_owned(),
             );
         }
+        let sources = match &config.dir {
+            Some(dir) => SourceStore::at(dir.join(SOURCES_FILE)),
+            None => SourceStore::in_memory(),
+        };
         let mut user = User {
             config,
+            sources,
             ..User::default()
         };
         user.reload(&mut warnings);

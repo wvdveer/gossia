@@ -211,6 +211,10 @@ const SPECIAL: &[&str] = &[
     "JSONPATH",
     // Reserved ahead of the XML adapter (build step 6).
     "XMLPATH",
+    // The data sources (build step 6b).
+    "source",
+    "sources",
+    "SourceError",
 ];
 
 fn reserved_set() -> &'static HashSet<&'static str> {

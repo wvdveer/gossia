@@ -18,6 +18,7 @@ mod model;
 pub mod names;
 pub mod python;
 mod session;
+pub mod sources;
 mod trie;
 
 pub use calc::{

@@ -603,6 +603,8 @@ struct Look {
     help: Option<String>,
     editor: Option<Editor>,
     read_only: bool,
+    /// A string's text box shows dots.
+    masked: bool,
     /// Absent: numbers on the right, the rest on the left.
     align: Option<Alignment>,
     format: Format,
@@ -1095,6 +1097,7 @@ impl Painter<'_> {
                 help: c.help.clone(),
                 editor: c.editor,
                 read_only: c.read_only,
+                masked: c.masked,
                 align: None,
                 format: c.format(),
             },
@@ -1311,11 +1314,18 @@ impl Painter<'_> {
                         .unwrap_or_else(|| current.clone()),
                     None => current.clone(),
                 };
-                let long = match look.editor {
-                    Some(Editor::Multiline) => matches!(kind, Kind::String(_) | Kind::Enum { .. }),
-                    Some(Editor::Text) => false,
-                    _ => matches!(kind, Kind::String(c) if c.max_length.is_some_and(|m| m > 200)),
-                };
+                // A masked string is one line of dots, whatever the editor.
+                let masked = look.masked && matches!(kind, Kind::String(_));
+                let long = !masked
+                    && match look.editor {
+                        Some(Editor::Multiline) => {
+                            matches!(kind, Kind::String(_) | Kind::Enum { .. })
+                        }
+                        Some(Editor::Text) => false,
+                        _ => {
+                            matches!(kind, Kind::String(c) if c.max_length.is_some_and(|m| m > 200))
+                        }
+                    };
                 let width = if compact {
                     f32::INFINITY
                 } else {
@@ -1324,7 +1334,7 @@ impl Painter<'_> {
                 let edit = if long {
                     egui::TextEdit::multiline(&mut text).desired_rows(3)
                 } else {
-                    egui::TextEdit::singleline(&mut text)
+                    egui::TextEdit::singleline(&mut text).password(masked)
                 };
                 // Numbers line up on the right, unless the column says.
                 let align = match look.align {
@@ -1616,6 +1626,7 @@ impl Painter<'_> {
                                             help: None,
                                             editor: design.editor,
                                             read_only: design.read_only,
+                                            masked: false,
                                             align: design.align,
                                             format: design.format(),
                                         };

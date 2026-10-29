@@ -72,6 +72,28 @@ pub(super) mod _cliotree {
         }
     }
 
+    /// `_source_access(op, payload)`, which the prelude's `source` and
+    /// `sources` call: see `sources.rs`.
+    #[pyattr]
+    #[pyclass(module = "_cliotree", name = "SourceAccess")]
+    #[derive(Debug, PyPayload)]
+    pub struct SourceAccess {
+        pub(in crate::python) shared: Rc<Shared>,
+    }
+
+    #[pyclass(with(Callable))]
+    impl SourceAccess {}
+
+    impl Callable for SourceAccess {
+        type Args = (PyStrRef, PyStrRef);
+
+        fn call(zelf: &Py<Self>, (op, payload): Self::Args, vm: &VirtualMachine) -> PyResult {
+            let reply =
+                super::super::sources::access(&zelf.shared, op.expect_str(), payload.expect_str());
+            Ok(vm.ctx.new_str(reply).into())
+        }
+    }
+
     /// `JSONPATH(query, node)`: see `jsonpath.rs`.
     #[pyfunction]
     fn jsonpath(query: PyStrRef, node: PyObjectRef, vm: &VirtualMachine) -> PyResult {

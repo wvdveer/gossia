@@ -132,6 +132,8 @@ pub struct ClioApp {
     pub code: crate::code::CodeEditor,
     /// The box a comment is written in, while it is open.
     pub comment_edit: Option<crate::comments::CommentEdit>,
+    /// *Tools > Data sources...*, while it is open.
+    pub sources_panel: Option<crate::sources_ui::SourcesPanel>,
 }
 
 impl ClioApp {
@@ -208,6 +210,7 @@ impl ClioApp {
             applied,
             code: crate::code::CodeEditor::default(),
             comment_edit: None,
+            sources_panel: None,
         }
     }
 
@@ -242,7 +245,7 @@ impl ClioApp {
             return;
         }
         self.session.evaluator_mut().reconfigure(
-            python::factory(effective.python_settings()),
+            python::factory(self.user.python_settings(&effective)),
             effective.eval_settings(),
         );
         self.applied = Some(effective);

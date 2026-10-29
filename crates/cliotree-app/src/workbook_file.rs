@@ -298,7 +298,7 @@ impl ClioApp {
         }
         let effective = calc.settings().effective(&prefs.ceilings);
         let evaluator = Evaluator::new(
-            python::factory(effective.python_settings()),
+            python::factory(self.user.python_settings(&effective)),
             effective.eval_settings(),
         );
         let mut fresh = ClioApp::build(Session::new(calc, evaluator), trusted);

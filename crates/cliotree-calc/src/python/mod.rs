@@ -12,6 +12,7 @@ mod jsonpath;
 mod modules;
 mod node;
 mod shared;
+mod sources;
 mod syntax;
 mod watchdog;
 mod xmlpath;
@@ -94,12 +95,18 @@ const REMOVED_BUILTINS: &[&str] = &[
 pub struct PythonSettings {
     /// The longest sequence `range` will make.
     pub max_range: i64,
+    /// The data source definitions of this user on this machine.
+    pub sources: crate::sources::SourceStore,
+    /// How long a call to a data source may wait.
+    pub source_timeout: Duration,
 }
 
 impl Default for PythonSettings {
     fn default() -> Self {
         PythonSettings {
             max_range: 1_000_000,
+            sources: crate::sources::SourceStore::in_memory(),
+            source_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -147,6 +154,8 @@ impl PythonEngine {
         let module = node::_cliotree::module_def(&builder.ctx);
         let interp = builder.add_native_module(module).build();
         let shared = Shared::new();
+        *shared.sources.borrow_mut() = settings.sources.clone();
+        shared.source_timeout.set(settings.source_timeout);
         let (globals, prelude) =
             interp.enter(|vm| set_up(vm, &shared, &settings).expect("the Python prelude runs"));
         PythonEngine {
@@ -468,6 +477,7 @@ impl Engine for PythonEngine {
             self.sync_sheets(vm, &*ctx);
             self.shared.begin(ctx.clone());
             *self.shared.writes.borrow_mut() = Some(Vec::new());
+            self.shared.side_effects.set(true);
             if let Some(limit) = call.time_limit {
                 self.watchdog.start(limit);
             }
@@ -476,6 +486,7 @@ impl Engine for PythonEngine {
                 self.watchdog.stop();
             }
             let writes = self.shared.writes.borrow_mut().take();
+            self.shared.side_effects.set(false);
             self.shared.end();
             result.map(|()| writes.unwrap_or_default())
         })
@@ -491,6 +502,7 @@ impl Engine for PythonEngine {
         self.interp.enter(|vm| {
             self.sync_sheets(vm, &*ctx);
             self.shared.begin(ctx.clone());
+            self.shared.side_effects.set(true);
             if let Some(limit) = limit {
                 self.watchdog.start(limit);
             }
@@ -510,6 +522,7 @@ impl Engine for PythonEngine {
             if limit.is_some() {
                 self.watchdog.stop();
             }
+            self.shared.side_effects.set(false);
             self.shared.end();
             result
         })
@@ -548,6 +561,12 @@ fn set_up(
     // The Excel-named functions run in the same namespace.
     let scope = Scope::with_builtins(None, prelude.clone(), vm);
     vm.run_string(scope, cliotree_std::PYTHON, "<cliotree std>")?;
+    // After the prelude, which imports `_cliotree` and so makes its types.
+    // The prelude only reads `_source_access` when a source is used.
+    let access = node::_cliotree::SourceAccess {
+        shared: shared.clone(),
+    };
+    prelude.set_item("_source_access", access.into_ref(&vm.ctx).into(), vm)?;
 
     let datetime = vm.import("datetime", 0)?;
     shared.set_classes(Classes {
@@ -559,6 +578,7 @@ fn set_up(
         datetime: datetime.get_attr("datetime", vm)?,
         timezone: datetime.get_attr("timezone", vm)?,
         timedelta: datetime.get_attr("timedelta", vm)?,
+        source_error: prelude.get_item("SourceError", vm)?,
     });
 
     // The builtins a formula sees: all of them, less a few.
@@ -594,6 +614,9 @@ fn set_up(
         "JSONPATH",
         "XMLPATH",
         "range",
+        "source",
+        "sources",
+        "SourceError",
     ]
     .iter()
     .chain(cliotree_std::NAMES)
@@ -638,3 +661,7 @@ mod tests_trust;
 #[cfg(test)]
 #[path = "tests_xml.rs"]
 mod tests_xml;
+
+#[cfg(test)]
+#[path = "tests_sources.rs"]
+mod tests_sources;

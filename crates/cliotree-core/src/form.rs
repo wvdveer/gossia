@@ -396,6 +396,10 @@ pub struct Control {
     pub editor: Option<Editor>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub read_only: bool,
+    /// For a field of a string: a password box, dots instead of the text.
+    /// Only what is shown changes; the value is stored as typed.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub masked: bool,
     /// For a group: the number of columns its children are arranged in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<u32>,
@@ -475,6 +479,7 @@ impl Control {
             text: None,
             editor: None,
             read_only: false,
+            masked: false,
             columns: None,
             mode: None,
             show: None,
@@ -646,6 +651,7 @@ pub fn form_schema_source() -> &'static str {
         "text": {"type": "string"},
         "editor": {"type": "string", "enum": ["auto", "text", "multiline"]},
         "read_only": {"type": "boolean"},
+        "masked": {"type": "boolean"},
         "columns": {"type": "integer", "minimum": 1, "maximum": 6},
         "mode": {"type": "string", "enum": ["table", "stacked"]},
         "show": {"type": "array", "items": {"type": "string"}},
@@ -1106,6 +1112,7 @@ mod tests {
         let mut design = generate(&spec());
         design.title = Some("Orders".into());
         design.controls[0].read_only = true;
+        design.controls[0].masked = true;
         design.controls[0].editor = Some(Editor::Multiline);
         design.controls[2].mode = Some(RepeaterMode::Stacked);
         design.controls[2].show = Some(vec!["sku".into()]);

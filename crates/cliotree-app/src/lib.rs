@@ -34,6 +34,7 @@ pub mod schema;
 #[cfg(test)]
 mod schema_tests;
 pub mod schema_view;
+pub mod sources_ui;
 pub mod status;
 pub mod style;
 pub mod tab_commands;

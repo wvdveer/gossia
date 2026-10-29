@@ -856,6 +856,11 @@ impl ClioApp {
                     let path = edited.bound_path()?;
                     Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
                 });
+                // A password box: only a string's text can be dots.
+                if matches!(kind, Some(Kind::String(_))) || edited.masked {
+                    ui.checkbox(&mut edited.masked, "Masked")
+                        .on_hover_text("Dots instead of the text, as in a password box");
+                }
                 if let Some(kind) = kind
                     && format_properties(
                         ui,
