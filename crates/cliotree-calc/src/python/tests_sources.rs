@@ -152,3 +152,177 @@ fn source_names_are_reserved() {
         assert!(crate::names::is_reserved(name), "{name}");
     }
 }
+
+#[test]
+fn a_formula_reads_an_http_source_and_a_failure_is_source() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("a", "source('Api').get('json').json()['total']");
+    b.formula(
+        "name",
+        "source('Api').get('echo', params={'q': 'x y', 'on': True}).text",
+    );
+    b.formula("note", "source('Api').get('missing').text");
+    b.formula("tags", "source('Api').get('page').json()");
+    b.formula("text", "source('Api').post('orders', json={'a': 1}).text");
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(42)));
+    assert_eq!(b.get("name"), Some(Value::Str("ok".into())));
+    assert!(
+        server
+            .received
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.target == "/v1/echo?q=x%20y&on=true")
+    );
+    assert_eq!(b.error("note"), Some(ErrorKind::Source));
+    assert!(b.message("note").contains("404"), "{}", b.message("note"));
+    // Text where JSON was expected says what came back.
+    let why = b.message("tags");
+    assert!(
+        why.contains("Api: GET page answered 200 OK") && why.contains("not JSON: ok"),
+        "{why}"
+    );
+    // A write is refused: the source does not allow writes.
+    assert_eq!(b.error("text"), Some(ErrorKind::Source));
+    assert!(
+        b.message("text").contains("Allow writes"),
+        "{}",
+        b.message("text")
+    );
+}
+
+#[test]
+fn a_write_needs_allow_writes_and_a_procedure_or_the_immediate_window() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    let mut def = crate::http::http_tests::api(&server.url);
+    def.writes = true;
+    store.save(def, None, false).unwrap();
+    // Not in a formula, even when writes are allowed.
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("text", "source('Api').post('orders', json={'a': 1}).text");
+    b.run();
+    assert!(
+        b.message("text").contains("button procedure"),
+        "{}",
+        b.message("text")
+    );
+    // In the Immediate window, with JSON and with a form.
+    let mut s = session(&store);
+    assert_eq!(
+        immediate(
+            &mut s,
+            "source('Api').post('orders', json={'a': [1, 2]}).status"
+        ),
+        Ok("200".to_owned())
+    );
+    let sent = server.last();
+    assert_eq!(sent.method, "POST");
+    assert_eq!(sent.body.replace(' ', ""), r#"{"a":[1,2]}"#);
+    assert_eq!(sent.header("content-type"), Some("application/json"));
+    assert_eq!(
+        immediate(
+            &mut s,
+            "source('Api').put('orders/1', data={'name': 'a&b'}).text"
+        ),
+        Ok("'ok'".to_owned())
+    );
+    let sent = server.last();
+    assert_eq!(
+        (sent.method.as_str(), sent.body.as_str()),
+        ("PUT", "name=a%26b")
+    );
+    assert_eq!(server.count(), 2);
+}
+
+#[test]
+fn waiting_for_a_source_does_not_count_against_the_formula_limit() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    // The server takes 1.5 s; the formula may run for 0.5 s.
+    b.engine.set_time_limit(Some(Duration::from_millis(500)));
+    b.formula("name", "source('Api').get('slow').text");
+    b.run();
+    assert_eq!(b.get("name"), Some(Value::Str("late".into())));
+}
+
+#[test]
+fn the_evaluation_thread_does_not_give_up_on_a_formula_that_waits_for_a_source() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut calc = Calc::new(std::sync::Arc::new(PythonSyntax));
+    calc.add_sheet(
+        "S",
+        jsonschema::lower_str(SCHEMA).unwrap(),
+        json::parse(r#"{"a": 1}"#).unwrap().node,
+    )
+    .unwrap();
+    let eval = EvalSettings {
+        formula_limit: Some(Duration::from_millis(300)),
+        grace: Duration::from_millis(200),
+        ..EvalSettings::default()
+    };
+    let mut s = Session::new(calc, Evaluator::new(super::factory(settings(&store)), eval));
+    s.calc_mut()
+        .set_formula(
+            "S",
+            &Path::root().key("a"),
+            "len(source('Api').get('slow').text)",
+        )
+        .unwrap();
+    assert!(s.wait_idle(Duration::from_secs(60)));
+    let a = s
+        .calc()
+        .data("S")
+        .unwrap()
+        .get(&Path::root().key("a"))
+        .map(|n| n.value().clone());
+    assert_eq!(a, Some(Value::Int(4)));
+    assert_eq!(s.evaluator().abandoned(), 0);
+}
+
+/// The owner's test case, through Python: see `http_tests::RANDOM_USER`.
+#[test]
+#[ignore = "uses the internet: randomuser.me"]
+fn a_formula_reads_randomuser_me() {
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::random_user(), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(PythonSettings {
+        source_timeout: Duration::from_secs(30),
+        ..settings(&store)
+    });
+    b.formula(
+        "a",
+        "len(source('RandomUser').get(params={'results': 2}).json()['results'])",
+    );
+    b.formula(
+        "name",
+        "source('RandomUser').get().json()['results'][0]['name']['first']",
+    );
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(2)));
+    assert!(
+        matches!(b.get("name"), Some(Value::Str(s)) if !s.is_empty()),
+        "{:?}",
+        b.get("name")
+    );
+}

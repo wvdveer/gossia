@@ -191,6 +191,12 @@ impl ClioApp {
     /// The Immediate window: what was typed and what it came to, and the line
     /// to type in.
     pub(crate) fn immediate_pane(&mut self, ui: &mut egui::Ui) {
+        // The panel takes the height of what it draws. The output's height
+        // below rests on an estimate of the input line's, and when what was
+        // drawn came out shorter the panel shrank a little at every redraw
+        // (moving the pointer over it was enough). Claiming the whole height
+        // first keeps it at the size the user gave it.
+        ui.set_min_height(ui.available_height());
         let trusted = self.calc().is_trusted();
         let (sheet, path) = self.immediate_place();
         let here = if path.is_root() {

@@ -8,6 +8,7 @@
 //! change the file, so every read goes to the file and every change reads it
 //! again first. What a newer version wrote and this one does not know is kept.
 
+use std::cell::RefCell;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -665,16 +666,83 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
                 Err(e) => TestOutcome::failed(format!("{path} cannot be opened: {e}")),
             }
         }
-        SourceKind::Http => {
-            let url = filled(&def.url).unwrap_or_default();
-            let (host, port) = http_host_port(url).expect("checked by problems");
-            reach(&host, port, timeout, start)
-        }
+        SourceKind::Http => crate::http::test(def, timeout),
         SourceKind::Postgres | SourceKind::Mariadb => {
             let host = filled(&def.host).unwrap_or_default().to_owned();
             let port = def.port.or(def.kind.default_port()).unwrap_or(0);
             reach(&host, port, timeout, start)
         }
+    }
+}
+
+/// Time spent waiting for a data source, which does not count against the
+/// time limit of the formula or procedure that waits (DESIGN.md, "Data
+/// sources", "Limits"). The evaluation thread gives each of its threads one,
+/// and reads it when it decides whether a formula is stuck.
+#[derive(Debug, Default)]
+pub struct IoClock {
+    /// When the wait now going on began.
+    since: Mutex<Option<Instant>>,
+    /// The waits of the current formula that are over.
+    spent: Mutex<Duration>,
+}
+
+impl IoClock {
+    /// A new formula: nothing waited yet.
+    pub fn reset(&self) {
+        *self.since.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.spent.lock().unwrap_or_else(|e| e.into_inner()) = Duration::ZERO;
+    }
+
+    /// The time waited so far by the current formula, the wait going on
+    /// included.
+    pub fn waited(&self) -> Duration {
+        let spent = *self.spent.lock().unwrap_or_else(|e| e.into_inner());
+        let now = self
+            .since
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .map(|s| s.elapsed())
+            .unwrap_or_default();
+        spent + now
+    }
+}
+
+thread_local! {
+    static IO_CLOCK: RefCell<Option<Arc<IoClock>>> = const { RefCell::new(None) };
+}
+
+/// Gives this thread the clock its waits are counted on.
+pub fn set_io_clock(clock: Arc<IoClock>) {
+    IO_CLOCK.with(|c| *c.borrow_mut() = Some(clock));
+}
+
+/// A wait for a data source, while it lasts.
+pub struct Waiting {
+    started: Instant,
+}
+
+impl Waiting {
+    pub fn begin() -> Waiting {
+        let started = Instant::now();
+        IO_CLOCK.with(|c| {
+            if let Some(clock) = c.borrow().as_ref() {
+                *clock.since.lock().unwrap_or_else(|e| e.into_inner()) = Some(started);
+            }
+        });
+        Waiting { started }
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        let took = self.started.elapsed();
+        IO_CLOCK.with(|c| {
+            if let Some(clock) = c.borrow().as_ref() {
+                *clock.since.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                *clock.spent.lock().unwrap_or_else(|e| e.into_inner()) += took;
+            }
+        });
     }
 }
 

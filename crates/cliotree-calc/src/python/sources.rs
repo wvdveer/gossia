@@ -8,7 +8,8 @@
 use serde_json::{Map, Value as Json, json};
 
 use super::shared::Shared;
-use crate::sources::{SourceDef, test};
+use crate::http::{self, HttpRequest, Limits};
+use crate::sources::{SourceDef, SourceKind, test};
 
 /// Runs one request and gives the reply as JSON text.
 pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
@@ -60,8 +61,125 @@ fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
                 }
             })
         }
+        "http" => call_http(shared, payload),
         _ => Err(format!("{op} is not a request the data sources know")),
     }
+}
+
+/// `source(name).get(...)` and the other methods.
+fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
+    let store = shared.sources.borrow().clone();
+    let name = payload["name"].as_str().unwrap_or_default();
+    let def = store.get(name)?.ok_or_else(|| missing(name))?;
+    if def.kind != SourceKind::Http {
+        return Err(format!(
+            "{name} is a {} source: it is read with query(), not with HTTP methods",
+            def.kind.label()
+        ));
+    }
+    let method = payload["method"]
+        .as_str()
+        .unwrap_or("GET")
+        .to_ascii_uppercase();
+    if method != "GET" {
+        if !def.writes {
+            return Err(format!(
+                "{name} does not allow writes, so {method} is refused: tick Allow writes in its \
+                 definition (Tools > Data sources...)"
+            ));
+        }
+        if !shared.side_effects.get() {
+            return Err(format!(
+                "{method} changes data, so it can be used only in a button procedure or the \
+                 Immediate window, not in a formula"
+            ));
+        }
+    }
+    let pairs = |value: &Json| -> Vec<(String, String)> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|pair| {
+                        Some((
+                            pair.get(0)?.as_str()?.to_owned(),
+                            pair.get(1)?.as_str()?.to_owned(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut headers = pairs(&payload["headers"]);
+    let form = pairs(&payload["form"]);
+    let body = match (&payload["body"], form.is_empty()) {
+        (Json::String(text), _) => Some(text.clone().into_bytes()),
+        (_, false) => {
+            if !headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            {
+                headers.push((
+                    "Content-Type".to_owned(),
+                    "application/x-www-form-urlencoded".to_owned(),
+                ));
+            }
+            let encoded: Vec<String> = form
+                .iter()
+                .map(|(k, v)| format!("{}={}", http::escape(k), http::escape(v)))
+                .collect();
+            Some(encoded.join("&").into_bytes())
+        }
+        _ => None,
+    };
+    let path = payload["path"].as_str().unwrap_or_default().to_owned();
+    let request = HttpRequest {
+        method: method.clone(),
+        path: path.clone(),
+        params: pairs(&payload["params"]),
+        headers,
+        body,
+    };
+    let limits = Limits {
+        timeout: shared.source_timeout.get(),
+        max_bytes: shared.max_response.get(),
+    };
+    // Waiting for the server does not count against the formula's limit.
+    let watchdog = shared.watchdog.borrow().clone();
+    let left = watchdog.as_ref().and_then(|w| w.pause());
+    let response = http::send(&def, &request, limits);
+    if let Some(w) = &watchdog {
+        w.resume(left);
+    }
+    let response = response.map_err(|e| format!("{name}: {e}"))?;
+    let text = String::from_utf8_lossy(&response.body).into_owned();
+    if response.status >= 400 {
+        let mut excerpt: String = text.chars().take(200).collect();
+        if excerpt.len() < text.len() {
+            excerpt.push_str("...");
+        }
+        let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+        let excerpt = match excerpt.is_empty() {
+            true => String::new(),
+            false => format!(": {excerpt}"),
+        };
+        return Err(format!(
+            "{name}: {method} {path} answered {} {}{excerpt}",
+            response.status, response.reason
+        ));
+    }
+    let headers: Map<String, Json> = response
+        .headers
+        .into_iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), Json::String(v)))
+        .collect();
+    Ok(json!({
+        "status": response.status,
+        "reason": response.reason,
+        "headers": headers,
+        "text": text,
+    }))
 }
 
 /// What `source(name)` shows of a definition: never its secrets.

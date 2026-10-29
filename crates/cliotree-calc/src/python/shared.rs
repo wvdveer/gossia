@@ -52,6 +52,10 @@ pub(super) struct Shared {
     pub sources: RefCell<SourceStore>,
     /// How long a call to a data source may wait.
     pub source_timeout: Cell<std::time::Duration>,
+    /// The largest response a data source may give, in bytes.
+    pub max_response: Cell<u64>,
+    /// The formula's time limit, which stops while it waits for a source.
+    pub watchdog: RefCell<Option<Rc<super::watchdog::Watchdog>>>,
     /// Whether what runs may change things outside the workbook or wait: a
     /// button procedure or the Immediate window, not a formula.
     pub side_effects: Cell<bool>,
@@ -76,6 +80,8 @@ impl Shared {
             writes: RefCell::new(None),
             sources: RefCell::new(SourceStore::in_memory()),
             source_timeout: Cell::new(std::time::Duration::from_secs(30)),
+            max_response: Cell::new(16 << 20),
+            watchdog: RefCell::new(None),
             side_effects: Cell::new(false),
         })
     }

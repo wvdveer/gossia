@@ -14,6 +14,7 @@ mod eval;
 pub mod fake;
 mod forms;
 mod history;
+pub mod http;
 mod model;
 pub mod names;
 pub mod python;

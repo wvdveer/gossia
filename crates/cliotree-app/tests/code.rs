@@ -463,3 +463,20 @@ fn the_immediate_window_shows_a_result_and_recalls_what_was_typed() {
         "The Immediate window runs Python, so it works once the workbook is trusted.",
     );
 }
+
+/// Moving the pointer over the Immediate window redraws it, and it kept
+/// shrinking a little at each redraw: its height is the user's to set.
+#[test]
+fn the_immediate_window_keeps_its_height_while_the_pointer_moves_over_it() {
+    let mut harness = window_with(&[("Tax", TAX)]);
+    open_editor(&mut harness);
+    let top = |h: &Harness<'_, ClioApp>| h.get_by_label("Immediate").rect().top();
+    let before = top(&harness);
+    for _ in 0..30 {
+        harness.get_by_label("Immediate expression").hover();
+        harness.run();
+        harness.get_by_label("Immediate").hover();
+        harness.run();
+    }
+    assert_eq!(top(&harness), before);
+}

@@ -31,6 +31,8 @@ pub(super) struct Watchdog {
     /// The evaluation that is allowed to be interrupted, or 0.
     armed: Arc<AtomicU64>,
     next: std::cell::Cell<u64>,
+    /// When the allowance running now ends.
+    deadline: std::cell::Cell<Option<Instant>>,
 }
 
 impl Watchdog {
@@ -82,6 +84,7 @@ impl Watchdog {
             messages,
             armed,
             next: std::cell::Cell::new(1),
+            deadline: std::cell::Cell::new(None),
         }
     }
 
@@ -90,15 +93,35 @@ impl Watchdog {
         let id = self.next.get();
         self.next.set(id + 1);
         self.armed.store(id, Ordering::SeqCst);
-        let _ = self.messages.send(Message::Start {
-            id,
-            deadline: Instant::now() + limit,
-        });
+        let deadline = Instant::now() + limit;
+        self.deadline.set(Some(deadline));
+        let _ = self.messages.send(Message::Start { id, deadline });
     }
 
     /// Ends the allowance, so that a signal still on its way does nothing.
     pub fn stop(&self) {
+        self.deadline.set(None);
         self.armed.store(0, Ordering::SeqCst);
         let _ = self.messages.send(Message::Stop);
+    }
+
+    /// Stops the clock while the formula waits for a data source, which does
+    /// not count against its limit. Gives what was left, for [`resume`].
+    pub fn pause(&self) -> Option<Duration> {
+        let left = self
+            .deadline
+            .get()
+            .map(|d| d.saturating_duration_since(Instant::now()));
+        if left.is_some() {
+            self.stop();
+        }
+        left
+    }
+
+    /// Starts the clock again with what was left when it was paused.
+    pub fn resume(&self, left: Option<Duration>) {
+        if let Some(left) = left {
+            self.start(left);
+        }
     }
 }

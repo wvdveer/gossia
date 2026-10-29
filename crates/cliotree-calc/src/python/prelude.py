@@ -188,6 +188,101 @@ class Source:
     def __repr__(self):
         return '<Source %s: %s>' % (self.name, self.target)
 
+    def get(self, path='', params=None, headers=None):
+        """An HTTP source: `GET` of `path` below its base URL. A formula may
+        use it; its result refreshes when the formula runs again (F9)."""
+        return self._http('GET', path, params, headers, None, None)
+
+    def post(self, path='', json=None, data=None, params=None, headers=None):
+        """`POST` to an HTTP source that allows writes, from a button
+        procedure or the Immediate window. `json` is sent as JSON, `data` as
+        text, or as a form when it is a dict."""
+        return self._http('POST', path, params, headers, json, data)
+
+    def put(self, path='', json=None, data=None, params=None, headers=None):
+        return self._http('PUT', path, params, headers, json, data)
+
+    def patch(self, path='', json=None, data=None, params=None, headers=None):
+        return self._http('PATCH', path, params, headers, json, data)
+
+    def delete(self, path='', params=None, headers=None):
+        return self._http('DELETE', path, params, headers, None, None)
+
+    def _http(self, method, path, params, headers, json_body, data):
+        if not isinstance(path, str):
+            raise TypeError('the path of a request is text, below the base URL')
+        payload = {
+            'name': self.name,
+            'method': method,
+            'path': path,
+            'params': _pairs(params),
+            'headers': _pairs(headers),
+        }
+        if json_body is not None:
+            payload['body'] = _json.dumps(PLAIN(json_body))
+            if not any(k.lower() == 'content-type' for k, _ in payload['headers']):
+                payload['headers'].append(['Content-Type', 'application/json'])
+        elif isinstance(data, dict):
+            payload['form'] = _pairs(data)
+        elif data is not None:
+            payload['body'] = str(data)
+        what = '%s: %s %s' % (self.name, method, path or '(the base URL)')
+        return Response(_source_call('http', payload), what)
+
+
+def _text(value):
+    if value is True:
+        return 'true'
+    if value is False:
+        return 'false'
+    return str(PLAIN(value))
+
+
+def _pairs(mapping):
+    """A dict (or a list of pairs) as a list of [name, text] pairs; a list as
+    a value repeats the name."""
+    if mapping is None:
+        return []
+    items = mapping.items() if hasattr(mapping, 'items') else mapping
+    pairs = []
+    for name, value in items:
+        if isinstance(value, (list, tuple)):
+            pairs.extend([str(name), _text(v)] for v in value)
+        elif value is not None:
+            pairs.append([str(name), _text(value)])
+    return pairs
+
+
+class Response:
+    """What an HTTP source answered: `status`, `reason`, `headers` (a dict
+    with lower-case names), `text`, and `json()`. A status of 400 or more is
+    not a response but a `SourceError`, which is `#SOURCE!` in a formula."""
+
+    def __init__(self, reply, what=''):
+        self._what = what
+        self.status = reply['status']
+        self.reason = reply['reason']
+        self.headers = reply['headers']
+        self.text = reply['text']
+
+    def json(self):
+        try:
+            return _json.loads(self.text)
+        except ValueError:
+            pass
+        # Say what came back, so that a page where JSON was expected (a base
+        # URL that is the site rather than its API) is plain to see.
+        kind = self.headers.get('content-type', 'no content type')
+        start = ' '.join(self.text[:80].split())
+        if len(self.text) > 80:
+            start += '...'
+        shown = ': ' + start if start else ', and it is empty'
+        raise SourceError('%s answered %s %s with %s, not JSON%s' % (
+            self._what, self.status, self.reason, kind, shown))
+
+    def __repr__(self):
+        return '<Response %s %s>' % (self.status, self.reason)
+
 
 def source(name):
     """The data source called `name` on this computer. One that is not

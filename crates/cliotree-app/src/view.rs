@@ -203,6 +203,10 @@ impl ClioApp {
         if ui.input_mut(|i| i.consume_shortcut(&code_editor)) {
             self.open_code_editor();
         }
+        let recalculate = KeyboardShortcut::new(Modifiers::NONE, Key::F9);
+        if ui.input_mut(|i| i.consume_shortcut(&recalculate)) {
+            self.recalculate();
+        }
         if ui.input_mut(|i| i.consume_shortcut(&save_as)) {
             self.begin_save_as();
         } else if ui.input_mut(|i| i.consume_shortcut(&save)) {
@@ -409,6 +413,15 @@ impl ClioApp {
                 }
             });
             ui.menu_button("Tools", |ui| {
+                if ui
+                    .add(egui::Button::new("Recalculate").shortcut_text("F9"))
+                    .on_hover_text("Run every formula again, reading the data sources afresh")
+                    .clicked()
+                {
+                    self.recalculate();
+                    ui.close();
+                }
+                ui.separator();
                 if ui
                     .add(egui::Button::new("Code editor").shortcut_text("Alt+F11"))
                     .clicked()

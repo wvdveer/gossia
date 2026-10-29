@@ -153,3 +153,79 @@ fn a_definition_is_deleted_after_asking() {
     click(&mut harness, "Close");
     assert!(harness.state().sources_panel.is_none());
 }
+
+/// A server that answers each request with how many it has had.
+fn counting_server() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for (n, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { break };
+            let mut buffer = [0; 4096];
+            let _ = stream.read(&mut buffer);
+            let text = format!("call {}", n + 1);
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                text.len()
+            );
+            let _ = stream.write_all(reply.as_bytes());
+        }
+    });
+    url
+}
+
+fn settle(harness: &mut Harness<'_, ClioApp>) {
+    assert!(
+        harness
+            .state_mut()
+            .session
+            .wait_idle(Duration::from_secs(60))
+    );
+    harness.run();
+}
+
+#[test]
+fn f9_runs_the_formulas_again_and_they_read_the_source_afresh() {
+    let mut harness = window();
+    let mut def = SourceDef::new("Api", SourceKind::Http);
+    def.url = Some(counting_server());
+    harness.state().user.sources.save(def, None, false).unwrap();
+    let path: cliotree_core::Path = "customer.name".parse().unwrap();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula("Orders", &path, "source('Api').get('n').text")
+        .unwrap();
+    settle(&mut harness);
+    let name = |h: &Harness<'_, ClioApp>| {
+        h.state()
+            .calc()
+            .data("Orders")
+            .unwrap()
+            .get(&path)
+            .map(|n| n.value().clone())
+    };
+    assert_eq!(
+        name(&harness),
+        Some(cliotree_core::Value::Str("call 1".into()))
+    );
+    harness.key_press(Key::F9);
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(
+        name(&harness),
+        Some(cliotree_core::Value::Str("call 2".into()))
+    );
+    // And from the menu.
+    click(&mut harness, "Tools");
+    // The item's label has its shortcut with it.
+    harness.get_by_label_contains("Recalculate").click();
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(
+        name(&harness),
+        Some(cliotree_core::Value::Str("call 3".into()))
+    );
+}

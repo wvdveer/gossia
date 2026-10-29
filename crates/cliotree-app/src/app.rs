@@ -139,12 +139,16 @@ pub struct ClioApp {
 impl ClioApp {
     /// An application showing `calc`, evaluated by the Python engine.
     pub fn new(calc: Calc) -> ClioApp {
+        let user = crate::prefs::User::in_memory();
         let effective = calc.settings().effective(&Ceilings::default());
         let evaluator = Evaluator::new(
-            python::factory(effective.python_settings()),
+            python::factory(user.python_settings(&effective)),
             effective.eval_settings(),
         );
-        ClioApp::with_session(Session::new(calc, evaluator))
+        let mut app = ClioApp::with_session(Session::new(calc, evaluator));
+        // The engine already has this user's data sources.
+        app.user = user;
+        app
     }
 
     /// The window for a session whose evaluator is the caller's: it is kept
@@ -253,6 +257,21 @@ impl ClioApp {
 
     pub fn calc(&self) -> &Calc {
         self.session.calc()
+    }
+
+    /// *Tools > Recalculate* (F9): every formula runs again, so that those
+    /// reading a data source read it afresh (DESIGN.md, "Volatile
+    /// functions"). An untrusted workbook runs nothing, and says so.
+    pub fn recalculate(&mut self) {
+        if !self.calc().is_trusted() {
+            self.notice = Some(
+                "This workbook is not trusted, so its formulas are not run. Trust it first to \
+                 recalculate."
+                    .to_owned(),
+            );
+            return;
+        }
+        self.session.calc_mut().recalc_all();
     }
 
     // ----------------------------------------------------------- the rows

@@ -102,6 +102,9 @@ enum Done {
 #[derive(Default)]
 struct Progress {
     current: Mutex<Option<(Loc, Instant)>>,
+    /// Time the current formula spent waiting for data sources, which does
+    /// not count against its limit.
+    io: Arc<crate::sources::IoClock>,
 }
 
 struct PassHooks {
@@ -115,6 +118,7 @@ impl Hooks for PassHooks {
             return false;
         }
         if let Ok(mut current) = self.progress.current.lock() {
+            self.progress.io.reset();
             *current = Some((loc.clone(), Instant::now()));
         }
         true
@@ -384,7 +388,9 @@ impl Evaluator {
         let stuck = match worker.progress.current.lock() {
             Ok(current) => current
                 .as_ref()
-                .filter(|(_, since)| since.elapsed() > patience)
+                .filter(|(_, since)| {
+                    since.elapsed().saturating_sub(worker.progress.io.waited()) > patience
+                })
                 .map(|(loc, _)| loc.clone()),
             Err(_) => None,
         };
@@ -456,6 +462,7 @@ impl Evaluator {
             .name("cliotree-evaluation".to_owned())
             .stack_size(settings.stack_size)
             .spawn(move || {
+                crate::sources::set_io_clock(Arc::clone(&watched.io));
                 let engine = factory();
                 engine.set_time_limit(settings.formula_limit);
                 while let Ok(job) = jobs_rx.recv() {
@@ -469,6 +476,7 @@ impl Evaluator {
                         }
                         Job::Call { snapshot, call } => {
                             if let Ok(mut current) = watched.current.lock() {
+                                watched.io.reset();
                                 *current = Some((
                                     Loc::new(call.sheet.clone(), cliotree_core::Path::root()),
                                     Instant::now(),
@@ -481,6 +489,7 @@ impl Evaluator {
                             immediate,
                         } => {
                             if let Ok(mut current) = watched.current.lock() {
+                                watched.io.reset();
                                 *current = Some((
                                     Loc::new(immediate.sheet.clone(), immediate.path.clone()),
                                     Instant::now(),

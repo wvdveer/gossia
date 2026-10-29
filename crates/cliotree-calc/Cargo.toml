@@ -21,6 +21,9 @@ ruff_python_parser = { package = "rustpython-ruff_python_parser", path = "../../
 ruff_source_file = { package = "rustpython-ruff_source_file", path = "../../vendor/ruff/crates/ruff_source_file" }
 ruff_text_size = { package = "rustpython-ruff_text_size", path = "../../vendor/ruff/crates/ruff_text_size" }
 sha2 = "0.11.1"
+# HTTP/HTTPS data sources (DESIGN.md, "Data sources"): blocking, rustls, and
+# the operating system's certificate store through the platform verifier.
+ureq = { version = "3.5.0", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
 

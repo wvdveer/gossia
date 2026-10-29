@@ -99,6 +99,8 @@ pub struct PythonSettings {
     pub sources: crate::sources::SourceStore,
     /// How long a call to a data source may wait.
     pub source_timeout: Duration,
+    /// The largest response a data source may give, in bytes.
+    pub max_response: u64,
 }
 
 impl Default for PythonSettings {
@@ -107,6 +109,7 @@ impl Default for PythonSettings {
             max_range: 1_000_000,
             sources: crate::sources::SourceStore::in_memory(),
             source_timeout: Duration::from_secs(30),
+            max_response: 16 << 20,
         }
     }
 }
@@ -129,7 +132,7 @@ pub struct PythonEngine {
     /// The names of the tabs, as of the last time the modules were loaded.
     tabs: RefCell<Vec<String>>,
     evaluations: Cell<usize>,
-    watchdog: Watchdog,
+    watchdog: Rc<Watchdog>,
     time_limit: Cell<Option<Duration>>,
     // Last, so that it is dropped after everything that lives in it.
     interp: Interpreter,
@@ -156,6 +159,9 @@ impl PythonEngine {
         let shared = Shared::new();
         *shared.sources.borrow_mut() = settings.sources.clone();
         shared.source_timeout.set(settings.source_timeout);
+        shared.max_response.set(settings.max_response);
+        let watchdog = Rc::new(Watchdog::new(signals));
+        *shared.watchdog.borrow_mut() = Some(Rc::clone(&watchdog));
         let (globals, prelude) =
             interp.enter(|vm| set_up(vm, &shared, &settings).expect("the Python prelude runs"));
         PythonEngine {
@@ -168,7 +174,7 @@ impl PythonEngine {
             provided: RefCell::new(HashMap::new()),
             tabs: RefCell::new(Vec::new()),
             evaluations: Cell::new(0),
-            watchdog: Watchdog::new(signals),
+            watchdog,
             time_limit: Cell::new(None),
             interp,
         }
