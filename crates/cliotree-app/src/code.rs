@@ -102,6 +102,8 @@ pub struct CodeEditor {
     /// Whether the window was drawn in the last frame. A window's first frame
     /// only measures it, and a text box in it cannot take the focus yet.
     pub(crate) drawn: bool,
+    /// The theme the window's title bar was last given.
+    title_theme: Option<crate::prefs::ThemeChoice>,
     /// How long typing pauses before it goes to the workbook: [`PAUSE`],
     /// longer in tests, whose clock runs fast.
     pub pause: f64,
@@ -124,6 +126,7 @@ impl Default for CodeEditor {
             forms_seen: 0,
             focus: false,
             drawn: false,
+            title_theme: None,
             pause: PAUSE,
         }
     }
@@ -416,6 +419,7 @@ impl ClioApp {
     pub(crate) fn code_window(&mut self, ctx: &egui::Context) {
         if !self.code.open {
             self.code.drawn = false;
+            self.code.title_theme = None;
             return;
         }
         if self.code.has_typing() {
@@ -443,6 +447,15 @@ impl ClioApp {
         }
         if std::mem::take(&mut self.code.focus) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        // Its title bar follows the theme of the application, as the main
+        // window's does (`apply_appearance`).
+        let theme = self.appearance().theme;
+        if self.code.title_theme != Some(theme) {
+            self.code.title_theme = Some(theme);
+            if class != ViewportClass::EmbeddedWindow {
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(theme.window_theme()));
+            }
         }
         self.code_keys(ui);
         if !self.code.open {

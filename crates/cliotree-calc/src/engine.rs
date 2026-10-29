@@ -270,6 +270,11 @@ pub trait Engine {
         ))
     }
 
+    /// Starts a recalculation pass. What a formula read from a data source
+    /// during the previous pass is forgotten, so that the pass reads it again
+    /// (DESIGN.md, "Data sources": reads are cached for one pass).
+    fn begin_pass(&self) {}
+
     /// Makes the engine's modules the ones given: loads those that are new or
     /// have changed (and those that use them), in the order their imports
     /// need, and takes away those that are gone. Called between evaluations,

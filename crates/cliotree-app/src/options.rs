@@ -598,6 +598,12 @@ impl ClioApp {
                 ThemeChoice::Light => egui::ThemePreference::Light,
                 ThemeChoice::Dark => egui::ThemePreference::Dark,
             });
+            // The title bar is drawn by the system: tell it the theme too, or
+            // a dark window keeps a light title bar under a light system.
+            ctx.send_viewport_cmd_to(
+                egui::ViewportId::ROOT,
+                egui::ViewportCommand::SetTheme(want.theme.window_theme()),
+            );
         }
         if want.scale_percent != before.scale_percent {
             ctx.set_zoom_factor(want.scale_percent as f32 / 100.0);

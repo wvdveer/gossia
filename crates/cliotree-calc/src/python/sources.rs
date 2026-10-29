@@ -16,7 +16,7 @@ use crate::{database, sqlite};
 /// Runs one request and gives the reply as JSON text.
 pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
     let reply = match serde_json::from_str::<Json>(payload) {
-        Ok(payload) => run(shared, op, &payload),
+        Ok(payload) => cached(shared, op, &payload),
         Err(e) => Err(format!("a request to the data sources did not parse: {e}")),
     };
     match reply {
@@ -24,6 +24,29 @@ pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
         Err(message) => json!({ "error": message }),
     }
     .to_string()
+}
+
+/// Runs a request, from the pass's cache when it is a read made by a formula
+/// or a control's expression: a `query`, or an HTTP `GET`. Procedures and the
+/// Immediate window always read afresh, and leave the cache as it is.
+fn cached(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
+    let read = match op {
+        "query" => true,
+        "http" => payload["method"]
+            .as_str()
+            .is_none_or(|m| m.eq_ignore_ascii_case("GET")),
+        _ => false,
+    };
+    if !read || shared.side_effects.get() {
+        return run(shared, op, payload);
+    }
+    let key = format!("{op} {payload}");
+    if let Some(reply) = shared.source_reads.borrow().get(&key) {
+        return reply.clone();
+    }
+    let reply = run(shared, op, payload);
+    shared.source_reads.borrow_mut().insert(key, reply.clone());
+    reply
 }
 
 fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {

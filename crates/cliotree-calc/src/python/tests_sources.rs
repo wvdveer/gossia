@@ -199,6 +199,46 @@ fn a_formula_reads_an_http_source_and_a_failure_is_source() {
 }
 
 #[test]
+fn a_read_is_made_once_per_pass_and_again_on_the_next() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    // The same read in two formulas, and a failing one twice: one request each.
+    b.formula("a", "source('Api').get('json').json()['total']");
+    b.formula("name", "str(source('Api').get('json').json()['items'])");
+    b.formula("note", "source('Api').get('missing').text");
+    b.formula("text", "source('Api').get('missing').text");
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(42)));
+    assert_eq!(b.get("name"), Some(Value::Str("[1, 2]".into())));
+    assert_eq!(b.error("text"), Some(ErrorKind::Source));
+    assert_eq!(server.count(), 2);
+    // Other parameters are another read.
+    b.formula("text", "source('Api').get('json', params={'p': 2}).text");
+    b.run();
+    assert!(matches!(b.get("text"), Some(Value::Str(t)) if t.contains("42")));
+    assert_eq!(server.count(), 3);
+    // Recalculate (F9) is a new pass, which reads everything again.
+    b.calc.recalc_all();
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(42)));
+    assert_eq!(server.count(), 6);
+    // The Immediate window always reads afresh.
+    let mut s = session(&store);
+    for _ in 0..2 {
+        assert_eq!(
+            immediate(&mut s, "source('Api').get('json').status"),
+            Ok("200".to_owned())
+        );
+    }
+    assert_eq!(server.count(), 8);
+}
+
+#[test]
 fn a_write_needs_allow_writes_and_a_procedure_or_the_immediate_window() {
     let server = crate::http::http_tests::Server::start();
     let store = SourceStore::in_memory();

@@ -508,3 +508,13 @@ fn the_display_page_sets_the_data_views_and_the_editing_page_the_formula_bar() {
     assert_eq!(app.user.prefs.display.density, Density::Comfortable);
     assert_eq!(app.user.prefs.display.indent, 8);
 }
+
+#[test]
+fn the_title_bar_takes_the_chosen_theme() {
+    assert_eq!(ThemeChoice::Dark.window_theme(), egui::SystemTheme::Dark);
+    assert_eq!(ThemeChoice::Light.window_theme(), egui::SystemTheme::Light);
+    assert_eq!(
+        ThemeChoice::System.window_theme(),
+        egui::SystemTheme::SystemDefault
+    );
+}

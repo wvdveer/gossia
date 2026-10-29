@@ -478,6 +478,10 @@ impl Engine for PythonEngine {
         self.load_modules(specs, tabs)
     }
 
+    fn begin_pass(&self) {
+        self.shared.source_reads.borrow_mut().clear();
+    }
+
     fn call(&self, call: &Call, ctx: Rc<dyn Context>) -> Result<Vec<Write>, Failure> {
         self.interp.enter(|vm| {
             self.sync_sheets(vm, &*ctx);

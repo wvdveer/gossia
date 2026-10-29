@@ -193,6 +193,7 @@ impl Snapshot {
         // Modules are loaded between evaluations, never during one.
         let tabs: Vec<String> = self.sheets.keys().cloned().collect();
         let modules = engine.sync_modules(&self.modules, &tabs);
+        engine.begin_pass();
         let mut run = Run {
             engine,
             hooks,

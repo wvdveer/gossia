@@ -59,6 +59,10 @@ pub(super) struct Shared {
     /// Whether what runs may change things outside the workbook or wait: a
     /// button procedure or the Immediate window, not a formula.
     pub side_effects: Cell<bool>,
+    /// What formulas read from data sources during this recalculation pass,
+    /// by request (op and payload), errors included: the same read in two
+    /// formulas, or twice in one, reaches the source once per pass.
+    pub source_reads: RefCell<std::collections::HashMap<String, Result<serde_json::Value, String>>>,
 }
 
 impl fmt::Debug for Shared {
@@ -83,6 +87,7 @@ impl Shared {
             max_response: Cell::new(16 << 20),
             watchdog: RefCell::new(None),
             side_effects: Cell::new(false),
+            source_reads: RefCell::new(std::collections::HashMap::new()),
         })
     }
 
