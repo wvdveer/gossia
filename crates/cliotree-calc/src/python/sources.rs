@@ -1,6 +1,7 @@
 //! What Python reaches the data source definitions through (DESIGN.md, "Data
-//! sources"): `source(name)`, `sources.define(...)` and `sources.check(name)`
-//! in the prelude call one native function, `_source_access(op, payload)`,
+//! sources"): `source(name)` with its HTTP methods, `query` and `execute`,
+//! `sources.define(...)` and `sources.check(name)` in the prelude call one
+//! native function, `_source_access(op, payload)`,
 //! with JSON text both ways. The reply is `{"ok": ...}` or `{"error": "..."}`,
 //! and the prelude raises `SourceError` for the latter, which a formula shows
 //! as `#SOURCE!`.
@@ -10,6 +11,7 @@ use serde_json::{Map, Value as Json, json};
 use super::shared::Shared;
 use crate::http::{self, HttpRequest, Limits};
 use crate::sources::{SourceDef, SourceKind, test};
+use crate::sqlite;
 
 /// Runs one request and gives the reply as JSON text.
 pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
@@ -62,6 +64,7 @@ fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
             })
         }
         "http" => call_http(shared, payload),
+        "query" | "execute" => call_sql(shared, op, payload),
         _ => Err(format!("{op} is not a request the data sources know")),
     }
 }
@@ -145,14 +148,8 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
         timeout: shared.source_timeout.get(),
         max_bytes: shared.max_response.get(),
     };
-    // Waiting for the server does not count against the formula's limit.
-    let watchdog = shared.watchdog.borrow().clone();
-    let left = watchdog.as_ref().and_then(|w| w.pause());
-    let response = http::send(&def, &request, limits);
-    if let Some(w) = &watchdog {
-        w.resume(left);
-    }
-    let response = response.map_err(|e| format!("{name}: {e}"))?;
+    let response = unwatched(shared, || http::send(&def, &request, limits))
+        .map_err(|e| format!("{name}: {e}"))?;
     let text = String::from_utf8_lossy(&response.body).into_owned();
     if response.status >= 400 {
         let mut excerpt: String = text.chars().take(200).collect();
@@ -180,6 +177,68 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
         "headers": headers,
         "text": text,
     }))
+}
+
+/// `source(name).query(sql, params)` and `.execute(sql, params)`.
+fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
+    let store = shared.sources.borrow().clone();
+    let name = payload["name"].as_str().unwrap_or_default();
+    let def = store.get(name)?.ok_or_else(|| missing(name))?;
+    match def.kind {
+        SourceKind::Sqlite => {}
+        SourceKind::Http => {
+            return Err(format!(
+                "{name} is an HTTP source: it is read with get(), not with {op}()"
+            ));
+        }
+        SourceKind::Postgres | SourceKind::Mariadb => {
+            return Err(format!(
+                "{name} is a {} source, and those cannot be queried in this version yet",
+                def.kind.label()
+            ));
+        }
+    }
+    let sql = payload["sql"].as_str().unwrap_or_default();
+    let params = &payload["params"];
+    let limits = Limits {
+        timeout: shared.source_timeout.get(),
+        max_bytes: shared.max_response.get(),
+    };
+    if op == "query" {
+        // A formula always reads through a read-only connection, even from a
+        // source that allows writes.
+        let writable = def.writes && shared.side_effects.get();
+        return unwatched(shared, || {
+            sqlite::query(&def, sql, params, limits, writable)
+        });
+    }
+    if !def.writes {
+        return Err(format!(
+            "{name} does not allow writes, so execute() is refused: tick Allow writes in its \
+             definition (Tools > Data sources...)"
+        ));
+    }
+    if !shared.side_effects.get() {
+        return Err(
+            "execute() changes data, so it can be used only in a button procedure or \
+             the Immediate window, not in a formula"
+                .to_owned(),
+        );
+    }
+    let changed = unwatched(shared, || sqlite::execute(&def, sql, params, limits))?;
+    Ok(Json::from(changed))
+}
+
+/// Runs a call to a data source with the formula's watchdog paused: waiting
+/// for a source does not count against the formula's time limit.
+fn unwatched<T>(shared: &Shared, call: impl FnOnce() -> T) -> T {
+    let watchdog = shared.watchdog.borrow().clone();
+    let left = watchdog.as_ref().and_then(|w| w.pause());
+    let result = call();
+    if let Some(w) = &watchdog {
+        w.resume(left);
+    }
+    result
 }
 
 /// What `source(name)` shows of a definition: never its secrets.

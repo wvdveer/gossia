@@ -326,3 +326,123 @@ fn a_formula_reads_randomuser_me() {
         b.get("name")
     );
 }
+
+#[test]
+fn a_formula_queries_a_sqlite_source() {
+    let (dir, db) = crate::sqlite::sqlite_tests::shop("formula");
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::sqlite::sqlite_tests::def(&db, false), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("a", "len(source('Shop').query('SELECT * FROM orders'))");
+    b.formula(
+        "name",
+        "source('Shop').query('SELECT customer FROM orders WHERE id = ?', [2])[0]['customer']",
+    );
+    b.formula(
+        "x",
+        "sum(r['total'] for r in source('Shop').query('SELECT total FROM orders'))",
+    );
+    // Dates and times by the declared type, bytes, and NULL as None.
+    b.formula(
+        "tags",
+        "[str(v) for v in source('Shop').query(\
+         'SELECT placed, shipped, stamp, note FROM orders WHERE id = 1')[0].values()]",
+    );
+    b.formula(
+        "c",
+        "sum(r['placed'].year + r['shipped'].hour + len(r['stamp']) \
+         for r in source('Shop').query('SELECT * FROM orders WHERE id = 1'))",
+    );
+    // Text in a DATE column that is not a date stays text.
+    b.formula(
+        "text",
+        "source('Shop').query('SELECT placed FROM orders WHERE id = 3')[0]['placed']",
+    );
+    // A node as a parameter, by name.
+    b.formula(
+        "nums",
+        "[r['id'] for r in source('Shop').query(\
+         'SELECT id FROM orders WHERE id >= :least ORDER BY id', {'least': S.b})]",
+    );
+    b.formula("note", "source('Shop').execute('DELETE FROM orders')");
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(3)));
+    assert_eq!(b.get("name"), Some(Value::Str("Bob".into())));
+    assert_eq!(b.get("x"), Some(Value::Float(22.75)));
+    assert_eq!(
+        b.get("tags"),
+        Some(Value::Array(
+            ["2026-10-01", "2026-10-02 09:30:00", r"b'\xca\xfe'", "None"]
+                .map(|t| Value::Str(t.into()).into())
+                .to_vec()
+        ))
+    );
+    assert_eq!(b.get("c"), Some(Value::Int(2026 + 9 + 2)));
+    assert_eq!(b.get("text"), Some(Value::Str("soon".into())));
+    assert_eq!(
+        b.get("nums"),
+        Some(Value::Array(vec![
+            Value::Int(2).into(),
+            Value::Int(3).into()
+        ]))
+    );
+    assert_eq!(b.error("note"), Some(ErrorKind::Source));
+    assert!(
+        b.message("note").contains("Allow writes"),
+        "{}",
+        b.message("note")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sqlite_writes_need_allow_writes_and_the_immediate_window() {
+    let (dir, db) = crate::sqlite::sqlite_tests::shop("writes");
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::sqlite::sqlite_tests::def(&db, true), None, false)
+        .unwrap();
+    // Not in a formula, even when writes are allowed; and a formula's
+    // query() is refused a statement that changes data.
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("text", "source('Shop').execute('DELETE FROM orders')");
+    b.formula("note", "source('Shop').query('DELETE FROM orders')");
+    b.formula("name", "source('Shop').get('x').text");
+    b.run();
+    assert!(
+        b.message("text").contains("button procedure"),
+        "{}",
+        b.message("text")
+    );
+    assert!(
+        b.message("note").contains("use execute()"),
+        "{}",
+        b.message("note")
+    );
+    assert!(
+        b.message("name").contains("read with query()"),
+        "{}",
+        b.message("name")
+    );
+    // The Immediate window changes data and reads the change back.
+    let mut s = session(&store);
+    assert_eq!(
+        immediate(
+            &mut s,
+            "source('Shop').execute('UPDATE orders SET note = ? WHERE customer = ?', ['paid', 'Ada'])"
+        ),
+        Ok("2".to_owned())
+    );
+    assert_eq!(
+        immediate(
+            &mut s,
+            "[r['note'] for r in source('Shop').query('SELECT note FROM orders ORDER BY id')]"
+        ),
+        Ok("['paid', 'gift', 'paid']".to_owned())
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

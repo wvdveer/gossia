@@ -20,6 +20,7 @@ pub mod names;
 pub mod python;
 mod session;
 pub mod sources;
+pub mod sqlite;
 mod trie;
 
 pub use calc::{

@@ -208,6 +208,40 @@ class Source:
     def delete(self, path='', params=None, headers=None):
         return self._http('DELETE', path, params, headers, None, None)
 
+    def query(self, sql, params=None):
+        """A database source: the rows of a statement that reads, as a list
+        of dicts. `params` is a list for `?` or a dict for `:name`; the values
+        are never put into the SQL text. A formula may use it; its result
+        refreshes when the formula runs again (F9)."""
+        found = _source_call('query', self._sql(sql, params))
+        names = found['columns']
+        kinds = [_sql_kind(t) for t in found['types']]
+        return [
+            {name: _from_sql(value, kind) for name, value, kind in zip(names, row, kinds)}
+            for row in found['rows']
+        ]
+
+    def execute(self, sql, params=None):
+        """A database source that allows writes: runs a statement that
+        changes data and gives the number of rows it changed. Only in a button
+        procedure or the Immediate window."""
+        return _source_call('execute', self._sql(sql, params))
+
+    def _sql(self, sql, params):
+        if not isinstance(sql, str):
+            raise TypeError('the SQL of a query is text')
+        params = PLAIN(params)
+        if params is None:
+            values = None
+        elif isinstance(params, dict):
+            values = {str(k): _to_sql(v) for k, v in params.items()}
+        elif isinstance(params, (list, tuple)):
+            values = [_to_sql(v) for v in params]
+        else:
+            raise TypeError(
+                'the parameters of a query are a list (for ?) or a dict (for :name)')
+        return {'name': self.name, 'sql': sql, 'params': values}
+
     def _http(self, method, path, params, headers, json_body, data):
         if not isinstance(path, str):
             raise TypeError('the path of a request is text, below the base URL')
@@ -228,6 +262,49 @@ class Source:
             payload['body'] = str(data)
         what = '%s: %s %s' % (self.name, method, path or '(the base URL)')
         return Response(_source_call('http', payload), what)
+
+
+def _to_sql(value):
+    """A parameter as the native side takes it: JSON, with dates as ISO text
+    (as SQLite keeps them) and bytes as hex."""
+    value = PLAIN(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return {'$bytes': bytes(value).hex()}
+    import datetime
+    if isinstance(value, datetime.datetime):
+        return value.isoformat(' ')
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    raise TypeError('%s cannot be passed to SQL: use a number, text, a date, '
+                    'bytes or None' % type(value).__name__)
+
+
+def _sql_kind(declared):
+    """What a column's declared type says its text holds: 'datetime', 'date',
+    or None."""
+    declared = (declared or '').upper()
+    if 'DATETIME' in declared or 'TIMESTAMP' in declared:
+        return 'datetime'
+    if 'DATE' in declared:
+        return 'date'
+    return None
+
+
+def _from_sql(value, kind):
+    if isinstance(value, dict):
+        return bytes.fromhex(value['$bytes'])
+    if kind is None or not isinstance(value, str):
+        return value
+    import datetime
+    try:
+        if kind == 'date':
+            return datetime.date.fromisoformat(value)
+        return datetime.datetime.fromisoformat(value)
+    except ValueError:
+        # Text that is not a date stays text, as SQLite let it be stored.
+        return value
 
 
 def _text(value):

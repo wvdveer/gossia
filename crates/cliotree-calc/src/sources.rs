@@ -635,7 +635,7 @@ pub struct TestOutcome {
 }
 
 impl TestOutcome {
-    fn failed(message: impl Into<String>) -> TestOutcome {
+    pub(crate) fn failed(message: impl Into<String>) -> TestOutcome {
         TestOutcome {
             ok: false,
             message: message.into(),
@@ -643,29 +643,17 @@ impl TestOutcome {
     }
 }
 
-/// Checks that the source can be reached: for SQLite that its file can be
-/// opened for reading, for the others that its server answers on its port.
-/// It does not run Python, so it works in an untrusted workbook.
-///
-/// Signing in, and the query the full Test runs, come with the support for
-/// each kind (DESIGN.md, build order, 6b).
+/// The Test: for SQLite and HTTP the full one (the file opened read-only and
+/// read, a `GET` with the authentication); for PostgreSQL and MariaDB, until
+/// they are built (6b part 4), that the server answers on its port. It does
+/// not run Python, so it works in an untrusted workbook.
 pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
     if let Some(why) = def.problems().first() {
         return TestOutcome::failed(why.clone());
     }
     let start = Instant::now();
     match def.kind {
-        SourceKind::Sqlite => {
-            let path = filled(&def.path).unwrap_or_default();
-            match std::fs::File::open(path) {
-                Ok(file) if file.metadata().is_ok_and(|m| m.is_file()) => TestOutcome {
-                    ok: true,
-                    message: format!("{path} can be opened for reading"),
-                },
-                Ok(_) => TestOutcome::failed(format!("{path} is not a file")),
-                Err(e) => TestOutcome::failed(format!("{path} cannot be opened: {e}")),
-            }
-        }
+        SourceKind::Sqlite => crate::sqlite::test(def, timeout),
         SourceKind::Http => crate::http::test(def, timeout),
         SourceKind::Postgres | SourceKind::Mariadb => {
             let host = filled(&def.host).unwrap_or_default().to_owned();

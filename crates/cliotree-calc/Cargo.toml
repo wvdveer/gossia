@@ -26,6 +26,9 @@ sha2 = "0.11.1"
 ureq = { version = "3.5.0", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+# SQLite data sources: SQLite built in, the progress handler for the call
+# timeout, and declared column types to give dates as dates.
+rusqlite = { version = "0.41.1", features = ["bundled", "hooks", "column_decltype"] }
 
 [dev-dependencies]
 proptest = "1.12.0"

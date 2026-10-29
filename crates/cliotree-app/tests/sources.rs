@@ -52,11 +52,14 @@ fn names(harness: &Harness<'_, ClioApp>) -> Vec<String> {
         .collect()
 }
 
-/// Runs frames until `done`, while a test finishes in the background.
+/// Runs frames until `done`, while a test finishes in the background. The
+/// spinner repaints all the time, so this steps frames rather than waiting
+/// for the window to settle.
 fn wait_for(harness: &mut Harness<'_, ClioApp>, done: impl Fn(&Harness<'_, ClioApp>) -> bool) {
     for _ in 0..200 {
-        harness.run();
+        harness.step();
         if done(harness) {
+            harness.run();
             return;
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -85,7 +88,7 @@ fn a_definition_is_made_in_the_form_and_tested() {
         "File of the data source",
         &file.display().to_string(),
     );
-    click(&mut harness, "Test");
+    harness.get_by_label("Test").click();
     wait_for(&mut harness, |h| {
         h.query_by_label_contains("Passed").is_some()
             || h.query_by_label_contains("Failed").is_some()
