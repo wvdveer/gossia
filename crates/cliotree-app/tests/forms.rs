@@ -930,3 +930,70 @@ fn masked_is_a_property_of_a_string_field() {
     click(&mut harness, "Field total");
     assert!(!has(&harness, "Masked"));
 }
+
+/// Drags with the primary button from `from` to `to`, over several frames,
+/// as a hand would.
+fn drag(harness: &mut Harness<'_, ClioApp>, from: egui::Pos2, to: egui::Pos2) {
+    harness.hover_at(from);
+    harness.run();
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=5 {
+        harness.hover_at(from.lerp(to, step as f32 / 5.0));
+        harness.run();
+    }
+    harness.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    harness.remove_cursor();
+    harness.run();
+}
+
+/// The name layout mode gives the field control at `at`.
+fn field_name(harness: &Harness<'_, ClioApp>, at: &[usize]) -> String {
+    let design = harness.state().design_of("Default");
+    format!("Field {}", design.get(at).unwrap().path.clone().unwrap())
+}
+
+#[test]
+fn a_control_is_moved_by_dragging_it_and_added_by_dragging_from_the_palette() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    let first = field_name(&harness, &[0, 0]);
+    let second = field_name(&harness, &[0, 1]);
+    // Onto the lower half of the next one: it goes after it.
+    let from = harness.get_by_label(&first).rect().center();
+    let target = harness.get_by_label(&second).rect();
+    let to = egui::pos2(target.center().x, target.bottom() - 2.0);
+    drag(&mut harness, from, to);
+    assert_eq!(field_name(&harness, &[0, 0]), second);
+    assert_eq!(field_name(&harness, &[0, 1]), first);
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 1]));
+    assert!(harness.state().can_layout_undo());
+    // A new label from the palette, onto the upper half of a field.
+    let from = harness.get_by_label("Add label").rect().center();
+    let target = harness.get_by_label(&second).rect();
+    let to = egui::pos2(target.center().x, target.top() + 2.0);
+    drag(&mut harness, from, to);
+    let design = harness.state().design_of("Default");
+    assert_eq!(design.get(&[0, 0]).unwrap().text.as_deref(), Some("Label"));
+    assert_eq!(field_name(&harness, &[0, 1]), second);
+    // One undo of layout takes the label away again, and moving is not an
+    // edit of the workbook.
+    harness.state_mut().layout_undo();
+    harness.run();
+    assert_eq!(field_name(&harness, &[0, 0]), second);
+    assert_eq!(harness.state().calc().history_len().0, 0);
+    // A group is not dropped into itself: dragging the customer group onto
+    // one of its own fields changes nothing.
+    let before = harness.state().design_of("Default");
+    let group = harness.get_by_label("Group customer").rect();
+    let from = egui::pos2(group.left() + 20.0, group.top() + 10.0);
+    let to = harness.get_by_label(&first).rect().center();
+    drag(&mut harness, from, to);
+    assert_eq!(harness.state().design_of("Default"), before);
+}

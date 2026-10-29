@@ -68,6 +68,45 @@ pub(crate) enum ControlAction {
     SelectColumn(Address, String),
     /// Move or show a column of the table of a repeater.
     Column(Address, String, ColumnEdit),
+    /// What was dragged, put down at a place in the list of a group (the top
+    /// level for an empty address), counted as the list was before.
+    Drop(DragItem, Address, usize),
+}
+
+/// What is dragged in layout mode: a control of the form, or a new one from
+/// the palette. The payload of egui's drag and drop is this with the name to
+/// show beside the pointer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DragItem {
+    Control(Address),
+    New(ControlKind),
+}
+
+/// A new control of a kind, as the palette adds it.
+pub(crate) fn new_control(kind: ControlKind) -> Control {
+    let mut c = Control::new(kind);
+    match kind {
+        ControlKind::Label => c.text = Some("Label".to_owned()),
+        ControlKind::Button => c.label = Some("Button".to_owned()),
+        _ => {}
+    }
+    c
+}
+
+/// Whether putting `item` down at `index` of `parent` changes anything and
+/// can be done: a control does not go into itself, and putting it back
+/// where it is is no move.
+pub(crate) fn drop_allowed(item: &DragItem, parent: &[usize], index: usize) -> bool {
+    match item {
+        DragItem::New(_) => true,
+        DragItem::Control(from) => {
+            let Some((&last, from_parent)) = from.split_last() else {
+                return false;
+            };
+            !parent.starts_with(from)
+                && !(parent == from_parent && (index == last || index == last + 1))
+        }
+    }
 }
 
 /// A change to the place of a column, or to whether it is shown.
@@ -297,6 +336,17 @@ impl ClioApp {
             ControlAction::SelectColumn(at, name) => self.select_table_column(at, &name),
             ControlAction::Column(at, name, edit) => {
                 self.edit_column_place(&at, &name, edit);
+            }
+            ControlAction::Drop(item, parent, index) => {
+                if !drop_allowed(&item, &parent, index) {
+                    return;
+                }
+                self.edit_design(|d| match item {
+                    DragItem::Control(from) => d.move_to(&from, &parent, index).map(Some),
+                    DragItem::New(kind) => {
+                        d.insert(&parent, Some(index), new_control(kind)).map(Some)
+                    }
+                });
             }
         }
     }
@@ -679,23 +729,16 @@ impl ClioApp {
                 return;
             }
             ui.separator();
+            // A click adds where the selection says; dragging one onto the
+            // form puts it where it is dropped.
             for kind in ControlKind::ALL {
                 let label = format!("Add {}", kind.label().to_lowercase());
-                if ui.button(label).clicked() {
-                    let control = match kind {
-                        ControlKind::Label => {
-                            let mut c = Control::new(kind);
-                            c.text = Some("Label".to_owned());
-                            c
-                        }
-                        ControlKind::Button => {
-                            let mut c = Control::new(kind);
-                            c.label = Some("Button".to_owned());
-                            c
-                        }
-                        _ => Control::new(kind),
-                    };
-                    self.add_control(control);
+                let button = ui
+                    .add(egui::Button::new(label).sense(egui::Sense::click_and_drag()))
+                    .on_hover_text("Click to add, or drag onto the form");
+                button.dnd_set_drag_payload((DragItem::New(kind), kind.label().to_owned()));
+                if button.clicked() {
+                    self.add_control(new_control(kind));
                 }
             }
             ui.separator();

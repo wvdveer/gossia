@@ -401,3 +401,47 @@ fn columns_back_in_their_first_order_and_shown_store_nothing() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_dragged_control_goes_where_the_pointer_says() {
+    use crate::form::{DropZone, drop_place};
+    use crate::form_layout::{DragItem, drop_allowed};
+    let rect = |top: f32, bottom: f32| {
+        egui::Rect::from_min_max(egui::pos2(0.0, top), egui::pos2(400.0, bottom))
+    };
+    let zone = |at: Vec<usize>, top, bottom, group| DropZone {
+        at,
+        rect: rect(top, bottom),
+        group,
+    };
+    // A field at the top, then a group of two fields.
+    let drops = vec![
+        zone(vec![0], 0.0, 20.0, false),
+        zone(vec![1, 0], 50.0, 70.0, false),
+        zone(vec![1, 1], 80.0, 100.0, false),
+        zone(vec![1], 30.0, 110.0, true),
+    ];
+    let area = rect(0.0, 300.0);
+    let place =
+        |y: f32| drop_place(&drops, egui::pos2(100.0, y), area).map(|p| (p.parent, p.index));
+    // By halves of a field.
+    assert_eq!(place(5.0), Some((vec![], 0)));
+    assert_eq!(place(15.0), Some((vec![], 1)));
+    assert_eq!(place(95.0), Some((vec![1], 2)));
+    // Near the edges of a group, before or after it; inside, among its fields.
+    assert_eq!(place(32.0), Some((vec![], 1)));
+    assert_eq!(place(108.0), Some((vec![], 2)));
+    assert_eq!(place(40.0), Some((vec![1], 0)));
+    assert_eq!(place(75.0), Some((vec![1], 1)));
+    // Below everything: the end of the form; outside the form: nowhere.
+    assert_eq!(place(200.0), Some((vec![], 2)));
+    assert_eq!(place(400.0), None);
+    // A group does not go into itself, and a control put back where it is
+    // is no move.
+    let group = DragItem::Control(vec![1]);
+    assert!(!drop_allowed(&group, &[1], 0));
+    assert!(!drop_allowed(&group, &[], 1));
+    assert!(!drop_allowed(&group, &[], 2));
+    assert!(drop_allowed(&group, &[], 0));
+    assert!(drop_allowed(&DragItem::New(ControlKind::Label), &[1], 0));
+}

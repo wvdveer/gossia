@@ -839,6 +839,36 @@ impl FormDesign {
         }
     }
 
+    /// Moves a control to `index` in the list of `parent` (a group, or the
+    /// top level for an empty address), `index` counting the places as they
+    /// are before the move: what dragging a control does. A control cannot go
+    /// into itself or anything inside it, and only a group takes children.
+    /// Returns the new address, or None if the move cannot be made.
+    pub fn move_to(&mut self, from: &[usize], parent: &[usize], index: usize) -> Option<Address> {
+        if parent.starts_with(from) {
+            return None;
+        }
+        if !parent.is_empty() && self.get(parent)?.kind != ControlKind::Group {
+            return None;
+        }
+        let (&last, from_parent) = from.split_last()?;
+        let len = self.list(parent)?.len();
+        let mut index = index.min(len);
+        self.get(from)?;
+        // Taking the control out moves up what comes after it in its list,
+        // which may be the target list or a group on the way to it.
+        let mut parent = parent.to_vec();
+        if parent.as_slice() == from_parent {
+            if index > last {
+                index -= 1;
+            }
+        } else if parent.starts_with(from_parent) && parent[from_parent.len()] > last {
+            parent[from_parent.len()] -= 1;
+        }
+        let control = self.remove(from)?;
+        self.insert(&parent, Some(index), control)
+    }
+
     /// Every control with its address, in the order of the form.
     pub fn walk(&self) -> Vec<(Address, &Control)> {
         fn visit<'a>(list: &'a [Control], at: &mut Address, out: &mut Vec<(Address, &'a Control)>) {
@@ -1331,6 +1361,32 @@ mod tests {
         );
         // Only a group takes a control.
         assert_eq!(design.nest(&[3], true), None);
+    }
+
+    #[test]
+    fn a_control_is_moved_to_any_place_but_inside_itself() {
+        let path = |d: &FormDesign, at: &[usize]| d.get(at).and_then(|c| c.path.clone());
+        let mut design = generate(&spec());
+        // [0] name, [1] the customer group, [2] items, [3] the last field.
+        let last = path(&design, &[3]);
+        // Down the same list: the places count as before the move.
+        assert_eq!(design.move_to(&[0], &[], 3), Some(vec![2]));
+        assert_eq!(path(&design, &[2]).as_deref(), Some("name"));
+        assert_eq!(design.move_to(&[2], &[], 0), Some(vec![0]));
+        assert_eq!(path(&design, &[0]).as_deref(), Some("name"));
+        // Into a group that comes after it: the group moves up one place.
+        let into = design.move_to(&[0], &[1], 0).unwrap();
+        assert_eq!(into, vec![0, 0]);
+        assert_eq!(path(&design, &[0, 0]).as_deref(), Some("name"));
+        // Out of the group, to the end of the form.
+        assert_eq!(design.move_to(&[0, 0], &[], 99), Some(vec![3]));
+        assert_eq!(path(&design, &[3]).as_deref(), Some("name"));
+        assert_eq!(path(&design, &[2]), last);
+        // Not into itself, nor into what is not a group.
+        assert_eq!(design.move_to(&[0], &[0], 0), None);
+        assert_eq!(design.move_to(&[0], &[0, 1], 0), None);
+        assert_eq!(design.move_to(&[1], &[2], 0), None);
+        assert_eq!(design.move_to(&[9], &[], 0), None);
     }
 
     #[test]

@@ -20,7 +20,9 @@ use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
 use crate::form_exprs::Gate;
-use crate::form_layout::{ColumnEdit, ControlAction, FormDialog, LayoutState};
+use crate::form_layout::{
+    ColumnEdit, ControlAction, DragItem, FormDialog, LayoutState, drop_allowed,
+};
 use crate::icons;
 use crate::rows::display;
 use crate::style::Typeface;
@@ -345,6 +347,7 @@ impl ClioApp {
                     column,
                     column_targets: Vec::new(),
                     at: Vec::new(),
+                    drops: Vec::new(),
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -367,6 +370,12 @@ impl ClioApp {
                             ui.weak("This form has no controls. Add some from the palette above.");
                         }
                         painter.controls(ui, &design.controls, &[]);
+                        if painter.layout.is_some() {
+                            let area = ui.clip_rect();
+                            if let Some(action) = drop_target(ui, &painter.drops, area) {
+                                painter.actions.push(FormAction::Control(action));
+                            }
+                        }
                     });
                 actions = painter.actions;
             }
@@ -595,6 +604,129 @@ struct Painter<'a> {
     /// Where the control being drawn is in the design, for the expressions
     /// of the columns of its table.
     at: Address,
+    /// In layout mode: where each control was drawn, for dropping a dragged
+    /// one.
+    drops: Vec<DropZone>,
+}
+
+/// Where a control was drawn in layout mode.
+#[derive(Debug, Clone)]
+pub(crate) struct DropZone {
+    pub at: Address,
+    /// For a control other than a group, the whole width of its list, so
+    /// that the space beside a narrow one counts as it.
+    pub rect: egui::Rect,
+    pub group: bool,
+}
+
+/// Where a dragged control would be put down: in the list of `parent` at
+/// `index` (counted as the list is before the move), with the line that
+/// shows it, from `x.0` to `x.1` at `y`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DropPlace {
+    pub parent: Address,
+    pub index: usize,
+    pub y: f32,
+    pub x: (f32, f32),
+}
+
+/// How close to the top or bottom of a group the pointer puts a control
+/// before or after it rather than inside.
+const GROUP_EDGE: f32 = 6.0;
+
+/// Where a control dropped at `pos` goes. Over a control, before it or after
+/// it by which half the pointer is in; over a group, before or after it near
+/// its edges and among its controls inside; elsewhere in `area`, among the
+/// controls of the top level.
+pub(crate) fn drop_place(
+    drops: &[DropZone],
+    pos: egui::Pos2,
+    area: egui::Rect,
+) -> Option<DropPlace> {
+    let over = drops
+        .iter()
+        .filter(|z| z.rect.contains(pos))
+        .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()));
+    let beside = |z: &DropZone, after: bool| {
+        let (&last, parent) = z.at.split_last()?;
+        Some(DropPlace {
+            parent: parent.to_vec(),
+            index: last + usize::from(after),
+            y: if after {
+                z.rect.bottom() + 2.0
+            } else {
+                z.rect.top() - 2.0
+            },
+            x: (z.rect.left(), z.rect.right()),
+        })
+    };
+    let (parent, frame) = match over {
+        Some(z) if !z.group => return beside(z, pos.y > z.rect.center().y),
+        Some(z) if pos.y < z.rect.top() + GROUP_EDGE => return beside(z, false),
+        Some(z) if pos.y > z.rect.bottom() - GROUP_EDGE => return beside(z, true),
+        Some(z) => (z.at.clone(), z.rect.shrink(GROUP_EDGE)),
+        None if area.contains(pos) => (Vec::new(), area),
+        None => return None,
+    };
+    let children: Vec<&DropZone> = drops
+        .iter()
+        .filter(|z| {
+            z.at.split_last()
+                .is_some_and(|(_, p)| p == parent.as_slice())
+        })
+        .collect();
+    let index = children
+        .iter()
+        .filter(|z| z.rect.center().y < pos.y)
+        .count();
+    let child = |i: usize| children.iter().find(|z| z.at.last() == Some(&i));
+    let (y, x) = match (child(index), children.iter().max_by_key(|z| z.at.last())) {
+        (Some(z), _) => (z.rect.top() - 2.0, (z.rect.left(), z.rect.right())),
+        (None, Some(z)) => (z.rect.bottom() + 2.0, (z.rect.left(), z.rect.right())),
+        (None, None) => (frame.center().y, (frame.left(), frame.right())),
+    };
+    Some(DropPlace {
+        parent,
+        index,
+        y,
+        x,
+    })
+}
+
+/// While a control is dragged over the form: the line where it would go and
+/// its name beside the pointer. When it is let go there, the move.
+fn drop_target(ui: &egui::Ui, drops: &[DropZone], area: egui::Rect) -> Option<ControlAction> {
+    let ctx = ui.ctx();
+    let (item, name) = egui::DragAndDrop::payload::<(DragItem, String)>(ctx)?
+        .as_ref()
+        .clone();
+    let pos = ui.input(|i| i.pointer.latest_pos())?;
+    let place = drop_place(drops, pos, area).filter(|p| drop_allowed(&item, &p.parent, p.index));
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::unique("form_drop"),
+    ));
+    let accent = ui.visuals().selection.stroke.color;
+    if let Some(place) = &place {
+        let painter = painter.with_clip_rect(area);
+        let (a, b) = (
+            egui::pos2(place.x.0, place.y),
+            egui::pos2(place.x.1, place.y),
+        );
+        painter.line_segment([a, b], Stroke::new(2.0, accent));
+        painter.circle_filled(a, 3.0, accent);
+        painter.circle_filled(b, 3.0, accent);
+    }
+    painter.text(
+        pos + egui::vec2(14.0, 4.0),
+        egui::Align2::LEFT_TOP,
+        name,
+        egui::TextStyle::Body.resolve(ui.style()),
+        ui.visuals().strong_text_color(),
+    );
+    let released = ui.input(|i| i.pointer.any_released());
+    let place = place.filter(|_| released)?;
+    Some(ControlAction::Drop(item, place.parent, place.index))
 }
 
 /// How the control of a node wants it drawn, beyond what its type calls for.
@@ -786,7 +918,13 @@ impl Painter<'_> {
                 .rect;
             let columns = std::mem::take(&mut self.column_targets);
             let id = ui.scope_id().with(("control", slot.at.clone()));
-            let target = ui.interact(rect, id, Sense::click());
+            let target = ui.interact(rect, id, Sense::click_and_drag());
+            target.dnd_set_drag_payload((DragItem::Control(slot.at.clone()), control_name(c)));
+            self.drops.push(DropZone {
+                at: slot.at.clone(),
+                rect: egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range()),
+                group: false,
+            });
             self.layout_target(ui, &target, rect, c, slot);
             for (name, title) in columns {
                 self.column_target(ui, c, slot, &name, title, rect);
@@ -989,9 +1127,11 @@ impl Painter<'_> {
             ui.set_width(ui.available_width());
             let title = label.clone().unwrap_or_default();
             if layout {
-                let header =
-                    ui.add(egui::Label::new(RichText::new(&title).strong()).sense(Sense::click()));
+                let header = ui.add(
+                    egui::Label::new(RichText::new(&title).strong()).sense(Sense::click_and_drag()),
+                );
                 let name = control_name(c);
+                header.dnd_set_drag_payload((DragItem::Control(slot.at.clone()), name.clone()));
                 header.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone())
                 });
@@ -1015,6 +1155,13 @@ impl Painter<'_> {
             }
             draw(self, ui);
         });
+        if layout {
+            self.drops.push(DropZone {
+                at: slot.at.clone(),
+                rect: response.response.rect,
+                group: true,
+            });
+        }
         if self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at) {
             ui.painter().rect_stroke(
                 response.response.rect.expand(2.0),
