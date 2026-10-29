@@ -210,8 +210,11 @@ class Source:
 
     def query(self, sql, params=None):
         """A database source: the rows of a statement that reads, as a list
-        of dicts. `params` is a list for `?` or a dict for `:name`; the values
-        are never put into the SQL text. A formula may use it; its result
+        of dicts. `params` is a list (for `?` in SQLite, MariaDB and ODBC,
+        `$1`, `$2` in PostgreSQL) or a dict (for `:name`, not in PostgreSQL
+        or ODBC); the values are never put into the SQL text. It runs in a
+        read-only transaction (for ODBC, as far as the driver allows). A
+        formula may use it; its result
         refreshes when the formula runs again (F9)."""
         found = _source_call('query', self._sql(sql, params))
         names = found['columns']
@@ -283,8 +286,10 @@ def _to_sql(value):
 
 def _sql_kind(declared):
     """What a column's declared type says its text holds: 'datetime', 'date',
-    or None."""
+    'json', or None."""
     declared = (declared or '').upper()
+    if declared == 'JSON':
+        return 'json'
     if 'DATETIME' in declared or 'TIMESTAMP' in declared:
         return 'datetime'
     if 'DATE' in declared:
@@ -297,6 +302,11 @@ def _from_sql(value, kind):
         return bytes.fromhex(value['$bytes'])
     if kind is None or not isinstance(value, str):
         return value
+    if kind == 'json':
+        try:
+            return _json.loads(value)
+        except ValueError:
+            return value
     import datetime
     try:
         if kind == 'date':

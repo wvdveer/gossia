@@ -29,6 +29,16 @@ serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtr
 # SQLite data sources: SQLite built in, the progress handler for the call
 # timeout, and declared column types to give dates as dates.
 rusqlite = { version = "0.41.1", features = ["bundled", "hooks", "column_decltype"] }
+postgres = { version = "0.19.14", default-features = false }
+mysql = { version = "28.0.4", default-features = false, features = ["minimal-rust", "native-tls"] }
+postgres-native-tls = "0.5.3"
+native-tls = "0.2.18"
+bytes = "1.12.1"
+
+# ODBC data sources, on Windows only, where the driver manager (odbc32.dll)
+# is part of the system.
+[target.'cfg(windows)'.dependencies]
+odbc-api = "29.2.0"
 
 [dev-dependencies]
 proptest = "1.12.0"

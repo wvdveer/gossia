@@ -11,7 +11,7 @@ use serde_json::{Map, Value as Json, json};
 use super::shared::Shared;
 use crate::http::{self, HttpRequest, Limits};
 use crate::sources::{SourceDef, SourceKind, test};
-use crate::sqlite;
+use crate::{database, sqlite};
 
 /// Runs one request and gives the reply as JSON text.
 pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
@@ -184,20 +184,12 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
     let store = shared.sources.borrow().clone();
     let name = payload["name"].as_str().unwrap_or_default();
     let def = store.get(name)?.ok_or_else(|| missing(name))?;
-    match def.kind {
-        SourceKind::Sqlite => {}
-        SourceKind::Http => {
-            return Err(format!(
-                "{name} is an HTTP source: it is read with get(), not with {op}()"
-            ));
-        }
-        SourceKind::Postgres | SourceKind::Mariadb => {
-            return Err(format!(
-                "{name} is a {} source, and those cannot be queried in this version yet",
-                def.kind.label()
-            ));
-        }
+    if def.kind == SourceKind::Http {
+        return Err(format!(
+            "{name} is an HTTP source: it is read with get(), not with {op}()"
+        ));
     }
+    let server = def.kind.is_database();
     let sql = payload["sql"].as_str().unwrap_or_default();
     let params = &payload["params"];
     let limits = Limits {
@@ -208,8 +200,10 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         // A formula always reads through a read-only connection, even from a
         // source that allows writes.
         let writable = def.writes && shared.side_effects.get();
-        return unwatched(shared, || {
-            sqlite::query(&def, sql, params, limits, writable)
+        return unwatched(shared, || match server {
+            // Always a read-only transaction, rolled back afterwards.
+            true => database::query(&def, sql, params, limits),
+            false => sqlite::query(&def, sql, params, limits, writable),
         });
     }
     if !def.writes {
@@ -225,7 +219,10 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
                 .to_owned(),
         );
     }
-    let changed = unwatched(shared, || sqlite::execute(&def, sql, params, limits))?;
+    let changed = unwatched(shared, || match server {
+        true => database::execute(&def, sql, params, limits),
+        false => sqlite::execute(&def, sql, params, limits),
+    })?;
     Ok(Json::from(changed))
 }
 

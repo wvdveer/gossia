@@ -9,7 +9,6 @@
 //! again first. What a newer version wrote and this one does not know is kept.
 
 use std::cell::RefCell;
-use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -30,15 +29,27 @@ pub enum SourceKind {
     Sqlite,
     Postgres,
     Mariadb,
+    /// Any database with an ODBC driver: Windows only.
+    Odbc,
 }
 
 impl SourceKind {
-    pub const ALL: [SourceKind; 4] = [
+    pub const ALL: [SourceKind; 5] = [
         SourceKind::Http,
         SourceKind::Sqlite,
         SourceKind::Postgres,
         SourceKind::Mariadb,
+        SourceKind::Odbc,
     ];
+
+    /// The kinds this build can use: ODBC only on Windows, where the driver
+    /// manager is part of the system.
+    pub fn available() -> Vec<SourceKind> {
+        SourceKind::ALL
+            .into_iter()
+            .filter(|k| *k != SourceKind::Odbc || cfg!(windows))
+            .collect()
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -46,6 +57,7 @@ impl SourceKind {
             SourceKind::Sqlite => "SQLite",
             SourceKind::Postgres => "PostgreSQL",
             SourceKind::Mariadb => "MariaDB",
+            SourceKind::Odbc => "ODBC",
         }
     }
 
@@ -56,6 +68,7 @@ impl SourceKind {
             SourceKind::Sqlite => "sqlite",
             SourceKind::Postgres => "postgres",
             SourceKind::Mariadb => "mariadb",
+            SourceKind::Odbc => "odbc",
         }
     }
 
@@ -72,8 +85,14 @@ impl SourceKind {
         }
     }
 
+    /// PostgreSQL and MariaDB: a host, a port and TLS.
     pub fn is_database_server(self) -> bool {
         matches!(self, SourceKind::Postgres | SourceKind::Mariadb)
+    }
+
+    /// The kinds `database` serves: the servers and ODBC.
+    pub fn is_database(self) -> bool {
+        self.is_database_server() || self == SourceKind::Odbc
     }
 }
 
@@ -131,6 +150,53 @@ impl HttpAuth {
     }
 }
 
+/// Whether a database connection is encrypted (PostgreSQL and MariaDB).
+/// The server's certificate is checked against the operating system's
+/// certificate store whenever TLS is used.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TlsMode {
+    /// Encrypted when the server offers it, unencrypted otherwise.
+    #[default]
+    Prefer,
+    /// Encrypted, or no connection at all.
+    Require,
+    /// Encrypted, or no connection at all, but the certificate is not
+    /// checked: for a server with a self-signed certificate. The traffic
+    /// cannot be read on the way, but a server pretending to be this one
+    /// would not be noticed.
+    Unchecked,
+    /// Never encrypted.
+    Off,
+}
+
+impl TlsMode {
+    pub const ALL: [TlsMode; 4] = [
+        TlsMode::Prefer,
+        TlsMode::Require,
+        TlsMode::Unchecked,
+        TlsMode::Off,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TlsMode::Prefer => "Prefer: encrypted when the server offers it",
+            TlsMode::Require => "Require: encrypted or not at all",
+            TlsMode::Unchecked => "Unchecked: encrypted, certificate not checked",
+            TlsMode::Off => "Off: never encrypted",
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            TlsMode::Prefer => "prefer",
+            TlsMode::Require => "require",
+            TlsMode::Unchecked => "unchecked",
+            TlsMode::Off => "off",
+        }
+    }
+}
+
 /// One definition. Which fields mean something depends on the kind; the
 /// others are left empty.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -168,6 +234,13 @@ pub struct SourceDef {
     /// SQLite: the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// ODBC: the name of a DSN, or a connection string (`Driver={...};...`),
+    /// without the user name and password, which have their own fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
+    /// PostgreSQL and MariaDB: whether the connection is encrypted.
+    #[serde(default, skip_serializing_if = "is_prefer")]
+    pub tls: TlsMode,
     /// Pooling: the most connections kept at once. Absent: no pooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<u32>,
@@ -182,6 +255,10 @@ pub struct SourceDef {
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+fn is_prefer(t: &TlsMode) -> bool {
+    *t == TlsMode::Prefer
 }
 
 fn is_no_auth(a: &HttpAuth) -> bool {
@@ -202,6 +279,8 @@ pub const SETTINGS: &[&str] = &[
     "key_name",
     "test_path",
     "path",
+    "connection",
+    "tls",
     "pool",
     "writes",
 ];
@@ -227,6 +306,8 @@ impl SourceDef {
             key_name: None,
             test_path: None,
             path: None,
+            connection: None,
+            tls: TlsMode::Prefer,
             pool: None,
             writes: false,
             extra: Map::new(),
@@ -274,6 +355,23 @@ impl SourceDef {
                     problems.push("the port must be from 1 to 65535".to_owned());
                 }
             }
+            SourceKind::Odbc => match filled(&self.connection) {
+                None => {
+                    problems.push("an ODBC source needs a DSN or a connection string".to_owned())
+                }
+                Some(connection) => {
+                    if odbc_has_password(connection) {
+                        problems.push(
+                            "put the password in the Password field, not in the connection \
+                             string, so that it is kept as a secret"
+                                .to_owned(),
+                        );
+                    }
+                }
+            },
+        }
+        if !self.kind.is_database_server() && self.tls != TlsMode::Prefer {
+            problems.push(format!("a {} source has no TLS setting", self.kind.label()));
         }
         if self.kind == SourceKind::Http {
             match self.auth {
@@ -308,14 +406,27 @@ impl SourceDef {
                 }
             }
             SourceKind::Sqlite => format!("sqlite:{}", filled(&self.path).unwrap_or("(no file)")),
+            SourceKind::Odbc => {
+                let connection = filled(&self.connection).unwrap_or("(no DSN)");
+                match user {
+                    Some(user) => format!("odbc:{connection} as {user}"),
+                    None => format!("odbc:{connection}"),
+                }
+            }
             SourceKind::Postgres | SourceKind::Mariadb => {
                 let scheme = self.kind.code();
                 let host = filled(&self.host).unwrap_or("(no host)");
                 let port = self.port.or(self.kind.default_port()).unwrap_or(0);
                 let db = filled(&self.database).unwrap_or("");
+                let tls = match self.tls {
+                    TlsMode::Prefer => "",
+                    TlsMode::Require => ", TLS required",
+                    TlsMode::Unchecked => ", TLS without certificate check",
+                    TlsMode::Off => ", no TLS",
+                };
                 match user {
-                    Some(user) => format!("{scheme}://{host}:{port}/{db} as {user}"),
-                    None => format!("{scheme}://{host}:{port}/{db}"),
+                    Some(user) => format!("{scheme}://{host}:{port}/{db} as {user}{tls}"),
+                    None => format!("{scheme}://{host}:{port}/{db}{tls}"),
                 }
             }
         }
@@ -388,6 +499,15 @@ impl SourceDef {
             None => Ok(def),
         }
     }
+}
+
+/// Whether an ODBC connection string carries a password (`PWD=` or
+/// `Password=`), which belongs in the masked field instead.
+pub fn odbc_has_password(connection: &str) -> bool {
+    connection.split(';').any(|pair| {
+        let key = pair.split('=').next().unwrap_or("").trim();
+        key.eq_ignore_ascii_case("pwd") || key.eq_ignore_ascii_case("password")
+    }) && connection.contains('=')
 }
 
 /// Why a source cannot be called `name`, or `None` if it can: letters, digits
@@ -643,22 +763,19 @@ impl TestOutcome {
     }
 }
 
-/// The Test: for SQLite and HTTP the full one (the file opened read-only and
-/// read, a `GET` with the authentication); for PostgreSQL and MariaDB, until
-/// they are built (6b part 4), that the server answers on its port. It does
-/// not run Python, so it works in an untrusted workbook.
+/// The Test: it signs in and reads something small (SQLite: the file opened
+/// read-only and read; HTTP: a `GET` with the authentication; PostgreSQL and
+/// MariaDB: a throwaway connection that asks for the server's version). It
+/// does not run Python, so it works in an untrusted workbook.
 pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
     if let Some(why) = def.problems().first() {
         return TestOutcome::failed(why.clone());
     }
-    let start = Instant::now();
     match def.kind {
         SourceKind::Sqlite => crate::sqlite::test(def, timeout),
         SourceKind::Http => crate::http::test(def, timeout),
-        SourceKind::Postgres | SourceKind::Mariadb => {
-            let host = filled(&def.host).unwrap_or_default().to_owned();
-            let port = def.port.or(def.kind.default_port()).unwrap_or(0);
-            reach(&host, port, timeout, start)
+        SourceKind::Postgres | SourceKind::Mariadb | SourceKind::Odbc => {
+            crate::database::test(def, timeout)
         }
     }
 }
@@ -731,41 +848,6 @@ impl Drop for Waiting {
                 *clock.spent.lock().unwrap_or_else(|e| e.into_inner()) += took;
             }
         });
-    }
-}
-
-/// Opens a TCP connection and closes it again.
-fn reach(host: &str, port: u16, timeout: Duration, start: Instant) -> TestOutcome {
-    let addrs = match (host, port).to_socket_addrs() {
-        Ok(addrs) => addrs.collect::<Vec<_>>(),
-        Err(e) => return TestOutcome::failed(format!("{host} cannot be found: {e}")),
-    };
-    let mut last = None;
-    for addr in addrs {
-        let left = timeout.saturating_sub(start.elapsed());
-        if left.is_zero() {
-            break;
-        }
-        match TcpStream::connect_timeout(&addr, left) {
-            Ok(_) => {
-                return TestOutcome {
-                    ok: true,
-                    message: format!(
-                        "{host}:{port} answered in {} ms",
-                        start.elapsed().as_millis()
-                    ),
-                };
-            }
-            Err(e) => last = Some(e),
-        }
-    }
-    match last {
-        Some(e) if e.kind() == std::io::ErrorKind::TimedOut => TestOutcome::failed(format!(
-            "{host}:{port} did not answer within {} s",
-            timeout.as_secs_f32()
-        )),
-        Some(e) => TestOutcome::failed(format!("{host}:{port} cannot be reached: {e}")),
-        None => TestOutcome::failed(format!("{host}:{port} cannot be reached")),
     }
 }
 

@@ -8,6 +8,7 @@
 
 mod calc;
 mod check;
+pub mod database;
 mod engine;
 pub mod entry;
 mod eval;

@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use cliotree_calc::Setting;
-use cliotree_calc::sources::{HttpAuth, SourceDef, SourceKind, TestOutcome, test};
+use cliotree_calc::sources::{HttpAuth, SourceDef, SourceKind, TestOutcome, TlsMode, test};
 use egui::RichText;
 
 use crate::app::ClioApp;
@@ -204,10 +204,11 @@ impl SourceForm {
         let kind = def.kind;
         let http = kind == SourceKind::Http;
         let server = kind.is_database_server();
+        let odbc = kind == SourceKind::Odbc;
         let basic = http && def.auth == HttpAuth::Basic;
         let token = http && def.auth.uses_token();
         let keyed = http && matches!(def.auth, HttpAuth::KeyHeader | HttpAuth::KeyQuery);
-        def.password = if server || basic {
+        def.password = if server || odbc || basic {
             self.password.resolve(&self.stored_password)
         } else {
             None
@@ -218,10 +219,14 @@ impl SourceForm {
             None
         };
         let keep = |on: bool, v: Option<String>| v.filter(|_| on);
-        def.user = keep(server || basic, def.user.take());
+        def.user = keep(server || odbc || basic, def.user.take());
+        def.connection = keep(odbc, def.connection.take());
         def.host = keep(server, def.host.take());
         def.database = keep(server, def.database.take());
         def.port = def.port.filter(|_| server);
+        if !server {
+            def.tls = TlsMode::Prefer;
+        }
         def.url = keep(http, def.url.take());
         def.test_path = keep(http, def.test_path.take());
         def.key_name = keep(keyed, def.key_name.take());
@@ -344,7 +349,7 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
             egui::ComboBox::from_id_salt("source_kind")
                 .selected_text(kind.label())
                 .show_ui(ui, |ui| {
-                    for k in SourceKind::ALL {
+                    for k in SourceKind::available() {
                         ui.selectable_value(&mut kind, k, k.label());
                     }
                 })
@@ -410,6 +415,16 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                 SourceKind::Sqlite => {
                     text_row(ui, "File", &mut form.draft.path, "C:\\data\\sales.db");
                 }
+                SourceKind::Odbc => {
+                    text_row(
+                        ui,
+                        "DSN or connection string",
+                        &mut form.draft.connection,
+                        "Sales, or Driver={...};Server=...",
+                    );
+                    text_row(ui, "User name", &mut form.draft.user, "");
+                    secret_row(ui, "Password", &mut form.password, stored_password);
+                }
                 SourceKind::Postgres | SourceKind::Mariadb => {
                     text_row(ui, "Host", &mut form.draft.host, "db.example.com");
                     ui.label("Port");
@@ -424,6 +439,28 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                     text_row(ui, "Database", &mut form.draft.database, "");
                     text_row(ui, "User name", &mut form.draft.user, "");
                     secret_row(ui, "Password", &mut form.password, stored_password);
+                    ui.label("TLS");
+                    let mut tls = form.draft.tls;
+                    egui::ComboBox::from_id_salt("source_tls")
+                        .selected_text(tls.label())
+                        .show_ui(ui, |ui| {
+                            for t in TlsMode::ALL {
+                                ui.selectable_value(&mut tls, t, t.label());
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "When the connection is encrypted, the server's certificate is \
+                             checked against this computer's certificate store. A self-signed \
+                             certificate cannot be checked: use Unchecked for such a server, \
+                             which still encrypts but would not notice a server pretending to \
+                             be this one.",
+                        )
+                        .widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "TLS")
+                        });
+                    form.draft.tls = tls;
+                    ui.end_row();
                 }
             }
 
@@ -443,7 +480,8 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
             ui.checkbox(&mut form.draft.writes, "Allow writes")
                 .on_hover_text(
                     "Off: SQLite is opened read-only, database sessions are read-only, \
-                 and HTTP may only GET.",
+                 and HTTP may only GET. ODBC asks the driver for read-only access, which \
+                 not every driver honours: use a read-only account where it matters.",
                 );
             ui.end_row();
         });

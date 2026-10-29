@@ -135,7 +135,7 @@ fn python_settings_become_a_definition() {
 }
 
 #[test]
-fn the_test_opens_a_sqlite_file_and_reaches_a_server() {
+fn the_test_opens_a_sqlite_file_and_signs_in_to_a_server() {
     let dir = temp_dir("test");
     let db = dir.join("x.db");
     std::fs::write(&db, b"").unwrap();
@@ -145,16 +145,57 @@ fn the_test_opens_a_sqlite_file_and_reaches_a_server() {
     lite.path = Some(dir.join("missing.db").display().to_string());
     assert!(!test(&lite, Duration::from_secs(1)).ok);
 
-    // A listener on this machine answers; a closed port does not.
+    // A server must sign in, not only answer: a listener that says nothing
+    // fails within the timeout, and so does a closed port.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let mut pg = postgres("Sales");
     pg.host = Some("127.0.0.1".into());
     pg.port = Some(port);
-    let outcome = test(&pg, Duration::from_secs(5));
-    assert!(outcome.ok, "{}", outcome.message);
+    pg.tls = TlsMode::Off;
+    let started = Instant::now();
+    let outcome = test(&pg, Duration::from_millis(500));
+    assert!(!outcome.ok, "{}", outcome.message);
+    assert!(started.elapsed() < Duration::from_secs(10));
     drop(listener);
     let outcome = test(&pg, Duration::from_secs(5));
-    assert!(!outcome.ok, "{}", outcome.message);
+    assert!(
+        !outcome.ok && outcome.message.contains(&format!("127.0.0.1:{port}")),
+        "{}",
+        outcome.message
+    );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_odbc_definition_keeps_its_password_out_of_the_connection_string() {
+    let mut def = SourceDef::new("Ledger", SourceKind::Odbc);
+    assert_eq!(
+        def.problems(),
+        ["an ODBC source needs a DSN or a connection string"]
+    );
+    def.connection = Some("Ledger".into());
+    def.user = Some("reader".into());
+    assert!(def.problems().is_empty());
+    assert_eq!(def.target(), "odbc:Ledger as reader");
+    for text in [
+        "Driver={SQL Server};Server=db;PWD=secret",
+        "Driver={SQL Server};Server=db; password = secret",
+    ] {
+        def.connection = Some(text.into());
+        assert!(
+            def.problems()[0].contains("Password field"),
+            "{:?}",
+            def.problems()
+        );
+    }
+    // From Python, by the setting's name.
+    let settings = serde_json::json!({"connection": "Ledger", "user": "reader"});
+    let made = SourceDef::from_settings("Ledger", "odbc", settings.as_object().unwrap()).unwrap();
+    assert_eq!(made.connection.as_deref(), Some("Ledger"));
+    // Offered by the form only where the driver manager is.
+    assert_eq!(
+        SourceKind::available().contains(&SourceKind::Odbc),
+        cfg!(windows)
+    );
 }
