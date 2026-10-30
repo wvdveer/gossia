@@ -1,11 +1,13 @@
 //! Comments in the window (DESIGN.md, "Comments in the UI"): a small triangle
 //! in the top-right corner of a cell that has a comment, the comment in a
 //! popup when the pointer rests on the cell, and *Insert Comment*, *Edit
-//! Comment* and *Delete Comment* in the cell's menu, on XML tabs only.
+//! Comment* and *Delete Comment* in the cell's menu, on XML tabs only. A
+//! node read from a file can also have comments inside its element, at its
+//! start and its end; they are shown and edited with the one before it.
 
 use std::time::Duration;
 
-use cliotree_core::Path;
+use cliotree_core::{CommentPlace, Path};
 use egui::{Key, Modifiers, Pos2, Rect, RichText, Shape, Stroke, Vec2};
 
 use crate::app::ClioApp;
@@ -17,7 +19,9 @@ use crate::view::{Action, error_color, named};
 pub struct CommentEdit {
     pub sheet: String,
     pub path: Path,
-    pub text: String,
+    /// The text of each place shown: the one before the element always,
+    /// and those inside it that the node has.
+    pub texts: Vec<(CommentPlace, String)>,
     /// Why the text was refused, shown under it.
     pub error: Option<String>,
     /// Where the box is: beside the cell it was opened from.
@@ -32,6 +36,15 @@ pub struct CommentEdit {
 /// The size of the triangle, in points.
 const MARK: f32 = 7.0;
 
+/// What a comment at `place` is called where more than one is shown.
+fn place_label(place: CommentPlace) -> &'static str {
+    match place {
+        CommentPlace::Before => "Comment",
+        CommentPlace::Start => "Comment at the start of the element",
+        CommentPlace::End => "Comment at the end of the element",
+    }
+}
+
 impl ClioApp {
     /// *Insert Comment* or *Edit Comment*: opens the box at `at` with the
     /// comment the node has. Nothing opens on a node that cannot have one.
@@ -40,15 +53,19 @@ impl ClioApp {
             self.notice = Some(why);
             return false;
         }
-        let text = self
-            .calc()
-            .comment(&self.sheet, path)
-            .unwrap_or_default()
-            .to_owned();
+        let calc = self.calc();
+        let texts = CommentPlace::ALL
+            .into_iter()
+            .filter_map(|place| {
+                let text = calc.comment_at(&self.sheet, path, place);
+                (place == CommentPlace::Before || text.is_some())
+                    .then(|| (place, text.unwrap_or_default().to_owned()))
+            })
+            .collect();
         self.comment_edit = Some(CommentEdit {
             sheet: self.sheet.clone(),
             path: path.clone(),
-            text,
+            texts,
             error: None,
             at,
             rect: None,
@@ -57,16 +74,21 @@ impl ClioApp {
         true
     }
 
-    /// Ctrl+Enter or a click away: the comment is set, or the box stays with
-    /// the reason. Says whether it was set.
+    /// Ctrl+Enter or a click away: the comments are set, or the box stays
+    /// with the reason. Says whether they were set.
     pub fn commit_comment(&mut self) -> bool {
         let Some(mut edit) = self.comment_edit.take() else {
             return false;
         };
+        let texts: Vec<(CommentPlace, Option<&str>)> = edit
+            .texts
+            .iter()
+            .map(|(place, text)| (*place, Some(text.as_str())))
+            .collect();
         match self
             .session
             .calc_mut()
-            .set_comment(&edit.sheet, &edit.path, Some(&edit.text))
+            .set_comments(&edit.sheet, &edit.path, &texts)
         {
             Ok(()) => {
                 self.notice = None;
@@ -86,10 +108,11 @@ impl ClioApp {
         self.comment_edit = None;
     }
 
-    /// *Delete Comment*.
+    /// *Delete Comment*: every comment of the node, at every place.
     pub fn delete_comment(&mut self, path: &Path) {
         let sheet = self.sheet.clone();
-        match self.session.calc_mut().set_comment(&sheet, path, None) {
+        let none = CommentPlace::ALL.map(|place| (place, None));
+        match self.session.calc_mut().set_comments(&sheet, path, &none) {
             Ok(()) => self.notice = None,
             Err(e) => self.notice = Some(e.to_string()),
         }
@@ -97,25 +120,29 @@ impl ClioApp {
 
     /// The comment items of a cell's menu: none on a JSON tab; on an XML
     /// tab, *Insert Comment*, or *Edit Comment* and *Delete Comment* when the
-    /// node has one. A node that cannot have one says why.
+    /// node has one. A node that cannot have one says why. `separate` puts a
+    /// line above them, after the menu's other items.
     pub(crate) fn comment_menu_items(
         &self,
         ui: &mut egui::Ui,
         path: &Path,
         at: Pos2,
         actions: &mut Vec<Action>,
+        separate: bool,
     ) {
         let calc = self.calc();
         if !calc.is_xml(&self.sheet) {
             return;
         }
-        ui.separator();
+        if separate {
+            ui.separator();
+        }
         if let Some(why) = calc.comment_refusal(&self.sheet, path) {
             ui.add_enabled(false, egui::Button::new("Insert Comment"))
                 .on_disabled_hover_text(why);
             return;
         }
-        if calc.comment(&self.sheet, path).is_some() {
+        if calc.has_comments(&self.sheet, path) {
             if ui.button("Edit Comment").clicked() {
                 actions.push(Action::EditComment(path.clone(), at));
                 ui.close();
@@ -135,9 +162,14 @@ impl ClioApp {
     /// popup stays while the pointer is on it, so that a long comment can be
     /// scrolled.
     pub(crate) fn comment_marks(&self, ui: &egui::Ui, cell: Rect, path: &Path) {
-        let Some(comment) = self.calc().comment(&self.sheet, path) else {
+        let calc = self.calc();
+        let comments: Vec<(CommentPlace, &str)> = CommentPlace::ALL
+            .into_iter()
+            .filter_map(|place| Some((place, calc.comment_at(&self.sheet, path, place)?)))
+            .collect();
+        if comments.is_empty() {
             return;
-        };
+        }
         let corner = cell.right_top();
         ui.painter().add(Shape::convex_polygon(
             vec![
@@ -187,7 +219,15 @@ impl ClioApp {
                         .id_salt(id.with("scroll"))
                         .max_height(height)
                         .show(ui, |ui| {
-                            ui.add(egui::Label::new(comment).wrap());
+                            // One comment is shown as it is; several each
+                            // under the name of its place.
+                            let several = comments.len() > 1;
+                            for (place, comment) in &comments {
+                                if several {
+                                    ui.label(RichText::new(place_label(*place)).weak().small());
+                                }
+                                ui.add(egui::Label::new(*comment).wrap());
+                            }
                         });
                 });
             });
@@ -224,14 +264,26 @@ impl ClioApp {
                     ui.label(
                         RichText::new(format!("Comment on {}", place.trim_end_matches('.'))).weak(),
                     );
-                    let response = ui.add(
-                        egui::TextEdit::multiline(&mut edit.text)
-                            .desired_rows(4)
-                            .desired_width(f32::INFINITY),
-                    );
-                    named(&response, "Comment");
-                    if std::mem::take(&mut edit.focus) {
-                        response.request_focus();
+                    // A box for each place, named when there are several.
+                    let several = edit.texts.len() > 1;
+                    let focus = std::mem::take(&mut edit.focus);
+                    for (i, (place, text)) in edit.texts.iter_mut().enumerate() {
+                        if several {
+                            ui.label(RichText::new(place_label(*place)).small());
+                        }
+                        let rows = if several { 2 } else { 4 };
+                        let response = ui.add(
+                            egui::TextEdit::multiline(text)
+                                .desired_rows(rows)
+                                .desired_width(f32::INFINITY),
+                        );
+                        named(&response, place_label(*place));
+                        if focus && i == 0 {
+                            response.request_focus();
+                        }
+                    }
+                    if several {
+                        ui.weak("An empty box takes that comment away.");
                     }
                     if let Some(error) = &edit.error {
                         ui.add(

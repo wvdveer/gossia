@@ -30,7 +30,9 @@ pub use typespec::{
     Field, Kind, Pattern, Range, Resolved, StringConstraints, StringFormat, TypeDef, TypeId,
     TypeSpec, XmlInfo,
 };
-pub use value::{DateTimeValue, ErrorKind, ErrorValue, Node, NodeId, PathError, Value};
+pub use value::{
+    CommentPlace, DateTimeValue, ErrorKind, ErrorValue, Node, NodeId, PathError, Value,
+};
 
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -183,6 +183,25 @@ struct NodeData {
     /// A comment on the node (XML tabs only; DESIGN.md, "Comments"). It belongs
     /// to the node, so it goes where the node goes. Formulas cannot see it.
     comment: Option<String>,
+    /// The comments inside the node's element, at its start and at its end
+    /// (rare, so kept apart to keep nodes small).
+    inner: Option<Box<[Option<String>; 2]>>,
+}
+
+/// Where a comment on a node is written in XML (DESIGN.md, "Comments").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CommentPlace {
+    /// Before the node's element: the node's comment.
+    Before,
+    /// Inside the element, before its text.
+    Start,
+    /// Inside the element, after the rest of it.
+    End,
+}
+
+impl CommentPlace {
+    pub const ALL: [CommentPlace; 3] =
+        [CommentPlace::Before, CommentPlace::Start, CommentPlace::End];
 }
 
 /// Why a path could not be followed by an edit.
@@ -216,6 +235,7 @@ impl Node {
             id: NodeId::fresh(),
             value,
             comment: None,
+            inner: None,
         }))
     }
 
@@ -231,6 +251,52 @@ impl Node {
 
     pub fn set_comment(&mut self, comment: Option<String>) {
         Arc::make_mut(&mut self.0).comment = comment;
+    }
+
+    /// The comment at `place`, if there is one.
+    pub fn comment_at(&self, place: CommentPlace) -> Option<&str> {
+        match place {
+            CommentPlace::Before => self.comment(),
+            CommentPlace::Start => self.0.inner.as_ref()?[0].as_deref(),
+            CommentPlace::End => self.0.inner.as_ref()?[1].as_deref(),
+        }
+    }
+
+    /// Puts (or with `None` takes away) the comment at `place`.
+    pub fn set_comment_at(&mut self, place: CommentPlace, comment: Option<String>) {
+        let i = match place {
+            CommentPlace::Before => return self.set_comment(comment),
+            CommentPlace::Start => 0,
+            CommentPlace::End => 1,
+        };
+        let data = Arc::make_mut(&mut self.0);
+        match (&mut data.inner, comment) {
+            (Some(inner), comment) => {
+                inner[i] = comment;
+                if inner.iter().all(Option::is_none) {
+                    data.inner = None;
+                }
+            }
+            (None, None) => {}
+            (None, Some(comment)) => {
+                let mut inner = [None, None];
+                inner[i] = Some(comment);
+                data.inner = Some(Box::new(inner));
+            }
+        }
+    }
+
+    /// Whether the node has a comment at any place.
+    pub fn has_comments(&self) -> bool {
+        self.0.comment.is_some() || self.0.inner.is_some()
+    }
+
+    /// The same node with the comments of `other`, at every place.
+    pub fn with_comments_of(mut self, other: &Node) -> Node {
+        let data = Arc::make_mut(&mut self.0);
+        data.comment = other.0.comment.clone();
+        data.inner = other.0.inner.clone();
+        self
     }
 
     pub fn id(&self) -> NodeId {

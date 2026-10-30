@@ -135,17 +135,80 @@ fn a_comment_before_an_element_belongs_to_it() {
     );
 }
 
+/// Core model, "Comments": a comment at the end of an element, or next to
+/// text, belongs to the enclosing element, at its place, and is written back
+/// there.
 #[test]
-fn a_comment_that_belongs_to_no_element_is_dropped_with_a_warning() {
-    let parsed = read("<order><customer>c</customer><!--at the end--></order>");
+fn a_comment_inside_an_element_is_kept_at_its_place() {
+    let text = "<order><customer><!--who-->c<!--after the name--></customer>\
+                <placed>2026-01-02</placed><!--at the end--></order>";
+    let parsed = read(text);
+    assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    let root = &parsed.node;
+    assert_eq!(root.comment_at(CommentPlace::End), Some("at the end"));
+    assert_eq!(root.comment_at(CommentPlace::Start), None);
+    let customer = root.get(&"customer".parse().unwrap()).unwrap();
+    assert_eq!(customer.value(), &Value::Str("c".into()));
+    assert_eq!(customer.comment(), None);
+    assert_eq!(customer.comment_at(CommentPlace::Start), Some("who"));
+    assert_eq!(
+        customer.comment_at(CommentPlace::End),
+        Some("after the name")
+    );
+
+    // Written back in the same places.
+    let written = to_string(root, &spec(), &parsed.document, false).unwrap();
+    assert!(
+        written.contains(
+            "<customer><!--who-->c<!--after the name--></customer>\
+             <placed>2026-01-02</placed><!--at the end--></order>"
+        ),
+        "{written}"
+    );
+    let again = read(&written);
+    assert_eq!(again.node, parsed.node);
+    let customer = again.node.get(&"customer".parse().unwrap()).unwrap();
+    assert_eq!(customer.comment_at(CommentPlace::Start), Some("who"));
+
+    // An element of only a comment keeps it at the end; one with
+    // attributes and text keeps it before its text.
+    let parsed =
+        read("<order><customer>c</customer><line id=\"1\"><!--empty for now--></line></order>");
+    let line = parsed.node.get(&"line[0]".parse().unwrap()).unwrap();
+    assert_eq!(line.comment_at(CommentPlace::End), Some("empty for now"));
+    let written = to_string(&parsed.node, &spec(), &parsed.document, false).unwrap();
+    assert!(written.contains("<!--empty for now--></line>"), "{written}");
+}
+
+#[test]
+fn a_comment_inside_the_text_goes_to_the_end_with_a_warning() {
+    let parsed = read("<order><customer>Ac<!--split-->me</customer></order>");
+    let customer = parsed.node.get(&"customer".parse().unwrap()).unwrap();
+    assert_eq!(customer.value(), &Value::Str("Acme".into()));
+    assert_eq!(customer.comment_at(CommentPlace::End), Some("split"));
     assert!(
         parsed
             .warnings
             .iter()
-            .any(|w| w.message.contains("end of an element")),
+            .any(|w| w.message.contains("moved to the end")),
         "{:?}",
         parsed.warnings
     );
+    let written = to_string(&parsed.node, &spec(), &parsed.document, false).unwrap();
+    assert!(
+        written.contains("<customer>Acme<!--split--></customer>"),
+        "{written}"
+    );
+}
+
+#[test]
+fn the_comments_of_elements_the_schema_lacks_are_kept() {
+    let parsed =
+        read("<order><customer>c</customer><extra><!--a--><part>1</part><!--b--></extra></order>");
+    let extra = parsed.node.get(&"extra".parse().unwrap()).unwrap();
+    assert_eq!(extra.comment_at(CommentPlace::End), Some("b"));
+    let part = parsed.node.get(&"extra.part".parse().unwrap()).unwrap();
+    assert_eq!(part.comment(), Some("a"));
 }
 
 /// Core model: invalid data is kept and flagged, not refused.

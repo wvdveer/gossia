@@ -1,8 +1,11 @@
 //! Comments on the nodes of an XML tab (DESIGN.md, "Comments and structure
 //! fidelity", "Comments in the UI"). A comment is part of its node and is
-//! written as an XML comment before its element. Formulas cannot see it, so
-//! changing one recalculates nothing; it is still an edit of the document, an
-//! entry in the history that marks the workbook as modified.
+//! written as an XML comment before its element, or inside it, at its start
+//! or its end ([`CommentPlace`]). Formulas cannot see it, so changing one
+//! recalculates nothing; it is still an edit of the document, an entry in the
+//! history that marks the workbook as modified.
+
+use cliotree_core::CommentPlace;
 
 use super::*;
 
@@ -59,47 +62,86 @@ impl Calc {
         None
     }
 
-    /// The comment on the node at `path`, if it has one.
+    /// The comment on the node at `path` (the one before its element), if it
+    /// has one.
     pub fn comment(&self, sheet: &str, path: &Path) -> Option<&str> {
-        self.sheets.get(sheet)?.data.get(path)?.comment()
+        self.comment_at(sheet, path, CommentPlace::Before)
+    }
+
+    /// The comment on the node at `path` at `place`, if it has one.
+    pub fn comment_at(&self, sheet: &str, path: &Path, place: CommentPlace) -> Option<&str> {
+        self.sheets.get(sheet)?.data.get(path)?.comment_at(place)
+    }
+
+    /// Whether the node at `path` has a comment at any place.
+    pub fn has_comments(&self, sheet: &str, path: &Path) -> bool {
+        self.sheets
+            .get(sheet)
+            .and_then(|s| s.data.get(path))
+            .is_some_and(Node::has_comments)
     }
 
     /// Inserts, edits or (with `None`, or nothing but white space) deletes
-    /// the comment on the node at `path`. One entry in the history; nothing is
-    /// recalculated. Text that XML cannot hold in a comment is refused.
+    /// the comment on the node at `path`, before its element.
     pub fn set_comment(
         &mut self,
         sheet: &str,
         path: &Path,
         text: Option<&str>,
     ) -> Result<(), EditError> {
+        self.set_comments(sheet, path, &[(CommentPlace::Before, text)])
+    }
+
+    /// Sets the comments of the node at `path` at the places given (`None`,
+    /// or nothing but white space, deletes one). One entry in the history;
+    /// nothing is recalculated. Text that XML cannot hold in a comment is
+    /// refused, and then nothing changes.
+    pub fn set_comments(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        texts: &[(CommentPlace, Option<&str>)],
+    ) -> Result<(), EditError> {
         if let Some(why) = self.comment_refusal(sheet, path) {
             return Err(EditError::Path(why));
         }
-        let after = text
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| t.replace("\r\n", "\n"));
-        if let Some(why) = after.as_deref().and_then(comment_text_problem) {
-            return Err(EditError::Path(why.to_owned()));
+        let mut ops = Vec::new();
+        for &(place, text) in texts {
+            let after = text
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| t.replace("\r\n", "\n"));
+            if let Some(why) = after.as_deref().and_then(comment_text_problem) {
+                return Err(EditError::Path(why.to_owned()));
+            }
+            let before = self.comment_at(sheet, path, place).map(str::to_owned);
+            if before != after {
+                ops.push((place, before, after));
+            }
         }
-        let before = self.comment(sheet, path).map(str::to_owned);
-        if before == after {
+        if ops.is_empty() {
             return Ok(());
         }
-        let what = match (&before, &after) {
-            (None, _) => "Insert comment on",
-            (_, None) => "Delete comment on",
-            _ => "Edit comment on",
+        let what = if ops.iter().all(|(_, before, _)| before.is_none()) {
+            "Insert comment on"
+        } else if ops.iter().all(|(_, _, after)| after.is_none()) {
+            "Delete comment on"
+        } else {
+            "Edit comment on"
         };
-        self.put_comment(sheet, path, after.clone())?;
+        for (place, _, after) in &ops {
+            self.put_comment(sheet, path, *place, after.clone())?;
+        }
         self.history.record(
             format!("{what} {}", Loc::new(sheet, path.clone())),
-            vec![Op::Comment {
-                sheet: sheet.to_owned(),
-                path: path.clone(),
-                before,
-                after,
-            }],
+            ops.into_iter()
+                .map(|(place, before, after)| Op::Comment {
+                    sheet: sheet.to_owned(),
+                    path: path.clone(),
+                    place,
+                    before,
+                    after,
+                })
+                .collect(),
             None,
         );
         Ok(())
@@ -111,6 +153,7 @@ impl Calc {
         &mut self,
         sheet: &str,
         path: &Path,
+        place: CommentPlace,
         comment: Option<String>,
     ) -> Result<(), EditError> {
         let node = self
@@ -118,7 +161,7 @@ impl Calc {
             .data
             .get_mut(path)
             .ok_or_else(|| EditError::Path(format!("there is no node at {path}")))?;
-        node.set_comment(comment);
+        node.set_comment_at(place, comment);
         self.revision += 1;
         Ok(())
     }

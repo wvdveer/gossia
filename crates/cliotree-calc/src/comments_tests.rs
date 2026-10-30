@@ -175,3 +175,60 @@ fn a_comment_stays_through_a_formula_and_is_written_as_xml() {
         "{text}"
     );
 }
+
+/// Comments inside an element (at its start, before its text, and at its
+/// end) are read, set in one entry with the one before it, undone, and
+/// written back in their places.
+#[test]
+fn the_comments_inside_an_element_are_kept_and_edited() {
+    use cliotree_core::CommentPlace::{Before, End, Start};
+    let engine = FakeEngine::new();
+    let mut calc = Calc::new(Arc::new(engine.clone()));
+    let spec = xsd::lower_str(XSD).unwrap();
+    let text = "<order><customer><!--first-->Ada<!--then--></customer>\
+                <item>2</item><total>0</total><!--last--></order>";
+    let node = xml::parse(text, &spec).unwrap().node;
+    calc.add_sheet("Order", spec, node).unwrap();
+    let customer = p("customer");
+    assert_eq!(calc.comment_at("Order", &customer, Start), Some("first"));
+    assert_eq!(calc.comment_at("Order", &customer, End), Some("then"));
+    assert_eq!(calc.comment_at("Order", &p(""), End), Some("last"));
+    assert!(calc.has_comments("Order", &customer));
+    assert!(!calc.has_comments("Order", &p("total")));
+
+    calc.set_comments(
+        "Order",
+        &customer,
+        &[
+            (Before, Some("who")),
+            (Start, None),
+            (End, Some("then, again")),
+        ],
+    )
+    .unwrap();
+    assert_eq!(calc.undo_label(), Some("Edit comment on Order.customer"));
+    assert_eq!(calc.comment("Order", &customer), Some("who"));
+    assert_eq!(calc.comment_at("Order", &customer, Start), None);
+    // Refused text changes nothing.
+    assert!(
+        calc.set_comments(
+            "Order",
+            &customer,
+            &[(Before, Some("x")), (End, Some("a--b"))]
+        )
+        .is_err()
+    );
+    assert_eq!(calc.comment("Order", &customer), Some("who"));
+
+    let written = calc.export_text("Order", ExportFormat::Xml, false).unwrap();
+    assert!(
+        written.contains("<!--who--><customer>Ada<!--then, again--></customer>"),
+        "{written}"
+    );
+    assert!(written.contains("<!--last--></order>"), "{written}");
+
+    calc.undo().unwrap();
+    assert_eq!(calc.comment("Order", &customer), None);
+    assert_eq!(calc.comment_at("Order", &customer, Start), Some("first"));
+    assert_eq!(calc.comment_at("Order", &customer, End), Some("then"));
+}

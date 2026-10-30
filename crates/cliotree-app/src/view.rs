@@ -1116,7 +1116,7 @@ impl ClioApp {
                 actions.push(Action::Select(row.path.clone()));
             }
             background.context_menu(|ui| {
-                self.comment_menu_items(ui, &row.path, cell.right_top(), actions);
+                self.comment_menu_items(ui, &row.path, cell.right_top(), actions, true);
             });
         }
 
@@ -1446,7 +1446,7 @@ impl ClioApp {
         self.field_menu_items(ui, add_to.as_ref(), self.field_of(path).as_ref(), actions);
         if row.node.is_some() {
             let at = ui.ctx().pointer_interact_pos().unwrap_or_default();
-            self.comment_menu_items(ui, path, at, actions);
+            self.comment_menu_items(ui, path, at, actions, true);
         }
     }
 
@@ -1751,7 +1751,7 @@ impl ClioApp {
             );
             if xml {
                 ui.separator();
-                self.comment_menu_items(ui, path, at, actions);
+                self.comment_menu_items(ui, path, at, actions, true);
             }
         });
         response

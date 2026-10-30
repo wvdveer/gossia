@@ -101,6 +101,7 @@ pub(crate) enum Op {
     Comment {
         sheet: String,
         path: Path,
+        place: cliotree_core::CommentPlace,
         before: Option<String>,
         after: Option<String>,
     },

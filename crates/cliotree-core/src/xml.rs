@@ -14,9 +14,11 @@
 //!
 //! What is kept: the declaration, the prefix and the namespace declarations of
 //! the root (in [`XmlDocument`]), attribute order, element order, text exactly,
-//! and the comment before an element (as that node's comment). What is not:
-//! see [`crate::xmltree`] and DESIGN.md, "Not preserved (accepted)". A comment
-//! anywhere but before an element or the root is dropped, with a warning.
+//! and comments: the comment before an element is that node's comment, and a
+//! comment inside an element that is before no child element is the node's
+//! comment at the start (before its text) or at the end ([`CommentPlace`]).
+//! What is not kept: see [`crate::xmltree`] and DESIGN.md, "Not preserved
+//! (accepted)".
 
 use std::collections::HashMap;
 
@@ -26,7 +28,7 @@ use indexmap::IndexMap;
 use crate::json::{Warning, WriteError};
 use crate::path::Path;
 use crate::typespec::{Kind, TypeId, TypeSpec};
-use crate::value::{DateTimeValue, Node, Value};
+use crate::value::{CommentPlace, DateTimeValue, Node, Value};
 use crate::xmltree::{self, Attribute, Child, Declaration, Element, XmlError};
 
 /// What a document says about itself beyond its tree.
@@ -134,9 +136,14 @@ impl Reader<'_> {
         });
     }
 
-    /// The node for an element, typed as `ty`.
+    /// The node for an element, typed as `ty`, with the comments inside it.
     fn element(&mut self, element: &Element, ty: TypeId, path: &Path) -> Node {
-        self.comments_inside(element, path);
+        let inner = self.comments_inside(element, path);
+        let node = self.element_value(element, ty, path);
+        with_inner(node, inner)
+    }
+
+    fn element_value(&mut self, element: &Element, ty: TypeId, path: &Path) -> Node {
         match &self.spec.get(ty).kind {
             Kind::Object { fields } => {
                 let fields = fields.clone();
@@ -159,25 +166,44 @@ impl Reader<'_> {
         }
     }
 
-    /// Comments that are not before an element are not kept.
-    fn comments_inside(&mut self, element: &Element, path: &Path) {
-        let mut pending = false;
+    /// The comments inside an element that are before no child element
+    /// (those are the child's): the ones before its text, at the start, and
+    /// the rest, at the end. A comment inside the text, or after a child
+    /// element and before text, goes to the end, with a warning, since the
+    /// text is one value.
+    fn comments_inside(&mut self, element: &Element, path: &Path) -> Inner {
+        let (mut start, mut end, mut pending) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut content, mut moved) = (false, false);
         for child in &element.children {
             match child {
-                Child::Comment(_) => pending = true,
-                Child::Element(_) => pending = false,
+                Child::Comment(c) => pending.push(c.as_str()),
+                Child::Element(_) => {
+                    pending.clear();
+                    content = true;
+                }
                 Child::Text(t) if t.trim().is_empty() => {}
                 Child::Text(_) => {
-                    if pending {
-                        self.warn(path, "a comment next to text was dropped");
-                        pending = false;
+                    if !pending.is_empty() {
+                        if content {
+                            moved = true;
+                            end.append(&mut pending);
+                        } else {
+                            start.append(&mut pending);
+                        }
                     }
+                    content = true;
                 }
             }
         }
-        if pending {
-            self.warn(path, "a comment at the end of an element was dropped");
+        end.append(&mut pending);
+        if moved {
+            self.warn(
+                path,
+                "a comment inside the text was moved to the end of the element",
+            );
         }
+        let joined = |list: Vec<&str>| (!list.is_empty()).then(|| list.join("\n"));
+        (joined(start), joined(end))
     }
 
     fn object(
@@ -302,9 +328,15 @@ impl Reader<'_> {
     }
 
     /// An element with no schema to type it: attributes, text and children, with
-    /// repeated children as arrays, every simple value a string.
+    /// repeated children as arrays, every simple value a string. Its comments
+    /// are kept as on any element.
     fn generic(&mut self, element: &Element, path: &Path) -> Node {
-        self.comments_inside(element, path);
+        let inner = self.comments_inside(element, path);
+        let node = self.generic_value(element, path);
+        with_inner(node, inner)
+    }
+
+    fn generic_value(&mut self, element: &Element, path: &Path) -> Node {
         let has_children = element.elements().next().is_some();
         if element.attributes.is_empty() && !has_children {
             return Node::new(Value::Str(element.text()));
@@ -320,13 +352,25 @@ impl Reader<'_> {
         if element.has_text() {
             map.insert("#text".to_string(), Node::new(Value::Str(element.text())));
         }
-        let mut groups: IndexMap<String, Vec<&Element>> = IndexMap::new();
-        for e in element.elements() {
-            groups.entry(e.name.clone()).or_default().push(e);
+        let mut groups: IndexMap<String, Vec<(&Element, Option<String>)>> = IndexMap::new();
+        let mut pending: Vec<&str> = Vec::new();
+        for child in &element.children {
+            match child {
+                Child::Comment(c) => pending.push(c),
+                Child::Element(e) => {
+                    let comment = (!pending.is_empty()).then(|| pending.join("\n"));
+                    pending.clear();
+                    groups.entry(e.name.clone()).or_default().push((e, comment));
+                }
+                Child::Text(_) => {}
+            }
         }
         for (name, found) in groups {
             let here = path.key(name.clone());
-            let nodes: Vec<Node> = found.iter().map(|e| self.generic(e, &here)).collect();
+            let nodes: Vec<Node> = found
+                .iter()
+                .map(|(e, comment)| self.generic(e, &here).with_comment(comment.clone()))
+                .collect();
             let node = if nodes.len() == 1 {
                 nodes.into_iter().next().expect("one")
             } else {
@@ -336,6 +380,15 @@ impl Reader<'_> {
         }
         Node::new(Value::Object(map))
     }
+}
+
+/// The comments inside an element: at its start and at its end.
+type Inner = (Option<String>, Option<String>);
+
+fn with_inner(mut node: Node, (start, end): Inner) -> Node {
+    node.set_comment_at(CommentPlace::Start, start);
+    node.set_comment_at(CommentPlace::End, end);
+    node
 }
 
 /// Reads the text of an element or attribute as a value of `kind`. Text that is
@@ -460,8 +513,29 @@ pub fn to_string(
     Ok(xmltree::write(&doc, pretty))
 }
 
-/// The element for a node, named `name`.
+/// The element for a node, named `name`, with the comments inside it: the
+/// one at the start before its text, and the one at the end after the rest.
+/// With no text to stand before, the one at the start goes with the end.
 fn emit(name: &str, node: &Node, prefix: &Option<String>) -> Element {
+    let mut element = emit_value(name, node, prefix);
+    let start = node.comment_at(CommentPlace::Start);
+    let end = node.comment_at(CommentPlace::End);
+    let text_first = matches!(element.children.first(), Some(Child::Text(_)));
+    if let Some(start) = start.filter(|_| text_first) {
+        element
+            .children
+            .insert(0, Child::Comment(start.to_string()));
+    }
+    if let Some(start) = start.filter(|_| !text_first) {
+        element.children.push(Child::Comment(start.to_string()));
+    }
+    if let Some(end) = end {
+        element.children.push(Child::Comment(end.to_string()));
+    }
+    element
+}
+
+fn emit_value(name: &str, node: &Node, prefix: &Option<String>) -> Element {
     let mut element = Element::new(name);
     element.prefix = prefix.clone();
     match node.value() {

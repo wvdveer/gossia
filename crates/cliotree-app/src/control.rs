@@ -273,14 +273,23 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         "key" => key(app, &text_arg(args, "chord")?.to_ascii_lowercase()),
         "cell" => cell(app, &path_arg(args, "path")?),
         // Inserts, edits or deletes (`text` null or absent) the comment on a
-        // node of an XML tab, as the comment box does.
+        // node of an XML tab, as the comment box does: before its element, or
+        // with `place` `start` or `end`, inside it.
         "set_comment" => {
             let path = path_arg(args, "path")?;
             let text = args.get("text").and_then(Json::as_str);
+            let place = match args.get("place").and_then(Json::as_str) {
+                None | Some("before") => cliotree_core::CommentPlace::Before,
+                Some("start") => cliotree_core::CommentPlace::Start,
+                Some("end") => cliotree_core::CommentPlace::End,
+                Some(other) => {
+                    return Err(format!("place is before, start or end, not {other}"));
+                }
+            };
             let sheet = app.sheet.clone();
             app.session
                 .calc_mut()
-                .set_comment(&sheet, &path, text)
+                .set_comments(&sheet, &path, &[(place, text)])
                 .map_err(|e| e.to_string())?;
             Ok(Json::Null)
         }
@@ -466,6 +475,8 @@ fn cell(app: &ClioApp, path: &Path) -> Result<Json, String> {
         "computed_by": cell.computed_by.map(|p| p.to_string()),
         "edit_text": app.cell_text(path),
         "comment": node.comment(),
+        "comment_start": node.comment_at(cliotree_core::CommentPlace::Start),
+        "comment_end": node.comment_at(cliotree_core::CommentPlace::End),
     }))
 }
 

@@ -24,9 +24,13 @@ fn p(text: &str) -> Path {
 }
 
 fn window() -> Harness<'static, ClioApp> {
+    window_of(XML)
+}
+
+fn window_of(text: &str) -> Harness<'static, ClioApp> {
     let mut calc = cliotree_calc::Calc::new(Arc::new(cliotree_calc::python::PythonSyntax));
     let spec = xsd::lower_str(XSD).unwrap();
-    let data = xml::parse(XML, &spec).unwrap();
+    let data = xml::parse(text, &spec).unwrap();
     calc.add_sheet("Order", spec, data.node).unwrap();
     calc.set_xml_document("Order", data.document).unwrap();
     let schema = xml::parse(XSD, metaschema::xsd_meta()).unwrap();
@@ -172,4 +176,86 @@ fn a_json_tab_has_no_comment_commands() {
     harness.get_by_label("customer").click_secondary();
     harness.run();
     assert!(harness.query_by_label("Insert Comment").is_none());
+}
+
+/// Comments read from inside an element (at its start and its end) are shown
+/// with the one before it, edited in the same box, and deleted with it.
+#[test]
+fn the_comments_inside_an_element_are_shown_and_edited_with_its_comment() {
+    use cliotree_core::CommentPlace::{End, Start};
+    let mut harness = window_of(
+        "<order id=\"7\"><customer><!--first-->Acme<!--then--></customer><qty>2</qty></order>",
+    );
+    let at = |harness: &Harness<'_, ClioApp>, place| {
+        harness
+            .state()
+            .calc()
+            .comment_at("Order", &p("customer"), place)
+            .map(str::to_owned)
+    };
+    harness.get_by_label("Acme").hover();
+    harness.run();
+    harness.run();
+    harness.get_by_label("first");
+    harness.get_by_label("then");
+    harness.get_by_label("Comment at the end of the element");
+
+    // The cell has comments, so its menu edits them: a box for each.
+    menu_item(&mut harness, "Acme", "Edit Comment");
+    let input = egui::accesskit::Role::TextInput;
+    harness
+        .get_by_role_and_label(input, "Comment")
+        .type_text("Who pays");
+    harness
+        .get_by_role_and_label(input, "Comment at the end of the element")
+        .click();
+    harness.run();
+    // The caret goes to the end of the text.
+    harness.key_press(Key::End);
+    harness
+        .get_by_role_and_label(input, "Comment at the end of the element")
+        .type_text(", and when");
+    harness.key_combination_modifiers(Modifiers::COMMAND, &[Key::Enter]);
+    harness.run();
+    assert_eq!(comment(&harness, "customer").as_deref(), Some("Who pays"));
+    assert_eq!(at(&harness, Start).as_deref(), Some("first"));
+    assert_eq!(at(&harness, End).as_deref(), Some("then, and when"));
+
+    // Delete takes every one away, in one step.
+    menu_item(&mut harness, "Acme", "Delete Comment");
+    assert_eq!(comment(&harness, "customer"), None);
+    assert_eq!(at(&harness, Start), None);
+    assert_eq!(at(&harness, End), None);
+    harness.key_combination_modifiers(Modifiers::COMMAND, &[Key::Z]);
+    harness.run();
+    assert_eq!(at(&harness, Start).as_deref(), Some("first"));
+    assert_eq!(comment(&harness, "customer").as_deref(), Some("Who pays"));
+}
+
+/// A field on a form shows its node's comment as the cell does, and its menu
+/// has the comment commands.
+#[test]
+fn a_field_on_a_form_shows_and_edits_its_comment() {
+    let mut harness = window();
+    assert!(
+        harness
+            .state_mut()
+            .set_view(cliotree_app::form::View::Form("Default".to_owned()))
+    );
+    harness.run();
+    harness.run();
+    assert!(harness.query_by_label("Who pays").is_none());
+    harness.get_by_label("Order.customer").hover();
+    harness.run();
+    harness.run();
+    harness.get_by_label("Who pays");
+
+    harness.get_by_label("Order.qty").click_secondary();
+    harness.run();
+    harness.get_by_label("Insert Comment").click();
+    harness.run();
+    harness.get_by_label("Comment").type_text("Boxes");
+    harness.key_combination_modifiers(Modifiers::COMMAND, &[Key::Enter]);
+    harness.run();
+    assert_eq!(comment(&harness, "qty").as_deref(), Some("Boxes"));
 }

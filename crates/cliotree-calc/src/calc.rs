@@ -1034,11 +1034,12 @@ impl Calc {
             Op::Comment {
                 sheet,
                 path,
+                place,
                 before,
                 after,
             } => {
                 let target = if forward { after } else { before };
-                self.put_comment(sheet, path, target.clone())?;
+                self.put_comment(sheet, path, *place, target.clone())?;
             }
             Op::Formula {
                 sheet,

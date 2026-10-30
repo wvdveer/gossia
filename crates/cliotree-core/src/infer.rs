@@ -125,7 +125,7 @@ fn without_nulls(node: &Node, path: &str, nulls: &mut IndexMap<(String, bool), u
         }
         _ => return node.clone(),
     };
-    Node::new(value).with_comment(node.comment().map(str::to_owned))
+    Node::new(value).with_comments_of(node)
 }
 
 /// The kinds of value a position can hold, in the order that settles a tie:

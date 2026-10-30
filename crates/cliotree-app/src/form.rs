@@ -2611,6 +2611,18 @@ impl Painter<'_> {
                 r.clone()
                     .on_hover_text("This value is not in the list of choices.");
             }
+            // The node's comments, as on its cell: the triangle and the
+            // popup, and outside layout mode the comment commands in the
+            // field's menu.
+            app.comment_marks(ui, r.rect, path);
+            if self.layout.is_none() && calc.is_xml(&app.sheet) {
+                let mut commands = Vec::new();
+                r.context_menu(|ui| {
+                    app.comment_menu_items(ui, path, r.rect.right_top(), &mut commands, false);
+                });
+                self.actions
+                    .extend(commands.into_iter().map(FormAction::Table));
+            }
         }
         if not_listed && !compact {
             ui.label(RichText::new("not in the list").small().weak().italics());
