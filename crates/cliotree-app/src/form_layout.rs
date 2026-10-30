@@ -597,9 +597,7 @@ impl ClioApp {
         let selected = self.selected_control();
         self.edit_design(|d| {
             let at = match selected {
-                Some(at) if d.get(&at).is_some_and(|c| c.kind == ControlKind::Group) => {
-                    d.insert(&at, None, control)
-                }
+                Some(at) if d.takes_children(&at) => d.insert(&at, None, control),
                 Some(at) => {
                     let (last, parent) = at.split_last()?;
                     d.insert(parent, Some(last + 1), control)
@@ -617,9 +615,27 @@ impl ClioApp {
             .calc()
             .spec(&self.sheet)
             .and_then(|spec| design::control_for(spec, path));
-        match control {
-            Some(control) => self.add_control(control),
-            None => false,
+        let Some(control) = control else {
+            return false;
+        };
+        // Its path is the whole path, so it goes after the stacked repeater
+        // whose items the selection is in, or that is selected.
+        let design = self.design_of(&self.form_name());
+        let selected = self.selected_control();
+        let outside = selected.as_ref().and_then(|at| {
+            design.item_scope(at).or_else(|| {
+                design
+                    .get(at)
+                    .filter(|c| c.kind == ControlKind::Repeater)
+                    .map(|_| at.clone())
+            })
+        });
+        match outside {
+            Some(repeater) => self.edit_design(|d| {
+                let (last, parent) = repeater.split_last()?;
+                d.insert(parent, Some(last + 1), control).map(Some)
+            }),
+            None => self.add_control(control),
         }
     }
 
@@ -629,7 +645,7 @@ impl ClioApp {
     /// order of the schema, if it is a table.
     fn column_names(&self, design: &FormDesign, at: &[usize]) -> Option<Vec<String>> {
         let spec = self.calc().spec(&self.sheet)?;
-        let columns = crate::form::columns_of(spec, design.get(at)?)?;
+        let columns = crate::form::columns_of(spec, design, at)?;
         Some(columns.into_iter().map(|c| c.name).collect())
     }
 
@@ -1072,14 +1088,37 @@ impl ClioApp {
             ControlKind::Field | ControlKind::Group | ControlKind::Repeater
         );
 
+        // The stacked repeater whose items the control is designed in, and
+        // the type of those items: its path is relative to the item.
+        let item_ty = spec.as_ref().and_then(|spec| {
+            let scope = design.item_scope(at)?;
+            let array = design.get(&scope)?.bound_path()?;
+            match &spec.get(spec.resolve(&array)?.ty).kind {
+                Kind::Array { items, .. } => Some(*items),
+                _ => None,
+            }
+        });
+        if item_ty.is_some() {
+            ui.weak("In the design of the items: paths are read from the item.");
+        }
+
         // What the control is bound to.
         if bound && let Some(spec) = &spec {
-            let options = design::bindable(spec, kind);
+            let options = match item_ty {
+                Some(ty) => design::bindable_from(spec, ty, kind),
+                None => design::bindable(spec, kind),
+            };
+            let shown = |path: &str| match (path.is_empty(), item_ty) {
+                (true, Some(_)) => "(the item)".to_owned(),
+                _ => path.to_owned(),
+            };
             let current = edited.path.clone();
             let mut chosen = current.clone();
             ui.horizontal(|ui| {
                 ui.label("Path");
-                let text = current.clone().unwrap_or_else(|| "(none)".to_owned());
+                let text = current
+                    .as_deref()
+                    .map_or_else(|| "(none)".to_owned(), shown);
                 let response = egui::ComboBox::from_id_salt("property_path")
                     .selected_text(text)
                     .width(200.0)
@@ -1088,11 +1127,8 @@ impl ClioApp {
                             ui.selectable_value(&mut chosen, None, "(none)");
                         }
                         for path in &options {
-                            ui.selectable_value(
-                                &mut chosen,
-                                Some(path.to_string()),
-                                path.to_string(),
-                            );
+                            let text = path.to_string();
+                            ui.selectable_value(&mut chosen, Some(text.clone()), shown(&text));
                         }
                     })
                     .response;
@@ -1139,7 +1175,7 @@ impl ClioApp {
                 });
                 ui.checkbox(&mut edited.read_only, "Read only");
                 let kind = spec.as_ref().and_then(|spec| {
-                    let path = edited.bound_path()?;
+                    let path = design.path_in_item(at, &edited, 0)?;
                     Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
                 });
                 // A password box: only a string's text can be dots.
@@ -1233,6 +1269,7 @@ impl ClioApp {
                     });
                     edited.mode = mode;
                 });
+                self.item_design_buttons(ui, design, at, &mut edited, spec.as_ref());
                 column_edit = self.column_list(ui, design, at);
                 font_properties(
                     ui,
@@ -1317,7 +1354,7 @@ impl ClioApp {
             }
             self.expression_error(ui, at, None, expr);
             let node_kind = spec.as_ref().and_then(|spec| {
-                let path = edited.bound_path()?;
+                let path = design.path_in_item(at, &edited, 0)?;
                 Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
             });
             self.choices_note(ui, at, None, node_kind.as_ref());
@@ -1333,7 +1370,7 @@ impl ClioApp {
         );
 
         if kind == ControlKind::Field {
-            self.formula_editor(ui, &edited);
+            self.formula_editor(ui, design, at, &edited);
         }
 
         // Where the control is.
@@ -1345,9 +1382,7 @@ impl ClioApp {
                 && at.split_last().is_some_and(|(_, parent)| {
                     let mut above = parent.to_vec();
                     above.push(index - 1);
-                    design
-                        .get(&above)
-                        .is_some_and(|c| c.kind == ControlKind::Group)
+                    design.takes_children(&above)
                 });
             let mut act = |ui: &mut egui::Ui, label: &str, enabled: bool, action: ControlAction| {
                 if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
@@ -1562,7 +1597,8 @@ impl ClioApp {
         let kind = (!row_number)
             .then(|| {
                 let spec = self.calc().spec(&self.sheet)?;
-                let columns = crate::form::columns_of(spec, control)?;
+                let design = self.design_of(&self.form_name());
+                let columns = crate::form::columns_of(spec, &design, at)?;
                 let ty = columns.iter().find(|c| c.name == column.name)?.ty;
                 Some(spec.get(ty).kind.clone())
             })
@@ -1669,7 +1705,18 @@ impl ClioApp {
         let sheet = &self.sheet;
         let failed = |state: Option<cliotree_calc::ExprState>| state?.result?.err();
         let error = match column {
-            None => failed(calc.control_expression(sheet, &form, at, kind)).map(|e| (None, e)),
+            // In the design of a stacked repeater's items it runs for each
+            // item: the first that failed.
+            None => failed(calc.control_expression(sheet, &form, at, kind))
+                .map(|e| (None, e))
+                .or_else(|| {
+                    (0..)
+                        .map_while(|item| {
+                            calc.control_expression_in(sheet, &form, at, Some(item), kind)
+                                .map(|state| (item, state))
+                        })
+                        .find_map(|(item, state)| Some((Some(item), failed(Some(state))?)))
+                }),
             Some(name) if kind == ExprKind::Visible => {
                 failed(calc.column_expression(sheet, &form, at, name, None, kind))
                     .map(|e| (None, e))
@@ -1685,9 +1732,10 @@ impl ClioApp {
             return;
         };
         let first = message.lines().next().unwrap_or_default();
-        let text = match row {
-            Some(row) => format!("Row [{row}]: {first}"),
-            None => first.to_owned(),
+        let text = match (row, column) {
+            (Some(row), Some(_)) => format!("Row [{row}]: {first}"),
+            (Some(item), None) => format!("Item [{item}]: {first}"),
+            (None, _) => first.to_owned(),
         };
         let color = error_color(ui);
         let response = ui.add(egui::Label::new(
@@ -1710,7 +1758,11 @@ impl ClioApp {
         let calc = self.calc();
         let form = self.form_name();
         let state = match column {
-            None => calc.control_expression(&self.sheet, &form, at, ExprKind::Choices),
+            None => calc
+                .control_expression(&self.sheet, &form, at, ExprKind::Choices)
+                .or_else(|| {
+                    calc.control_expression_in(&self.sheet, &form, at, Some(0), ExprKind::Choices)
+                }),
             Some(name) => {
                 calc.column_expression(&self.sheet, &form, at, name, Some(0), ExprKind::Choices)
             }
@@ -1746,10 +1798,80 @@ impl ClioApp {
         }
     }
 
+    /// On the page of a repeater: designing its items, or going back to the
+    /// generated look. Designing shows the repeater stacked and starts from
+    /// the controls the generated form has for an item, which can then be
+    /// arranged as on the rest of the form.
+    fn item_design_buttons(
+        &self,
+        ui: &mut egui::Ui,
+        design: &FormDesign,
+        at: &Address,
+        edited: &mut Control,
+        spec: Option<&cliotree_core::TypeSpec>,
+    ) {
+        // A repeater in an item shows its items as generated.
+        if design.item_scope(at).is_some() {
+            return;
+        }
+        let item_ty = spec.and_then(|spec| {
+            let resolved = spec.resolve(&edited.bound_path()?)?;
+            match &spec.get(resolved.ty).kind {
+                Kind::Array { items, .. } => Some((spec, *items)),
+                _ => None,
+            }
+        });
+        let Some((spec, item_ty)) = item_ty else {
+            return;
+        };
+        if edited.children.is_empty() {
+            let design_them = ui
+                .button("Design the items")
+                .on_hover_text(
+                    "Show each item with controls you arrange, as on the rest of the form,                      one item at a time",
+                )
+                .clicked();
+            if design_them {
+                edited.mode = Some(RepeaterMode::Stacked);
+                edited.children = design::item_controls(spec, item_ty);
+            }
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label("The items are designed.");
+            if ui
+                .button("Use the generated items")
+                .on_hover_text("Take away the design of the items: they are drawn from the schema")
+                .clicked()
+            {
+                edited.children.clear();
+            }
+        });
+        if !edited.is_stacked() {
+            ui.colored_label(
+                error_color(ui),
+                "The design of the items is used only when they are shown stacked.",
+            );
+        }
+    }
+
     /// The formula of the node a field is bound to, edited here, since a form
     /// has no formula bar. It is the same entry as in the formula bar of the
     /// data tree, an undoable edit of the tab.
-    fn formula_editor(&mut self, ui: &mut egui::Ui, control: &Control) {
+    fn formula_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        design: &FormDesign,
+        at: &Address,
+        control: &Control,
+    ) {
+        if design.item_scope(at).is_some() {
+            ui.weak(
+                "A formula for this field in every item is a column formula: \
+                 set it in the data tree, on the array.",
+            );
+            return;
+        }
         let Some(path) = control.bound_path().filter(|_| control.binds()) else {
             return;
         };

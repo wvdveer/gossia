@@ -91,6 +91,13 @@ impl Path {
         p
     }
 
+    /// This path followed by the steps of `rest`, which is relative to it.
+    pub fn join(&self, rest: &Path) -> Path {
+        let mut p = self.clone();
+        p.0.extend(rest.0.iter().cloned());
+        p
+    }
+
     /// The path of the containing node, or `None` for the root.
     pub fn parent(&self) -> Option<Path> {
         let (_, rest) = self.0.split_last()?;

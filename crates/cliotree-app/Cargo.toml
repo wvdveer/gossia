@@ -22,7 +22,10 @@ cliotree-std.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"
-egui_extras = "0.37.0"
+# The date picker of a form's date fields needs `jiff`, which the lock file
+# already has.
+egui_extras = { version = "0.37.0", features = ["datepicker"] }
+jiff = { version = "0.2.38", default-features = false, features = ["std"] }
 # Reads the clipboard for Paste values and the menu's Paste; egui hands the
 # clipboard over only with Ctrl+V. The same version egui-winit uses.
 arboard = { version = "3.7.0", default-features = false }

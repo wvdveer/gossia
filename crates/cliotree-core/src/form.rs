@@ -988,6 +988,12 @@ fn is_false(b: &bool) -> bool {
 }
 
 impl Control {
+    /// Whether it is a repeater that shows one item at a time. Its items can
+    /// be designed: the controls in it are drawn for the item shown.
+    pub fn is_stacked(&self) -> bool {
+        self.kind == ControlKind::Repeater && self.mode == Some(RepeaterMode::Stacked)
+    }
+
     /// Whether it is a group that places its controls freely.
     pub fn is_free(&self) -> bool {
         self.kind == ControlKind::Group && self.layout == Some(GroupLayout::Free)
@@ -1398,7 +1404,7 @@ impl FormDesign {
             let above = last.checked_sub(1)?;
             let mut target = parent.to_vec();
             target.push(above);
-            if self.get(&target)?.kind != ControlKind::Group {
+            if !self.takes_children(&target) {
                 return None;
             }
             let control = self.remove(address)?;
@@ -1421,13 +1427,14 @@ impl FormDesign {
     /// Moves a control to `index` in the list of `parent` (a group, or the
     /// top level for an empty address), `index` counting the places as they
     /// are before the move: what dragging a control does. A control cannot go
-    /// into itself or anything inside it, and only a group takes children.
-    /// Returns the new address, or None if the move cannot be made.
+    /// into itself or anything inside it, and only a group or a stacked
+    /// repeater takes children ([`FormDesign::takes_children`]). Returns the
+    /// new address, or None if the move cannot be made.
     pub fn move_to(&mut self, from: &[usize], parent: &[usize], index: usize) -> Option<Address> {
         if parent.starts_with(from) {
             return None;
         }
-        if !parent.is_empty() && self.get(parent)?.kind != ControlKind::Group {
+        if !self.takes_children(parent) {
             return None;
         }
         let (&last, from_parent) = from.split_last()?;
@@ -1446,6 +1453,54 @@ impl FormDesign {
         }
         let control = self.remove(from)?;
         self.insert(&parent, Some(index), control)
+    }
+
+    /// Whether controls can be put into the one at `address` (the top level
+    /// for an empty address): a group, or a stacked repeater whose items are
+    /// designed, its controls being that design. Its items are designed
+    /// first, from the generated look ([`item_controls`]); until then, and
+    /// again once its last control is taken out, it shows them as generated.
+    /// A repeater inside the items of another is drawn as generated, so it
+    /// takes none.
+    pub fn takes_children(&self, address: &[usize]) -> bool {
+        if address.is_empty() {
+            return true;
+        }
+        match self.get(address) {
+            Some(c) if c.kind == ControlKind::Group => true,
+            Some(c) if c.is_stacked() => {
+                !c.children.is_empty() && self.item_scope(address).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// The repeater whose items the control at `address` is designed in: the
+    /// address of the nearest repeater it is inside. The path of such a
+    /// control is relative to the item, and its expressions run for each
+    /// item.
+    pub fn item_scope(&self, address: &[usize]) -> Option<Address> {
+        (1..address.len())
+            .rev()
+            .map(|n| &address[..n])
+            .find(|a| self.get(a).is_some_and(|c| c.kind == ControlKind::Repeater))
+            .map(<[usize]>::to_vec)
+    }
+
+    /// The node the control at `address` shows: its own path, or inside the
+    /// items of a repeater, its path in item `item` (an unbound control
+    /// there is at the item). `control` is the one at `address`, or the
+    /// property page's copy that it is editing. None for an unbound control
+    /// outside an item, and when the paths cannot be read.
+    pub fn path_in_item(&self, address: &[usize], control: &Control, item: usize) -> Option<Path> {
+        let Some(scope) = self.item_scope(address) else {
+            return control.bound_path();
+        };
+        let base = self.get(&scope)?.bound_path()?.index(item);
+        match control.bound_path() {
+            Some(rest) => Some(base.join(&rest)),
+            None => Some(base),
+        }
     }
 
     /// Every control with its address, in the order of the form.
@@ -1517,10 +1572,28 @@ fn generated(spec: &TypeSpec, ty: crate::TypeId, path: &Path, name: &str) -> Con
     control
 }
 
+/// The controls of the generated form for an item of type `ty`, with paths
+/// relative to the item: where the design of a stacked repeater's items
+/// starts. An item that is not an object is one control, bound to the item
+/// itself (the empty path).
+pub fn item_controls(spec: &TypeSpec, ty: crate::TypeId) -> Vec<Control> {
+    match &spec.get(ty).kind {
+        Kind::Object { .. } => generated_children(spec, ty, &Path::root()),
+        _ => vec![generated(spec, ty, &Path::root(), "")],
+    }
+}
+
 /// The paths a control of `kind` can be bound to: a field takes a scalar or a
 /// map, a group an object, a repeater an array. Only nodes that exist
 /// without an index are offered, and the root is not.
 pub fn bindable(spec: &TypeSpec, kind: ControlKind) -> Vec<Path> {
+    bindable_from(spec, spec.root(), kind)
+}
+
+/// As [`bindable`], relative to a node of type `ty`: for the controls in the
+/// items of a repeater, `ty` being the items' type. An item that is not an
+/// object offers itself (the empty path) to a field.
+pub fn bindable_from(spec: &TypeSpec, ty: crate::TypeId, kind: ControlKind) -> Vec<Path> {
     fn visit(
         spec: &TypeSpec,
         ty: crate::TypeId,
@@ -1547,7 +1620,14 @@ pub fn bindable(spec: &TypeSpec, kind: ControlKind) -> Vec<Path> {
         }
     }
     let mut out = Vec::new();
-    visit(spec, spec.root(), &Path::root(), kind, &mut out);
+    let scalar = !matches!(
+        spec.get(ty).kind,
+        Kind::Object { .. } | Kind::Array { .. } | Kind::Map { .. }
+    );
+    if scalar && kind == ControlKind::Field && ty != spec.root() {
+        out.push(Path::root());
+    }
+    visit(spec, ty, &Path::root(), kind, &mut out);
     out
 }
 
@@ -1559,14 +1639,48 @@ impl FormDesign {
     /// the schema was before.
     pub fn problem(&self, spec: &TypeSpec, address: &[usize]) -> Option<String> {
         let control = self.get(address)?;
-        control_problem(spec, control)
+        self.problem_of(spec, address, control)
+    }
+
+    /// Why `control`, at `address` or standing for the one there, cannot be
+    /// drawn. In the items of a repeater its path is read from the item, and
+    /// the design of the items is used only when the repeater is stacked.
+    pub fn problem_of(
+        &self,
+        spec: &TypeSpec,
+        address: &[usize],
+        control: &Control,
+    ) -> Option<String> {
+        let Some(scope) = self.item_scope(address) else {
+            return control_problem(spec, control);
+        };
+        let repeater = self.get(&scope)?;
+        if !repeater.is_stacked() {
+            return Some(
+                "its repeater shows a table, so the design of its items is not used".to_owned(),
+            );
+        }
+        if self.item_scope(&scope).is_some() {
+            return Some(
+                "a repeater inside an item shows its items as generated, so they are not designed"
+                    .to_owned(),
+            );
+        }
+        let array = repeater.bound_path().filter(|a| {
+            spec.resolve(a)
+                .is_some_and(|r| matches!(spec.get(r.ty).kind, Kind::Array { .. }))
+        });
+        let Some(array) = array else {
+            return Some("its repeater is broken".to_owned());
+        };
+        control_problem_at(spec, control, &array.index(0))
     }
 
     /// The controls that are broken, with the reason.
     pub fn broken(&self, spec: &TypeSpec) -> Vec<(Address, String)> {
         self.walk()
             .into_iter()
-            .filter_map(|(at, c)| control_problem(spec, c).map(|p| (at, p)))
+            .filter_map(|(at, c)| self.problem_of(spec, &at, c).map(|p| (at, p)))
             .collect()
     }
 
@@ -1579,7 +1693,11 @@ impl FormDesign {
         // shows only its children, so it only marks its object as partly shown.
         let mut bound = Vec::new();
         let mut groups = Vec::new();
-        for (_, control) in self.walk() {
+        for (at, control) in self.walk() {
+            // The controls of a repeater's items show what the repeater shows.
+            if self.item_scope(&at).is_some() {
+                continue;
+            }
             if let Some(path) = control.bound_path().filter(|_| control.binds()) {
                 if control.kind == ControlKind::Group {
                     groups.push(path);
@@ -1597,6 +1715,12 @@ impl FormDesign {
 
 /// Why a control cannot be drawn against a schema, or None.
 pub fn control_problem(spec: &TypeSpec, control: &Control) -> Option<String> {
+    control_problem_at(spec, control, &Path::root())
+}
+
+/// As [`control_problem`], for a control whose path is relative to the node
+/// at `base` (an item of a repeater).
+pub fn control_problem_at(spec: &TypeSpec, control: &Control, base: &Path) -> Option<String> {
     let Some(text) = control.path.as_deref() else {
         return match control.kind {
             ControlKind::Field | ControlKind::Repeater => Some(format!(
@@ -1613,13 +1737,17 @@ pub fn control_problem(spec: &TypeSpec, control: &Control) -> Option<String> {
         return None;
     }
     let path: Path = match text.parse() {
-        Ok(path) => path,
+        Ok(path) => base.join(&path),
         Err(e) => return Some(format!("the path {text:?} is not a path: {e}")),
     };
     let Some(resolved) = spec.resolve(&path) else {
         return Some(format!(
             "the schema has nothing at {}",
-            if text.is_empty() { "the root" } else { text }
+            match (text.is_empty(), base.is_root()) {
+                (true, true) => "the root",
+                (true, false) => "the item",
+                _ => text,
+            }
         ));
     };
     let kind = &spec.get(resolved.ty).kind;
@@ -1686,6 +1814,72 @@ mod tests {
             }"##,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_stacked_repeater_takes_a_design_of_its_items() {
+        let spec = spec();
+        let mut design = generate(&spec);
+        // The repeater of items is the third control.
+        let repeater = vec![2];
+        assert!(!design.takes_children(&repeater), "a table takes none");
+        design.get_mut(&repeater).unwrap().mode = Some(RepeaterMode::Stacked);
+        assert!(
+            !design.takes_children(&repeater),
+            "not before its items are designed"
+        );
+        let item_ty = match &spec
+            .get(spec.resolve(&"items".parse().unwrap()).unwrap().ty)
+            .kind
+        {
+            Kind::Array { items, .. } => *items,
+            _ => unreachable!(),
+        };
+        let children = item_controls(&spec, item_ty);
+        assert_eq!(children[0].path.as_deref(), Some("sku"));
+        design.get_mut(&repeater).unwrap().children = children;
+        assert!(design.takes_children(&repeater));
+        assert!(
+            design.broken(&spec).is_empty(),
+            "{:?}",
+            design.broken(&spec)
+        );
+        assert!(design.unplaced(&spec).is_empty());
+        assert_eq!(design.item_scope(&[2, 1]), Some(vec![2]));
+        assert_eq!(design.item_scope(&[2]), None);
+        let qty = design.get(&[2, 1]).unwrap().clone();
+        assert_eq!(
+            design.path_in_item(&[2, 1], &qty, 4),
+            Some("items[4].qty".parse().unwrap())
+        );
+        // A label in an item is at the item.
+        let label = Control::new(ControlKind::Label);
+        assert_eq!(
+            design.path_in_item(&[2, 0], &label, 1),
+            Some("items[1]".parse().unwrap())
+        );
+        // Relative paths, read from the item.
+        assert_eq!(
+            bindable_from(&spec, item_ty, ControlKind::Field),
+            vec!["sku".parse::<Path>().unwrap(), "qty".parse().unwrap()]
+        );
+        design.get_mut(&[2, 0]).unwrap().path = Some("name".into());
+        assert_eq!(
+            design.problem(&spec, &[2, 0]).as_deref(),
+            Some("the schema has nothing at name")
+        );
+        // A control moves into it, and out again.
+        let name = design.move_to(&[0], &[2], 0).unwrap();
+        assert_eq!(name, vec![1, 0]);
+        // Out again, after the repeater, which is now second.
+        assert_eq!(design.nest(&name, false), Some(vec![2]));
+        // As a table, the design of its items is not used.
+        design.get_mut(&[1]).unwrap().mode = Some(RepeaterMode::Table);
+        assert!(
+            design
+                .problem(&spec, &[1, 1])
+                .is_some_and(|p| p.contains("table"))
+        );
     }
 
     #[test]

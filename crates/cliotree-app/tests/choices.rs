@@ -77,7 +77,7 @@ fn form(path: &str, change: impl FnOnce(&mut Control)) -> (Harness<'static, Clio
 }
 
 fn list(harness: &Harness<'_, ClioApp>, at: &[usize]) -> ChoiceList {
-    choice_list(harness.state().calc(), "Orders", "Default", at, None)
+    choice_list(harness.state().calc(), "Orders", "Default", at, None, None)
         .expect("the field has choices")
 }
 
@@ -324,6 +324,7 @@ fn the_choices_of_a_column_run_for_each_row() {
             "Default",
             &at,
             Some(("note", row)),
+            None,
         )
         .expect("the column has choices");
         texts(&list)

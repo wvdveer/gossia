@@ -68,7 +68,7 @@ fn form(buttons: Vec<Control>) -> (Harness<'static, ClioApp>, usize) {
 }
 
 fn the_gate(harness: &Harness<'_, ClioApp>, at: usize) -> Gate {
-    gate(harness.state().calc(), "Orders", "Default", &[at])
+    gate(harness.state().calc(), "Orders", "Default", &[at], None)
 }
 
 fn disabled(harness: &Harness<'_, ClioApp>, label: &str) -> bool {

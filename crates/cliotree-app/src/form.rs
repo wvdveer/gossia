@@ -87,6 +87,12 @@ pub struct FormState {
     pub layout: Option<LayoutState>,
     /// The dialog of a command on forms, when one is waiting.
     pub dialog: Option<FormDialog>,
+    /// The caret of the text box that had the focus in the frame before, for
+    /// the arrow keys.
+    pub caret: Option<(egui::Id, usize)>,
+    /// Frames left to find the control of `scroll_to` (a stacked item has to
+    /// be stepped to first).
+    pub scroll_tries: u8,
 }
 
 /// Something a control asked for while it was drawn. They are applied after
@@ -111,6 +117,9 @@ pub(crate) enum FormAction {
     Button(String, String),
     /// A command on a control, in layout mode.
     Control(ControlAction),
+    /// A command of the tabular view on a table of the form: a filter, hiding
+    /// a row or a column, showing them again.
+    Table(crate::view::Action),
 }
 
 impl ClioApp {
@@ -177,6 +186,7 @@ impl ClioApp {
             self.raw.error = None;
             self.views.insert(self.sheet.clone(), view);
             self.form.scroll_to = selection;
+            self.form.scroll_tries = 3;
         }
         self.notice = None;
         true
@@ -336,6 +346,10 @@ impl ClioApp {
         let mut new_keys = std::mem::take(&mut self.form.new_keys);
         let scroll_to = self.form.scroll_to.take();
         let mut actions = Vec::new();
+        let mut nav = Vec::new();
+        let mut next_scroll = None;
+        let tries = self.form.scroll_tries;
+        let mut tried = false;
         {
             let calc = self.calc();
             if let (Some(spec), Some(data)) = (calc.spec(&self.sheet), calc.data(&self.sheet)) {
@@ -370,6 +384,9 @@ impl ClioApp {
                     free_bottom: None,
                     rects: FormRects::default(),
                     last,
+                    nav: Vec::new(),
+                    seen: Vec::new(),
+                    item: None,
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -408,8 +425,27 @@ impl ClioApp {
                     );
                 }
                 actions = painter.actions;
+                nav = painter.nav;
+                // A node with no control of its own: the nearest one above
+                // it that has, in the next frame (a stacked repeater may
+                // be stepping to its item first).
+                if let Some(missed) = painter.scroll_to
+                    && tries > 0
+                {
+                    tried = true;
+                    let stepping = actions.iter().any(|a| matches!(a, FormAction::Step(..)));
+                    next_scroll = if stepping {
+                        Some(missed)
+                    } else {
+                        std::iter::successors(missed.parent(), Path::parent)
+                            .find(|p| painter.seen.contains(p))
+                    };
+                }
             }
         }
+        self.form.scroll_to = next_scroll;
+        self.form.scroll_tries = if tried { tries - 1 } else { 0 };
+        self.form_arrows(ui.ctx(), &nav);
         self.form.drafts = drafts;
         self.form.new_keys = new_keys;
         for action in actions {
@@ -421,11 +457,14 @@ impl ClioApp {
         let sheet = self.sheet.clone();
         match action {
             FormAction::Commit(path, text) => {
-                self.commit_field(&path, &text);
+                if self.commit_field(&path, &text) {
+                    self.pin_form_row(&path);
+                }
             }
             FormAction::Direct(path, text) => {
                 self.selection = Some(path.clone());
                 self.enter_directly(&path, &text);
+                self.pin_form_row(&path);
             }
             FormAction::Create(path) => {
                 let value = self
@@ -440,7 +479,13 @@ impl ClioApp {
                 let _ = self.click_button(&procedure, &label);
             }
             FormAction::Select(path) => self.selection = Some(path),
-            FormAction::Add(array) => self.add_item_to(&array),
+            FormAction::Add(array) => {
+                let before = self.array_len(&array);
+                self.add_item_to(&array);
+                if self.array_len(&array) > before {
+                    self.pin_form_row(&array.index(before));
+                }
+            }
             FormAction::Delete(array, index) => {
                 self.delete_node(&array.index(index));
             }
@@ -466,6 +511,7 @@ impl ClioApp {
                 self.delete_node(&map.key(key));
             }
             FormAction::Control(action) => self.apply_control(action),
+            FormAction::Table(action) => self.apply(action),
         }
     }
 
@@ -694,6 +740,14 @@ struct Painter<'a> {
     /// they were in the frame before.
     rects: FormRects,
     last: FormRects,
+    /// The controls the arrow keys can go to.
+    nav: Vec<crate::form_nav::NavStop>,
+    /// The nodes whose controls were drawn, for finding the nearest one
+    /// above a node that has none.
+    seen: Vec<Path>,
+    /// In the design of a stacked repeater's items: the item drawn, and its
+    /// index. The paths of the controls there are relative to it.
+    item: Option<(Path, usize)>,
 }
 
 /// The Grid group a control is drawn in: where its rows and columns are.
@@ -928,6 +982,10 @@ struct Slot {
 }
 
 fn slots(list: &[Control], parent: &[usize]) -> Vec<Slot> {
+    // The control above takes others: a group, or a stacked repeater whose
+    // items are designed, at the top level (one in an item takes none).
+    let takes =
+        |c: &Control| c.kind == ControlKind::Group || (c.is_stacked() && !c.children.is_empty());
     (0..list.len())
         .map(|i| {
             let mut at = parent.to_vec();
@@ -935,7 +993,7 @@ fn slots(list: &[Control], parent: &[usize]) -> Vec<Slot> {
             Slot {
                 at,
                 siblings: list.len(),
-                above_is_group: i > 0 && list[i - 1].kind == ControlKind::Group,
+                above_is_group: i > 0 && takes(&list[i - 1]),
             }
         })
         .collect()
@@ -947,6 +1005,9 @@ impl Painter<'_> {
     }
 
     fn arrive(&mut self, path: &Path, response: &egui::Response) {
+        if self.scroll_to.is_some() {
+            self.seen.push(path.clone());
+        }
         if self.scroll_to.as_ref() == Some(path) {
             response.scroll_to_me(Some(Align::Center));
             self.scroll_to = None;
@@ -1029,7 +1090,9 @@ impl Painter<'_> {
             self.control_in_style(ui, c, slot);
             return;
         }
-        let gate = crate::form_exprs::gate(self.app.calc(), &self.app.sheet, self.form, &slot.at);
+        let item = self.item.as_ref().map(|(_, i)| *i);
+        let gate =
+            crate::form_exprs::gate(self.app.calc(), &self.app.sheet, self.form, &slot.at, item);
         if gate == Gate::default() {
             self.control_in_style(ui, c, slot);
             return;
@@ -1141,7 +1204,7 @@ impl Painter<'_> {
         self.at = slot.at.clone();
         let free = self.free_parent.take();
         let grid = self.grid_parent.take();
-        if c.kind == ControlKind::Group {
+        if c.kind == ControlKind::Group || (self.layout.is_some() && self.designs_items(c)) {
             self.group(ui, c, slot, free, grid);
         } else if self.layout.is_none() {
             self.leaf(ui, c);
@@ -1806,8 +1869,22 @@ impl Painter<'_> {
         grid: Option<GridParent>,
     ) {
         let layout = self.layout.is_some();
-        let problem = design_problem(self.spec, c);
-        let path = c.bound_path().filter(|_| problem.is_none());
+        let problem = self.problem_of(c);
+        let path = self.path_of(c).filter(|_| problem.is_none());
+        // A stacked repeater in layout mode: its controls are the design of
+        // its items, drawn for the item its stepper is at.
+        let item = match (&path, c.kind) {
+            (Some(array), ControlKind::Repeater) => {
+                let len = self
+                    .data
+                    .get(array)
+                    .and_then(|n| n.value().as_array())
+                    .map_or(0, <[Node]>::len);
+                let at = self.step_of(array, len);
+                Some((array.index(at), at))
+            }
+            _ => None,
+        };
         let label = c.label.clone().or_else(|| {
             path.as_ref()
                 .and_then(last_name)
@@ -1843,6 +1920,10 @@ impl Painter<'_> {
             let outer = (this.sized, this.label_width);
             this.sized = false;
             this.label_width = c.label_width.or(this.label_width);
+            let outer_item = this.item.clone();
+            if item.is_some() {
+                this.item = item.clone();
+            }
             ui.scope(|ui| {
                 if let Some(gap) = c.spacing {
                     ui.spacing_mut().item_spacing = egui::vec2(gap as f32, gap as f32);
@@ -1882,6 +1963,7 @@ impl Painter<'_> {
                     });
                 }
             });
+            this.item = outer_item;
             (this.sized, this.label_width) = outer;
         };
         if !framed {
@@ -2012,6 +2094,14 @@ impl Painter<'_> {
                 let button = egui::Button::new(&label).min_size(egui::vec2(width, height));
                 let response = ui.add_enabled(can, button);
                 if can {
+                    self.nav.push(crate::form_nav::NavStop {
+                        id: response.id,
+                        rect: response.rect,
+                        text: false,
+                        vertical: true,
+                    });
+                }
+                if can {
                     if response.on_hover_text(hint).clicked()
                         && let Some(procedure) = &c.procedure
                     {
@@ -2029,11 +2119,11 @@ impl Painter<'_> {
 
     /// A field or a repeater: the control of the node it is bound to.
     fn bound(&mut self, ui: &mut egui::Ui, c: &Control) {
-        if let Some(problem) = design_problem(self.spec, c) {
+        if let Some(problem) = self.problem_of(c) {
             self.placeholder(ui, c, &problem);
             return;
         }
-        let Some(path) = c.bound_path() else {
+        let Some(path) = self.path_of(c) else {
             return;
         };
         let Some(resolved) = self.spec.resolve(&path) else {
@@ -2060,7 +2150,8 @@ impl Painter<'_> {
                 choices: has_text(&c.choices)
                     .then(|| {
                         let app = self.app;
-                        choice_list(app.calc(), &app.sheet, self.form, &self.at, None)
+                        let item = self.item.as_ref().map(|(_, i)| *i);
+                        choice_list(app.calc(), &app.sheet, self.form, &self.at, None, item)
                     })
                     .flatten(),
                 allow_other: c.allow_other,
@@ -2215,6 +2306,8 @@ impl Painter<'_> {
         let formula = cell.as_ref().and_then(|c| c.formula);
         let computed_by = cell.as_ref().and_then(|c| c.computed_by.clone());
         let pending = cell.as_ref().is_some_and(|c| c.pending);
+        let untrusted = cell.as_ref().is_some_and(|c| c.untrusted);
+        let stale = cell.as_ref().is_some_and(|c| c.stale);
         let computed = formula.is_some() || computed_by.is_some();
         let read_only = computed || !app.can_edit(path);
         let node = self.data.get(path);
@@ -2255,6 +2348,13 @@ impl Painter<'_> {
 
         let mut problem = None;
         let mut response = None;
+        // How the arrow keys leave the editor: (a text box, Up and Down).
+        let mut nav: Option<(bool, bool)> = None;
+        // A value that is out of date is grey, as in the grid.
+        let text_colour = ui.visuals().override_text_color;
+        if stale {
+            ui.visuals_mut().override_text_color = Some(crate::style::Palette::of_ui(ui).stale);
+        }
         match (value, kind) {
             (Some(Value::Error(error)), _) => {
                 let r = ui.label(
@@ -2288,8 +2388,10 @@ impl Painter<'_> {
                     },
                 };
                 let (r, listed) = if *typeahead {
+                    nav = Some((true, false));
                     self.typeahead(ui, &field)
                 } else {
+                    nav = Some((false, true));
                     self.dropdown(ui, &field)
                 };
                 not_listed = !listed;
@@ -2310,6 +2412,7 @@ impl Painter<'_> {
                     self.actions
                         .push(FormAction::Direct(path.clone(), checked.to_string()));
                 }
+                nav = Some((false, true));
                 response = Some(r);
             }
             (_, Kind::Enum { values, .. }) if !as_text => {
@@ -2339,6 +2442,7 @@ impl Painter<'_> {
                 if chosen != current {
                     self.actions.push(FormAction::Direct(path.clone(), chosen));
                 }
+                nav = Some((false, true));
                 response = Some(r);
             }
             (Some(Value::Array(_) | Value::Object(_)), _) => {
@@ -2373,9 +2477,17 @@ impl Painter<'_> {
                             matches!(kind, Kind::String(c) if c.max_length.is_some_and(|m| m > 200))
                         }
                     };
+                // A date gets a button that opens a calendar.
+                let date = !read_only && !long && !masked && date_kind(kind).is_some();
                 // In a control of a set width, what is left after the markers
                 // that follow it.
-                let markers = if computed || pending { 24.0 } else { 0.0 };
+                let markers = if computed || pending { 24.0 } else { 0.0 }
+                    + if date { 28.0 } else { 0.0 }
+                    + if untrusted && formula.is_some() {
+                        80.0
+                    } else {
+                        0.0
+                    };
                 let width = if compact {
                     f32::INFINITY
                 } else if self.sized {
@@ -2432,6 +2544,14 @@ impl Painter<'_> {
                             .push(FormAction::Commit(path.clone(), draft.text.clone()));
                     }
                 }
+                if date {
+                    let typed = self
+                        .drafts
+                        .get(&key)
+                        .map_or_else(|| current.clone(), |d| d.text.clone());
+                    self.date_button(ui, path, &name, &typed, kind);
+                }
+                nav = Some((true, !long));
                 response = Some(r);
             }
         }
@@ -2447,6 +2567,20 @@ impl Painter<'_> {
             problem = Some("required".to_owned());
         }
 
+        ui.visuals_mut().override_text_color = text_colour;
+        // A read-only text box is drawn enabled but cannot take the focus, so
+        // the arrow keys pass it by, as Tab does.
+        if let (Some(r), Some((text, vertical))) = (&response, nav)
+            && r.enabled()
+            && !read_only
+        {
+            self.nav.push(crate::form_nav::NavStop {
+                id: r.id,
+                rect: r.rect,
+                text,
+                vertical,
+            });
+        }
         if let Some(r) = &response {
             self.arrive(path, r);
             if computed {
@@ -2488,10 +2622,54 @@ impl Painter<'_> {
             ui.label(RichText::new("fx").italics().weak())
                 .on_hover_text(format!("computed by {}", app.name_of(by)));
         }
+        if untrusted && formula.is_some() {
+            crate::view::untrusted_mark(ui, stale);
+        }
         if pending {
             crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
         }
         problem
+    }
+
+    /// The button beside a date that opens a calendar. A day picked there is
+    /// entered at once; a date and time keeps its time.
+    fn date_button(&mut self, ui: &mut egui::Ui, path: &Path, name: &str, text: &str, kind: &Kind) {
+        let Some(with_time) = date_kind(kind) else {
+            return;
+        };
+        let typed = text.trim();
+        let shown = typed
+            .get(..10)
+            .and_then(|d| d.parse::<jiff::civil::Date>().ok());
+        let mut day = shown.unwrap_or_else(today);
+        let before = day;
+        let salt = format!("form_date {}", path);
+        let r = ui.add(
+            egui_extras::DatePickerButton::new(&mut day)
+                .id_salt(&salt)
+                // The button shows a calendar from the icon font, which
+                // follows every text font; its own icon is an emoji the
+                // bundled fonts lack.
+                .format(CALENDAR)
+                .show_icon(false)
+                .combo_boxes(false)
+                .calendar_week(false)
+                .highlight_weekends(false),
+        );
+        let label = format!("Pick a date for {name}");
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+        let r = r.on_hover_text("Pick a date");
+        if day != before || (shown.is_none() && r.changed()) {
+            let date = day.strftime("%Y-%m-%d").to_string();
+            let entered = if with_time {
+                let rest = typed.get(10..).filter(|t| t.starts_with('T'));
+                format!("{date}{}", rest.unwrap_or("T00:00:00"))
+            } else {
+                date
+            };
+            self.drafts.remove(&self.key(path));
+            self.actions.push(FormAction::Direct(path.clone(), entered));
+        }
     }
 
     /// A dropdown of the choices of a field: it shows the text of the item
@@ -2700,9 +2878,14 @@ impl Painter<'_> {
         let node = self.data.get(path);
         let items: &[Node] = node.and_then(|n| n.value().as_array()).unwrap_or(&[]);
         let can_add = self.app.can_reorder(path);
+        let columns = match control.and_then(|c| c.mode) {
+            Some(RepeaterMode::Stacked) => None,
+            _ => item_columns(self.spec, item_ty).map(|columns| arranged(control, columns)),
+        };
+        let shown = columns.as_ref().map(|_| self.table_shown(path, items));
         ui.group(|ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let title_font =
                     control.and_then(|c| own_font(c.title_font, c.title_font_size, self.font));
                 let response = in_font(ui, title_font, |ui| ui.strong(label));
@@ -2711,14 +2894,13 @@ impl Painter<'_> {
                 if ui.add_enabled(can_add, egui::Button::new("New")).clicked() {
                     self.actions.push(FormAction::Add(path.clone()));
                 }
+                if let Some(shown) = &shown {
+                    self.table_strip(ui, path, shown);
+                }
             });
             if let Some(help) = self.help(path, ty) {
                 ui.label(RichText::new(help).weak().small());
             }
-            let columns = match control.and_then(|c| c.mode) {
-                Some(RepeaterMode::Stacked) => None,
-                _ => item_columns(self.spec, item_ty).map(|columns| arranged(control, columns)),
-            };
             match columns {
                 // In layout mode an empty table still shows its columns.
                 Some(columns) if !items.is_empty() || self.layout.is_some() => {
@@ -2731,11 +2913,20 @@ impl Painter<'_> {
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
                             let at = control.map(|_| self.at.clone());
-                            self.table(ui, path, items.len(), &columns, at, header_font);
+                            let shown = shown.unwrap_or_default();
+                            let table = FormTable {
+                                array: path,
+                                len: items.len(),
+                                columns: &columns,
+                                shown: &shown,
+                                at,
+                                header_font,
+                            };
+                            self.table(ui, table);
                         });
                 }
                 Some(_) => {}
-                None => self.stacked(ui, path, item_ty, items.len()),
+                None => self.stacked(ui, path, item_ty, items.len(), control),
             }
         });
     }
@@ -2744,15 +2935,15 @@ impl Painter<'_> {
     /// order, each with its own properties. `at` is the address of the
     /// control the table is of: its columns can be selected in layout mode,
     /// and out of it their expressions hide a column or colour a cell.
-    fn table(
-        &mut self,
-        ui: &mut egui::Ui,
-        array: &Path,
-        len: usize,
-        columns: &[(ColumnDesign, Option<Column>)],
-        at: Option<Address>,
-        header_font: Option<ColumnFont>,
-    ) {
+    fn table(&mut self, ui: &mut egui::Ui, table: FormTable<'_>) {
+        let FormTable {
+            array,
+            len,
+            columns,
+            shown: view,
+            at,
+            header_font,
+        } = table;
         let designed = at.is_some();
         // The expressions of the columns, out of layout mode: a column whose
         // *visible when* is false is left out; what the others say about the
@@ -2772,12 +2963,29 @@ impl Painter<'_> {
                 ),
                 _ => Gate::default(),
             };
-            if !head.hidden {
+            let by_hand = column.is_some() && view.hidden_columns.contains(&design.name);
+            if !head.hidden && !by_hand {
                 shown.push((design.clone(), column.clone()));
                 heads.push(head);
             }
         }
         let columns = &shown[..];
+        // Out of layout mode a column's title has the commands of the
+        // tabular view: filter, hide.
+        let menus = self.layout.is_none();
+        let filterable: Vec<String> = self
+            .app
+            .columns_of(array)
+            .into_iter()
+            .filter(|c| !c.summary)
+            .map(|c| c.name)
+            .collect();
+        let filtered: Vec<bool> = columns
+            .iter()
+            .map(|(d, _)| self.app.filter_of(array, &d.name).is_some())
+            .collect();
+        let mut command: Option<crate::view::Action> = None;
+        let rows = &view.visible.rows;
         let editable = self.app.can_reorder(array);
         let sortable = editable
             && columns
@@ -2814,7 +3022,7 @@ impl Painter<'_> {
         let mut titles = Vec::new();
         table
             .header(header_height, |mut header| {
-                for (design, column) in columns {
+                for ((design, column), &filtered) in columns.iter().zip(&filtered) {
                     let mut max = egui::Rect::NOTHING;
                     let (used, _) = header.col(|ui| {
                         max = ui.max_rect();
@@ -2824,24 +3032,39 @@ impl Painter<'_> {
                                     design.label.clone().unwrap_or_else(|| design.name.clone());
                                 let text = RichText::new(title).strong();
                                 let sorts = sortable && column.is_some();
-                                let mut response = if sorts {
+                                let menu = menus && column.is_some();
+                                let mut response = if sorts || menu {
                                     ui.add(egui::Label::new(text).sense(Sense::CLICK))
                                 } else {
                                     ui.label(text)
                                 };
-                                let hover = match (&design.help, sorts) {
-                                    (Some(help), true) => {
-                                        Some(format!("{help}\nClick to sort by this column"))
-                                    }
-                                    (Some(help), false) => Some(help.clone()),
-                                    (None, true) => Some("Sort by this column".to_owned()),
-                                    (None, false) => None,
-                                };
-                                if let Some(hover) = hover {
-                                    response = response.on_hover_text(hover);
+                                if filtered {
+                                    crate::table_view::filter_mark(ui);
+                                }
+                                let mut hover: Vec<String> = design.help.iter().cloned().collect();
+                                if sorts {
+                                    hover.push("Click to sort by this column".to_owned());
+                                }
+                                if menu {
+                                    hover.push("Right-click to filter or hide it".to_owned());
+                                }
+                                if !hover.is_empty() {
+                                    response = response.on_hover_text(hover.join("\n"));
                                 }
                                 if sorts && response.clicked() {
                                     sort = Some(design.name.clone());
+                                }
+                                if menu {
+                                    let can_filter = filterable.contains(&design.name);
+                                    response.context_menu(|ui| {
+                                        command = column_menu(
+                                            ui,
+                                            array,
+                                            &design.name,
+                                            (sorts, can_filter, filtered),
+                                        )
+                                        .or(command.take());
+                                    });
                                 }
                             });
                         });
@@ -2852,8 +3075,8 @@ impl Painter<'_> {
                 }
             })
             .body(|body| {
-                body.rows(row_height, len, |mut row| {
-                    let index = row.index();
+                body.rows(row_height, rows.len(), |mut row| {
+                    let index = rows[row.index()];
                     for (((design, column), font), head) in columns.iter().zip(&fonts).zip(&heads) {
                         row.col(|ui| {
                             in_font(ui, *font, |ui| {
@@ -2881,6 +3104,7 @@ impl Painter<'_> {
                                                     self.form,
                                                     at,
                                                     Some((&design.name, index)),
+                                                    None,
                                                 )
                                             });
                                         let look = Look {
@@ -2941,6 +3165,9 @@ impl Painter<'_> {
         if let Some(name) = sort {
             self.actions.push(FormAction::Sort(array.clone(), name));
         }
+        if let Some(command) = command {
+            self.actions.push(FormAction::Table(command));
+        }
         if designed && self.layout.is_some() {
             self.column_targets = titles;
         }
@@ -2978,22 +3205,128 @@ impl Painter<'_> {
             self.actions.push(FormAction::Delete(array.clone(), index));
             ui.close();
         }
+        if self.layout.is_none() {
+            ui.separator();
+            if ui.button("Hide row").clicked() {
+                self.actions
+                    .push(FormAction::Table(crate::view::Action::HideRow(
+                        array.clone(),
+                        index,
+                    )));
+                ui.close();
+            }
+        }
+    }
+
+    /// Which rows and columns of a table the user has left shown: the state
+    /// of the tabular view of the same array. In layout mode, all of them.
+    fn table_shown(&self, array: &Path, items: &[Node]) -> TableShown {
+        let all = TableShown {
+            visible: table::Visible {
+                rows: (0..items.len()).collect(),
+                total: items.len(),
+                ..table::Visible::default()
+            },
+            ..TableShown::default()
+        };
+        if self.layout.is_some() {
+            return all;
+        }
+        let Some(view) = self.app.view_of(array) else {
+            return all;
+        };
+        let columns = self.app.columns_of(array);
+        TableShown {
+            visible: table::visible(self.spec, items, &columns, view),
+            hidden_columns: view.hidden_columns.iter().cloned().collect(),
+            hidden_rows: self.app.hidden_rows(array),
+            filtered: !view.filters.is_empty(),
+        }
+    }
+
+    /// Beside the title of a table: how many rows are hidden or filtered,
+    /// and the commands that show them again.
+    fn table_strip(&mut self, ui: &mut egui::Ui, array: &Path, shown: &TableShown) {
+        use crate::view::Action;
+        let visible = &shown.visible;
+        if visible.hidden > 0 || visible.filtered > 0 {
+            ui.label(
+                RichText::new(format!(
+                    "{} shown ({} hidden, {} filtered)",
+                    visible.rows.len(),
+                    visible.hidden,
+                    visible.filtered
+                ))
+                .weak(),
+            );
+        }
+        let mut command = None;
+        if shown.filtered {
+            if ui.button("Clear all filters").clicked() {
+                command = Some(Action::ClearAllFilters(array.clone()));
+            }
+            if ui
+                .button("Reapply filter")
+                .on_hover_text("Hide the rows edited since that no longer pass the filters")
+                .clicked()
+            {
+                command = Some(Action::ReapplyFilters(array.clone()));
+            }
+        }
+        let hidden = shown.hidden_columns.len() + shown.hidden_rows.len();
+        if hidden > 0 {
+            ui.menu_button(format!("Hidden ({hidden})"), |ui| {
+                for column in &shown.hidden_columns {
+                    if ui.button(format!("Show column {column}")).clicked() {
+                        command = Some(Action::ShowColumn(array.clone(), column.clone()));
+                        ui.close();
+                    }
+                }
+                for (index, id) in &shown.hidden_rows {
+                    if ui.button(format!("Show row [{index}]")).clicked() {
+                        command = Some(Action::ShowRow(array.clone(), *id));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button("Show all").clicked() {
+                    command = Some(Action::ShowAllHidden(array.clone()));
+                    ui.close();
+                }
+            });
+        }
+        if let Some(command) = command {
+            self.actions.push(FormAction::Table(command));
+        }
     }
 
     /// Items that are not flat, one at a time with a stepper.
-    fn stacked(&mut self, ui: &mut egui::Ui, array: &Path, item_ty: TypeId, len: usize) {
+    /// Items that are not flat, or a repeater set to stacked: one item at a
+    /// time with a stepper. The item is drawn as the control's design of its
+    /// items says, or as generated.
+    fn stacked(
+        &mut self,
+        ui: &mut egui::Ui,
+        array: &Path,
+        item_ty: TypeId,
+        len: usize,
+        control: Option<&Control>,
+    ) {
         if len == 0 {
             return;
         }
-        let at = self
-            .app
-            .form
-            .steps
-            .get(&self.key(array))
-            .copied()
-            .unwrap_or(0)
-            .min(len - 1);
+        let at = self.step_of(array, len);
         let editable = self.app.can_reorder(array);
+        // Going to a node inside another item: step to that item.
+        if let Some(wanted) = &self.scroll_to
+            && wanted.len() > array.len()
+            && wanted.segments().starts_with(array.segments())
+            && let cliotree_core::Segment::Index(i) = wanted.segments()[array.len()]
+            && i != at
+            && i < len
+        {
+            self.actions.push(FormAction::Step(array.clone(), i));
+        }
         ui.horizontal(|ui| {
             if icons::button(ui, at > 0, icons::CARET_LEFT, "<", "Previous item").clicked() {
                 self.actions.push(FormAction::Step(array.clone(), at - 1));
@@ -3010,7 +3343,55 @@ impl Painter<'_> {
             }
         });
         let item = array.index(at);
-        self.node(ui, &item, item_ty, &format!("Item {}", at + 1), true);
+        match control.filter(|c| self.designs_items(c)) {
+            Some(c) => {
+                let address = self.at.clone();
+                let outer = self.item.replace((item, at));
+                self.controls(ui, &c.children, &address);
+                self.item = outer;
+                self.at = address;
+            }
+            None => self.node(ui, &item, item_ty, &format!("Item {}", at + 1), true),
+        }
+    }
+
+    /// The item a stacked repeater of `len` items shows.
+    fn step_of(&self, array: &Path, len: usize) -> usize {
+        self.app
+            .form
+            .steps
+            .get(&self.key(array))
+            .copied()
+            .unwrap_or(0)
+            .min(len.saturating_sub(1))
+    }
+
+    /// Whether a control is a stacked repeater drawn by the design of its
+    /// items. One inside the items of another shows its items as generated.
+    fn designs_items(&self, c: &Control) -> bool {
+        c.is_stacked() && !c.children.is_empty() && self.item.is_none()
+    }
+
+    /// The node a control shows: its path, or in the design of a stacked
+    /// repeater's items, its path in the item drawn (the item itself for a
+    /// control that is not bound).
+    fn path_of(&self, c: &Control) -> Option<Path> {
+        match &self.item {
+            None => c.bound_path(),
+            Some((item, _)) => match c.bound_path() {
+                Some(rest) => Some(item.join(&rest)),
+                None => Some(item.clone()),
+            },
+        }
+    }
+
+    /// Why a control cannot be drawn, its path read from the item drawn when
+    /// it is in the design of a stacked repeater's items.
+    fn problem_of(&self, c: &Control) -> Option<String> {
+        match &self.item {
+            None => design_problem(self.spec, c),
+            Some((item, _)) => cliotree_core::form::control_problem_at(self.spec, c, item),
+        }
     }
 
     // ---------------------------------------------------------------- maps
@@ -3098,6 +3479,30 @@ fn cell_gate(
     gate
 }
 
+/// Phosphor's calendar, on the button that opens one.
+const CALENDAR: &str = "\u{E108}";
+
+/// Whether a type is a date (`Some(false)`) or a date and time
+/// (`Some(true)`), as a type or as a string format.
+fn date_kind(kind: &Kind) -> Option<bool> {
+    use cliotree_core::StringFormat;
+    match kind {
+        Kind::Date => Some(false),
+        Kind::DateTime => Some(true),
+        Kind::String(c) => match c.format {
+            Some(StringFormat::Date) => Some(false),
+            Some(StringFormat::DateTime) => Some(true),
+            None => None,
+        },
+        _ => None,
+    }
+}
+
+/// Today's date where the user is, for a calendar opened on an empty date.
+fn today() -> jiff::civil::Date {
+    jiff::Zoned::now().date()
+}
+
 fn count_text(n: usize) -> String {
     if n == 1 {
         "1 item".to_owned()
@@ -3180,6 +3585,77 @@ fn aligned<R>(
 
 /// The columns of a table of items of `item_ty`: its fields, or `value` for
 /// scalars. None for items that are not flat, which are stacked.
+/// A table of the items of an array, to draw.
+struct FormTable<'a> {
+    array: &'a Path,
+    /// The number of items.
+    len: usize,
+    columns: &'a [(ColumnDesign, Option<Column>)],
+    /// The rows and columns left shown.
+    shown: &'a TableShown,
+    /// The address of the control the table is of: its columns can be
+    /// selected in layout mode, and out of it their expressions hide a
+    /// column or colour a cell.
+    at: Option<Address>,
+    header_font: Option<ColumnFont>,
+}
+
+/// What of a table on a form is shown, by the filters and the hiding of the
+/// tabular view.
+#[derive(Default)]
+struct TableShown {
+    visible: table::Visible,
+    hidden_columns: Vec<String>,
+    hidden_rows: Vec<(usize, cliotree_core::NodeId)>,
+    filtered: bool,
+}
+
+/// The menu of a column's title on a form: sorting, the filter, hiding.
+fn column_menu(
+    ui: &mut egui::Ui,
+    array: &Path,
+    name: &str,
+    (sorts, can_filter, filtered): (bool, bool, bool),
+) -> Option<crate::view::Action> {
+    use crate::view::Action;
+    let mut chosen = None;
+    let mut item = |ui: &mut egui::Ui, enabled: bool, label: &str, action: Action| {
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            chosen = Some(action);
+            ui.close();
+        }
+    };
+    let (array, name) = (array.clone(), name.to_owned());
+    item(
+        ui,
+        sorts,
+        "Sort ascending",
+        Action::SortBy(array.clone(), name.clone(), Some(false)),
+    );
+    item(
+        ui,
+        sorts,
+        "Sort descending",
+        Action::SortBy(array.clone(), name.clone(), Some(true)),
+    );
+    ui.separator();
+    item(
+        ui,
+        can_filter,
+        "Filter...",
+        Action::FilterDialog(array.clone(), name.clone()),
+    );
+    item(
+        ui,
+        filtered,
+        "Clear filter",
+        Action::ClearFilter(array.clone(), name.clone()),
+    );
+    ui.separator();
+    item(ui, true, "Hide column", Action::HideColumn(array, name));
+    chosen
+}
+
 fn item_columns(spec: &TypeSpec, item_ty: TypeId) -> Option<Vec<Column>> {
     match &spec.get(item_ty).kind {
         Kind::Object { .. } => {
@@ -3197,9 +3673,15 @@ fn item_columns(spec: &TypeSpec, item_ty: TypeId) -> Option<Vec<Column>> {
     }
 }
 
-/// The columns the table of a repeater control can have, if it is a table.
-pub(crate) fn columns_of(spec: &TypeSpec, control: &Control) -> Option<Vec<Column>> {
-    let path = control.bound_path()?;
+/// The columns the table of the repeater at `at` can have, if it is a
+/// table. In the design of a stacked repeater's items its path is read from
+/// the first item.
+pub(crate) fn columns_of(
+    spec: &TypeSpec,
+    design: &cliotree_core::form::FormDesign,
+    at: &[usize],
+) -> Option<Vec<Column>> {
+    let path = design.path_in_item(at, design.get(at)?, 0)?;
     let resolved = spec.resolve(&path)?;
     match &spec.get(resolved.ty).kind {
         Kind::Array { items, .. } => item_columns(spec, *items),

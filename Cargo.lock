@@ -947,6 +947,7 @@ dependencies = [
  "egui_extras",
  "egui_kittest",
  "image",
+ "jiff",
  "serde_json",
  "skrifa",
  "zip",
@@ -1588,6 +1589,7 @@ dependencies = [
  "egui",
  "enum-map",
  "itertools 0.15.0",
+ "jiff",
  "log",
  "mime_guess2",
  "profiling",
@@ -2705,10 +2707,12 @@ dependencies = [
  "jiff-core",
  "jiff-static",
  "jiff-tzdb-platform",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "wasm-bindgen",
  "windows-link",
 ]
 

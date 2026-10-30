@@ -7,7 +7,10 @@
 //!
 //! The columns of a repeater's table have them too. A column's *visible
 //! when* runs once, at the array; the others run for each row, at the cell,
-//! so their list follows the number of items.
+//! so their list follows the number of items. So do the controls in the
+//! design of a stacked repeater's items: each of their expressions runs for
+//! each item, at the control's node in that item (at the item, for a control
+//! that is not bound).
 
 use cliotree_core::form::{ColumnDesign, Control, ControlKind, RepeaterMode};
 use cliotree_core::{Kind, Path, Value};
@@ -195,13 +198,15 @@ impl Calc {
         let mut wanted: Vec<(ExprKey, String, Loc)> = Vec::new();
         let mut has_rows = false;
         for (tab, form, design) in self.forms.iter() {
-            let mut stack: Vec<(Vec<usize>, &Control)> = design
+            // Each control, with the array of the stacked repeater whose
+            // items it is designed in.
+            let mut stack: Vec<(Vec<usize>, &Control, Option<Path>)> = design
                 .controls
                 .iter()
                 .enumerate()
-                .map(|(i, c)| (vec![i], c))
+                .map(|(i, c)| (vec![i], c, None))
                 .collect();
-            while let Some((at, control)) = stack.pop() {
+            while let Some((at, control, scope)) = stack.pop() {
                 let key = |kind, column: Option<&str>, row| ExprKey {
                     tab: tab.to_owned(),
                     form: form.to_owned(),
@@ -210,18 +215,49 @@ impl Calc {
                     row,
                     kind,
                 };
-                let path = control.bound_path().unwrap_or_default();
-                for kind in ExprKind::ALL {
-                    if let Some(text) = kind.text(control) {
-                        wanted.push((
-                            key(kind, None, None),
-                            text.to_owned(),
-                            Loc::new(tab, path.clone()),
-                        ));
+                let texts: Vec<(ExprKind, &str)> = ExprKind::ALL
+                    .into_iter()
+                    .filter_map(|k| Some((k, k.text(control)?)))
+                    .collect();
+                match &scope {
+                    None => {
+                        let path = control.bound_path().unwrap_or_default();
+                        for (kind, text) in &texts {
+                            wanted.push((
+                                key(*kind, None, None),
+                                (*text).to_owned(),
+                                Loc::new(tab, path.clone()),
+                            ));
+                        }
                     }
+                    // In the items of a stacked repeater: for each item.
+                    Some(array) if !texts.is_empty() => {
+                        has_rows = true;
+                        let len = self
+                            .data(tab)
+                            .and_then(|d| d.get(array))
+                            .and_then(|n| n.value().as_array())
+                            .map_or(0, <[_]>::len);
+                        for row in 0..len {
+                            let item = array.index(row);
+                            let path = match control.bound_path() {
+                                Some(rest) => item.join(&rest),
+                                None => item,
+                            };
+                            for (kind, text) in &texts {
+                                wanted.push((
+                                    key(*kind, None, Some(row)),
+                                    (*text).to_owned(),
+                                    Loc::new(tab, path.clone()),
+                                ));
+                            }
+                        }
+                    }
+                    Some(_) => {}
                 }
-                // The columns of its table.
-                if control.kind == ControlKind::Repeater
+                // The columns of its table. (Not of a table in an item.)
+                if scope.is_none()
+                    && control.kind == ControlKind::Repeater
                     && control.mode != Some(RepeaterMode::Stacked)
                     && let Some(array) = control.bound_path()
                 {
@@ -260,10 +296,25 @@ impl Calc {
                         }
                     }
                 }
+                // The controls in it: a group's are where the group is; a
+                // stacked repeater's are the design of its items. Those of a
+                // table, and of a repeater in an item, are not used.
+                let inner = match (&scope, control.kind) {
+                    (Some(_), ControlKind::Repeater) => continue,
+                    (Some(_), _) => scope.clone(),
+                    (None, ControlKind::Repeater) if control.is_stacked() => {
+                        match control.bound_path() {
+                            Some(array) => Some(array),
+                            None => continue,
+                        }
+                    }
+                    (None, ControlKind::Repeater) => continue,
+                    (None, _) => None,
+                };
                 for (i, child) in control.children.iter().enumerate() {
                     let mut child_at = at.clone();
                     child_at.push(i);
-                    stack.push((child_at, child));
+                    stack.push((child_at, child, inner.clone()));
                 }
             }
         }
@@ -340,12 +391,25 @@ impl Calc {
         at: &[usize],
         kind: ExprKind,
     ) -> Option<ExprState> {
+        self.control_expression_in(tab, form, at, None, kind)
+    }
+
+    /// As [`Calc::control_expression`], for a control in the design of a
+    /// stacked repeater's items: what it came to for item `item`.
+    pub fn control_expression_in(
+        &self,
+        tab: &str,
+        form: &str,
+        at: &[usize],
+        item: Option<usize>,
+        kind: ExprKind,
+    ) -> Option<ExprState> {
         self.expression_state(&ExprKey {
             tab: tab.to_owned(),
             form: form.to_owned(),
             at: at.to_vec(),
             column: None,
-            row: None,
+            row: item,
             kind,
         })
     }

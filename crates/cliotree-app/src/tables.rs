@@ -488,6 +488,36 @@ impl ClioApp {
         }
     }
 
+    /// A row edited or added on a form stays shown, as in the pane, until
+    /// the filters of its table change. Only a table that has filters keeps
+    /// it.
+    pub(crate) fn pin_form_row(&mut self, path: &Path) {
+        let found: Vec<(Path, usize)> = self
+            .tables
+            .views
+            .iter()
+            .filter(|((sheet, array), view)| {
+                sheet == &self.sheet
+                    && !view.filters.is_empty()
+                    && path.len() > array.len()
+                    && path.segments().starts_with(array.segments())
+            })
+            .filter_map(|((_, array), _)| match path.segments()[array.len()] {
+                Segment::Index(i) => Some((array.clone(), i)),
+                _ => None,
+            })
+            .collect();
+        for (array, index) in found {
+            let id = self
+                .items_of(&array)
+                .and_then(|items| items.get(index))
+                .map(Node::id);
+            if let Some(id) = id {
+                self.view_mut(&array).pinned.insert(id);
+            }
+        }
+    }
+
     /// Adds a row at the end, or at `at`, and keeps it shown.
     pub fn add_row(&mut self, array: &Path, at: Option<usize>) {
         let length = self.items_of(array).map_or(0, <[Node]>::len);

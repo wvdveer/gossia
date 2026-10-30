@@ -42,6 +42,7 @@ pub(crate) fn outline_invalid(ui: &egui::Ui, rect: egui::Rect) {
 
 /// Something a row asked for while it was being drawn. They are applied after
 /// the table, because drawing borrows the workbook.
+#[derive(Debug)]
 pub(crate) enum Action {
     Select(Path),
     /// Shift and a click: the range from the selection to here.
@@ -1160,14 +1161,7 @@ impl ClioApp {
             );
         });
         if untrusted && formula.is_some() {
-            ui.label(RichText::new("#UNTRUSTED!").color(error_color(ui)).small())
-                .on_hover_text(if stale {
-                    "This workbook is not trusted, so the formula was not run. The value is \
-                     out of date: something it uses has changed."
-                } else {
-                    "This workbook is not trusted, so the formula was not run. The value is \
-                     the one that was stored."
-                });
+            untrusted_mark(ui, stale);
         }
         if pending {
             crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
@@ -1613,6 +1607,19 @@ impl ClioApp {
             self.insert_function = Some(dialog);
         }
     }
+}
+
+/// The mark of a formula that was not run because the workbook is not
+/// trusted, in the grid and on a form.
+pub(crate) fn untrusted_mark(ui: &mut egui::Ui, stale: bool) -> egui::Response {
+    ui.label(RichText::new("#UNTRUSTED!").color(error_color(ui)).small())
+        .on_hover_text(if stale {
+            "This workbook is not trusted, so the formula was not run. The value is \
+             out of date: something it uses has changed."
+        } else {
+            "This workbook is not trusted, so the formula was not run. The value is \
+             the one that was stored."
+        })
 }
 
 /// The title of a grid column.

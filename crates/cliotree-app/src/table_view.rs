@@ -336,17 +336,7 @@ impl ClioApp {
                 }
             }
             if filtered {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-                let c = rect.center();
-                ui.painter().add(egui::Shape::convex_polygon(
-                    vec![
-                        egui::pos2(c.x - 5.0, c.y - 4.0),
-                        egui::pos2(c.x + 5.0, c.y - 4.0),
-                        egui::pos2(c.x, c.y + 5.0),
-                    ],
-                    ui.visuals().strong_text_color(),
-                    Stroke::NONE,
-                ));
+                filter_mark(ui);
             }
             if response.clicked() {
                 actions.push(Action::SelectColumn(array.clone(), column.name.clone()));
@@ -499,6 +489,24 @@ impl ClioApp {
             self.tables.dialog = Some(dialog);
         }
     }
+}
+
+/// The mark of a column that is filtered, after its title: a funnel's
+/// triangle.
+pub(crate) fn filter_mark(ui: &mut egui::Ui) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+    let c = rect.center();
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(c.x - 5.0, c.y - 4.0),
+            egui::pos2(c.x + 5.0, c.y - 4.0),
+            egui::pos2(c.x, c.y + 5.0),
+        ],
+        ui.visuals().strong_text_color(),
+        Stroke::NONE,
+    ));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, "Filtered"));
+    response.on_hover_text("Filtered");
 }
 
 /// The context menu of a row header.

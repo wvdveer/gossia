@@ -22,10 +22,11 @@ pub struct Gate {
     pub pending: bool,
 }
 
-/// What the expressions of the control at `at` of a form come to.
-pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize]) -> Gate {
+/// What the expressions of the control at `at` of a form come to; in the
+/// design of a stacked repeater's items, for item `item`.
+pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize], item: Option<usize>) -> Gate {
     gate_of(calc.is_trusted(), |kind| {
-        calc.control_expression(tab, form, at, kind)
+        calc.control_expression_in(tab, form, at, item, kind)
     })
 }
 
@@ -294,17 +295,19 @@ pub struct ChoiceList {
     pub pending: bool,
 }
 
-/// The choices of the field of the control at `at`, or of a cell of a column
-/// of its table (`column` and the row). None if it has no choices.
+/// The choices of the field of the control at `at` (for item `item`, in the
+/// design of a stacked repeater's items), or of a cell of a column of its
+/// table (`column` and the row). None if it has no choices.
 pub fn choice_list(
     calc: &Calc,
     tab: &str,
     form: &str,
     at: &[usize],
     column: Option<(&str, usize)>,
+    item: Option<usize>,
 ) -> Option<ChoiceList> {
     let state = match column {
-        None => calc.control_expression(tab, form, at, ExprKind::Choices),
+        None => calc.control_expression_in(tab, form, at, item, ExprKind::Choices),
         Some((name, row)) => {
             calc.column_expression(tab, form, at, name, Some(row), ExprKind::Choices)
         }
