@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use cliotree_calc::entry;
 use cliotree_core::form::{
     Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
-    DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, flow_rows,
+    DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, flow_rows, free_place,
 };
 use cliotree_core::validate::validate_at;
 use cliotree_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
@@ -21,8 +21,9 @@ use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
 use crate::form_exprs::{Choice, ChoiceList, Gate, choice_list};
+use crate::form_free::{FormRects, Placement, keep_rects, last_rects, snap_move};
 use crate::form_layout::{
-    ColumnEdit, ControlAction, DragItem, FormDialog, LayoutState, drop_allowed,
+    ColumnEdit, ControlAction, DragItem, FormDialog, FreeDrop, LayoutState, drop_allowed,
 };
 use crate::icons;
 use crate::rows::display;
@@ -336,6 +337,13 @@ impl ClioApp {
         {
             let calc = self.calc();
             if let (Some(spec), Some(data)) = (calc.spec(&self.sheet), calc.data(&self.sheet)) {
+                let last = last_rects(ui.ctx(), &self.sheet, &name);
+                let also = self
+                    .form
+                    .layout
+                    .as_ref()
+                    .map(|l| l.also.clone())
+                    .unwrap_or_default();
                 let mut painter = Painter {
                     app: self,
                     form: &name,
@@ -354,6 +362,11 @@ impl ClioApp {
                     drops: Vec::new(),
                     sized: false,
                     label_width: None,
+                    also,
+                    free_parent: None,
+                    free_bottom: None,
+                    rects: FormRects::default(),
+                    last,
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -383,6 +396,14 @@ impl ClioApp {
                             }
                         }
                     });
+                if painter.layout.is_some() {
+                    keep_rects(
+                        ui.ctx(),
+                        &self.sheet,
+                        &name,
+                        std::mem::take(&mut painter.rects),
+                    );
+                }
                 actions = painter.actions;
             }
         }
@@ -656,6 +677,26 @@ struct Painter<'a> {
     sized: bool,
     /// The width of the labels of the fields of the group being drawn.
     label_width: Option<u32>,
+    /// In layout mode: the other selected controls, which the align tools
+    /// move with the selected one.
+    also: Vec<Address>,
+    /// The Free group the control about to be drawn is in, taken by it.
+    free_parent: Option<FreeParent>,
+    /// For a Free group with a height: where the bottom of its inside is.
+    free_bottom: Option<f32>,
+    /// In layout mode: where the controls are drawn in this frame, and where
+    /// they were in the frame before.
+    rects: FormRects,
+    last: FormRects,
+}
+
+/// The Free group a control is drawn in: its address, the top left of its
+/// inside, and the size of its inside.
+#[derive(Debug, Clone)]
+struct FreeParent {
+    at: Address,
+    origin: egui::Pos2,
+    size: (f32, f32),
 }
 
 /// Where a control was drawn in layout mode.
@@ -666,6 +707,8 @@ pub(crate) struct DropZone {
     /// that the space beside a narrow one counts as it.
     pub rect: egui::Rect,
     pub group: bool,
+    /// For a Free group: its inside, and how many controls it has.
+    pub free: Option<(egui::Rect, usize)>,
 }
 
 /// Where a dragged control would be put down: in the list of `parent` at
@@ -677,6 +720,8 @@ pub(crate) struct DropPlace {
     pub index: usize,
     pub y: f32,
     pub x: (f32, f32),
+    /// In a Free group: the point it goes to.
+    pub free: Option<FreeDrop>,
 }
 
 /// How close to the top or bottom of a group the pointer puts a control
@@ -707,12 +752,33 @@ pub(crate) fn drop_place(
                 z.rect.top() - 2.0
             },
             x: (z.rect.left(), z.rect.right()),
+            free: None,
         })
     };
     let (parent, frame) = match over {
         Some(z) if !z.group => return beside(z, pos.y > z.rect.center().y),
         Some(z) if pos.y < z.rect.top() + GROUP_EDGE => return beside(z, false),
         Some(z) if pos.y > z.rect.bottom() - GROUP_EDGE => return beside(z, true),
+        // In a Free group, at the end of its list, where the pointer is.
+        Some(DropZone {
+            at,
+            free: Some((region, count)),
+            ..
+        }) => {
+            return Some(DropPlace {
+                parent: at.clone(),
+                index: *count,
+                y: pos.y,
+                x: (region.left(), region.right()),
+                free: Some(FreeDrop {
+                    point: (
+                        (pos.x - region.left()).max(0.0),
+                        (pos.y - region.top()).max(0.0),
+                    ),
+                    size: (region.width(), region.height()),
+                }),
+            });
+        }
         Some(z) => (z.at.clone(), z.rect.shrink(GROUP_EDGE)),
         None if area.contains(pos) => (Vec::new(), area),
         None => return None,
@@ -739,6 +805,7 @@ pub(crate) fn drop_place(
         index,
         y,
         x,
+        free: None,
     })
 }
 
@@ -756,7 +823,13 @@ fn drop_target(ui: &egui::Ui, drops: &[DropZone], area: egui::Rect) -> Option<Co
         egui::Id::unique("form_drop"),
     ));
     let accent = ui.visuals().selection.stroke.color;
-    if let Some(place) = &place {
+    if let Some(place) = place.as_ref().filter(|p| p.free.is_some()) {
+        // A mark where it goes in the Free group.
+        let painter = painter.with_clip_rect(area);
+        let at = egui::pos2(place.x.0, 0.0) + egui::vec2(0.0, place.y);
+        let point = egui::pos2(pos.x, at.y);
+        painter.circle_stroke(point, 5.0, Stroke::new(2.0, accent));
+    } else if let Some(place) = &place {
         let painter = painter.with_clip_rect(area);
         let (a, b) = (
             egui::pos2(place.x.0, place.y),
@@ -775,7 +848,12 @@ fn drop_target(ui: &egui::Ui, drops: &[DropZone], area: egui::Rect) -> Option<Co
     );
     let released = ui.input(|i| i.pointer.any_released());
     let place = place.filter(|_| released)?;
-    Some(ControlAction::Drop(item, place.parent, place.index))
+    Some(ControlAction::Drop(
+        item,
+        place.parent,
+        place.index,
+        place.free,
+    ))
 }
 
 /// How the control of a node wants it drawn, beyond what its type calls for.
@@ -1019,8 +1097,9 @@ impl Painter<'_> {
 
     fn control_in_font(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
         self.at = slot.at.clone();
+        let free = self.free_parent.take();
         if c.kind == ControlKind::Group {
-            self.group(ui, c, slot);
+            self.group(ui, c, slot, free);
         } else if self.layout.is_none() {
             self.leaf(ui, c);
         } else {
@@ -1037,17 +1116,195 @@ impl Painter<'_> {
             let columns = std::mem::take(&mut self.column_targets);
             let id = ui.scope_id().with(("control", slot.at.clone()));
             let target = ui.interact(rect, id, Sense::click_and_drag());
-            target.dnd_set_drag_payload((DragItem::Control(slot.at.clone()), control_name(c)));
-            self.drops.push(DropZone {
-                at: slot.at.clone(),
-                rect: egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range()),
-                group: false,
-            });
+            self.rects.controls.insert(slot.at.clone(), rect);
+            match &free {
+                // In a Free group a drag moves it to a point.
+                Some(free) => self.free_drag(ui, &target, rect, slot, free),
+                None => {
+                    target.dnd_set_drag_payload((
+                        DragItem::Control(slot.at.clone()),
+                        control_name(c),
+                    ));
+                    self.drops.push(DropZone {
+                        at: slot.at.clone(),
+                        rect: egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range()),
+                        group: false,
+                        free: None,
+                    });
+                }
+            }
             self.layout_target(ui, &target, rect, c, slot);
             for (name, title) in columns {
                 self.column_target(ui, c, slot, &name, title, rect);
             }
-            self.handles(ui, rect, c, slot);
+            self.handles(ui, rect, c, slot, free.as_ref());
+        }
+    }
+
+    /// Whether a control is selected in layout mode, as the one the others
+    /// follow or as one of the others.
+    fn is_selected(&self, at: &Address) -> bool {
+        self.layout.as_ref().and_then(Option::as_ref) == Some(at) || self.also.contains(at)
+    }
+
+    /// Selects a control on a click, or with Ctrl adds it to the selection
+    /// or takes it out.
+    fn select_on(&mut self, ui: &egui::Ui, response: &egui::Response, at: &Address) {
+        if response.clicked() {
+            // Ctrl as the input says, or as the click itself said.
+            let ctrl = ui.input(|i| {
+                i.modifiers.command
+                    || i.events.iter().any(|e| {
+                        matches!(e, egui::Event::PointerButton { modifiers, .. } if modifiers.command)
+                    })
+            });
+            let action = if ctrl {
+                ControlAction::Toggle(at.clone())
+            } else {
+                ControlAction::Select(at.clone())
+            };
+            self.actions.push(FormAction::Control(action));
+        }
+    }
+
+    /// A control of a Free group dragged in layout mode: it follows the
+    /// pointer from where it was, snapped to the grid and to the edges and
+    /// centres of the others and of the group, with a guide line for what it
+    /// snapped to (Alt drags without snapping). Each drag is one change.
+    fn free_drag(
+        &mut self,
+        ui: &egui::Ui,
+        target: &egui::Response,
+        rect: egui::Rect,
+        slot: &Slot,
+        free: &FreeParent,
+    ) {
+        let id = egui::Id::unique(("form_move", &self.app.sheet, self.form));
+        if target.drag_started() {
+            self.actions
+                .push(FormAction::Control(ControlAction::ResizeStart));
+            ui.data_mut(|d| d.insert_temp(id, rect.min - free.origin));
+            if !self.is_selected(&slot.at) {
+                self.actions
+                    .push(FormAction::Control(ControlAction::Select(slot.at.clone())));
+            }
+        }
+        if !target.dragged() {
+            return;
+        }
+        let start = ui.data(|d| d.get_temp::<egui::Vec2>(id));
+        let (from, pos) = ui.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
+        let (Some(start), Some(from), Some(pos)) = (start, from, pos) else {
+            return;
+        };
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let moved = egui::Rect::from_min_size((start + (pos - from)).to_pos2(), rect.size());
+        let others: Vec<egui::Rect> = self
+            .last
+            .controls
+            .iter()
+            .filter(|(a, _)| {
+                **a != slot.at && a.split_last().is_some_and(|(_, p)| p == free.at.as_slice())
+            })
+            .map(|(_, r)| r.translate(-free.origin.to_vec2()))
+            .collect();
+        let snap = !ui.input(|i| i.modifiers.alt);
+        let area = egui::vec2(free.size.0, free.size.1);
+        let (to, guides) = snap_move(moved, &others, area, snap);
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("form_guides"),
+        ));
+        let stroke = Stroke::new(1.0, ui.visuals().selection.stroke.color);
+        let o = free.origin;
+        for guide in guides {
+            let (a, b) = if guide.vertical {
+                (
+                    egui::pos2(o.x + guide.at, o.y),
+                    egui::pos2(o.x + guide.at, o.y + area.y),
+                )
+            } else {
+                (
+                    egui::pos2(o.x, o.y + guide.at),
+                    egui::pos2(o.x + area.x, o.y + guide.at),
+                )
+            };
+            painter.line_segment([a, b], stroke);
+        }
+        self.actions.push(FormAction::Control(ControlAction::Place(
+            vec![Placement {
+                at: slot.at.clone(),
+                x: Some(to.x),
+                y: Some(to.y),
+                size: Some(free.size),
+                ..Placement::default()
+            }],
+            Some("move".to_owned()),
+        )));
+    }
+
+    /// The controls of a Free group, each at its place, the later ones over
+    /// the earlier. The group is as tall as its lowest control (known from
+    /// the frame before), or its height.
+    fn free_children(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        let layout = self.layout.is_some();
+        let width = ui.available_width();
+        let key = egui::Id::unique(("form_free_height", &self.app.sheet, self.form, &slot.at));
+        let bottom_of_box = self.free_bottom.take();
+        let fixed = c.height.map(|h| {
+            bottom_of_box
+                .map_or(h as f32, |b| b - ui.cursor().top())
+                .max(16.0)
+        });
+        let last = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0);
+        let least = if layout { 48.0 } else { 0.0 };
+        let height = fixed.unwrap_or(last).max(least);
+        let (region, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+        let size = (width, height);
+        let mut bottom: f32 = 0.0;
+        for (child, s) in c.children.iter().zip(slots(&c.children, &slot.at)) {
+            let place = free_place(c, child, size);
+            let min = region.min + egui::vec2(place.left, place.top);
+            let w = place.width.unwrap_or((region.right() - min.x).max(24.0));
+            let max = egui::Rect::from_min_size(min, egui::vec2(w, 100_000.0));
+            let mut child_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(max)
+                    .layout(egui::Layout::top_down(Align::Min)),
+            );
+            if let Some(w) = place.width {
+                child_ui.set_width(w);
+            }
+            if let Some(h) = place
+                .height
+                .filter(|_| !matches!(child.kind, ControlKind::Group | ControlKind::Repeater))
+            {
+                child_ui.set_min_height(h);
+            }
+            let outer = self.sized;
+            self.sized = place.width.is_some();
+            self.free_parent = Some(FreeParent {
+                at: slot.at.clone(),
+                origin: region.min,
+                size,
+            });
+            self.control_gated(&mut child_ui, child, &s);
+            self.free_parent = None;
+            self.sized = outer;
+            bottom = bottom.max(child_ui.min_rect().bottom() - region.top());
+        }
+        if fixed.is_none() && (bottom - last).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(key, bottom));
+            ui.ctx().request_repaint();
+        }
+        if layout {
+            self.rects.free.insert(slot.at.clone(), region);
+            ui.painter().rect_stroke(
+                region,
+                0.0,
+                Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                StrokeKind::Inside,
+            );
         }
     }
 
@@ -1055,7 +1312,14 @@ impl Painter<'_> {
     /// sets the width, its bottom edge the height, and the corner both, in
     /// points snapped to a grid (Alt drags without snapping). A double click
     /// on a handle puts its size back to automatic.
-    fn handles(&mut self, ui: &mut egui::Ui, rect: egui::Rect, c: &Control, slot: &Slot) {
+    fn handles(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        c: &Control,
+        slot: &Slot,
+        free: Option<&FreeParent>,
+    ) {
         let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
             && self.column.is_none();
         if !selected {
@@ -1110,11 +1374,26 @@ impl Painter<'_> {
                 let snap = !ui.input(|i| i.modifiers.alt);
                 let width = snapped(pointer.x - rect.left(), snap, &CONTROL_WIDTHS);
                 let height = snapped(pointer.y - rect.top(), snap, &CONTROL_HEIGHTS);
-                self.actions.push(FormAction::Control(ControlAction::Resize(
-                    slot.at.clone(),
-                    sets_width.then_some(Some(width)),
-                    sets_height.then_some(Some(height)),
-                )));
+                // In a Free group, as seen, so that a stretched control keeps
+                // what it shows.
+                let action = match free {
+                    Some(free) => ControlAction::Place(
+                        vec![Placement {
+                            at: slot.at.clone(),
+                            width: sets_width.then_some(width as f32),
+                            height: sets_height.then_some(height as f32),
+                            size: Some(free.size),
+                            ..Placement::default()
+                        }],
+                        Some("resize".to_owned()),
+                    ),
+                    None => ControlAction::Resize(
+                        slot.at.clone(),
+                        sets_width.then_some(Some(width)),
+                        sets_height.then_some(Some(height)),
+                    ),
+                };
+                self.actions.push(FormAction::Control(action));
             }
         }
     }
@@ -1192,14 +1471,10 @@ impl Painter<'_> {
     ) {
         // When a column of its table is selected, the column is outlined, not
         // the control.
-        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
-            && self.column.is_none();
+        let selected = self.is_selected(&slot.at) && self.column.is_none();
         let name = control_name(c);
         target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
-        if target.clicked() {
-            self.actions
-                .push(FormAction::Control(ControlAction::Select(slot.at.clone())));
-        }
+        self.select_on(ui, target, &slot.at);
         if selected {
             ui.painter().rect_stroke(
                 rect.expand(2.0),
@@ -1257,11 +1532,36 @@ impl Painter<'_> {
                 ui.close();
             }
         }
+        // With several selected, this one among them: the align tools.
+        let selection: Vec<Address> = self
+            .layout
+            .clone()
+            .flatten()
+            .into_iter()
+            .chain(self.also.iter().cloned())
+            .collect();
+        if selection.len() > 1 && selection.contains(&slot.at) {
+            ui.menu_button("Align", |ui| {
+                for how in crate::form_free::Arrange::ALL {
+                    let placements = crate::form_free::arranged(how, &selection, &self.last);
+                    if ui
+                        .add_enabled(placements.is_some(), egui::Button::new(how.label()))
+                        .clicked()
+                    {
+                        self.actions.push(FormAction::Control(ControlAction::Place(
+                            placements.unwrap_or_default(),
+                            None,
+                        )));
+                        ui.close();
+                    }
+                }
+            });
+        }
     }
 
     /// A group: its controls in columns, in a box when it has a title or is
     /// bound to an object.
-    fn group(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+    fn group(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot, free: Option<FreeParent>) {
         let layout = self.layout.is_some();
         let problem = design_problem(self.spec, c);
         let path = c.bound_path().filter(|_| problem.is_none());
@@ -1304,6 +1604,10 @@ impl Painter<'_> {
                 if let Some(gap) = c.spacing {
                     ui.spacing_mut().item_spacing = egui::vec2(gap as f32, gap as f32);
                 }
+                if c.is_free() {
+                    this.free_children(ui, c, slot);
+                    return;
+                }
                 let columns = c.columns.unwrap_or(1).clamp(1, 6) as usize;
                 if columns == 1 {
                     this.controls(ui, &c.children, &slot.at);
@@ -1341,11 +1645,15 @@ impl Painter<'_> {
         if let Some(padding) = c.padding {
             frame = frame.inner_margin(padding as f32);
         }
+        let mut header_response = None;
         let response = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
             if let Some(height) = c.height {
                 let margin = frame.inner_margin.sum().y + frame.stroke.width * 2.0;
                 ui.set_min_height((height as f32 - margin).max(0.0));
+                if c.is_free() {
+                    self.free_bottom = Some(ui.cursor().top() + (height as f32 - margin).max(0.0));
+                }
             }
             let title = label.clone().unwrap_or_default();
             if layout {
@@ -1353,15 +1661,16 @@ impl Painter<'_> {
                     egui::Label::new(RichText::new(&title).strong()).sense(Sense::click_and_drag()),
                 );
                 let name = control_name(c);
-                header.dnd_set_drag_payload((DragItem::Control(slot.at.clone()), name.clone()));
+                // In a Free group, dragging the title moves the group.
+                if free.is_none() {
+                    header.dnd_set_drag_payload((DragItem::Control(slot.at.clone()), name.clone()));
+                }
                 header.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone())
                 });
-                if header.clicked() {
-                    self.actions
-                        .push(FormAction::Control(ControlAction::Select(slot.at.clone())));
-                }
+                self.select_on(ui, &header, &slot.at);
                 header.context_menu(|ui| self.control_menu(ui, slot));
+                header_response = Some(header);
             } else {
                 let response = ui.strong(&title);
                 if let Some(path) = &path {
@@ -1382,16 +1691,29 @@ impl Painter<'_> {
                 at: slot.at.clone(),
                 rect: response.response.rect,
                 group: true,
+                free: self
+                    .rects
+                    .free
+                    .get(&slot.at)
+                    .map(|r| (*r, c.children.len())),
             });
+            self.rects
+                .controls
+                .insert(slot.at.clone(), response.response.rect);
+            if let (Some(free), Some(header)) = (&free, &header_response) {
+                self.free_drag(ui, header, response.response.rect, slot, free);
+            }
         }
-        if self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at) {
+        if self.is_selected(&slot.at) {
             ui.painter().rect_stroke(
                 response.response.rect.expand(2.0),
                 3.0,
                 Stroke::new(1.5, ui.visuals().selection.stroke.color),
                 StrokeKind::Outside,
             );
-            self.handles(ui, response.response.rect, c, slot);
+        }
+        if self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at) {
+            self.handles(ui, response.response.rect, c, slot, free.as_ref());
         }
     }
 

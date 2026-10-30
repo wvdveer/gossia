@@ -10,14 +10,15 @@
 
 use cliotree_calc::{ExprKind, entry};
 use cliotree_core::form::{
-    self as design, Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control,
-    ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, LABEL_WIDTHS, LabelPosition,
-    RepeaterMode, SPACINGS,
+    self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
+    Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
+    LabelPosition, POSITIONS, RepeaterMode, SPACINGS, free_place, rebase_free,
 };
 use cliotree_core::{Kind, Path};
 
 use crate::app::ClioApp;
 use crate::form::{DEFAULT_FORM, View, control_name, last_name};
+use crate::form_free::{Arrange, FormRects, GRID, Placement, arranged, last_rects};
 use crate::icons;
 use crate::view::{error_color, named};
 
@@ -28,6 +29,9 @@ pub struct LayoutState {
     pub sheet: String,
     pub form: String,
     pub selected: Option<Address>,
+    /// The other controls selected with Ctrl and a click, for the align
+    /// tools; `selected` is the one they follow.
+    pub also: Vec<Address>,
     /// A column of the table of the selected control, when one is selected
     /// rather than the control.
     pub column: Option<String>,
@@ -50,6 +54,7 @@ impl LayoutState {
             sheet: sheet.to_owned(),
             form: form.to_owned(),
             selected: None,
+            also: Vec::new(),
             column: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -64,6 +69,8 @@ impl LayoutState {
 #[derive(Debug, Clone)]
 pub(crate) enum ControlAction {
     Select(Address),
+    /// Adds a control to the selection, or takes it out (Ctrl and a click).
+    Toggle(Address),
     Shift(Address, bool),
     /// Into the group above (`true`), or out of the group.
     Nest(Address, bool),
@@ -73,13 +80,25 @@ pub(crate) enum ControlAction {
     /// Move or show a column of the table of a repeater.
     Column(Address, String, ColumnEdit),
     /// What was dragged, put down at a place in the list of a group (the top
-    /// level for an empty address), counted as the list was before.
-    Drop(DragItem, Address, usize),
-    /// A resize handle starts to be dragged.
+    /// level for an empty address), counted as the list was before; in a
+    /// Free group, at a point of its inside, which is the size given.
+    Drop(DragItem, Address, usize, Option<FreeDrop>),
+    /// A resize handle, or a control in a Free group, starts to be dragged.
     ResizeStart,
+    /// Where controls are and how big, as seen; edits with the same merge key
+    /// (`move` and `resize` are per drag) are one step of undo.
+    Place(Vec<Placement>, Option<String>),
     /// A new width and height, each left alone when `None`, made automatic
     /// with `Some(None)`.
     Resize(Address, Option<Option<u32>>, Option<Option<u32>>),
+}
+
+/// Where in a Free group something dragged is put down: the point in its
+/// inside, and the size of the inside.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FreeDrop {
+    pub point: (f32, f32),
+    pub size: (f32, f32),
 }
 
 /// What is dragged in layout mode: a control of the form, or a new one from
@@ -218,6 +237,7 @@ impl ClioApp {
             layout.merge = merge;
             if layout.selected != selection {
                 layout.column = None;
+                layout.also.clear();
             }
             layout.selected = selection;
         }
@@ -259,9 +279,42 @@ impl ClioApp {
     pub fn select_control(&mut self, address: Option<Address>) {
         if let Some(layout) = self.form.layout.as_mut() {
             layout.selected = address;
+            layout.also.clear();
             layout.column = None;
             layout.merge = None;
         }
+    }
+
+    /// Adds a control to the selection in layout mode, or takes it out if it
+    /// is in it: the first selected stays the one the others follow.
+    pub fn toggle_control(&mut self, at: Address) {
+        let Some(layout) = self.form.layout.as_mut() else {
+            return;
+        };
+        layout.column = None;
+        layout.merge = None;
+        if layout.selected.as_ref() == Some(&at) {
+            layout.selected = (!layout.also.is_empty()).then(|| layout.also.remove(0));
+        } else if let Some(i) = layout.also.iter().position(|a| a == &at) {
+            layout.also.remove(i);
+        } else if layout.selected.is_none() {
+            layout.selected = Some(at);
+        } else {
+            layout.also.push(at);
+        }
+    }
+
+    /// Every control selected in layout mode, the one the others follow first.
+    pub fn selected_controls(&self) -> Vec<Address> {
+        let Some(layout) = self.form.layout.as_ref() else {
+            return Vec::new();
+        };
+        layout
+            .selected
+            .iter()
+            .chain(&layout.also)
+            .cloned()
+            .collect()
     }
 
     /// The column selected in layout mode: the repeater, and the column's name.
@@ -275,6 +328,7 @@ impl ClioApp {
     pub fn select_table_column(&mut self, at: Address, name: &str) {
         if let Some(layout) = self.form.layout.as_mut() {
             layout.selected = Some(at);
+            layout.also.clear();
             layout.column = Some(name.to_owned());
             layout.merge = None;
         }
@@ -316,6 +370,7 @@ impl ClioApp {
             return;
         };
         layout.selected = None;
+        layout.also.clear();
         layout.column = None;
         layout.merge = None;
         let form = layout.form.clone();
@@ -333,6 +388,7 @@ impl ClioApp {
     pub(crate) fn apply_control(&mut self, action: ControlAction) {
         match action {
             ControlAction::Select(at) => self.select_control(Some(at)),
+            ControlAction::Toggle(at) => self.toggle_control(at),
             ControlAction::Shift(at, up) => {
                 self.edit_design(|d| d.shift(&at, up).map(Some));
             }
@@ -346,16 +402,32 @@ impl ClioApp {
             ControlAction::Column(at, name, edit) => {
                 self.edit_column_place(&at, &name, edit);
             }
-            ControlAction::Drop(item, parent, index) => {
+            ControlAction::Drop(item, parent, index, free) => {
                 if !drop_allowed(&item, &parent, index) {
                     return;
                 }
-                self.edit_design(|d| match item {
-                    DragItem::Control(from) => d.move_to(&from, &parent, index).map(Some),
-                    DragItem::New(kind) => {
-                        d.insert(&parent, Some(index), new_control(kind)).map(Some)
+                self.edit_design(|d| {
+                    let at = match item {
+                        DragItem::Control(from) => d.move_to(&from, &parent, index)?,
+                        DragItem::New(kind) => d.insert(&parent, Some(index), new_control(kind))?,
+                    };
+                    if let Some(free) = free {
+                        let group = d.get_mut(&parent)?;
+                        rebase_free(group, free.size);
+                        let c = d.get_mut(&at)?;
+                        c.x = Some(position(snap_grid(free.point.0)));
+                        c.y = Some(position(snap_grid(free.point.1)));
                     }
+                    Some(Some(at))
                 });
+            }
+            ControlAction::Place(placements, merge) => {
+                let gesture = self.form.layout.as_ref().map_or(0, |l| l.gesture);
+                let merge = merge.map(|m| match m.as_str() {
+                    "move" | "resize" => format!("{m}:{gesture}"),
+                    _ => m,
+                });
+                self.place_controls(&placements, merge);
             }
             ControlAction::ResizeStart => {
                 if let Some(layout) = self.form.layout.as_mut() {
@@ -366,6 +438,111 @@ impl ClioApp {
                 let gesture = self.form.layout.as_ref().map_or(0, |l| l.gesture);
                 self.resize_control(&at, width, height, Some(format!("resize:{gesture}")));
             }
+        }
+    }
+
+    /// Puts controls where the placements say, as they are seen: the Free
+    /// group of each is first made to keep every control where it is seen
+    /// at its size (so that the others do not move), then the control is
+    /// given its position, size and anchors. A width ends `fill`. The
+    /// selection is kept.
+    pub fn place_controls(&mut self, placements: &[Placement], merge: Option<String>) -> bool {
+        let keep = self.selected_control();
+        self.edit_design_merging(merge, |d| {
+            let mut rebased: Vec<Address> = Vec::new();
+            for p in placements {
+                let (_, parent) = p.at.split_last()?;
+                if let Some(size) = p.size
+                    && !rebased.iter().any(|r| r == parent)
+                    && d.get(parent).is_some_and(Control::is_free)
+                {
+                    rebase_free(d.get_mut(parent)?, size);
+                    rebased.push(parent.to_vec());
+                }
+                let c = d.get_mut(&p.at)?;
+                if let Some(x) = p.x {
+                    c.x = Some(position(x));
+                }
+                if let Some(y) = p.y {
+                    c.y = Some(position(y));
+                }
+                if let Some(w) = p.width {
+                    c.width = Some(clamped(w, &CONTROL_WIDTHS));
+                    c.fill = false;
+                }
+                if let Some(h) = p.height {
+                    c.height = Some(clamped(h, &CONTROL_HEIGHTS));
+                }
+                if let Some(anchor) = p.anchor_x {
+                    c.anchor_x = (anchor != Anchor::Start).then_some(anchor);
+                }
+                if let Some(anchor) = p.anchor_y {
+                    c.anchor_y = (anchor != Anchor::Start).then_some(anchor);
+                }
+            }
+            Some(keep)
+        })
+    }
+
+    /// In layout mode, with no text being typed: the arrow keys move the
+    /// selected controls that are in Free groups by one point, or by one step
+    /// of the grid with Shift. The presses are one step of undo.
+    pub(crate) fn layout_keys(&mut self, ui: &mut egui::Ui) {
+        // From the events, which say what was held with each key.
+        let (dx, dy) = ui.input_mut(|i| {
+            let (mut dx, mut dy) = (0.0, 0.0);
+            i.events.retain(|e| {
+                let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = e
+                else {
+                    return true;
+                };
+                if modifiers.command || modifiers.alt {
+                    return true;
+                }
+                let step = if modifiers.shift { GRID } else { 1.0 };
+                match key {
+                    egui::Key::ArrowRight => dx += step,
+                    egui::Key::ArrowLeft => dx -= step,
+                    egui::Key::ArrowDown => dy += step,
+                    egui::Key::ArrowUp => dy -= step,
+                    _ => return true,
+                }
+                false
+            });
+            (dx, dy)
+        });
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
+        self.nudge(&rects, dx, dy);
+    }
+
+    /// Moves the selected controls that are in Free groups, as they were
+    /// drawn, by `dx` and `dy` points.
+    pub(crate) fn nudge(&mut self, rects: &FormRects, dx: f32, dy: f32) {
+        let placements: Vec<Placement> = self
+            .selected_controls()
+            .into_iter()
+            .filter_map(|at| {
+                let rect = rects.controls.get(&at)?;
+                let region = rects.free.get(at.split_last()?.1)?;
+                Some(Placement {
+                    x: Some((rect.left() - region.left() + dx).max(0.0)),
+                    y: Some((rect.top() - region.top() + dy).max(0.0)),
+                    size: Some((region.width(), region.height())),
+                    at,
+                    ..Placement::default()
+                })
+            })
+            .collect();
+        if !placements.is_empty() {
+            self.place_controls(&placements, Some("nudge".to_owned()));
         }
     }
 
@@ -836,6 +1013,7 @@ impl ClioApp {
                 if let Some((at, control, column)) = column {
                     self.column_properties(ui, &at, &control, column);
                 } else {
+                    self.arrange_tools(ui);
                     match selected
                         .as_ref()
                         .and_then(|at| design.get(at).map(|c| (at, c)))
@@ -865,6 +1043,8 @@ impl ClioApp {
         let key = |property: &str| format!("{at:?}:{property}");
         let mut merge = None;
         let mut column_edit = None;
+        let mut tab_action: Option<(Address, bool)> = None;
+        let mut placement = None;
         let kind = control.kind;
         let bound = matches!(
             kind,
@@ -961,18 +1141,43 @@ impl ClioApp {
             }
             ControlKind::Group => {
                 ui.horizontal(|ui| {
-                    ui.label("Columns");
-                    let mut columns = edited.columns.unwrap_or(1);
-                    let response = ui.add(egui::DragValue::new(&mut columns).range(1..=6));
+                    ui.label("Layout");
+                    let mut layout = edited.layout.unwrap_or(GroupLayout::Flow);
+                    let response = egui::ComboBox::from_id_salt("property_group_layout")
+                        .selected_text(layout.label())
+                        .show_ui(ui, |ui| {
+                            for l in GroupLayout::ALL {
+                                ui.selectable_value(&mut layout, l, l.label());
+                            }
+                        })
+                        .response;
                     response.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::Role::SpinButton,
-                            true,
-                            "Columns of the group",
-                        )
+                        egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Layout of the group")
                     });
-                    edited.columns = (columns > 1).then_some(columns);
+                    if layout != edited.layout.unwrap_or(GroupLayout::Flow) {
+                        let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
+                        set_layout(&mut edited, at, layout, &rects);
+                    }
                 });
+                if edited.is_free() {
+                    if let Some(action) = tab_order(ui, &edited, at) {
+                        tab_action = Some(action);
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Columns");
+                        let mut columns = edited.columns.unwrap_or(1);
+                        let response = ui.add(egui::DragValue::new(&mut columns).range(1..=6));
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::Role::SpinButton,
+                                true,
+                                "Columns of the group",
+                            )
+                        });
+                        edited.columns = (columns > 1).then_some(columns);
+                    });
+                }
             }
             ControlKind::Repeater => {
                 ui.horizontal(|ui| {
@@ -1039,13 +1244,18 @@ impl ClioApp {
             }
             ControlKind::Separator => {}
         }
-        let parent_columns = at
-            .split_last()
-            .and_then(|(_, parent)| design.get(parent))
+        let parent = at.split_last().and_then(|(_, parent)| design.get(parent));
+        let in_free = parent.is_some_and(Control::is_free);
+        let parent_columns = parent
+            .filter(|_| !in_free)
             .and_then(|parent| parent.columns)
             .unwrap_or(1);
         if size_properties(ui, &mut edited, parent_columns) {
             merge = Some(key("size"));
+        }
+        if in_free && let Some(parent) = parent {
+            let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
+            placement = free_properties(ui, parent, control, at, &rects);
         }
         if kind != ControlKind::Separator {
             font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
@@ -1157,7 +1367,42 @@ impl ClioApp {
             });
         } else if let Some(action) = column_edit {
             self.apply_control(action);
+        } else if let Some((child, up)) = tab_action {
+            // The group stays selected.
+            let group = at.clone();
+            self.edit_design(|d| d.shift(&child, up).map(|_| Some(group)));
+        } else if let Some((placement, merge)) = placement {
+            self.place_controls(&[placement], Some(format!("{at:?}:{merge}")));
         }
+    }
+
+    /// With several controls selected: how many, and the align tools, each
+    /// enabled when it can be used on them.
+    fn arrange_tools(&mut self, ui: &mut egui::Ui) {
+        let selected = self.selected_controls();
+        if selected.len() < 2 {
+            return;
+        }
+        ui.strong(format!("{} controls selected", selected.len()));
+        ui.weak("They follow the first one selected. Ctrl and a click adds or removes one.");
+        let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
+        let mut chosen = None;
+        ui.horizontal_wrapped(|ui| {
+            for how in Arrange::ALL {
+                let placements = arranged(how, &selected, &rects);
+                let response = ui.add_enabled(placements.is_some(), egui::Button::new(how.label()));
+                let response = response.on_disabled_hover_text(
+                    "Moving needs the controls in one Free group; distributing needs three.",
+                );
+                if response.clicked() {
+                    chosen = placements;
+                }
+            }
+        });
+        if let Some(placements) = chosen {
+            self.place_controls(&placements, None);
+        }
+        ui.separator();
     }
 
     /// The columns of the table of a repeater, the row numbers among them, in
@@ -2084,4 +2329,196 @@ fn optional_number(
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, name));
         }
     });
+}
+
+fn position(points: f32) -> u32 {
+    clamped(points, &POSITIONS)
+}
+
+fn clamped(points: f32, range: &std::ops::RangeInclusive<u32>) -> u32 {
+    (points.round().max(0.0) as u32).clamp(*range.start(), *range.end())
+}
+
+fn snap_grid(points: f32) -> f32 {
+    (points / GRID).round() * GRID
+}
+
+/// Changes the layout of a group. Its controls going into a Free group are
+/// put where they were drawn, from the top left of the first of them, so
+/// that nothing jumps; the group's size is learnt when it is next drawn.
+fn set_layout(group: &mut Control, at: &Address, layout: GroupLayout, rects: &FormRects) {
+    group.layout = (layout != GroupLayout::Flow).then_some(layout);
+    group.base_width = None;
+    group.base_height = None;
+    if layout != GroupLayout::Free {
+        return;
+    }
+    let drawn: Vec<Option<egui::Rect>> = (0..group.children.len())
+        .map(|i| {
+            let mut child = at.clone();
+            child.push(i);
+            rects.controls.get(&child).copied()
+        })
+        .collect();
+    let left = drawn
+        .iter()
+        .flatten()
+        .map(|r| r.left())
+        .fold(f32::INFINITY, f32::min);
+    let top = drawn
+        .iter()
+        .flatten()
+        .map(|r| r.top())
+        .fold(f32::INFINITY, f32::min);
+    let mut next = 0.0;
+    for (c, rect) in group.children.iter_mut().zip(drawn) {
+        let (x, y) = match rect {
+            Some(r) => (r.left() - left, r.top() - top),
+            // Not drawn (hidden, say): under the others.
+            None => (0.0, next),
+        };
+        c.x = Some(position(snap_grid(x)));
+        c.y = Some(position(snap_grid(y)));
+        next = next.max(y + rect.map_or(24.0, |r| r.height()) + GRID * 2.0);
+    }
+}
+
+/// The controls of a Free group in their order, which is the tab order, with
+/// buttons that move one earlier or later. Returns the move asked for.
+fn tab_order(ui: &mut egui::Ui, group: &Control, at: &Address) -> Option<(Address, bool)> {
+    ui.add_space(4.0);
+    ui.strong("Tab order");
+    let mut asked = None;
+    let n = group.children.len();
+    for (i, child) in group.children.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let mut child_at = at.clone();
+            child_at.push(i);
+            let name = control_name(child);
+            let up = ui
+                .add_enabled(i > 0, egui::Button::new("\u{2191}").small())
+                .on_hover_text("Earlier in the tab order");
+            up.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, i > 0, format!("Earlier: {name}"))
+            });
+            let down = ui
+                .add_enabled(i + 1 < n, egui::Button::new("\u{2193}").small())
+                .on_hover_text("Later in the tab order");
+            down.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, i + 1 < n, format!("Later: {name}"))
+            });
+            ui.label(format!("{}. {name}", i + 1));
+            if up.clicked() {
+                asked = Some((child_at.clone(), true));
+            }
+            if down.clicked() {
+                asked = Some((child_at, false));
+            }
+        });
+    }
+    ui.weak("Moving a control on the form does not change its place in the tab order.");
+    asked
+}
+
+/// The position of a control in a Free group, as it is seen, and its
+/// anchors. Returns the change asked for, with the property it is of (so
+/// that dragging a number is one change).
+fn free_properties(
+    ui: &mut egui::Ui,
+    group: &Control,
+    control: &Control,
+    at: &Address,
+    rects: &FormRects,
+) -> Option<(Placement, &'static str)> {
+    let parent = at.split_last()?.1;
+    let size = rects
+        .free
+        .get(parent)
+        .map(|r| (r.width(), r.height()))
+        .unwrap_or_else(|| {
+            let w = group.base_width.unwrap_or(0) as f32;
+            let h = group.base_height.unwrap_or(0) as f32;
+            (w, h)
+        });
+    let place = free_place(group, control, size);
+    let mut asked = None;
+    ui.add_space(4.0);
+    ui.strong("Place in the group");
+    ui.horizontal(|ui| {
+        let mut x = place.left.round() as u32;
+        let mut y = place.top.round() as u32;
+        ui.label("X");
+        let rx = ui.add(egui::DragValue::new(&mut x).range(POSITIONS).suffix(" pt"));
+        rx.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "X position"));
+        ui.label("Y");
+        let ry = ui.add(egui::DragValue::new(&mut y).range(POSITIONS).suffix(" pt"));
+        ry.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Y position"));
+        if x != place.left.round() as u32 || y != place.top.round() as u32 {
+            asked = Some((
+                Placement {
+                    at: at.clone(),
+                    x: Some(x as f32),
+                    y: Some(y as f32),
+                    size: Some(size),
+                    ..Placement::default()
+                },
+                "position",
+            ));
+        }
+    });
+    for across in [true, false] {
+        let current = if across {
+            control.anchor_x
+        } else {
+            control.anchor_y
+        }
+        .unwrap_or(Anchor::Start);
+        let mut anchor = current;
+        ui.horizontal(|ui| {
+            ui.label(if across {
+                "Anchored across"
+            } else {
+                "Anchored down"
+            });
+            let response = egui::ComboBox::from_id_salt(("property_anchor", across))
+                .selected_text(anchor.label(across))
+                .show_ui(ui, |ui| {
+                    for a in Anchor::ALL {
+                        ui.selectable_value(&mut anchor, a, a.label(across));
+                    }
+                })
+                .response;
+            let name = if across {
+                "Anchor across"
+            } else {
+                "Anchor down"
+            };
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
+        });
+        if anchor != current {
+            let mut p = Placement {
+                at: at.clone(),
+                size: Some(size),
+                ..Placement::default()
+            };
+            // Stretching needs a size to stretch: the one it is drawn at.
+            let drawn = rects.controls.get(at);
+            if across {
+                p.anchor_x = Some(anchor);
+                if anchor == Anchor::Both && control.width.is_none() {
+                    p.width = drawn.map(|r| r.width());
+                }
+            } else {
+                p.anchor_y = Some(anchor);
+                if anchor == Anchor::Both && control.height.is_none() {
+                    p.height = drawn.map(|r| r.height());
+                }
+            }
+            asked = Some((p, "anchor"));
+        }
+    }
+    if group.height.is_none() {
+        ui.weak("Anchoring to the bottom needs a height on the group.");
+    }
+    asked
 }

@@ -21,6 +21,7 @@ pub mod export;
 pub mod file;
 pub mod form;
 pub mod form_exprs;
+pub mod form_free;
 pub mod form_layout;
 #[cfg(test)]
 mod form_layout_tests;

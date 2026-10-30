@@ -193,6 +193,148 @@ pub const SPACINGS: std::ops::RangeInclusive<u32> = 0..=48;
 /// The most columns a group can have.
 pub const MAX_COLUMNS: u32 = 6;
 
+/// The positions of a control in a Free group, and the sizes a Free group's
+/// places were made for, in points.
+pub const POSITIONS: std::ops::RangeInclusive<u32> = 0..=4000;
+
+/// How a group arranges its controls (DESIGN.md, "Forms", "Layout").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupLayout {
+    /// One after the other, in rows of the group's columns.
+    Flow,
+    /// Each at a position of its own.
+    Free,
+}
+
+impl GroupLayout {
+    pub const ALL: [GroupLayout; 2] = [GroupLayout::Flow, GroupLayout::Free];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupLayout::Flow => "Flow",
+            GroupLayout::Free => "Free",
+        }
+    }
+}
+
+/// Which edges of a Free group a control keeps its distance to when the
+/// group is wider (or taller) than its places were made for: the first
+/// edge (left, top), the last (right, bottom), or both, which stretches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Anchor {
+    Start,
+    End,
+    Both,
+}
+
+impl Anchor {
+    pub const ALL: [Anchor; 3] = [Anchor::Start, Anchor::End, Anchor::Both];
+
+    pub fn label(self, across: bool) -> &'static str {
+        match (self, across) {
+            (Anchor::Start, true) => "Left",
+            (Anchor::End, true) => "Right",
+            (Anchor::Both, true) => "Left and right",
+            (Anchor::Start, false) => "Top",
+            (Anchor::End, false) => "Bottom",
+            (Anchor::Both, false) => "Top and bottom",
+        }
+    }
+}
+
+/// Where a control of a Free group is drawn, in points from the top left of
+/// the group's inside.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FreePlace {
+    pub left: f32,
+    pub top: f32,
+    /// Its width and height, when it has them; stretched by its anchors.
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+}
+
+/// How far a group of `size` is from the size its places were made for:
+/// across always, down only when the group has a height of its own (else
+/// it is as tall as its controls, and nothing is anchored to its bottom).
+fn free_growth(group: &Control, size: (f32, f32)) -> (f32, f32) {
+    let dx = group.base_width.map_or(0.0, |base| size.0 - base as f32);
+    let dy = match (group.height, group.base_height) {
+        (Some(_), Some(base)) => size.1 - base as f32,
+        _ => 0.0,
+    };
+    (dx, dy)
+}
+
+fn anchored(
+    anchor: Option<Anchor>,
+    start: f32,
+    length: Option<f32>,
+    growth: f32,
+) -> (f32, Option<f32>) {
+    match anchor.unwrap_or(Anchor::Start) {
+        Anchor::Start => (start, length),
+        Anchor::End => (start + growth, length),
+        // A control with no length of its own cannot stretch.
+        Anchor::Both => (start, length.map(|l| (l + growth).max(1.0))),
+    }
+}
+
+/// Where the child `c` of the Free group `group` is drawn when the group's
+/// inside is `size`.
+pub fn free_place(group: &Control, c: &Control, size: (f32, f32)) -> FreePlace {
+    let (dx, dy) = free_growth(group, size);
+    let (left, width) = anchored(
+        c.anchor_x,
+        c.x.unwrap_or(0) as f32,
+        c.width.map(|w| w as f32),
+        dx,
+    );
+    let (top, height) = anchored(
+        c.anchor_y,
+        c.y.unwrap_or(0) as f32,
+        c.height.map(|h| h as f32),
+        dy,
+    );
+    FreePlace {
+        left: left.max(0.0),
+        top: top.max(0.0),
+        width,
+        height,
+    }
+}
+
+/// Makes the places of the children of a Free group the ones they are drawn
+/// at when its inside is `size`, and that size the one they are made for;
+/// so that a change made where they are seen does not move the others.
+pub fn rebase_free(group: &mut Control, size: (f32, f32)) {
+    let to_u32 = |v: f32, range: &std::ops::RangeInclusive<u32>| {
+        (v.round().max(0.0) as u32).clamp(*range.start(), *range.end())
+    };
+    let places: Vec<FreePlace> = group
+        .children
+        .iter()
+        .map(|c| free_place(group, c, size))
+        .collect();
+    for (c, place) in group.children.iter_mut().zip(places) {
+        if c.x.is_some() || place.left > 0.0 {
+            c.x = Some(to_u32(place.left, &POSITIONS));
+        }
+        if c.y.is_some() || place.top > 0.0 {
+            c.y = Some(to_u32(place.top, &POSITIONS));
+        }
+        if let Some(w) = place.width.filter(|_| c.width.is_some()) {
+            c.width = Some(to_u32(w, &CONTROL_WIDTHS));
+        }
+        if let Some(h) = place.height.filter(|_| c.height.is_some()) {
+            c.height = Some(to_u32(h, &CONTROL_HEIGHTS));
+        }
+    }
+    group.base_width = Some(to_u32(size.0, &POSITIONS));
+    group.base_height = group.height.map(|_| to_u32(size.1, &POSITIONS));
+}
+
 /// Where the label of a field is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -563,6 +705,28 @@ pub struct Control {
     pub spacing: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub padding: Option<u32>,
+    /// For a group: how it arranges its controls. Absent: flow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<GroupLayout>,
+    /// For a Free group: the width and height of its inside that the places
+    /// of its controls were made for; anchors keep a control's distance to
+    /// an edge when the group is another size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_height: Option<u32>,
+    /// In a Free group: the position, in points from the top left of the
+    /// group's inside. Absent: 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<u32>,
+    /// In a Free group: the edges it keeps its distance to. Absent: the left
+    /// and the top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_x: Option<Anchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_y: Option<Anchor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
 }
@@ -602,6 +766,11 @@ fn is_false(b: &bool) -> bool {
 }
 
 impl Control {
+    /// Whether it is a group that places its controls freely.
+    pub fn is_free(&self) -> bool {
+        self.kind == ControlKind::Group && self.layout == Some(GroupLayout::Free)
+    }
+
     pub fn new(kind: ControlKind) -> Control {
         Control {
             kind,
@@ -642,6 +811,13 @@ impl Control {
             new_row: false,
             spacing: None,
             padding: None,
+            layout: None,
+            base_width: None,
+            base_height: None,
+            x: None,
+            y: None,
+            anchor_x: None,
+            anchor_y: None,
             children: Vec::new(),
         }
     }
@@ -826,6 +1002,13 @@ pub fn form_schema_source() -> &'static str {
         "new_row": {"type": "boolean"},
         "spacing": {"type": "integer", "minimum": 0, "maximum": 48},
         "padding": {"type": "integer", "minimum": 0, "maximum": 48},
+        "layout": {"type": "string", "enum": ["flow", "free"]},
+        "base_width": {"type": "integer", "minimum": 0, "maximum": 4000},
+        "base_height": {"type": "integer", "minimum": 0, "maximum": 4000},
+        "x": {"type": "integer", "minimum": 0, "maximum": 4000},
+        "y": {"type": "integer", "minimum": 0, "maximum": 4000},
+        "anchor_x": {"type": "string", "enum": ["start", "end", "both"]},
+        "anchor_y": {"type": "string", "enum": ["start", "end", "both"]},
         "children": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["type"]
@@ -1699,5 +1882,77 @@ mod tests {
         };
         assert!(!plain.to_json().contains("choices"));
         assert!(!plain.to_json().contains("allow_other"));
+    }
+
+    fn free_group() -> Control {
+        let mut group = Control::new(ControlKind::Group);
+        group.layout = Some(GroupLayout::Free);
+        group.base_width = Some(400);
+        let mut a = Control::new(ControlKind::Label);
+        a.x = Some(10);
+        a.y = Some(20);
+        a.width = Some(100);
+        let mut b = a.clone();
+        b.anchor_x = Some(Anchor::End);
+        let mut c = a.clone();
+        c.anchor_x = Some(Anchor::Both);
+        group.children = vec![a, b, c];
+        group
+    }
+
+    #[test]
+    fn anchors_keep_a_free_control_at_its_edges() {
+        let group = free_group();
+        let at = |i: usize, w: f32| free_place(&group, &group.children[i], (w, 300.0));
+        // At the size the places were made for, each is where it says.
+        for i in 0..3 {
+            assert_eq!(at(i, 400.0).left, 10.0);
+            assert_eq!(at(i, 400.0).width, Some(100.0));
+        }
+        // Wider by 50: the left one stays, the right one moves, the one
+        // anchored to both stretches.
+        assert_eq!((at(0, 450.0).left, at(0, 450.0).width), (10.0, Some(100.0)));
+        assert_eq!((at(1, 450.0).left, at(1, 450.0).width), (60.0, Some(100.0)));
+        assert_eq!((at(2, 450.0).left, at(2, 450.0).width), (10.0, Some(150.0)));
+        // Down, nothing moves while the group has no height of its own.
+        let mut bottom = group.children[0].clone();
+        bottom.anchor_y = Some(Anchor::End);
+        assert_eq!(free_place(&group, &bottom, (400.0, 900.0)).top, 20.0);
+        let mut tall = group.clone();
+        tall.height = Some(300);
+        tall.base_height = Some(280);
+        assert_eq!(free_place(&tall, &bottom, (400.0, 300.0)).top, 40.0);
+    }
+
+    #[test]
+    fn rebasing_keeps_every_control_where_it_is_seen() {
+        let mut group = free_group();
+        let before: Vec<FreePlace> = group
+            .children
+            .iter()
+            .map(|c| free_place(&group, c, (450.0, 300.0)))
+            .collect();
+        rebase_free(&mut group, (450.0, 300.0));
+        assert_eq!(group.base_width, Some(450));
+        let after: Vec<FreePlace> = group
+            .children
+            .iter()
+            .map(|c| free_place(&group, c, (450.0, 300.0)))
+            .collect();
+        assert_eq!(before, after);
+        assert_eq!(group.children[1].x, Some(60));
+        assert_eq!(group.children[2].width, Some(150));
+    }
+
+    #[test]
+    fn a_free_layout_is_stored_and_checked() {
+        let mut design = FormDesign::default();
+        design.controls.push(free_group());
+        let text = design.to_json();
+        assert!(text.contains("\"layout\": \"free\""), "{text}");
+        assert!(text.contains("\"anchor_x\": \"end\""), "{text}");
+        assert_eq!(FormDesign::from_json(&text).unwrap(), design);
+        let far = text.replacen("\"x\": 10", "\"x\": 5000", 1);
+        assert!(FormDesign::from_json(&far).is_err());
     }
 }

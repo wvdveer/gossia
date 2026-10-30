@@ -232,6 +232,10 @@ impl ClioApp {
                 self.undo();
             }
         }
+        // In layout mode the arrows move the selected controls of Free groups.
+        if !typing_somewhere && self.options.is_none() && self.layout_active() {
+            self.layout_keys(ui);
+        }
         // While the Options dialog is open, keys are for it, not the grid.
         if typing_somewhere
             || self.editing.is_some()
