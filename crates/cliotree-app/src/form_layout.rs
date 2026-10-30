@@ -12,7 +12,8 @@ use cliotree_calc::{ExprKind, entry};
 use cliotree_core::form::{
     self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
     Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
-    LabelPosition, POSITIONS, RepeaterMode, SPACINGS, free_place, rebase_free,
+    LabelPosition, MAX_TRACKS, POSITIONS, RepeaterMode, SPACINGS, TRACK_POINTS, TRACK_SHARES,
+    TrackSize, flow_rows, free_place, grid_cells, rebase_free,
 };
 use cliotree_core::{Kind, Path};
 
@@ -82,7 +83,7 @@ pub(crate) enum ControlAction {
     /// What was dragged, put down at a place in the list of a group (the top
     /// level for an empty address), counted as the list was before; in a
     /// Free group, at a point of its inside, which is the size given.
-    Drop(DragItem, Address, usize, Option<FreeDrop>),
+    Drop(DragItem, Address, usize, Option<DropAt>),
     /// A resize handle, or a control in a Free group, starts to be dragged.
     ResizeStart,
     /// Where controls are and how big, as seen; edits with the same merge key
@@ -91,6 +92,14 @@ pub(crate) enum ControlAction {
     /// A new width and height, each left alone when `None`, made automatic
     /// with `Some(None)`.
     Resize(Address, Option<Option<u32>>, Option<Option<u32>>),
+}
+
+/// Where in a Free or Grid group something dragged is put down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum DropAt {
+    Free(FreeDrop),
+    /// The row and column of a cell, from 0.
+    Cell(usize, usize),
 }
 
 /// Where in a Free group something dragged is put down: the point in its
@@ -402,7 +411,7 @@ impl ClioApp {
             ControlAction::Column(at, name, edit) => {
                 self.edit_column_place(&at, &name, edit);
             }
-            ControlAction::Drop(item, parent, index, free) => {
+            ControlAction::Drop(item, parent, index, at_point) => {
                 if !drop_allowed(&item, &parent, index) {
                     return;
                 }
@@ -411,12 +420,20 @@ impl ClioApp {
                         DragItem::Control(from) => d.move_to(&from, &parent, index)?,
                         DragItem::New(kind) => d.insert(&parent, Some(index), new_control(kind))?,
                     };
-                    if let Some(free) = free {
-                        let group = d.get_mut(&parent)?;
-                        rebase_free(group, free.size);
-                        let c = d.get_mut(&at)?;
-                        c.x = Some(position(snap_grid(free.point.0)));
-                        c.y = Some(position(snap_grid(free.point.1)));
+                    match at_point {
+                        Some(DropAt::Free(free)) => {
+                            let group = d.get_mut(&parent)?;
+                            rebase_free(group, free.size);
+                            let c = d.get_mut(&at)?;
+                            c.x = Some(position(snap_grid(free.point.0)));
+                            c.y = Some(position(snap_grid(free.point.1)));
+                        }
+                        Some(DropAt::Cell(row, column)) => {
+                            let c = d.get_mut(&at)?;
+                            c.grid_row = Some(track_number(row));
+                            c.grid_column = Some(track_number(column));
+                        }
+                        None => {}
                     }
                     Some(Some(at))
                 });
@@ -478,6 +495,10 @@ impl ClioApp {
                 }
                 if let Some(anchor) = p.anchor_y {
                     c.anchor_y = (anchor != Anchor::Start).then_some(anchor);
+                }
+                if let Some((row, column)) = p.cell {
+                    c.grid_row = Some(track_number(row));
+                    c.grid_column = Some(track_number(column));
                 }
             }
             Some(keep)
@@ -1159,7 +1180,10 @@ impl ClioApp {
                         set_layout(&mut edited, at, layout, &rects);
                     }
                 });
-                if edited.is_free() {
+                if edited.is_free() || edited.is_grid() {
+                    if edited.is_grid() {
+                        grid_tracks(ui, &mut edited);
+                    }
                     if let Some(action) = tab_order(ui, &edited, at) {
                         tab_action = Some(action);
                     }
@@ -1246,8 +1270,9 @@ impl ClioApp {
         }
         let parent = at.split_last().and_then(|(_, parent)| design.get(parent));
         let in_free = parent.is_some_and(Control::is_free);
+        let in_grid = parent.is_some_and(Control::is_grid);
         let parent_columns = parent
-            .filter(|_| !in_free)
+            .filter(|_| !in_free && !in_grid)
             .and_then(|parent| parent.columns)
             .unwrap_or(1);
         if size_properties(ui, &mut edited, parent_columns) {
@@ -1256,6 +1281,9 @@ impl ClioApp {
         if in_free && let Some(parent) = parent {
             let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
             placement = free_properties(ui, parent, control, at, &rects);
+        }
+        if in_grid && let Some(parent) = parent {
+            cell_properties(ui, parent, &mut edited, at);
         }
         if kind != ControlKind::Separator {
             font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
@@ -2347,9 +2375,30 @@ fn snap_grid(points: f32) -> f32 {
 /// put where they were drawn, from the top left of the first of them, so
 /// that nothing jumps; the group's size is learnt when it is next drawn.
 fn set_layout(group: &mut Control, at: &Address, layout: GroupLayout, rects: &FormRects) {
+    let was = group.layout.unwrap_or(GroupLayout::Flow);
     group.layout = (layout != GroupLayout::Flow).then_some(layout);
     group.base_width = None;
     group.base_height = None;
+    if layout == GroupLayout::Grid {
+        // From a flow, the rows and columns it had; from a Free group, one
+        // column in the order of the controls.
+        let columns = match was {
+            GroupLayout::Flow => group.columns.unwrap_or(1).clamp(1, MAX_TRACKS) as usize,
+            _ => 1,
+        };
+        if group.grid_columns.is_empty() {
+            group.grid_columns = vec![TrackSize::Share(1); columns];
+        }
+        for (row, cells) in flow_rows(&group.children, columns).into_iter().enumerate() {
+            for (i, column, span) in cells.cells {
+                let c = &mut group.children[i];
+                c.grid_row = Some(track_number(row));
+                c.grid_column = Some(track_number(column));
+                c.span = (span > 1).then_some(span as u32);
+            }
+        }
+        return;
+    }
     if layout != GroupLayout::Free {
         return;
     }
@@ -2521,4 +2570,139 @@ fn free_properties(
         ui.weak("Anchoring to the bottom needs a height on the group.");
     }
     asked
+}
+
+/// A row or column number as it is stored, from 1.
+fn track_number(index: usize) -> u32 {
+    (index as u32 + 1).min(MAX_TRACKS)
+}
+
+/// The columns and rows of a Grid group, each with its size, a button that
+/// removes it, and buttons that add one.
+fn grid_tracks(ui: &mut egui::Ui, group: &mut Control) {
+    let (_, rows, columns) = grid_cells(group);
+    for (what, tracks, shown) in [
+        ("Column", &mut group.grid_columns, columns),
+        ("Row", &mut group.grid_rows, rows),
+    ] {
+        ui.add_space(4.0);
+        ui.strong(format!("{what}s"));
+        let mut remove = None;
+        for i in 0..tracks.len().max(shown) {
+            ui.horizontal(|ui| {
+                ui.label(format!("{what} {}", i + 1));
+                let mut size = tracks.get(i).copied().unwrap_or(TrackSize::Auto);
+                let before = size;
+                let name = format!("Size of {} {}", what.to_lowercase(), i + 1);
+                let response = egui::ComboBox::from_id_salt(("property_track", what, i))
+                    .selected_text(size.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut size, TrackSize::Auto, "Automatic");
+                        let points = match size {
+                            TrackSize::Points(p) => p,
+                            _ => 100,
+                        };
+                        ui.selectable_value(&mut size, TrackSize::Points(points), "Points");
+                        let share = match size {
+                            TrackSize::Share(s) => s,
+                            _ => 1,
+                        };
+                        ui.selectable_value(&mut size, TrackSize::Share(share), "Share");
+                    })
+                    .response;
+                response
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+                match &mut size {
+                    TrackSize::Points(p) => {
+                        ui.add(egui::DragValue::new(p).range(TRACK_POINTS).suffix(" pt"));
+                    }
+                    TrackSize::Share(s) => {
+                        ui.add(egui::DragValue::new(s).range(TRACK_SHARES).suffix(" fr"));
+                    }
+                    TrackSize::Auto => {}
+                }
+                if size != before {
+                    while tracks.len() <= i {
+                        tracks.push(TrackSize::Auto);
+                    }
+                    tracks[i] = size;
+                }
+                if i < tracks.len() {
+                    let label = format!("Remove {} {}", what.to_lowercase(), i + 1);
+                    let r = ui.small_button("\u{2715}").on_hover_text(&label);
+                    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+                    if r.clicked() {
+                        remove = Some(i);
+                    }
+                }
+            });
+        }
+        if let Some(i) = remove {
+            tracks.remove(i);
+        }
+        let add = format!("Add {}", what.to_lowercase());
+        if ui
+            .add_enabled(
+                (tracks.len() as u32) < MAX_TRACKS,
+                egui::Button::new(add.as_str()),
+            )
+            .clicked()
+        {
+            while tracks.len() < shown {
+                tracks.push(TrackSize::Auto);
+            }
+            tracks.push(TrackSize::Auto);
+        }
+    }
+    ui.weak(
+        "A control placed past the last row or column adds an automatic one. \
+         A share divides what the others leave.",
+    );
+}
+
+/// The cell of a control in a Grid group, as it is placed (a control with
+/// none is in the next free cell), and the rows and columns it takes.
+fn cell_properties(ui: &mut egui::Ui, group: &Control, edited: &mut Control, at: &Address) {
+    let Some(&index) = at.last() else {
+        return;
+    };
+    let (cells, ..) = grid_cells(group);
+    let Some(cell) = cells.iter().find(|c| c.index == index) else {
+        return;
+    };
+    ui.add_space(4.0);
+    ui.strong("Cell in the grid");
+    let max = MAX_TRACKS;
+    ui.horizontal(|ui| {
+        let mut row = cell.row as u32 + 1;
+        let mut column = cell.column as u32 + 1;
+        ui.label("Row");
+        let r = ui.add(egui::DragValue::new(&mut row).range(1..=max));
+        r.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Row of the cell")
+        });
+        ui.label("Column");
+        let c = ui.add(egui::DragValue::new(&mut column).range(1..=max));
+        c.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Column of the cell")
+        });
+        if row != cell.row as u32 + 1 || column != cell.column as u32 + 1 {
+            edited.grid_row = Some(row);
+            edited.grid_column = Some(column);
+        }
+    });
+    ui.horizontal(|ui| {
+        let mut rows = edited.row_span.unwrap_or(1);
+        let mut columns = edited.span.unwrap_or(1);
+        ui.label("Rows it takes");
+        let r = ui.add(egui::DragValue::new(&mut rows).range(1..=max));
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Rows it takes"));
+        ui.label("Columns");
+        let c = ui.add(egui::DragValue::new(&mut columns).range(1..=max));
+        c.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Columns it takes")
+        });
+        edited.row_span = (rows > 1).then_some(rows);
+        edited.span = (columns > 1).then_some(columns);
+    });
 }

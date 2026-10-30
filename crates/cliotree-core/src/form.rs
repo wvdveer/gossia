@@ -205,17 +205,225 @@ pub enum GroupLayout {
     Flow,
     /// Each at a position of its own.
     Free,
+    /// In the cells of rows and columns that the group defines.
+    Grid,
 }
 
 impl GroupLayout {
-    pub const ALL: [GroupLayout; 2] = [GroupLayout::Flow, GroupLayout::Free];
+    pub const ALL: [GroupLayout; 3] = [GroupLayout::Flow, GroupLayout::Free, GroupLayout::Grid];
 
     pub fn label(self) -> &'static str {
         match self {
             GroupLayout::Flow => "Flow",
             GroupLayout::Free => "Free",
+            GroupLayout::Grid => "Grid",
         }
     }
+}
+
+/// The most rows or columns a Grid group can have.
+pub const MAX_TRACKS: u32 = 50;
+
+/// The sizes a row or column of a Grid group may be given, in points.
+pub const TRACK_POINTS: std::ops::RangeInclusive<u32> = 8..=2000;
+
+/// The shares a row or column may take of what is left.
+pub const TRACK_SHARES: std::ops::RangeInclusive<u32> = 1..=99;
+
+/// The size of a row or column of a Grid group. Written as `auto`, a number
+/// of points (`120`), or a share of what the others leave (`2fr`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum TrackSize {
+    /// As big as its biggest control.
+    Auto,
+    Points(u32),
+    /// A share of the room the others leave.
+    Share(u32),
+}
+
+impl TrackSize {
+    pub fn label(self) -> &'static str {
+        match self {
+            TrackSize::Auto => "Automatic",
+            TrackSize::Points(_) => "Points",
+            TrackSize::Share(_) => "Share",
+        }
+    }
+}
+
+impl From<TrackSize> for String {
+    fn from(size: TrackSize) -> String {
+        match size {
+            TrackSize::Auto => "auto".to_owned(),
+            TrackSize::Points(p) => p.to_string(),
+            TrackSize::Share(s) => format!("{s}fr"),
+        }
+    }
+}
+
+impl TryFrom<String> for TrackSize {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<TrackSize, String> {
+        let wrong =
+            || format!("`{text}` is not a size: auto, points such as 120, or a share such as 2fr");
+        if text == "auto" {
+            Ok(TrackSize::Auto)
+        } else if let Some(share) = text.strip_suffix("fr") {
+            let s: u32 = share.parse().map_err(|_| wrong())?;
+            TRACK_SHARES
+                .contains(&s)
+                .then_some(TrackSize::Share(s))
+                .ok_or_else(wrong)
+        } else {
+            let p: u32 = text.parse().map_err(|_| wrong())?;
+            TRACK_POINTS
+                .contains(&p)
+                .then_some(TrackSize::Points(p))
+                .ok_or_else(wrong)
+        }
+    }
+}
+
+/// Where a control of a Grid group is: its first row and column, from 0,
+/// and how many of each it takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GridCell {
+    /// The index of the control among the group's.
+    pub index: usize,
+    pub row: usize,
+    pub column: usize,
+    pub rows: usize,
+    pub columns: usize,
+}
+
+/// The cells of the controls of a Grid group, and how many rows and columns
+/// it has: those it defines, or more if a control is placed beyond them. A
+/// control with a row and a column is there; one without is put in the next
+/// cell that is free, row by row, after the one before it.
+pub fn grid_cells(group: &Control) -> (Vec<GridCell>, usize, usize) {
+    let max = MAX_TRACKS as usize;
+    let span = |v: Option<u32>| (v.unwrap_or(1).max(1) as usize).min(max);
+    let placed = |c: &Control| match (c.grid_row, c.grid_column) {
+        (Some(r), Some(k)) => Some((
+            (r.max(1) as usize - 1).min(max - 1),
+            (k.max(1) as usize - 1).min(max - 1),
+        )),
+        _ => None,
+    };
+    let mut columns = group.grid_columns.len().max(1);
+    for c in &group.children {
+        if let Some((_, k)) = placed(c) {
+            columns = columns.max(k + span(c.span));
+        }
+    }
+    let columns = columns.min(max);
+    let mut taken: Vec<Vec<bool>> = Vec::new();
+    let take = |taken: &mut Vec<Vec<bool>>, cell: &GridCell| {
+        for r in cell.row..cell.row + cell.rows {
+            while taken.len() <= r {
+                taken.push(vec![false; columns]);
+            }
+            let end = (cell.column + cell.columns).min(columns);
+            taken[r][cell.column..end].fill(true);
+        }
+    };
+    let mut cells: Vec<Option<GridCell>> = vec![None; group.children.len()];
+    for (index, c) in group.children.iter().enumerate() {
+        if let Some((row, column)) = placed(c) {
+            let cell = GridCell {
+                index,
+                row,
+                column,
+                rows: span(c.row_span),
+                columns: span(c.span).min(columns - column.min(columns - 1)),
+            };
+            take(&mut taken, &cell);
+            cells[index] = Some(cell);
+        }
+    }
+    let free = |taken: &Vec<Vec<bool>>, row: usize, column: usize, rows: usize, width: usize| {
+        (row..row + rows)
+            .all(|r| (column..column + width).all(|k| taken.get(r).is_none_or(|line| !line[k])))
+    };
+    let (mut row, mut column) = (0, 0);
+    for (index, c) in group.children.iter().enumerate() {
+        if cells[index].is_some() {
+            continue;
+        }
+        let width = span(c.span).min(columns);
+        let rows = span(c.row_span);
+        loop {
+            if column + width > columns {
+                row += 1;
+                column = 0;
+            }
+            if free(&taken, row, column, rows, width) {
+                break;
+            }
+            column += 1;
+        }
+        let cell = GridCell {
+            index,
+            row,
+            column,
+            rows,
+            columns: width,
+        };
+        take(&mut taken, &cell);
+        cells[index] = Some(cell);
+        column += width;
+    }
+    let cells: Vec<GridCell> = cells.into_iter().flatten().collect();
+    let rows = cells
+        .iter()
+        .map(|c| c.row + c.rows)
+        .max()
+        .unwrap_or(0)
+        .max(group.grid_rows.len())
+        .max(1);
+    (cells, rows, columns)
+}
+
+/// The sizes of the rows or columns of a Grid group, in points: a number of
+/// points is that; automatic is `content`, the size of its biggest control;
+/// the shares divide what the others and the gaps leave of `available` (or,
+/// with nothing available, are automatic). Tracks beyond `sizes` are
+/// automatic.
+pub fn track_sizes(
+    sizes: &[TrackSize],
+    content: &[f32],
+    available: Option<f32>,
+    gap: f32,
+) -> Vec<f32> {
+    let n = content.len();
+    let size = |i: usize| sizes.get(i).copied().unwrap_or(TrackSize::Auto);
+    let mut out: Vec<f32> = (0..n)
+        .map(|i| match size(i) {
+            TrackSize::Auto => content[i],
+            TrackSize::Points(p) => p as f32,
+            TrackSize::Share(_) => 0.0,
+        })
+        .collect();
+    let shares: u32 = (0..n)
+        .filter_map(|i| match size(i) {
+            TrackSize::Share(s) => Some(s),
+            _ => None,
+        })
+        .sum();
+    if shares > 0 {
+        let used: f32 = out.iter().sum::<f32>() + gap * n.saturating_sub(1) as f32;
+        for i in 0..n {
+            if let TrackSize::Share(s) = size(i) {
+                out[i] = match available {
+                    Some(room) => ((room - used).max(0.0) * s as f32 / shares as f32).max(0.0),
+                    None => content[i],
+                };
+            }
+        }
+    }
+    out
 }
 
 /// Which edges of a Free group a control keeps its distance to when the
@@ -727,6 +935,20 @@ pub struct Control {
     pub anchor_x: Option<Anchor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_y: Option<Anchor>,
+    /// For a Grid group: the sizes of its columns and rows. A control placed
+    /// beyond them adds automatic ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grid_columns: Vec<TrackSize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grid_rows: Vec<TrackSize>,
+    /// In a Grid group: the row and column of its cell, from 1. Absent: the
+    /// next free cell. It takes `span` columns and `row_span` rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_row: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_span: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
 }
@@ -769,6 +991,11 @@ impl Control {
     /// Whether it is a group that places its controls freely.
     pub fn is_free(&self) -> bool {
         self.kind == ControlKind::Group && self.layout == Some(GroupLayout::Free)
+    }
+
+    /// Whether it is a group that places its controls in a grid.
+    pub fn is_grid(&self) -> bool {
+        self.kind == ControlKind::Group && self.layout == Some(GroupLayout::Grid)
     }
 
     pub fn new(kind: ControlKind) -> Control {
@@ -818,6 +1045,11 @@ impl Control {
             y: None,
             anchor_x: None,
             anchor_y: None,
+            grid_columns: Vec::new(),
+            grid_rows: Vec::new(),
+            grid_row: None,
+            grid_column: None,
+            row_span: None,
             children: Vec::new(),
         }
     }
@@ -998,11 +1230,16 @@ pub fn form_schema_source() -> &'static str {
         "align": {"type": "string", "enum": ["left", "center", "right"]},
         "label_position": {"type": "string", "enum": ["left", "top", "none"]},
         "label_width": {"type": "integer", "minimum": 0, "maximum": 600},
-        "span": {"type": "integer", "minimum": 1, "maximum": 6},
+        "span": {"type": "integer", "minimum": 1, "maximum": 50},
         "new_row": {"type": "boolean"},
         "spacing": {"type": "integer", "minimum": 0, "maximum": 48},
         "padding": {"type": "integer", "minimum": 0, "maximum": 48},
-        "layout": {"type": "string", "enum": ["flow", "free"]},
+        "layout": {"type": "string", "enum": ["flow", "free", "grid"]},
+        "grid_columns": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},
+        "grid_rows": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},
+        "grid_row": {"type": "integer", "minimum": 1, "maximum": 50},
+        "grid_column": {"type": "integer", "minimum": 1, "maximum": 50},
+        "row_span": {"type": "integer", "minimum": 1, "maximum": 50},
         "base_width": {"type": "integer", "minimum": 0, "maximum": 4000},
         "base_height": {"type": "integer", "minimum": 0, "maximum": 4000},
         "x": {"type": "integer", "minimum": 0, "maximum": 4000},
@@ -1013,6 +1250,7 @@ pub fn form_schema_source() -> &'static str {
       },
       "required": ["type"]
     },
+    "Track": {"type": "string", "pattern": "^(auto|[0-9]{1,4}|[0-9]{1,2}fr)$"},
     "Column": {
       "type": "object",
       "properties": {
@@ -1954,5 +2192,86 @@ mod tests {
         assert_eq!(FormDesign::from_json(&text).unwrap(), design);
         let far = text.replacen("\"x\": 10", "\"x\": 5000", 1);
         assert!(FormDesign::from_json(&far).is_err());
+    }
+
+    fn grid_of(children: Vec<Control>, columns: usize) -> Control {
+        let mut group = Control::new(ControlKind::Group);
+        group.layout = Some(GroupLayout::Grid);
+        group.grid_columns = vec![TrackSize::Auto; columns];
+        group.children = children;
+        group
+    }
+
+    fn cell(row: u32, column: u32) -> Control {
+        let mut c = Control::new(ControlKind::Label);
+        c.grid_row = Some(row);
+        c.grid_column = Some(column);
+        c
+    }
+
+    #[test]
+    fn controls_of_a_grid_take_their_cells_or_the_next_free_one() {
+        let label = || Control::new(ControlKind::Label);
+        let mut wide = label();
+        wide.span = Some(2);
+        let mut tall = cell(1, 3);
+        tall.row_span = Some(2);
+        // Three columns: the third column of rows 1 and 2 is taken by `tall`.
+        let group = grid_of(vec![label(), wide, label(), tall, label()], 3);
+        let (cells, rows, columns) = grid_cells(&group);
+        let at: Vec<(usize, usize, usize, usize)> = cells
+            .iter()
+            .map(|c| (c.row, c.column, c.rows, c.columns))
+            .collect();
+        assert_eq!(
+            at,
+            vec![
+                (0, 0, 1, 1),
+                // Does not fit beside the first: the next row.
+                (1, 0, 1, 2),
+                (2, 0, 1, 1),
+                (0, 2, 2, 1),
+                (2, 1, 1, 1),
+            ]
+        );
+        assert_eq!((rows, columns), (3, 3));
+        // A control placed beyond the columns adds one; cells can stay empty.
+        let group = grid_of(vec![cell(4, 5)], 2);
+        let (_, rows, columns) = grid_cells(&group);
+        assert_eq!((rows, columns), (4, 5));
+    }
+
+    #[test]
+    fn tracks_are_points_their_content_or_a_share_of_what_is_left() {
+        let sizes = [
+            TrackSize::Points(100),
+            TrackSize::Auto,
+            TrackSize::Share(1),
+            TrackSize::Share(3),
+        ];
+        let content = [50.0, 80.0, 30.0, 30.0, 40.0];
+        // 600 less 100, 80, the fifth (automatic) 40 and four gaps of 10:
+        // 340, in 1 and 3 shares.
+        let out = track_sizes(&sizes, &content, Some(600.0), 10.0);
+        assert_eq!(out, vec![100.0, 80.0, 85.0, 255.0, 40.0]);
+        // With nothing available, shares are automatic.
+        let out = track_sizes(&sizes, &content, None, 10.0);
+        assert_eq!(out, vec![100.0, 80.0, 30.0, 30.0, 40.0]);
+    }
+
+    #[test]
+    fn a_grid_is_stored_and_its_sizes_checked() {
+        let mut group = grid_of(vec![cell(2, 1)], 0);
+        group.grid_columns = vec![TrackSize::Points(120), TrackSize::Share(2)];
+        group.grid_rows = vec![TrackSize::Auto];
+        let mut design = FormDesign::default();
+        design.controls.push(group);
+        let text = design.to_json();
+        assert!(text.contains("\"120\""), "{text}");
+        assert!(text.contains("\"2fr\""), "{text}");
+        assert!(text.contains("\"auto\""), "{text}");
+        assert_eq!(FormDesign::from_json(&text).unwrap(), design);
+        assert!(FormDesign::from_json(&text.replace("\"2fr\"", "\"wide\"")).is_err());
+        assert!(FormDesign::from_json(&text.replace("\"120\"", "\"3\"")).is_err());
     }
 }

@@ -1,7 +1,7 @@
-//! Placing the controls of a Free group in layout mode (DESIGN.md, "Forms",
-//! "The designer for sizes and places"): where the controls were drawn, the
-//! snapping of a moved control to the grid and to the others, and the align
-//! tools for several selected controls.
+//! Placing the controls of Free and Grid groups in layout mode (DESIGN.md,
+//! "Forms", "The designer for sizes and places"): where the controls were
+//! drawn, the snapping of a moved control to the grid and to the others, the
+//! cells of a Grid group, and the align tools for several selected controls.
 
 use std::collections::HashMap;
 
@@ -20,6 +20,50 @@ const SNAP_DISTANCE: f32 = 5.0;
 pub(crate) struct FormRects {
     pub controls: HashMap<Address, Rect>,
     pub free: HashMap<Address, Rect>,
+    pub grids: HashMap<Address, GridGeom>,
+}
+
+/// Where the rows and columns of a Grid group were drawn: each from where to
+/// where, on the screen.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GridGeom {
+    pub region: Rect,
+    pub columns: Vec<(f32, f32)>,
+    pub rows: Vec<(f32, f32)>,
+}
+
+/// How much room a row or column added past the last one is shown with.
+const NEW_TRACK: f32 = 40.0;
+
+impl GridGeom {
+    /// The row and column of the cell at `pos`: the nearest, and one past
+    /// the last when beyond it, which adds a row or a column.
+    pub fn cell_at(&self, pos: Pos2) -> (usize, usize) {
+        fn track(tracks: &[(f32, f32)], at: f32) -> usize {
+            match tracks.iter().position(|&(_, end)| at < end) {
+                Some(i) => i,
+                None if tracks.last().is_some_and(|&(_, end)| at < end + NEW_TRACK) => tracks.len(),
+                None => tracks.len().saturating_sub(1),
+            }
+        }
+        (track(&self.rows, pos.y), track(&self.columns, pos.x))
+    }
+
+    /// Where the cell at a row and a column is, one past the last included.
+    pub fn cell_rect(&self, row: usize, column: usize) -> Rect {
+        fn span(tracks: &[(f32, f32)], i: usize) -> (f32, f32) {
+            match tracks.get(i) {
+                Some(&t) => t,
+                None => {
+                    let end = tracks.last().map_or(0.0, |t| t.1);
+                    (end, end + NEW_TRACK)
+                }
+            }
+        }
+        let (x0, x1) = span(&self.columns, column);
+        let (y0, y1) = span(&self.rows, row);
+        Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
+    }
 }
 
 fn rects_id(sheet: &str, form: &str) -> egui::Id {
@@ -51,6 +95,8 @@ pub struct Placement {
     pub anchor_y: Option<Anchor>,
     /// The size of the inside of its Free group, when it is in one.
     pub size: Option<(f32, f32)>,
+    /// In a Grid group: the row and column of its cell, from 0.
+    pub cell: Option<(usize, usize)>,
 }
 
 /// A line that a moved control snapped to: across (`vertical` false) at a
@@ -301,6 +347,26 @@ pub(crate) fn arranged(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cell_under_the_pointer_or_a_new_track_past_the_last() {
+        let geom = GridGeom {
+            region: Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(300.0, 60.0)),
+            columns: vec![(0.0, 100.0), (110.0, 300.0)],
+            rows: vec![(0.0, 20.0), (30.0, 60.0)],
+        };
+        assert_eq!(geom.cell_at(Pos2::new(50.0, 10.0)), (0, 0));
+        // In the gap: the track after it.
+        assert_eq!(geom.cell_at(Pos2::new(105.0, 25.0)), (1, 1));
+        // Just past the last: a new row and a new column.
+        assert_eq!(geom.cell_at(Pos2::new(320.0, 70.0)), (2, 2));
+        // Far past: the last.
+        assert_eq!(geom.cell_at(Pos2::new(900.0, 900.0)), (1, 1));
+        assert_eq!(
+            geom.cell_rect(2, 0),
+            Rect::from_min_max(Pos2::new(0.0, 60.0), Pos2::new(100.0, 100.0))
+        );
+    }
 
     fn r(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h))

@@ -414,6 +414,7 @@ fn a_dragged_control_goes_where_the_pointer_says() {
         rect: rect(top, bottom),
         group,
         free: None,
+        grid: None,
     };
     // A field at the top, then a group of two fields.
     let drops = vec![

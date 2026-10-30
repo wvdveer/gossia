@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use cliotree_calc::entry;
 use cliotree_core::form::{
     Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
-    DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, flow_rows, free_place,
+    DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, TrackSize, flow_rows,
+    free_place, grid_cells, track_sizes,
 };
 use cliotree_core::validate::validate_at;
 use cliotree_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
@@ -21,9 +22,10 @@ use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
 use crate::form_exprs::{Choice, ChoiceList, Gate, choice_list};
-use crate::form_free::{FormRects, Placement, keep_rects, last_rects, snap_move};
+use crate::form_free::{FormRects, GridGeom, Placement, keep_rects, last_rects, snap_move};
 use crate::form_layout::{
-    ColumnEdit, ControlAction, DragItem, FormDialog, FreeDrop, LayoutState, drop_allowed,
+    ColumnEdit, ControlAction, DragItem, DropAt as DragAt, FormDialog, FreeDrop, LayoutState,
+    drop_allowed,
 };
 use crate::icons;
 use crate::rows::display;
@@ -364,6 +366,7 @@ impl ClioApp {
                     label_width: None,
                     also,
                     free_parent: None,
+                    grid_parent: None,
                     free_bottom: None,
                     rects: FormRects::default(),
                     last,
@@ -682,12 +685,21 @@ struct Painter<'a> {
     also: Vec<Address>,
     /// The Free group the control about to be drawn is in, taken by it.
     free_parent: Option<FreeParent>,
-    /// For a Free group with a height: where the bottom of its inside is.
+    /// The Grid group the control about to be drawn is in, taken by it.
+    grid_parent: Option<GridParent>,
+    /// For a Free or Grid group with a height: where the bottom of its
+    /// inside is.
     free_bottom: Option<f32>,
     /// In layout mode: where the controls are drawn in this frame, and where
     /// they were in the frame before.
     rects: FormRects,
     last: FormRects,
+}
+
+/// The Grid group a control is drawn in: where its rows and columns are.
+#[derive(Debug, Clone)]
+struct GridParent {
+    geom: GridGeom,
 }
 
 /// The Free group a control is drawn in: its address, the top left of its
@@ -709,6 +721,8 @@ pub(crate) struct DropZone {
     pub group: bool,
     /// For a Free group: its inside, and how many controls it has.
     pub free: Option<(egui::Rect, usize)>,
+    /// For a Grid group: its rows and columns, and how many controls it has.
+    pub grid: Option<(GridGeom, usize)>,
 }
 
 /// Where a dragged control would be put down: in the list of `parent` at
@@ -720,8 +734,8 @@ pub(crate) struct DropPlace {
     pub index: usize,
     pub y: f32,
     pub x: (f32, f32),
-    /// In a Free group: the point it goes to.
-    pub free: Option<FreeDrop>,
+    /// In a Free group, the point it goes to; in a Grid group, the cell.
+    pub free: Option<DragAt>,
 }
 
 /// How close to the top or bottom of a group the pointer puts a control
@@ -770,13 +784,30 @@ pub(crate) fn drop_place(
                 index: *count,
                 y: pos.y,
                 x: (region.left(), region.right()),
-                free: Some(FreeDrop {
+                free: Some(DragAt::Free(FreeDrop {
                     point: (
                         (pos.x - region.left()).max(0.0),
                         (pos.y - region.top()).max(0.0),
                     ),
                     size: (region.width(), region.height()),
-                }),
+                })),
+            });
+        }
+        // In a Grid group, at the end of its list, in the cell under the
+        // pointer.
+        Some(DropZone {
+            at,
+            grid: Some((geom, count)),
+            ..
+        }) if geom.region.expand(40.0).contains(pos) => {
+            let (row, column) = geom.cell_at(pos);
+            let cell = geom.cell_rect(row, column);
+            return Some(DropPlace {
+                parent: at.clone(),
+                index: *count,
+                y: cell.top(),
+                x: (cell.left(), cell.right()),
+                free: Some(DragAt::Cell(row, column)),
             });
         }
         Some(z) => (z.at.clone(), z.rect.shrink(GROUP_EDGE)),
@@ -823,7 +854,18 @@ fn drop_target(ui: &egui::Ui, drops: &[DropZone], area: egui::Rect) -> Option<Co
         egui::Id::unique("form_drop"),
     ));
     let accent = ui.visuals().selection.stroke.color;
-    if let Some(place) = place.as_ref().filter(|p| p.free.is_some()) {
+    if let Some(place) = place
+        .as_ref()
+        .filter(|p| matches!(p.free, Some(DragAt::Cell(..))))
+    {
+        // The cell it goes to.
+        let painter = painter.with_clip_rect(area);
+        let cell = egui::Rect::from_min_max(
+            egui::pos2(place.x.0, place.y),
+            egui::pos2(place.x.1, place.y + 24.0),
+        );
+        painter.rect_stroke(cell, 2.0, Stroke::new(2.0, accent), StrokeKind::Inside);
+    } else if let Some(place) = place.as_ref().filter(|p| p.free.is_some()) {
         // A mark where it goes in the Free group.
         let painter = painter.with_clip_rect(area);
         let at = egui::pos2(place.x.0, 0.0) + egui::vec2(0.0, place.y);
@@ -1098,8 +1140,9 @@ impl Painter<'_> {
     fn control_in_font(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
         self.at = slot.at.clone();
         let free = self.free_parent.take();
+        let grid = self.grid_parent.take();
         if c.kind == ControlKind::Group {
-            self.group(ui, c, slot, free);
+            self.group(ui, c, slot, free, grid);
         } else if self.layout.is_none() {
             self.leaf(ui, c);
         } else {
@@ -1117,10 +1160,12 @@ impl Painter<'_> {
             let id = ui.scope_id().with(("control", slot.at.clone()));
             let target = ui.interact(rect, id, Sense::click_and_drag());
             self.rects.controls.insert(slot.at.clone(), rect);
-            match &free {
-                // In a Free group a drag moves it to a point.
-                Some(free) => self.free_drag(ui, &target, rect, slot, free),
-                None => {
+            match (&free, &grid) {
+                // In a Free group a drag moves it to a point, in a Grid group
+                // to a cell.
+                (Some(free), _) => self.free_drag(ui, &target, rect, slot, free),
+                (_, Some(grid)) => self.grid_drag(ui, &target, slot, grid),
+                _ => {
                     target.dnd_set_drag_payload((
                         DragItem::Control(slot.at.clone()),
                         control_name(c),
@@ -1130,6 +1175,7 @@ impl Painter<'_> {
                         rect: egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range()),
                         group: false,
                         free: None,
+                        grid: None,
                     });
                 }
             }
@@ -1241,6 +1287,196 @@ impl Painter<'_> {
             }],
             Some("move".to_owned()),
         )));
+    }
+
+    /// A control of a Grid group dragged in layout mode: the cell under the
+    /// pointer is outlined (one past the last row or column adds one), and
+    /// letting go puts the control in it. Each drag is one change.
+    fn grid_drag(
+        &mut self,
+        ui: &egui::Ui,
+        target: &egui::Response,
+        slot: &Slot,
+        grid: &GridParent,
+    ) {
+        if target.drag_started() && !self.is_selected(&slot.at) {
+            self.actions
+                .push(FormAction::Control(ControlAction::Select(slot.at.clone())));
+        }
+        if !(target.dragged() || target.drag_stopped()) {
+            return;
+        }
+        let Some(pos) = ui.input(|i| i.pointer.latest_pos()) else {
+            return;
+        };
+        let (row, column) = grid.geom.cell_at(pos);
+        if target.drag_stopped() {
+            self.actions.push(FormAction::Control(ControlAction::Place(
+                vec![Placement {
+                    at: slot.at.clone(),
+                    cell: Some((row, column)),
+                    ..Placement::default()
+                }],
+                None,
+            )));
+            return;
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("form_guides"),
+        ));
+        painter.rect_stroke(
+            grid.geom.cell_rect(row, column),
+            2.0,
+            Stroke::new(2.0, ui.visuals().selection.stroke.color),
+            StrokeKind::Inside,
+        );
+    }
+
+    /// The controls of a Grid group, each in its cell. A column or row is as
+    /// big as it says, or its biggest control (known from the frame before),
+    /// or its share of what the others leave; a control in a column of a set
+    /// size fills its cell unless it has a width, which its alignment places.
+    fn grid_children(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        let layout = self.layout.is_some();
+        let (cells, nrows, ncols) = grid_cells(c);
+        let gap = ui.spacing().item_spacing;
+        let width = ui.available_width();
+        let key = egui::Id::unique(("form_grid_sizes", &self.app.sheet, self.form, &slot.at));
+        let measured: Vec<egui::Vec2> = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+        let size_of = |i: usize| measured.get(i).copied().unwrap_or(egui::Vec2::ZERO);
+        let mut column_content = vec![0.0f32; ncols];
+        let mut row_content = vec![0.0f32; nrows];
+        for cell in &cells {
+            let m = size_of(cell.index);
+            if cell.columns == 1 {
+                column_content[cell.column] = column_content[cell.column].max(m.x);
+            }
+            if cell.rows == 1 {
+                row_content[cell.row] = row_content[cell.row].max(m.y);
+            }
+        }
+        // In layout mode an empty row or column still has room to drop into.
+        if layout {
+            column_content.iter_mut().for_each(|v| *v = v.max(40.0));
+            row_content.iter_mut().for_each(|v| *v = v.max(24.0));
+        }
+        let bottom_of_box = self.free_bottom.take();
+        let fixed = c.height.map(|h| {
+            bottom_of_box
+                .map_or(h as f32, |b| b - ui.cursor().top())
+                .max(16.0)
+        });
+        let columns = track_sizes(&c.grid_columns, &column_content, Some(width), gap.x);
+        let rows = track_sizes(&c.grid_rows, &row_content, fixed, gap.y);
+        let ranges = |sizes: &[f32], start: f32, gap: f32| {
+            let mut at = start;
+            sizes
+                .iter()
+                .map(|s| {
+                    let range = (at, at + s);
+                    at += s + gap;
+                    range
+                })
+                .collect::<Vec<(f32, f32)>>()
+        };
+        let total = |sizes: &[f32], gap: f32| {
+            sizes.iter().sum::<f32>() + gap * sizes.len().saturating_sub(1) as f32
+        };
+        let height = total(&rows, gap.y).max(fixed.unwrap_or(0.0));
+        let (region, _) = ui.allocate_exact_size(
+            egui::vec2(total(&columns, gap.x).max(width), height),
+            Sense::hover(),
+        );
+        let geom = GridGeom {
+            region,
+            columns: ranges(&columns, region.left(), gap.x),
+            rows: ranges(&rows, region.top(), gap.y),
+        };
+        let list = slots(&c.children, &slot.at);
+        let mut sizes = vec![egui::Vec2::ZERO; c.children.len()];
+        for cell in &cells {
+            let child = &c.children[cell.index];
+            let x0 = geom.columns[cell.column].0;
+            let x1 = geom.columns[cell.column + cell.columns - 1].1;
+            let y0 = geom.rows[cell.row].0;
+            let cell_width = x1 - x0;
+            let automatic = cell.columns == 1
+                && c.grid_columns
+                    .get(cell.column)
+                    .is_none_or(|t| *t == TrackSize::Auto);
+            let w = match child.width {
+                Some(w) if !child.fill => Some(w as f32),
+                _ if automatic && !child.fill => None,
+                _ => Some(cell_width),
+            };
+            let offset = match (child.align, w) {
+                (Some(Alignment::Center), Some(w)) => ((cell_width - w) / 2.0).max(0.0),
+                (Some(Alignment::Right), Some(w)) => (cell_width - w).max(0.0),
+                _ => 0.0,
+            };
+            let max_width = w.unwrap_or((region.right() - x0).max(24.0));
+            let max = egui::Rect::from_min_size(
+                egui::pos2(x0 + offset, y0),
+                egui::vec2(max_width, 100_000.0),
+            );
+            let mut child_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(max)
+                    .layout(egui::Layout::top_down(Align::Min)),
+            );
+            if let Some(w) = w {
+                child_ui.set_width(w);
+            }
+            if let Some(h) = child
+                .height
+                .filter(|_| !matches!(child.kind, ControlKind::Group | ControlKind::Repeater))
+            {
+                child_ui.set_min_height(h as f32);
+            }
+            let outer = self.sized;
+            self.sized = w.is_some();
+            self.grid_parent = Some(GridParent { geom: geom.clone() });
+            self.control_gated(&mut child_ui, child, &list[cell.index]);
+            self.grid_parent = None;
+            self.sized = outer;
+            sizes[cell.index] = child_ui.min_rect().size();
+        }
+        let changed = sizes.len() != measured.len()
+            || sizes
+                .iter()
+                .zip(&measured)
+                .any(|(a, b)| (*a - *b).length() > 0.5);
+        if changed {
+            ui.data_mut(|d| d.insert_temp(key, sizes));
+            ui.ctx().request_repaint();
+        }
+        if layout {
+            // The lines between the rows and the columns.
+            let stroke = Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+            let painter = ui.painter();
+            painter.rect_stroke(region, 0.0, stroke, StrokeKind::Inside);
+            for (_, end) in geom
+                .columns
+                .iter()
+                .take(geom.columns.len().saturating_sub(1))
+            {
+                let x = end + gap.x / 2.0;
+                painter.line_segment(
+                    [egui::pos2(x, region.top()), egui::pos2(x, region.bottom())],
+                    stroke,
+                );
+            }
+            for (_, end) in geom.rows.iter().take(geom.rows.len().saturating_sub(1)) {
+                let y = end + gap.y / 2.0;
+                painter.line_segment(
+                    [egui::pos2(region.left(), y), egui::pos2(region.right(), y)],
+                    stroke,
+                );
+            }
+            self.rects.grids.insert(slot.at.clone(), geom);
+        }
     }
 
     /// The controls of a Free group, each at its place, the later ones over
@@ -1561,7 +1797,14 @@ impl Painter<'_> {
 
     /// A group: its controls in columns, in a box when it has a title or is
     /// bound to an object.
-    fn group(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot, free: Option<FreeParent>) {
+    fn group(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Control,
+        slot: &Slot,
+        free: Option<FreeParent>,
+        grid: Option<GridParent>,
+    ) {
         let layout = self.layout.is_some();
         let problem = design_problem(self.spec, c);
         let path = c.bound_path().filter(|_| problem.is_none());
@@ -1608,6 +1851,10 @@ impl Painter<'_> {
                     this.free_children(ui, c, slot);
                     return;
                 }
+                if c.is_grid() {
+                    this.grid_children(ui, c, slot);
+                    return;
+                }
                 let columns = c.columns.unwrap_or(1).clamp(1, 6) as usize;
                 if columns == 1 {
                     this.controls(ui, &c.children, &slot.at);
@@ -1651,7 +1898,7 @@ impl Painter<'_> {
             if let Some(height) = c.height {
                 let margin = frame.inner_margin.sum().y + frame.stroke.width * 2.0;
                 ui.set_min_height((height as f32 - margin).max(0.0));
-                if c.is_free() {
+                if c.is_free() || c.is_grid() {
                     self.free_bottom = Some(ui.cursor().top() + (height as f32 - margin).max(0.0));
                 }
             }
@@ -1661,8 +1908,8 @@ impl Painter<'_> {
                     egui::Label::new(RichText::new(&title).strong()).sense(Sense::click_and_drag()),
                 );
                 let name = control_name(c);
-                // In a Free group, dragging the title moves the group.
-                if free.is_none() {
+                // In a Free or Grid group, dragging the title moves the group.
+                if free.is_none() && grid.is_none() {
                     header.dnd_set_drag_payload((DragItem::Control(slot.at.clone()), name.clone()));
                 }
                 header.widget_info(|| {
@@ -1696,12 +1943,20 @@ impl Painter<'_> {
                     .free
                     .get(&slot.at)
                     .map(|r| (*r, c.children.len())),
+                grid: self
+                    .rects
+                    .grids
+                    .get(&slot.at)
+                    .map(|g| (g.clone(), c.children.len())),
             });
             self.rects
                 .controls
                 .insert(slot.at.clone(), response.response.rect);
             if let (Some(free), Some(header)) = (&free, &header_response) {
                 self.free_drag(ui, header, response.response.rect, slot, free);
+            }
+            if let (Some(grid), Some(header)) = (&grid, &header_response) {
+                self.grid_drag(ui, header, slot, grid);
             }
         }
         if self.is_selected(&slot.at) {
