@@ -114,6 +114,11 @@ impl ClioApp {
         egui::Panel::top("menu")
             .frame(bar)
             .show(ui, |ui| self.menu(ui));
+        if self.show_toolbar {
+            egui::Panel::top("toolbar")
+                .frame(bar.inner_margin(egui::Margin::symmetric(8, 6)))
+                .show(ui, |ui| self.toolbar(ui));
+        }
         if self.banner_shown() {
             let fill = Palette::of_ui(ui).banner_fill;
             egui::Panel::top("trust_banner")
@@ -138,10 +143,25 @@ impl ClioApp {
         egui::Panel::bottom("tabs")
             .frame(bar.inner_margin(egui::Margin::symmetric(8, 0)))
             .show(ui, |ui| self.tab_bar(ui));
-        if self.show_issues {
+        // The issues and the inspector share the right side, the issues on
+        // top.
+        let inspector = self.show_inspector && !form;
+        if self.show_issues || inspector {
             egui::Panel::right("issues")
                 .default_size(300.0)
-                .show(ui, |ui| self.issues_panel(ui));
+                .show(ui, |ui| {
+                    if self.show_issues && inspector {
+                        egui::Panel::top("issues_part")
+                            .resizable(true)
+                            .default_size(260.0)
+                            .show(ui, |ui| self.issues_panel(ui));
+                        self.inspector_panel(ui);
+                    } else if inspector {
+                        self.inspector_panel(ui);
+                    } else {
+                        self.issues_panel(ui);
+                    }
+                });
         }
         if form && self.layout_active() {
             egui::Panel::right("form_properties")
@@ -462,7 +482,16 @@ impl ClioApp {
                 self.forms_menu(ui);
                 ui.menu_button("Font", |ui| self.font_menu(ui));
                 ui.separator();
+                if ui.checkbox(&mut self.show_toolbar, "Toolbar").clicked() {
+                    ui.close();
+                }
                 if ui.checkbox(&mut self.show_issues, "Issues panel").clicked() {
+                    ui.close();
+                }
+                if ui
+                    .checkbox(&mut self.show_inspector, "Node inspector")
+                    .clicked()
+                {
                     ui.close();
                 }
                 if ui.button("Collapse all").clicked() {

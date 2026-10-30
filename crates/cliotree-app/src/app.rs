@@ -90,6 +90,10 @@ pub struct ClioApp {
     pub insert_function: Option<InsertFunction>,
     pub summary: Summary,
     pub show_issues: bool,
+    /// The toolbar under the menu bar (View > Toolbar).
+    pub show_toolbar: bool,
+    /// The node inspector on the right of the data tree.
+    pub show_inspector: bool,
     /// A formula waiting for the answer to whether it may erase what is
     /// inside its node.
     pub replace_inside: Option<crate::replace_inside::ReplaceInside>,
@@ -195,6 +199,8 @@ impl ClioApp {
             insert_function: None,
             summary: Summary::default(),
             show_issues: false,
+            show_toolbar: true,
+            show_inspector: false,
             replace_inside: None,
             tables: Tables::default(),
             schema_dialog: None,

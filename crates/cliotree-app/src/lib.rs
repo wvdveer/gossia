@@ -28,6 +28,7 @@ mod form_layout_tests;
 pub mod icons;
 pub mod immediate;
 pub mod import;
+pub mod inspector;
 pub mod options;
 pub mod prefs;
 pub mod raw;
@@ -48,6 +49,7 @@ pub mod table_view;
 pub mod tables;
 #[cfg(test)]
 mod tables_tests;
+pub mod toolbar;
 pub mod tree_hidden;
 pub mod trust_ui;
 pub mod view;

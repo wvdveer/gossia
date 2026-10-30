@@ -321,6 +321,8 @@ impl ClioApp {
             };
         }
         fresh.show_issues = self.show_issues;
+        fresh.show_toolbar = self.show_toolbar;
+        fresh.show_inspector = self.show_inspector;
         fresh.code = self.code.for_next_workbook();
         fresh.files.browse = self.files.browse;
         fresh.files.quit_confirmed = false;
