@@ -11,7 +11,8 @@ use std::collections::HashMap;
 
 use cliotree_calc::entry;
 use cliotree_core::form::{
-    Address, Alignment, ColumnDesign, Control, ControlKind, Editor, Format, RepeaterMode,
+    Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
+    DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, flow_rows,
 };
 use cliotree_core::validate::validate_at;
 use cliotree_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
@@ -32,8 +33,11 @@ use crate::view::{ROW_HEIGHT, computed_fill, error_color};
 /// The form every Data Tab has. It cannot be renamed or deleted.
 pub const DEFAULT_FORM: &str = cliotree_calc::DEFAULT_FORM;
 
-/// The width of the labels of fields, in points.
-const LABEL_WIDTH: f32 = 170.0;
+/// The width of the labels of fields, in points, when nothing sets it.
+const LABEL_WIDTH: f32 = DEFAULT_LABEL_WIDTH as f32;
+
+/// The grid sizes snap to when a handle is dragged, in points.
+const SNAP: f32 = 4.0;
 
 /// What a tab shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -348,6 +352,8 @@ impl ClioApp {
                     column_targets: Vec::new(),
                     at: Vec::new(),
                     drops: Vec::new(),
+                    sized: false,
+                    label_width: None,
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -607,6 +613,11 @@ struct Painter<'a> {
     /// In layout mode: where each control was drawn, for dropping a dragged
     /// one.
     drops: Vec<DropZone>,
+    /// The control being drawn has a width of its own, so its editor fills it
+    /// rather than stopping at the usual width.
+    sized: bool,
+    /// The width of the labels of the fields of the group being drawn.
+    label_width: Option<u32>,
 }
 
 /// Where a control was drawn in layout mode.
@@ -740,6 +751,11 @@ struct Look {
     /// Absent: numbers on the right, the rest on the left.
     align: Option<Alignment>,
     format: Format,
+    /// Where the label of a field is, and how wide.
+    label_position: Option<LabelPosition>,
+    label_width: Option<f32>,
+    /// The height of a several-lines text box.
+    height: Option<f32>,
 }
 
 /// Where a control is among the others of its list, for its menu.
@@ -787,6 +803,66 @@ impl Painter<'_> {
     /// with the pending marker while one is waiting to run again. In layout
     /// mode every control is drawn as designed.
     fn control(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        if c.width.is_none() && !c.fill && c.height.is_none() && c.align.is_none() {
+            self.control_gated(ui, c, slot);
+        } else {
+            self.sized(ui, c, slot);
+        }
+    }
+
+    /// A control with a size or an alignment of its own: drawn in a box of
+    /// its width (or the whole width, for `fill`), put where its alignment
+    /// says. A control without a width is placed by the width it had in the
+    /// frame before, as egui knows a size only once it has drawn it.
+    fn sized(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        let available = ui.available_width();
+        let width = if c.fill {
+            Some(available)
+        } else {
+            c.width.map(|w| w as f32)
+        };
+        let id = ui.scope_id().with(("control_width", slot.at.clone()));
+        let known = width.or_else(|| ui.data(|d| d.get_temp::<f32>(id)));
+        let offset = match (c.align, known) {
+            (Some(Alignment::Center), Some(w)) => ((available - w) / 2.0).max(0.0),
+            (Some(Alignment::Right), Some(w)) => (available - w).max(0.0),
+            _ => 0.0,
+        };
+        let outer = self.sized;
+        self.sized = width.is_some();
+        // A group sets its own least height, inside its box; a repeater
+        // scrolls in its height.
+        let min_height = c
+            .height
+            .filter(|_| !matches!(c.kind, ControlKind::Group | ControlKind::Repeater));
+        let rect = ui
+            .horizontal_top(|ui| {
+                ui.add_space(offset);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width.unwrap_or(available - offset), 0.0),
+                    egui::Layout::top_down(Align::Min),
+                    |ui| {
+                        if let Some(w) = width {
+                            ui.set_width(w);
+                        }
+                        if let Some(h) = min_height {
+                            ui.set_min_height(h as f32);
+                        }
+                        self.control_gated(ui, c, slot);
+                    },
+                )
+                .response
+                .rect
+            })
+            .inner;
+        self.sized = outer;
+        if width.is_none() && known != Some(rect.width()) {
+            ui.data_mut(|d| d.insert_temp(id, rect.width()));
+            ui.ctx().request_repaint();
+        }
+    }
+
+    fn control_gated(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
         if self.layout.is_some() {
             self.control_in_style(ui, c, slot);
             return;
@@ -928,6 +1004,75 @@ impl Painter<'_> {
             self.layout_target(ui, &target, rect, c, slot);
             for (name, title) in columns {
                 self.column_target(ui, c, slot, &name, title, rect);
+            }
+            self.handles(ui, rect, c, slot);
+        }
+    }
+
+    /// The handles of the selected control in layout mode: its right edge
+    /// sets the width, its bottom edge the height, and the corner both, in
+    /// points snapped to a grid (Alt drags without snapping). A double click
+    /// on a handle puts its size back to automatic.
+    fn handles(&mut self, ui: &mut egui::Ui, rect: egui::Rect, c: &Control, slot: &Slot) {
+        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
+            && self.column.is_none();
+        if !selected {
+            return;
+        }
+        let rect = rect.expand(2.0);
+        let handles = [
+            (true, false, rect.right_center(), "Width handle"),
+            (false, true, rect.center_bottom(), "Height handle"),
+            (true, true, rect.right_bottom(), "Size handle"),
+        ];
+        for (sets_width, sets_height, centre, name) in handles {
+            if sets_height && c.kind == ControlKind::Separator {
+                continue;
+            }
+            let area = egui::Rect::from_center_size(centre, egui::vec2(8.0, 8.0));
+            // Not from the Ui: a control that gets a size is drawn in a box of its
+            // own, and the drag must survive that.
+            let id = egui::Id::unique(("form_resize", &self.app.sheet, self.form, &slot.at, name));
+            let response = ui.interact(area, id, Sense::click_and_drag());
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+            let colour = ui.visuals().selection.stroke.color;
+            ui.painter().rect_filled(area.shrink(1.0), 1.0, colour);
+            ui.painter().rect_stroke(
+                area.shrink(1.0),
+                1.0,
+                Stroke::new(1.0, ui.visuals().extreme_bg_color),
+                StrokeKind::Outside,
+            );
+            if response.hovered() || response.dragged() {
+                ui.ctx().set_cursor_icon(match (sets_width, sets_height) {
+                    (true, true) => egui::CursorIcon::ResizeNwSe,
+                    (true, false) => egui::CursorIcon::ResizeHorizontal,
+                    _ => egui::CursorIcon::ResizeVertical,
+                });
+            }
+            if response.double_clicked() {
+                self.actions.push(FormAction::Control(ControlAction::Resize(
+                    slot.at.clone(),
+                    sets_width.then_some(None),
+                    sets_height.then_some(None),
+                )));
+                continue;
+            }
+            if response.drag_started() {
+                self.actions
+                    .push(FormAction::Control(ControlAction::ResizeStart));
+            }
+            if response.dragged()
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                let snap = !ui.input(|i| i.modifiers.alt);
+                let width = snapped(pointer.x - rect.left(), snap, &CONTROL_WIDTHS);
+                let height = snapped(pointer.y - rect.top(), snap, &CONTROL_HEIGHTS);
+                self.actions.push(FormAction::Control(ControlAction::Resize(
+                    slot.at.clone(),
+                    sets_width.then_some(Some(width)),
+                    sets_height.then_some(Some(height)),
+                )));
             }
         }
     }
@@ -1093,7 +1238,8 @@ impl Painter<'_> {
             let ty = self.spec.resolve(path).map(|r| r.ty);
             ui.horizontal(|ui| {
                 let help = ty.and_then(|ty| self.help(path, ty));
-                label_cell(ui, label.as_deref().unwrap_or(""), false, help);
+                let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
+                label_cell(ui, label.as_deref().unwrap_or(""), false, help, width);
                 let can = self.app.can_edit(path);
                 if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
@@ -1107,24 +1253,58 @@ impl Painter<'_> {
                 this.placeholder(ui, c, problem);
                 return;
             }
-            let columns = c.columns.unwrap_or(1).clamp(1, 6) as usize;
-            if columns == 1 {
-                this.controls(ui, &c.children, &slot.at);
-            } else {
+            // The controls inside set their own sizes, and take the width of
+            // the labels of the group.
+            let outer = (this.sized, this.label_width);
+            this.sized = false;
+            this.label_width = c.label_width.or(this.label_width);
+            ui.scope(|ui| {
+                if let Some(gap) = c.spacing {
+                    ui.spacing_mut().item_spacing = egui::vec2(gap as f32, gap as f32);
+                }
+                let columns = c.columns.unwrap_or(1).clamp(1, 6) as usize;
+                if columns == 1 {
+                    this.controls(ui, &c.children, &slot.at);
+                    return;
+                }
+                // Rows of cells of equal width, as tall as their tallest
+                // control, so that the controls of a row line up.
                 let list = slots(&c.children, &slot.at);
-                ui.columns(columns, |cols| {
-                    for (i, (child, child_slot)) in c.children.iter().zip(&list).enumerate() {
-                        this.control(&mut cols[i % columns], child, child_slot);
-                    }
-                });
-            }
+                let gap = ui.spacing().item_spacing.x;
+                let cell = ((ui.available_width() - gap * (columns - 1) as f32) / columns as f32)
+                    .max(24.0);
+                for row in flow_rows(&c.children, columns) {
+                    ui.horizontal_top(|ui| {
+                        for &(i, _, span) in &row.cells {
+                            let width = cell * span as f32 + gap * (span - 1) as f32;
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(width, 0.0),
+                                egui::Layout::top_down(Align::Min),
+                                |ui| {
+                                    ui.set_width(width);
+                                    this.control(ui, &c.children[i], &list[i]);
+                                },
+                            );
+                        }
+                    });
+                }
+            });
+            (this.sized, this.label_width) = outer;
         };
         if !framed {
             draw(self, ui);
             return;
         }
-        let response = ui.group(|ui| {
+        let mut frame = egui::Frame::group(ui.style());
+        if let Some(padding) = c.padding {
+            frame = frame.inner_margin(padding as f32);
+        }
+        let response = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
+            if let Some(height) = c.height {
+                let margin = frame.inner_margin.sum().y + frame.stroke.width * 2.0;
+                ui.set_min_height((height as f32 - margin).max(0.0));
+            }
             let title = label.clone().unwrap_or_default();
             if layout {
                 let header = ui.add(
@@ -1169,6 +1349,7 @@ impl Painter<'_> {
                 Stroke::new(1.5, ui.visuals().selection.stroke.color),
                 StrokeKind::Outside,
             );
+            self.handles(ui, response.response.rect, c, slot);
         }
     }
 
@@ -1203,7 +1384,14 @@ impl Painter<'_> {
                     ),
                     Some(p) => (true, format!("Runs {p}")),
                 };
-                let response = ui.add_enabled(can, egui::Button::new(&label));
+                let width = if self.sized {
+                    ui.available_width()
+                } else {
+                    0.0
+                };
+                let height = c.height.map_or(0.0, |h| h as f32);
+                let button = egui::Button::new(&label).min_size(egui::vec2(width, height));
+                let response = ui.add_enabled(can, button);
                 if can {
                     if response.on_hover_text(hint).clicked()
                         && let Some(procedure) = &c.procedure
@@ -1247,12 +1435,24 @@ impl Painter<'_> {
                 masked: c.masked,
                 align: None,
                 format: c.format(),
+                label_position: c.label_position,
+                label_width: c.label_width.or(self.label_width).map(|w| w as f32),
+                height: c.height.map(|h| h as f32),
             },
         ));
         match (&self.spec.get(ty).kind, c.kind) {
-            (Kind::Array { .. }, _) => {
-                self.repeater_of(ui, &path, ty, &label, Some(c));
-            }
+            (Kind::Array { .. }, _) => match c.height {
+                // In its height, scrolling.
+                Some(height) => {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("form_repeater_height", path.to_string()))
+                        .max_height(height as f32)
+                        .min_scrolled_height(height as f32)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| self.repeater_of(ui, &path, ty, &label, Some(c)));
+                }
+                None => self.repeater_of(ui, &path, ty, &label, Some(c)),
+            },
             (Kind::Map { .. }, _) => self.map(ui, &path, ty, &label),
             (Kind::Object { .. }, _) => self.object(ui, &path, ty, &label, resolved.required),
             _ => self.field(ui, &path, ty, &label, resolved.required),
@@ -1299,7 +1499,8 @@ impl Painter<'_> {
         if self.data.get(path).is_none() {
             // Absent: an empty control, and the object is made on request.
             ui.horizontal(|ui| {
-                label_cell(ui, label, required, self.help(path, ty));
+                let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
+                label_cell(ui, label, required, self.help(path, ty), width);
                 let can = self.app.can_edit(path);
                 if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
@@ -1337,15 +1538,35 @@ impl Painter<'_> {
     // ------------------------------------------------------------- fields
 
     fn field(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str, required: bool) {
+        let (position, width) = match self.look.as_ref().filter(|(p, _)| p == path) {
+            Some((_, look)) => (
+                look.label_position.unwrap_or(LabelPosition::Left),
+                look.label_width.unwrap_or(LABEL_WIDTH),
+            ),
+            None => (
+                LabelPosition::Left,
+                self.label_width.map_or(LABEL_WIDTH, |w| w as f32),
+            ),
+        };
+        let help = self.help(path, ty).map(str::to_owned);
+        let indent = match position {
+            LabelPosition::Left => width + ui.spacing().item_spacing.x,
+            _ => 0.0,
+        };
+        if position == LabelPosition::Top {
+            label_cell(ui, label, required, help.as_deref(), ui.available_width());
+        }
         let problem = ui
             .horizontal(|ui| {
-                label_cell(ui, label, required, self.help(path, ty));
+                if position == LabelPosition::Left {
+                    label_cell(ui, label, required, help.as_deref(), width);
+                }
                 self.editor(ui, path, ty, required, false)
             })
             .inner;
         if let Some(problem) = problem {
             ui.horizontal(|ui| {
-                ui.add_space(LABEL_WIDTH + ui.spacing().item_spacing.x);
+                ui.add_space(indent);
                 ui.label(RichText::new(problem).small().color(error_color(ui)));
             });
         }
@@ -1473,13 +1694,22 @@ impl Painter<'_> {
                             matches!(kind, Kind::String(c) if c.max_length.is_some_and(|m| m > 200))
                         }
                     };
+                // In a control of a set width, what is left after the markers
+                // that follow it.
+                let markers = if computed || pending { 24.0 } else { 0.0 };
                 let width = if compact {
                     f32::INFINITY
+                } else if self.sized {
+                    ui.available_width() - markers
                 } else {
                     ui.available_width().min(360.0)
                 };
                 let edit = if long {
-                    egui::TextEdit::multiline(&mut text).desired_rows(3)
+                    let edit = egui::TextEdit::multiline(&mut text).desired_rows(3);
+                    match look.height {
+                        Some(height) => edit.min_size(egui::vec2(0.0, height)),
+                        None => edit,
+                    }
                 } else {
                     egui::TextEdit::singleline(&mut text).password(masked)
                 };
@@ -1776,6 +2006,7 @@ impl Painter<'_> {
                                             masked: false,
                                             align: design.align,
                                             format: design.format(),
+                                            ..Look::default()
                                         };
                                         let outer = self.look.replace((cell.clone(), look));
                                         let gate = match &gated {
@@ -1991,13 +2222,16 @@ fn count_text(n: usize) -> String {
 
 /// The label of a field: fixed width so that the editors line up, a mark for
 /// a required field, and the help text of the schema on hover.
-fn label_cell(ui: &mut egui::Ui, label: &str, required: bool, help: Option<&str>) {
+fn label_cell(ui: &mut egui::Ui, label: &str, required: bool, help: Option<&str>, width: f32) {
+    if width <= 0.0 {
+        return;
+    }
     let response = ui
         .allocate_ui_with_layout(
-            egui::vec2(LABEL_WIDTH, ROW_HEIGHT),
+            egui::vec2(width, ROW_HEIGHT),
             egui::Layout::left_to_right(Align::Center),
             |ui| {
-                ui.set_min_size(egui::vec2(LABEL_WIDTH, ROW_HEIGHT));
+                ui.set_min_size(egui::vec2(width, ROW_HEIGHT));
                 let response = ui.add(egui::Label::new(label).truncate());
                 if required {
                     ui.label(RichText::new("*").color(error_color(ui)));
@@ -2162,4 +2396,15 @@ fn own_font(
     inherited: ColumnFont,
 ) -> Option<ColumnFont> {
     (typeface.is_some() || size.is_some()).then(|| (typeface.or(inherited.0), size.or(inherited.1)))
+}
+
+/// A size dragged to `points`, snapped to the grid unless `snap` is off, and
+/// kept within `range`.
+pub(crate) fn snapped(points: f32, snap: bool, range: &std::ops::RangeInclusive<u32>) -> u32 {
+    let points = if snap {
+        (points / SNAP).round() * SNAP
+    } else {
+        points.round()
+    };
+    (points.max(0.0) as u32).clamp(*range.start(), *range.end())
 }

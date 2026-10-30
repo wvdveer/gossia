@@ -10,8 +10,9 @@
 
 use cliotree_calc::{ExprKind, entry};
 use cliotree_core::form::{
-    self as design, Address, Alignment, ColumnDesign, Control, ControlKind, Editor, FormDesign,
-    RepeaterMode,
+    self as design, Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control,
+    ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, LABEL_WIDTHS, LabelPosition,
+    RepeaterMode, SPACINGS,
 };
 use cliotree_core::{Kind, Path};
 
@@ -39,6 +40,8 @@ pub struct LayoutState {
     merge: Option<String>,
     /// The formula being typed for the node of the selected field.
     formula: Option<(Path, String)>,
+    /// Counts the drags of resize handles, so that each drag is one change.
+    gesture: u64,
 }
 
 impl LayoutState {
@@ -52,6 +55,7 @@ impl LayoutState {
             redo: Vec::new(),
             merge: None,
             formula: None,
+            gesture: 0,
         }
     }
 }
@@ -71,6 +75,11 @@ pub(crate) enum ControlAction {
     /// What was dragged, put down at a place in the list of a group (the top
     /// level for an empty address), counted as the list was before.
     Drop(DragItem, Address, usize),
+    /// A resize handle starts to be dragged.
+    ResizeStart,
+    /// A new width and height, each left alone when `None`, made automatic
+    /// with `Some(None)`.
+    Resize(Address, Option<Option<u32>>, Option<Option<u32>>),
 }
 
 /// What is dragged in layout mode: a control of the form, or a new one from
@@ -348,7 +357,40 @@ impl ClioApp {
                     }
                 });
             }
+            ControlAction::ResizeStart => {
+                if let Some(layout) = self.form.layout.as_mut() {
+                    layout.gesture += 1;
+                }
+            }
+            ControlAction::Resize(at, width, height) => {
+                let gesture = self.form.layout.as_ref().map_or(0, |l| l.gesture);
+                self.resize_control(&at, width, height, Some(format!("resize:{gesture}")));
+            }
         }
+    }
+
+    /// Sets the width and height of a control: each is left alone when
+    /// `None`, and made automatic with `Some(None)`. A width also ends
+    /// `fill`. Edits with the same `merge` are one step of undo.
+    pub fn resize_control(
+        &mut self,
+        at: &Address,
+        width: Option<Option<u32>>,
+        height: Option<Option<u32>>,
+        merge: Option<String>,
+    ) -> bool {
+        let at = at.clone();
+        self.edit_design_merging(merge, |d| {
+            let control = d.get_mut(&at)?;
+            if let Some(width) = width {
+                control.width = width;
+                control.fill = false;
+            }
+            if let Some(height) = height {
+                control.height = height;
+            }
+            Some(Some(at))
+        })
     }
 
     /// Adds a control to the form: into the selected group, or after the
@@ -996,6 +1038,14 @@ impl ClioApp {
                 }
             }
             ControlKind::Separator => {}
+        }
+        let parent_columns = at
+            .split_last()
+            .and_then(|(_, parent)| design.get(parent))
+            .and_then(|parent| parent.columns)
+            .unwrap_or(1);
+        if size_properties(ui, &mut edited, parent_columns) {
+            merge = Some(key("size"));
         }
         if kind != ControlKind::Separator {
             font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
@@ -1785,4 +1835,158 @@ fn option_text(
         *value = (!text.is_empty()).then_some(text);
     }
     changed
+}
+
+/// The size and place of a control on its property page: width (automatic,
+/// points, or the whole width), height, alignment in its cell, and as its
+/// kind and its group allow, the label of a field, the columns it spans and
+/// a new row, and a group's label width, spacing and padding. Returns whether
+/// a number was changed, so that dragging one is one change.
+fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32) -> bool {
+    let before = edited.clone();
+    let kind = edited.kind;
+    ui.add_space(4.0);
+    ui.strong("Size and place");
+    ui.horizontal(|ui| {
+        let mut fill = edited.fill;
+        ui.checkbox(&mut fill, "Fill the width")
+            .on_hover_text("The whole width of its cell or row");
+        if fill != edited.fill {
+            edited.fill = fill;
+            if fill {
+                edited.width = None;
+            }
+        }
+    });
+    if !edited.fill {
+        optional_number(
+            ui,
+            "Width",
+            &mut edited.width,
+            &CONTROL_WIDTHS,
+            200,
+            "Width in points",
+        );
+    }
+    if kind != ControlKind::Separator {
+        optional_number(
+            ui,
+            "Height",
+            &mut edited.height,
+            &CONTROL_HEIGHTS,
+            100,
+            "Height in points",
+        );
+    }
+    ui.horizontal(|ui| {
+        ui.label("Alignment");
+        let mut align = edited.align.unwrap_or(Alignment::Left);
+        let response = egui::ComboBox::from_id_salt("property_control_align")
+            .selected_text(align.label())
+            .show_ui(ui, |ui| {
+                for a in Alignment::ALL {
+                    ui.selectable_value(&mut align, a, a.label());
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Alignment in its cell")
+        });
+        edited.align = (align != Alignment::Left).then_some(align);
+    });
+    if kind == ControlKind::Field {
+        ui.horizontal(|ui| {
+            ui.label("Label");
+            let mut position = edited.label_position.unwrap_or(LabelPosition::Left);
+            let response = egui::ComboBox::from_id_salt("property_label_position")
+                .selected_text(position.label())
+                .show_ui(ui, |ui| {
+                    for p in LabelPosition::ALL {
+                        ui.selectable_value(&mut position, p, p.label());
+                    }
+                })
+                .response;
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Position of the label")
+            });
+            edited.label_position = (position != LabelPosition::Left).then_some(position);
+        });
+    }
+    if matches!(kind, ControlKind::Field | ControlKind::Group) {
+        let name = if kind == ControlKind::Group {
+            "Label width of its fields"
+        } else {
+            "Label width"
+        };
+        optional_number(
+            ui,
+            "Label width",
+            &mut edited.label_width,
+            &LABEL_WIDTHS,
+            DEFAULT_LABEL_WIDTH,
+            name,
+        );
+    }
+    if parent_columns > 1 {
+        ui.horizontal(|ui| {
+            ui.label("Columns it takes");
+            let mut span = edited.span.unwrap_or(1).min(parent_columns);
+            let response = ui.add(egui::DragValue::new(&mut span).range(1..=parent_columns));
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Columns it takes")
+            });
+            edited.span = (span > 1).then_some(span);
+        });
+        ui.checkbox(&mut edited.new_row, "Start a new row");
+    }
+    if kind == ControlKind::Group {
+        optional_number(
+            ui,
+            "Spacing",
+            &mut edited.spacing,
+            &SPACINGS,
+            8,
+            "Spacing in points",
+        );
+        optional_number(
+            ui,
+            "Padding",
+            &mut edited.padding,
+            &SPACINGS,
+            6,
+            "Padding in points",
+        );
+    }
+    *edited != before
+}
+
+/// A number that is automatic unless ticked: a tick box with the label, and
+/// beside it the number in points. `name` names the number for a screen
+/// reader.
+fn optional_number(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut Option<u32>,
+    range: &std::ops::RangeInclusive<u32>,
+    default: u32,
+    name: &str,
+) {
+    ui.horizontal(|ui| {
+        let mut set = value.is_some();
+        ui.checkbox(&mut set, label)
+            .on_hover_text("Automatic unless ticked");
+        match (set, *value) {
+            (false, _) => *value = None,
+            (true, None) => *value = Some(default.clamp(*range.start(), *range.end())),
+            (true, Some(_)) => {}
+        }
+        if let Some(number) = value.as_mut() {
+            let response = ui.add(
+                egui::DragValue::new(number)
+                    .range(range.clone())
+                    .suffix(" pt"),
+            );
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, name));
+        }
+    });
 }

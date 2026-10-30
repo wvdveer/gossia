@@ -445,3 +445,43 @@ fn a_dragged_control_goes_where_the_pointer_says() {
     assert!(drop_allowed(&group, &[], 0));
     assert!(drop_allowed(&DragItem::New(ControlKind::Label), &[1], 0));
 }
+
+#[test]
+fn a_resize_sets_the_size_and_one_drag_is_one_step_of_undo() {
+    let mut app = app();
+    app.set_layout(true);
+    let at = vec![0, 0];
+    app.edit_design(|d| {
+        d.get_mut(&[0, 0])?.fill = true;
+        Some(None)
+    });
+    let merge = Some("resize:1".to_owned());
+    // The frames of one drag.
+    assert!(app.resize_control(&at, Some(Some(200)), None, merge.clone()));
+    assert!(app.resize_control(&at, Some(Some(240)), Some(Some(60)), merge));
+    let control = app.design_of(DEFAULT_FORM).get(&at).cloned().unwrap();
+    assert_eq!((control.width, control.height), (Some(240), Some(60)));
+    assert!(!control.fill, "a width ends fill");
+    app.layout_undo();
+    let control = app.design_of(DEFAULT_FORM).get(&at).cloned().unwrap();
+    assert_eq!(
+        (control.width, control.height, control.fill),
+        (None, None, true)
+    );
+    app.layout_redo();
+    // Back to automatic, for the width only.
+    assert!(app.resize_control(&at, Some(None), None, None));
+    let control = app.design_of(DEFAULT_FORM).get(&at).cloned().unwrap();
+    assert_eq!((control.width, control.height), (None, Some(60)));
+}
+
+#[test]
+fn a_dragged_size_snaps_to_the_grid_within_its_range() {
+    use crate::form::snapped;
+    use cliotree_core::form::CONTROL_WIDTHS;
+    assert_eq!(snapped(201.0, true, &CONTROL_WIDTHS), 200);
+    assert_eq!(snapped(203.0, true, &CONTROL_WIDTHS), 204);
+    assert_eq!(snapped(203.0, false, &CONTROL_WIDTHS), 203);
+    assert_eq!(snapped(3.0, true, &CONTROL_WIDTHS), 24);
+    assert_eq!(snapped(9000.0, true, &CONTROL_WIDTHS), 2000);
+}

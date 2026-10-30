@@ -997,3 +997,155 @@ fn a_control_is_moved_by_dragging_it_and_added_by_dragging_from_the_palette() {
     drag(&mut harness, from, to);
     assert_eq!(harness.state().design_of("Default"), before);
 }
+
+#[test]
+fn the_width_handle_sizes_the_selected_control_and_a_double_click_resets_it() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    let name = field_name(&harness, &[0, 0]);
+    click(&mut harness, &name);
+    let rect = target(&harness, &name);
+    let handle = harness.get_by_label("Width handle").rect().center();
+    // To 250 points from the left edge, two points outside the control.
+    let to = egui::pos2(rect.left() - 2.0 + 250.0, handle.y);
+    drag(&mut harness, handle, to);
+    let width = harness
+        .state()
+        .design_of("Default")
+        .get(&[0, 0])
+        .unwrap()
+        .width;
+    assert_eq!(width, Some(252), "snapped to 4 points");
+    let rect = target(&harness, &name);
+    assert!(
+        (rect.width() - 252.0).abs() < 6.0,
+        "drawn {} wide",
+        rect.width()
+    );
+    // One drag is one step of layout undo.
+    harness.state_mut().layout_undo();
+    harness.run();
+    assert_eq!(
+        harness
+            .state()
+            .design_of("Default")
+            .get(&[0, 0])
+            .unwrap()
+            .width,
+        None
+    );
+    harness.state_mut().layout_redo();
+    harness.run();
+    // Selected again, then two clicks in quick succession on the handle.
+    harness
+        .get(
+            egui_kittest::kittest::By::new()
+                .label(name.as_str())
+                .role(egui::accesskit::Role::Button),
+        )
+        .click();
+    harness.run();
+    let at = harness.get_by_label("Width handle").rect().center();
+    harness.hover_at(at);
+    harness.run();
+    // Two clicks a frame apart. The harness's clock moves in large steps, so
+    // a double click is given more time than egui's 0.3 s.
+    harness
+        .ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 2.0);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.step();
+    }
+    harness.run();
+    assert_eq!(
+        harness
+            .state()
+            .design_of("Default")
+            .get(&[0, 0])
+            .unwrap()
+            .width,
+        None
+    );
+}
+
+#[test]
+fn a_group_of_columns_lines_its_controls_up_in_rows_with_spans() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    harness.state_mut().edit_design(|d| {
+        let group = d.get_mut(&[0])?;
+        group.columns = Some(2);
+        group.children[0].span = Some(2);
+        Some(None)
+    });
+    harness.run();
+    let names: Vec<String> = (0..3).map(|i| field_name(&harness, &[0, i])).collect();
+    let rects: Vec<egui::Rect> = names.iter().map(|n| target(&harness, n)).collect();
+    assert!(
+        rects[1].top() > rects[0].bottom() - 1.0,
+        "the first spans the row"
+    );
+    assert!(
+        (rects[1].top() - rects[2].top()).abs() < 1.0,
+        "side by side, lined up"
+    );
+    assert!((rects[1].left() - rects[0].left()).abs() < 1.0);
+    assert!(
+        rects[2].left() > rects[1].left() + 200.0,
+        "in the second column"
+    );
+}
+
+#[test]
+fn the_label_of_a_field_can_be_above_or_left_out() {
+    let mut harness = form();
+    let editor = harness.get_by_label("Orders.customer.name").rect();
+    harness.state_mut().set_layout(true);
+    harness.state_mut().edit_design(|d| {
+        d.get_mut(&[0, 0])?.label_position = Some(cliotree_core::form::LabelPosition::Top);
+        d.get_mut(&[0, 1])?.label_position = Some(cliotree_core::form::LabelPosition::None);
+        Some(None)
+    });
+    harness.state_mut().set_layout(false);
+    harness.run();
+    let above = harness.get_by_label("Orders.customer.name").rect();
+    assert!(above.left() < editor.left() - 100.0, "no label beside it");
+    assert!(above.top() > editor.top() + 10.0, "the label is above it");
+    let city = harness.get_by_label("Orders.customer.city").rect();
+    assert!((city.left() - above.left()).abs() < 2.0, "no label at all");
+}
+
+#[test]
+fn the_property_page_sets_a_width_and_a_group_spacing() {
+    let mut harness = form();
+    edit_form(&mut harness);
+    let name = field_name(&harness, &[0, 0]);
+    click(&mut harness, &name);
+    click(&mut harness, "Width");
+    let design = harness.state().design_of("Default");
+    assert_eq!(design.get(&[0, 0]).unwrap().width, Some(200));
+    click(&mut harness, "Group customer");
+    click(&mut harness, "Spacing");
+    let design = harness.state().design_of("Default");
+    assert_eq!(design.get(&[0]).unwrap().spacing, Some(8));
+}
+
+/// Where the control of layout mode called `name` is drawn (its name is also
+/// the heading of the property page).
+fn target(harness: &Harness<'_, ClioApp>, name: &str) -> egui::Rect {
+    harness
+        .get(
+            egui_kittest::kittest::By::new()
+                .label(name)
+                .role(egui::accesskit::Role::Button),
+        )
+        .rect()
+}

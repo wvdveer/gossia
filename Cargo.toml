@@ -37,6 +37,11 @@ all = { level = "warn", priority = -1 }
 # does in its own workspace.
 [profile.dev.package."*"]
 opt-level = 3
+# Dependencies keep only line tables (backtraces still name file and line):
+# full debug information for RustPython in every test binary filled 150 GB
+# of target/ on Windows. Our own crates keep full debug information.
+debug = "line-tables-only"
 
 [profile.test.package."*"]
 opt-level = 3
+debug = "line-tables-only"

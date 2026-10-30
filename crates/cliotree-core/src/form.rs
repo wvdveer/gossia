@@ -2,10 +2,12 @@
 //! drawn from, the built-in schema it is stored under (`builtin:form`), the
 //! generated form, and the checks of a design against the schema of its tab.
 //!
-//! A design holds no data and no pixel positions. It is a list of controls laid
-//! out one under the other; a group arranges its children in one or more
-//! columns. A control is addressed by its place in the tree, a list of
-//! indices ([`Address`]).
+//! A design holds no data. It is a list of controls laid out one under the
+//! other; a group arranges its children in rows of one or more columns, where
+//! a control can span columns and start a new row. A control can have a
+//! width, a height and an alignment in its cell, and a field a label position
+//! and width (DESIGN.md, "Forms", "Size and place of a control"). A control is
+//! addressed by its place in the tree, a list of indices ([`Address`]).
 
 use std::sync::OnceLock;
 
@@ -159,6 +161,46 @@ pub const FONT_SIZES: std::ops::RangeInclusive<u32> = 6..=72;
 
 /// The widths a table column may be given, in points.
 pub const COLUMN_WIDTHS: std::ops::RangeInclusive<u32> = 24..=800;
+
+/// The widths a control may be given, in points.
+pub const CONTROL_WIDTHS: std::ops::RangeInclusive<u32> = 24..=2000;
+
+/// The heights a control may be given, in points.
+pub const CONTROL_HEIGHTS: std::ops::RangeInclusive<u32> = 16..=2000;
+
+/// The widths of the label of a field, in points.
+pub const LABEL_WIDTHS: std::ops::RangeInclusive<u32> = 0..=600;
+
+/// The width of the label of a field when nothing sets it, in points.
+pub const DEFAULT_LABEL_WIDTH: u32 = 170;
+
+/// The space between the controls of a group, and its padding, in points.
+pub const SPACINGS: std::ops::RangeInclusive<u32> = 0..=48;
+
+/// The most columns a group can have.
+pub const MAX_COLUMNS: u32 = 6;
+
+/// Where the label of a field is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LabelPosition {
+    Left,
+    Top,
+    None,
+}
+
+impl LabelPosition {
+    pub const ALL: [LabelPosition; 3] =
+        [LabelPosition::Left, LabelPosition::Top, LabelPosition::None];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LabelPosition::Left => "On the left",
+            LabelPosition::Top => "Above",
+            LabelPosition::None => "None",
+        }
+    }
+}
 
 /// The name of the column of row numbers in a table, `[0]`, `[1]`, ...
 pub const ROW_NUMBER: &str = "#";
@@ -461,8 +503,69 @@ pub struct Control {
     pub header_font: Option<FontFamily>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_font_size: Option<u32>,
+    /// The width in points. Absent: what the control needs (or `fill`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Takes the whole width of its cell or row; `width` is then ignored.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fill: bool,
+    /// The height in points: of a several-lines text box, a table or stacked
+    /// repeater, a label or button, or the least height of a group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Where the control sits in its cell when it is narrower. Absent: left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<Alignment>,
+    /// For a field: where its label is. Absent: on the left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_position: Option<LabelPosition>,
+    /// For a field: the width of its label; for a group: of the labels of the
+    /// fields in it. Absent: the group's, or [`DEFAULT_LABEL_WIDTH`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_width: Option<u32>,
+    /// In a group of several columns: how many it takes. Absent: one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<u32>,
+    /// In a group of several columns: starts a new row.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub new_row: bool,
+    /// For a group: the space between its controls, and inside its box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spacing: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padding: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
+}
+
+/// One row of a group of several columns: the controls in it, each with the
+/// column it starts at and the columns it takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlowRow {
+    /// `(index of the child, first column, columns taken)`.
+    pub cells: Vec<(usize, usize, usize)>,
+}
+
+/// Puts the controls of a group into rows of `columns` columns: each takes
+/// its span (at most the number of columns), and goes to the next row when
+/// it asks for a new row or does not fit in what is left of the row.
+pub fn flow_rows(children: &[Control], columns: usize) -> Vec<FlowRow> {
+    let columns = columns.max(1);
+    let mut rows: Vec<FlowRow> = Vec::new();
+    let mut used = columns;
+    for (i, child) in children.iter().enumerate() {
+        let span = (child.span.unwrap_or(1).max(1) as usize).min(columns);
+        if used + span > columns || child.new_row || rows.is_empty() {
+            rows.push(FlowRow { cells: Vec::new() });
+            used = 0;
+        }
+        rows.last_mut()
+            .expect("a row was pushed")
+            .cells
+            .push((i, used, span));
+        used += span;
+    }
+    rows
 }
 
 fn is_false(b: &bool) -> bool {
@@ -498,6 +601,16 @@ impl Control {
             title_font_size: None,
             header_font: None,
             header_font_size: None,
+            width: None,
+            fill: false,
+            height: None,
+            align: None,
+            label_position: None,
+            label_width: None,
+            span: None,
+            new_row: false,
+            spacing: None,
+            padding: None,
             children: Vec::new(),
         }
     }
@@ -670,6 +783,16 @@ pub fn form_schema_source() -> &'static str {
         "title_font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "header_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "header_font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "width": {"type": "integer", "minimum": 24, "maximum": 2000},
+        "fill": {"type": "boolean"},
+        "height": {"type": "integer", "minimum": 16, "maximum": 2000},
+        "align": {"type": "string", "enum": ["left", "center", "right"]},
+        "label_position": {"type": "string", "enum": ["left", "top", "none"]},
+        "label_width": {"type": "integer", "minimum": 0, "maximum": 600},
+        "span": {"type": "integer", "minimum": 1, "maximum": 6},
+        "new_row": {"type": "boolean"},
+        "spacing": {"type": "integer", "minimum": 0, "maximum": 48},
+        "padding": {"type": "integer", "minimum": 0, "maximum": 48},
         "children": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["type"]
@@ -1456,5 +1579,63 @@ mod tests {
             rest,
             ["name", "customer.city", "customer.vip", "items", "tags"]
         );
+    }
+
+    #[test]
+    fn flow_rows_put_controls_in_rows_by_span_and_new_row() {
+        let with = |span: Option<u32>, new_row: bool| Control {
+            span,
+            new_row,
+            ..Control::new(ControlKind::Label)
+        };
+        let children = [
+            with(None, false),
+            with(Some(2), false),
+            with(None, true),
+            with(Some(9), false),
+            with(None, false),
+            with(None, false),
+        ];
+        let rows: Vec<Vec<(usize, usize, usize)>> = flow_rows(&children, 3)
+            .into_iter()
+            .map(|r| r.cells)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                vec![(0, 0, 1), (1, 1, 2)],
+                vec![(2, 0, 1)],
+                // A span wider than the group takes the whole row.
+                vec![(3, 0, 3)],
+                vec![(4, 0, 1), (5, 1, 1)],
+            ]
+        );
+        assert!(flow_rows(&[], 3).is_empty());
+    }
+
+    #[test]
+    fn sizes_are_stored_and_checked_against_their_ranges() {
+        let mut design = FormDesign::default();
+        let mut field = Control::bound(ControlKind::Field, &"name".parse().unwrap());
+        field.width = Some(240);
+        field.height = Some(80);
+        field.align = Some(Alignment::Right);
+        field.label_position = Some(LabelPosition::Top);
+        field.label_width = Some(0);
+        field.span = Some(2);
+        field.new_row = true;
+        let mut group = Control::new(ControlKind::Group);
+        group.fill = true;
+        group.spacing = Some(12);
+        group.padding = Some(0);
+        group.children.push(field);
+        design.controls.push(group);
+        let text = design.to_json();
+        assert!(text.contains("\"label_position\": \"top\""), "{text}");
+        assert_eq!(FormDesign::from_json(&text).unwrap(), design);
+        let too_wide = text.replace("\"width\": 240", "\"width\": 5000");
+        assert!(FormDesign::from_json(&too_wide).is_err());
+        let no_space = text.replace("\"spacing\": 12", "\"spacing\": 60");
+        assert!(FormDesign::from_json(&no_space).is_err());
     }
 }
