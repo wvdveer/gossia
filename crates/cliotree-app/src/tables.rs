@@ -153,6 +153,15 @@ pub struct Tables {
     pub last_sort: Option<(String, Path, String, bool)>,
     pub refused: Option<Refusal>,
     pub dialog: Option<FilterDialog>,
+    /// The corner a range of cells started from, when the selection is a
+    /// range (see `clipboard.rs`); the selected cell is the other corner.
+    pub anchor: Option<Path>,
+    /// This window's last *Copy*, so that a paste of it puts back formulas.
+    pub copied: Option<crate::clipboard::CopyRecord>,
+    /// Text for the clipboard, handed to egui on the next frame.
+    pub to_clipboard: Option<String>,
+    /// A clipboard of the window's own instead of the system's, for tests.
+    pub stand_in: Option<String>,
     /// The column selected by clicking its header, if one is.
     pub column: Option<ColumnSel>,
 }

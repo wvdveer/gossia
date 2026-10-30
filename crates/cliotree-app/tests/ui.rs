@@ -517,6 +517,73 @@ fn a_cell_of_the_table_is_typed_into_and_the_arrows_move_among_cells() {
 }
 
 #[test]
+fn a_range_is_selected_with_shift_copied_and_pasted_as_one_undo() {
+    let mut harness = table_window();
+    click(&mut harness, "A-100");
+    harness
+        .get_by_label("gift wrap")
+        .click_modifiers(Modifiers::SHIFT);
+    harness.run();
+    let range = harness.state().table_range().unwrap();
+    assert_eq!((range.rows, range.columns), (0..=1, 0..=4));
+    harness.event(egui::Event::Copy);
+    // The copy is taken in one frame and handed to the clipboard in the next,
+    // whose output carries it.
+    harness.step();
+    harness.step();
+    let expected = "A-100\t2\t9.5\t19.0\t\nB-220\t1\t24.0\t24.0\tgift wrap\n";
+    let copied = harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .any(|c| matches!(c, egui::OutputCommand::CopyText(t) if t == expected));
+    assert!(copied, "the values of the range are put on the clipboard");
+
+    // Shift and the arrows grow the range too.
+    click(&mut harness, "12");
+    harness.key_combination_modifiers(Modifiers::SHIFT, &[Key::ArrowRight]);
+    harness.run();
+    let range = harness.state().table_range().unwrap();
+    assert_eq!((range.rows, range.columns), (2..=2, 1..=2));
+    harness.event(egui::Event::Paste("3\t1.25".to_owned()));
+    settle(&mut harness);
+    // 3 * 1.25.
+    harness.get_by_label("3.75");
+    ctrl(&mut harness, Key::Z);
+    settle(&mut harness);
+    // 12 * 0.75, both cells back in one undo.
+    harness.get_by_label("9.0");
+}
+
+#[test]
+fn the_cell_menu_copies_formulas_and_ctrl_shift_v_pastes_values() {
+    let mut harness = table_window();
+    harness.state_mut().tables.stand_in = Some(String::new());
+    click(&mut harness, "A-100");
+    // A right click outside the selection selects the cell first.
+    harness.get_by_label("19.0").click_secondary();
+    harness.run();
+    // A menu item's label ends with its keys.
+    harness.get_by_label_contains("Copy formulas").click();
+    harness.run();
+    assert_eq!(
+        harness.state().tables.stand_in.as_deref(),
+        Some("=parent.qty * parent.price\n")
+    );
+    harness.get_by_label("19.0").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Ctrl+C").click();
+    harness.run();
+    assert_eq!(harness.state().tables.stand_in.as_deref(), Some("19.0\n"));
+    click(&mut harness, "0.75");
+    harness.key_combination_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, &[Key::V]);
+    settle(&mut harness);
+    // 12 * 19.0: the value was pasted, not the formula.
+    harness.get_by_label("228.0");
+}
+
+#[test]
 fn rows_are_added_and_the_table_is_closed_from_its_toolbar() {
     let mut harness = table_window();
     click(&mut harness, "Add row");

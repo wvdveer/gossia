@@ -204,13 +204,35 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 Err(app.notice.clone().unwrap_or_default())
             }
         }
-        // Pastes a whole document in the Raw view.
+        // Pastes a whole document in the Raw view, or cells at the selection
+        // of the tree or a table (`values` for *Paste values*).
         "paste" => {
             let text = text_arg(args, "text")?;
-            if app.current_view().label() != "Raw" {
-                return Err("paste needs the Raw view".to_owned());
+            if app.current_view().label() == "Raw" {
+                return app.paste_document(text).map(|()| Json::Null);
             }
-            app.paste_document(text).map(|()| Json::Null)
+            if !app.in_tree() {
+                return Err("paste needs the Raw view or the data tree".to_owned());
+            }
+            let values = args.get("values").and_then(Json::as_bool).unwrap_or(false);
+            let mode = if values {
+                crate::clipboard::PasteMode::Values
+            } else {
+                crate::clipboard::PasteMode::Cells
+            };
+            app.paste_clip(text, mode).map(|()| Json::Null)
+        }
+        // Copies the selection (`mode`: `values`, the default, or `formulas`)
+        // and gives the text put on the clipboard.
+        "copy" => {
+            let mode = match args.get("mode").and_then(Json::as_str) {
+                None | Some("values") => crate::clipboard::CopyMode::Cells,
+                Some("formulas") => crate::clipboard::CopyMode::Formulas,
+                Some(other) => return Err(format!("there is no copy mode called {other}")),
+            };
+            app.copy_cells(mode)
+                .map(Json::String)
+                .ok_or_else(|| "nothing is selected to copy".to_owned())
         }
         "enter" => {
             let text = text_arg(args, "text")?;

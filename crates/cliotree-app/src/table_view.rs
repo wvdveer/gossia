@@ -156,6 +156,14 @@ impl ClioApp {
             return;
         };
         let shown: Vec<&Column> = layout.shown.iter().map(|&i| &layout.columns[i]).collect();
+        let range = self.table_range();
+        let column_place = |column: &Column| {
+            layout
+                .columns
+                .iter()
+                .position(|c| c.name == column.name)
+                .unwrap_or(usize::MAX)
+        };
         let rows = &layout.visible.rows;
         let editable = self.can_edit(array);
         let reorderable = self.can_reorder(array);
@@ -231,6 +239,15 @@ impl ClioApp {
                                             ui.max_rect(),
                                             0.0,
                                             ui.visuals().selection.bg_fill.gamma_multiply(0.35),
+                                        );
+                                    }
+                                    if range.as_ref().is_some_and(|r| {
+                                        r.is_range() && r.contains(index, column_place(column))
+                                    }) {
+                                        ui.painter().rect_filled(
+                                            ui.max_rect(),
+                                            0.0,
+                                            ui.visuals().selection.bg_fill.gamma_multiply(0.25),
                                         );
                                     }
                                     let selected = self.selection.as_ref() == Some(&cell.path);

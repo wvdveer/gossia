@@ -211,6 +211,7 @@ impl ClioApp {
         }
         self.selection = Some(path.clone());
         self.tables.column = None;
+        self.tables.anchor = None;
         self.note_selection_in_table(path);
         if self.editing.is_none() {
             self.notice = None;

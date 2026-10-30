@@ -65,7 +65,7 @@ impl Calc {
 
     /// Ends the entry being built and takes back what it did, leaving nothing
     /// in the history, not even something to redo.
-    fn abort_entry(&mut self) {
+    pub fn abort_entry(&mut self) {
         if let Some(entry) = self.history.abort() {
             let _ = self.run_entry(&entry, false);
         }

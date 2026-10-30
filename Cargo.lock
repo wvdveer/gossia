@@ -936,6 +936,7 @@ dependencies = [
 name = "cliotree-app"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "chrono",
  "cliotree-calc",
  "cliotree-core",

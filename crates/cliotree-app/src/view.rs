@@ -9,6 +9,7 @@ use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Stroke, S
 use egui_extras::{Column, TableBuilder};
 
 use crate::app::{ClioApp, Editing, Focus};
+use crate::clipboard::{CopyMode, PasteMode};
 use crate::rows::{Row, RowKind, display};
 use crate::status::{evaluation_text, problems_text};
 
@@ -43,6 +44,10 @@ pub(crate) fn outline_invalid(ui: &egui::Ui, rect: egui::Rect) {
 /// the table, because drawing borrows the workbook.
 pub(crate) enum Action {
     Select(Path),
+    /// Shift and a click: the range from the selection to here.
+    Extend(Path),
+    Copy(CopyMode),
+    Paste(PasteMode),
     Toggle(Path),
     BeginEdit(Path),
     EnterText(Path, String),
@@ -190,6 +195,9 @@ impl ClioApp {
 
     fn handle_keys(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        if let Some(text) = self.tables.to_clipboard.take() {
+            ctx.copy_text(text);
+        }
         let typing_somewhere = ctx.text_edit_focused();
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
         let redo_y = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
@@ -232,6 +240,15 @@ impl ClioApp {
             || self.comment_edit.is_some()
         {
             return;
+        }
+        self.handle_clipboard(ui);
+        if self.table_cell_selected() {
+            let key = |ui: &mut egui::Ui, k| ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, k));
+            let dx = isize::from(key(ui, Key::ArrowRight)) - isize::from(key(ui, Key::ArrowLeft));
+            let dy = isize::from(key(ui, Key::ArrowDown)) - isize::from(key(ui, Key::ArrowUp));
+            if dx != 0 || dy != 0 {
+                self.table_extend_selection(dx, dy);
+            }
         }
         let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
         let up = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
@@ -290,6 +307,44 @@ impl ClioApp {
                     i.events.retain(|e| !matches!(e, egui::Event::Text(_)));
                 });
             }
+        }
+    }
+
+    /// Ctrl+C and Ctrl+V on the selected cells, which egui gives as events.
+    fn handle_clipboard(&mut self, ui: &mut egui::Ui) {
+        if self.selection.is_none() {
+            return;
+        }
+        let (copy, pasted) = ui.input_mut(|i| {
+            let mut copy = false;
+            let mut pasted = None;
+            i.events.retain(|e| match e {
+                egui::Event::Copy => {
+                    copy = true;
+                    false
+                }
+                egui::Event::Paste(text) => {
+                    pasted = Some(text.clone());
+                    false
+                }
+                _ => true,
+            });
+            (copy, pasted)
+        });
+        if copy {
+            self.copy_cells(CopyMode::Cells);
+        }
+        if let Some(text) = pasted {
+            let _ = self.paste_clip(&text, PasteMode::Cells);
+        }
+        // egui makes clipboard events only of Ctrl+C and Ctrl+V; with Shift
+        // they are keys, and the clipboard is read here.
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        if ui.input_mut(|i| i.consume_key(shift, Key::C)) {
+            self.copy_cells(CopyMode::Formulas);
+        }
+        if ui.input_mut(|i| i.consume_key(shift, Key::V)) {
+            let _ = self.paste_from_clipboard(PasteMode::Values);
         }
     }
 
@@ -775,6 +830,15 @@ impl ClioApp {
             Action::Select(path) => {
                 self.select(&path);
             }
+            Action::Extend(path) => {
+                self.extend_selection(&path);
+            }
+            Action::Copy(mode) => {
+                self.copy_cells(mode);
+            }
+            Action::Paste(mode) => {
+                let _ = self.paste_from_clipboard(mode);
+            }
             Action::SelectColumn(array, name) => self.select_column(&array, &name),
             Action::Toggle(path) => {
                 let open = !self.is_open(&path);
@@ -1120,7 +1184,7 @@ impl ClioApp {
                     label(ui)
                 };
                 if response.clicked() {
-                    actions.push(Action::Select(row.path.clone()));
+                    actions.push(select_action(ui, &row.path));
                 }
                 if response.double_clicked() && editable && row.kind == RowKind::Scalar {
                     actions.push(Action::BeginEdit(row.path.clone()));
@@ -1128,12 +1192,8 @@ impl ClioApp {
                 if response.double_clicked() && row.kind != RowKind::Scalar && !row.tabular {
                     actions.push(Action::Reveal(row.path.clone()));
                 }
-                if self.calc().is_xml(&self.sheet) {
-                    let at = ui.max_rect().right_top();
-                    response.context_menu(|ui| {
-                        self.comment_menu_items(ui, &row.path, at, actions);
-                    });
-                }
+                let at = ui.max_rect().right_top();
+                let response = self.cell_menu(response, &row.path, at, actions);
                 if let Value::Error(error) = value {
                     let trace = self
                         .calc()
@@ -1164,11 +1224,13 @@ impl ClioApp {
                     )
                     .union(response);
                 if response.clicked() {
-                    actions.push(Action::Select(row.path.clone()));
+                    actions.push(select_action(ui, &row.path));
                 }
                 if response.double_clicked() && editable && row.kind == RowKind::Scalar {
                     actions.push(Action::BeginEdit(row.path.clone()));
                 }
+                let at = ui.max_rect().right_top();
+                self.cell_menu(response, &row.path, at, actions);
             }
         }
     }
@@ -1518,4 +1580,61 @@ fn paint_triangle(ui: &egui::Ui, rect: egui::Rect, open: bool, hovered: bool) {
     };
     ui.painter()
         .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+}
+
+/// A click selects; with Shift it makes a range in a table.
+fn select_action(ui: &egui::Ui, path: &Path) -> Action {
+    if ui.input(|i| i.modifiers.shift) {
+        Action::Extend(path.clone())
+    } else {
+        Action::Select(path.clone())
+    }
+}
+
+impl ClioApp {
+    /// The context menu of a cell's value: copy and paste, and on XML tabs
+    /// the comment commands. A right click outside the selection selects the
+    /// cell first, so that the commands act on it.
+    fn cell_menu(
+        &self,
+        response: egui::Response,
+        path: &Path,
+        at: egui::Pos2,
+        actions: &mut Vec<Action>,
+    ) -> egui::Response {
+        if response.secondary_clicked() && !self.is_in_selection(path) {
+            actions.push(Action::Select(path.clone()));
+        }
+        let xml = self.calc().is_xml(&self.sheet);
+        response.context_menu(|ui| {
+            let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, action: Action| {
+                if ui
+                    .add(egui::Button::new(label).shortcut_text(keys))
+                    .clicked()
+                {
+                    actions.push(action);
+                    ui.close();
+                }
+            };
+            item(ui, "Copy", "Ctrl+C", Action::Copy(CopyMode::Cells));
+            item(
+                ui,
+                "Copy formulas",
+                "Ctrl+Shift+C",
+                Action::Copy(CopyMode::Formulas),
+            );
+            item(ui, "Paste", "Ctrl+V", Action::Paste(PasteMode::Cells));
+            item(
+                ui,
+                "Paste values",
+                "Ctrl+Shift+V",
+                Action::Paste(PasteMode::Values),
+            );
+            if xml {
+                ui.separator();
+                self.comment_menu_items(ui, path, at, actions);
+            }
+        });
+        response
+    }
 }

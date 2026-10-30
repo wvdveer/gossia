@@ -23,6 +23,9 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"
 egui_extras = "0.37.0"
+# Reads the clipboard for Paste values and the menu's Paste; egui hands the
+# clipboard over only with Ctrl+V. The same version egui-winit uses.
+arboard = { version = "3.7.0", default-features = false }
 # Reads the character map of a bundled font (style.rs); egui reads fonts with it.
 skrifa = { version = "0.44.0", default-features = false, features = ["std"] }
 serde_json = "1.0.154"
