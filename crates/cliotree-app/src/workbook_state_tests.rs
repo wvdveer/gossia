@@ -170,6 +170,43 @@ fn a_hidden_row_stays_with_its_item_when_the_file_is_read() {
 }
 
 #[test]
+fn nodes_hidden_in_the_tree_are_saved_by_path_and_come_back() {
+    let folder = Folder::new("hidden");
+    let mut app = sample();
+    app.hide_node(&p("customer.city"));
+    app.hide_node(&p("items[2]"));
+    // Hiding is not an edit.
+    assert!(!app.is_dirty());
+    // A reorder moves the hidden item; it is saved where it is now.
+    app.reverse_rows(&p("items"));
+    app.save_as(&folder.file("h.clio")).unwrap();
+    let overlay: Json =
+        serde_json::from_str(&entry(&folder.file("h.clio"), "sheets/Orders/overlay.json").unwrap())
+            .unwrap();
+    assert_eq!(
+        overlay["view"],
+        json!({ "hidden": ["customer.city", "items[0]"] })
+    );
+
+    let mut again = sample();
+    again.open_path(&folder.file("h.clio")).unwrap();
+    settle(&mut again);
+    let names = |app: &ClioApp, at: &str| -> Vec<String> {
+        let at = if at.is_empty() { Path::root() } else { p(at) };
+        app.hidden_children(&at)
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
+    };
+    assert_eq!(names(&again, "customer"), ["city"]);
+    assert_eq!(names(&again, "items"), ["[0]"]);
+    // A path that no longer fits the data is dropped.
+    again.restore_hidden("Orders", &["items[9]".to_owned(), "tax".to_owned()]);
+    assert!(names(&again, "items").is_empty());
+    assert_eq!(names(&again, ""), ["tax"]);
+}
+
+#[test]
 fn a_form_view_comes_back_and_one_that_is_gone_is_dropped() {
     let folder = Folder::new("formview");
     let mut app = sample();

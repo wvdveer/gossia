@@ -48,6 +48,7 @@ pub mod table_view;
 pub mod tables;
 #[cfg(test)]
 mod tables_tests;
+pub mod tree_hidden;
 pub mod trust_ui;
 pub mod view;
 pub mod view_state;

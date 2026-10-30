@@ -77,8 +77,10 @@ pub struct ClioApp {
     pub sheet: String,
     pub selection: Option<Path>,
     pub expanded: HashMap<String, HashSet<Path>>,
-    /// Bumped whenever a node is opened or closed.
+    /// Bumped whenever a node is opened or closed, hidden or shown.
     pub expansion_rev: u64,
+    /// The nodes hidden by hand in the tree view, for each tab.
+    pub hidden: HashMap<String, HashSet<crate::tree_hidden::HiddenKey>>,
     pub rows: Vec<Row>,
     pub rows_key: Option<(String, u64, u64)>,
     pub editing: Option<Editing>,
@@ -184,6 +186,7 @@ impl ClioApp {
             selection: None,
             expanded,
             expansion_rev: 0,
+            hidden: HashMap::new(),
             rows: Vec::new(),
             rows_key: None,
             editing: None,
@@ -293,7 +296,9 @@ impl ClioApp {
             (Some(spec), Some(data)) => {
                 let none = HashSet::new();
                 let open = self.expanded.get(&self.sheet).unwrap_or(&none);
-                rows::build(spec, &self.sheet, data, open, &tabular)
+                let no_hidden = HashSet::new();
+                let hidden = self.hidden.get(&self.sheet).unwrap_or(&no_hidden);
+                rows::build(spec, &self.sheet, data, open, &tabular, hidden)
             }
             _ => Vec::new(),
         };

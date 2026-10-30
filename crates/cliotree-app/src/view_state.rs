@@ -1,8 +1,8 @@
 //! The state of the view of the whole workbook, in `view.json` (the font of
 //! the Data tree and Raw views), and of each tab, as the tab's overlay keeps it (DESIGN.md,
 //! "File format", "Tabular view of arrays"): which view the tab shows, which
-//! arrays are tables, and for each table the hidden columns, the rows hidden by
-//! hand and the filters. It is not part of the data, not undoable, and not part
+//! arrays are tables, for each table the hidden columns, the rows hidden by
+//! hand and the filters, and the nodes of the tree hidden by hand. It is not part of the data, not undoable, and not part
 //! of the trust hash.
 //!
 //! In the overlay it is the `view` object of the tab:
@@ -16,7 +16,8 @@
 //!                          "condition": {"is": "greater", "operands": ["1"]},
 //!                          "ignore_case": false}}}
 //!   ],
-//!   "table": "items"
+//!   "table": "items",
+//!   "hidden": ["customer.city", "items[3]"]
 //! }
 //! ```
 //!
@@ -42,7 +43,7 @@ use crate::table::{Condition, Filter, TableView, item_type};
 
 /// The keys of the view object this version writes. Anything else in it was
 /// written by a newer version and is kept.
-const KNOWN: [&str; 3] = ["show", "tables", "table"];
+const KNOWN: [&str; 4] = ["show", "tables", "table", "hidden"];
 
 fn condition_to_json(condition: &Condition) -> Json {
     let (is, operands): (&str, Vec<&String>) = match condition {
@@ -168,6 +169,10 @@ impl ClioApp {
                     object.insert("table".to_owned(), json!(active.to_string()));
                 }
             }
+            let hidden = self.hidden_paths(tab);
+            if !hidden.is_empty() {
+                object.insert("hidden".to_owned(), json!(hidden));
+            }
             if !object.is_empty() {
                 out.insert(tab.to_owned(), Json::Object(object));
             }
@@ -263,6 +268,7 @@ impl ClioApp {
             {
                 self.tables.active.insert(tab.clone(), active);
             }
+            self.restore_hidden(tab, &strings(state.get("hidden")));
         }
         self.tables.rev += 1;
         self.expansion_rev += 1;

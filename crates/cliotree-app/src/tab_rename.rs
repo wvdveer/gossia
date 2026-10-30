@@ -106,6 +106,7 @@ impl ClioApp {
             self.editing = None;
         }
         self.expanded.remove(name);
+        self.hidden.remove(name);
         self.views.remove(name);
         self.doc.views.remove(name);
         let tables = &mut self.tables;
@@ -150,6 +151,7 @@ impl ClioApp {
             moved(&mut editing.sheet);
         }
         rekey(&mut self.expanded, from, to);
+        rekey(&mut self.hidden, from, to);
         rekey(&mut self.views, from, to);
         if let Some(view) = self.doc.views.remove(from) {
             self.doc.views.insert(to.to_owned(), view);

@@ -5,11 +5,14 @@
 //! Every node the schema defines has a row, whether or not it has data: an
 //! absent optional field is an empty cell that can be filled. Content the
 //! schema does not define is shown greyed and read-only after the declared
-//! fields. Only the rows of expanded nodes are made.
+//! fields. Only the rows of expanded nodes are made, and none for a node
+//! hidden by hand or for what is inside it.
 
 use std::collections::{BTreeSet, HashSet};
 
 use cliotree_core::{Kind, Node, Path, Segment, TypeId, TypeSpec, Value};
+
+use crate::tree_hidden::{HiddenKey, Step};
 
 /// What a row stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +42,10 @@ pub struct Row {
     /// An array shown as a table: its items are in the table, and only an
     /// item that was opened from the table (a drill-in) has rows here.
     pub tabular: bool,
+    /// How many of its children are hidden by hand.
+    pub hidden: usize,
+    /// Hidden nodes come right after this row: their parent and how many.
+    pub marker: Option<(Path, usize)>,
 }
 
 impl Row {
@@ -49,20 +56,27 @@ impl Row {
 }
 
 /// The rows of a tab. `expanded` holds the paths of the nodes that are open,
-/// and `tabular` those of the arrays that are shown as tables.
+/// `tabular` those of the arrays that are shown as tables, and `hidden` the
+/// nodes hidden by hand.
 pub fn build(
     spec: &TypeSpec,
     tab: &str,
     root: &Node,
     expanded: &HashSet<Path>,
     tabular: &HashSet<Path>,
+    hidden: &HashSet<HiddenKey>,
 ) -> Vec<Row> {
     let mut out = Vec::new();
-    let open = Open { expanded, tabular };
+    let open = Open {
+        expanded,
+        tabular,
+        hidden,
+    };
     walk(
         spec,
         spec.root(),
         Path::root(),
+        &mut Vec::new(),
         tab.to_owned(),
         Some(root),
         true,
@@ -76,6 +90,32 @@ pub fn build(
 struct Open<'a> {
     expanded: &'a HashSet<Path>,
     tabular: &'a HashSet<Path>,
+    hidden: &'a HashSet<HiddenKey>,
+}
+
+/// Counts the hidden children of a row as they are passed over, and marks
+/// the row they come right after.
+struct Skipped {
+    parent: usize,
+    count: usize,
+}
+
+impl Skipped {
+    /// Whether the child at `key` is hidden; if so it is counted.
+    fn hidden(&mut self, open: &Open<'_>, key: &HiddenKey, out: &mut [Row]) -> bool {
+        if open.hidden.is_empty() || !open.hidden.contains(key) {
+            return false;
+        }
+        self.count += 1;
+        let parent = out[self.parent].path.clone();
+        if let Some(last) = out.last_mut() {
+            match &mut last.marker {
+                Some((p, n)) if *p == parent => *n += 1,
+                marker => *marker = Some((parent, 1)),
+            }
+        }
+        true
+    }
 }
 
 impl Open<'_> {
@@ -97,6 +137,7 @@ fn walk(
     spec: &TypeSpec,
     ty: TypeId,
     path: Path,
+    key: &mut HiddenKey,
     name: String,
     node: Option<&Node>,
     required: bool,
@@ -119,6 +160,7 @@ fn walk(
     };
     let open =
         kind != RowKind::Scalar && expanded.contains(&path) && (!tabular || !drilled.is_empty());
+    let me = out.len();
     out.push(Row {
         path: path.clone(),
         depth,
@@ -131,18 +173,30 @@ fn walk(
         expanded: open,
         unrecognised: false,
         tabular,
+        hidden: 0,
+        marker: None,
     });
     if !open {
         return;
     }
+    let mut skipped = Skipped {
+        parent: me,
+        count: 0,
+    };
     match &spec.get(ty).kind {
         Kind::Object { fields } => {
             for field in fields {
+                key.push(Step::Key(field.name.clone()));
+                if skipped.hidden(open_state, key, out) {
+                    key.pop();
+                    continue;
+                }
                 let child = node.and_then(|n| n.child(&Segment::Key(field.name.clone())));
                 walk(
                     spec,
                     field.ty,
                     path.key(field.name.as_str()),
+                    key,
                     field.name.clone(),
                     child,
                     field.required,
@@ -150,16 +204,23 @@ fn walk(
                     open_state,
                     out,
                 );
+                key.pop();
             }
             if let Some(Value::Object(present)) = node.map(Node::value) {
-                for (key, child) in present {
-                    if fields.iter().any(|f| &f.name == key) {
+                for (name, child) in present {
+                    if fields.iter().any(|f| &f.name == name) {
+                        continue;
+                    }
+                    key.push(Step::Key(name.clone()));
+                    let hidden = skipped.hidden(open_state, key, out);
+                    key.pop();
+                    if hidden {
                         continue;
                     }
                     out.push(Row {
-                        path: path.key(key.as_str()),
+                        path: path.key(name.as_str()),
                         depth: depth + 1,
-                        name: key.clone(),
+                        name: name.clone(),
                         ty: None,
                         type_label: "unrecognised".to_owned(),
                         node: Some(child.clone()),
@@ -168,6 +229,8 @@ fn walk(
                         expanded: false,
                         unrecognised: true,
                         tabular: false,
+                        hidden: 0,
+                        marker: None,
                     });
                 }
             }
@@ -178,10 +241,16 @@ fn walk(
                     if tabular && !drilled.contains(&i) {
                         continue;
                     }
+                    key.push(Step::Item(child.id()));
+                    if skipped.hidden(open_state, key, out) {
+                        key.pop();
+                        continue;
+                    }
                     walk(
                         spec,
                         *items,
                         path.index(i),
+                        key,
                         format!("[{i}]"),
                         Some(child),
                         true,
@@ -189,28 +258,37 @@ fn walk(
                         open_state,
                         out,
                     );
+                    key.pop();
                 }
             }
         }
         Kind::Map { value } => {
             if let Some(Value::Object(present)) = node.map(Node::value) {
-                for (key, child) in present {
+                for (name, child) in present {
+                    key.push(Step::Key(name.clone()));
+                    if skipped.hidden(open_state, key, out) {
+                        key.pop();
+                        continue;
+                    }
                     walk(
                         spec,
                         *value,
-                        path.key(key.as_str()),
-                        key.clone(),
+                        path.key(name.as_str()),
+                        key,
+                        name.clone(),
                         Some(child),
                         true,
                         depth + 1,
                         open_state,
                         out,
                     );
+                    key.pop();
                 }
             }
         }
         _ => {}
     }
+    out[me].hidden = skipped.count;
 }
 
 /// How a value is shown in its cell: in Python's canonical form, with dates in
@@ -282,7 +360,14 @@ mod tests {
                 }
             })
             .collect();
-        build(&spec, "T", &root, &expanded, &HashSet::new())
+        build(
+            &spec,
+            "T",
+            &root,
+            &expanded,
+            &HashSet::new(),
+            &HashSet::new(),
+        )
     }
 
     fn names(rows: &[Row]) -> Vec<String> {
@@ -360,7 +445,7 @@ mod tests {
         .unwrap();
         let root = json::parse("{}").unwrap().node;
         let open: HashSet<Path> = [Path::root(), "o".parse().unwrap()].into();
-        let r = build(&spec, "T", &root, &open, &HashSet::new());
+        let r = build(&spec, "T", &root, &open, &HashSet::new(), &HashSet::new());
         assert_eq!(names(&r), ["T", "  o", "    n"]);
         assert!(r[1].node.is_none() && r[2].node.is_none());
     }
@@ -376,10 +461,13 @@ mod tests {
             .unwrap()
             .node;
         let closed: HashSet<Path> = [Path::root()].into();
-        assert_eq!(build(&spec, "T", &root, &closed, &HashSet::new()).len(), 2);
+        assert_eq!(
+            build(&spec, "T", &root, &closed, &HashSet::new(), &HashSet::new()).len(),
+            2
+        );
         let open: HashSet<Path> = [Path::root(), "big".parse().unwrap()].into();
         assert_eq!(
-            build(&spec, "T", &root, &open, &HashSet::new()).len(),
+            build(&spec, "T", &root, &open, &HashSet::new(), &HashSet::new()).len(),
             50_002
         );
     }
@@ -397,13 +485,57 @@ mod tests {
             .node;
         let tabular: HashSet<Path> = ["o".parse().unwrap()].into();
         let mut open: HashSet<Path> = [Path::root(), "o".parse().unwrap()].into();
-        let r = build(&spec, "T", &root, &open, &tabular);
+        let r = build(&spec, "T", &root, &open, &tabular, &HashSet::new());
         assert_eq!(names(&r), ["T", "  o"]);
         assert!(r[1].tabular && !r[1].expandable() && !r[1].expanded);
         open.insert("o[1]".parse().unwrap());
-        let r = build(&spec, "T", &root, &open, &tabular);
+        let r = build(&spec, "T", &root, &open, &tabular, &HashSet::new());
         assert_eq!(names(&r), ["T", "  o", "    [1]", "      n"]);
         assert!(r[1].expanded);
+    }
+
+    /// A node hidden by hand has no row, nor has anything inside it; its
+    /// parent counts it and the row before it carries the marker.
+    #[test]
+    fn hidden_nodes_have_no_rows_and_are_counted() {
+        use crate::tree_hidden::key_of;
+        let spec = jsonschema::lower_str(SCHEMA).unwrap();
+        let root = json::parse(DATA).unwrap().node;
+        let open: HashSet<Path> = ["", "tags", "by", "address"]
+            .iter()
+            .map(|p| {
+                if p.is_empty() {
+                    Path::root()
+                } else {
+                    p.parse().unwrap()
+                }
+            })
+            .collect();
+        let hide = |paths: &[&str]| -> HashSet<HiddenKey> {
+            paths
+                .iter()
+                .map(|p| key_of(&root, &p.parse().unwrap()).unwrap())
+                .collect()
+        };
+        // An absent field, an item, a key of a map, and an object with its
+        // fields.
+        let hidden = hide(&["note", "tags[0]", "by.j", "address"]);
+        let r = build(&spec, "T", &root, &open, &HashSet::new(), &hidden);
+        assert_eq!(
+            names(&r),
+            [
+                "T", "  name", "  tags", "    [1]", "  by", "    k", "  extra"
+            ]
+        );
+        assert_eq!(r[0].hidden, 2);
+        assert_eq!(r[2].hidden, 1);
+        assert_eq!(r[4].hidden, 1);
+        // `note` comes after `name`; `tags[0]` is first, after its parent;
+        // `by.j` and then `address` both come after `k`.
+        assert_eq!(r[1].marker, Some((Path::root(), 1)));
+        assert_eq!(r[2].marker, Some(("tags".parse().unwrap(), 1)));
+        assert_eq!(r[5].marker, Some((Path::root(), 1)));
+        assert_eq!(r[3].marker, None);
     }
 
     /// Values are shown in Python's canonical form.

@@ -572,5 +572,7 @@ fn cell_row(spec: &TypeSpec, array: &Path, index: usize, item: &Node, column: &C
         expanded: false,
         unrecognised: false,
         tabular: false,
+        hidden: 0,
+        marker: None,
     }
 }

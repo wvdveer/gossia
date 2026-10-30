@@ -74,6 +74,10 @@ pub(crate) enum Action {
     HideRow(Path, usize),
     ShowRow(Path, cliotree_core::NodeId),
     ShowAllHidden(Path),
+    // Hiding in the tree view.
+    HideNode(Path),
+    ShowNode(Path),
+    ShowAllNodes(Path),
     ShowRefusedRows,
     DismissRefusal,
     // Changing the schema from this tab.
@@ -888,6 +892,9 @@ impl ClioApp {
             Action::HideRow(array, index) => self.hide_row(&array, index),
             Action::ShowRow(array, id) => self.show_row(&array, id),
             Action::ShowAllHidden(array) => self.show_all_hidden(&array),
+            Action::HideNode(path) => self.hide_node(&path),
+            Action::ShowNode(path) => self.show_node(&path),
+            Action::ShowAllNodes(parent) => self.show_all_nodes(&parent),
             Action::ShowRefusedRows => self.show_refused_rows(),
             Action::DismissRefusal => self.tables.refused = None,
             Action::EditComment(path, at) => {
@@ -953,6 +960,15 @@ impl ClioApp {
                 actions.push(Action::Toggle(row.path.clone()));
             }
             name_response = Some(response);
+            if row.hidden > 0 {
+                let count = RichText::new(format!("({} hidden)", row.hidden))
+                    .weak()
+                    .small();
+                ui.menu_button(count, |ui| self.hidden_list(ui, &row.path, actions));
+            }
+            if let Some((parent, count)) = &row.marker {
+                self.hidden_marker(ui, row, parent, *count, actions);
+            }
         });
 
         // The type, as a badge in the colour of its kind.
@@ -1281,6 +1297,60 @@ impl ClioApp {
         }
     }
 
+    /// The hidden children of `parent`, each with *Show*, and *Show all*.
+    fn hidden_list(&self, ui: &mut egui::Ui, parent: &Path, actions: &mut Vec<Action>) {
+        let children = self.hidden_children(parent);
+        for child in &children {
+            ui.horizontal(|ui| {
+                ui.label(&child.name);
+                let label = format!("Show {}", child.name);
+                let show = ui.small_button("Show");
+                show.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+                if show.clicked() {
+                    actions.push(Action::ShowNode(child.path.clone()));
+                    ui.close();
+                }
+            });
+        }
+        if !children.is_empty() && ui.button("Show all").clicked() {
+            actions.push(Action::ShowAllNodes(parent.clone()));
+            ui.close();
+        }
+    }
+
+    /// The thin line under a row where hidden nodes were; a click on it opens
+    /// the list that shows them.
+    fn hidden_marker(
+        &self,
+        ui: &mut egui::Ui,
+        row: &Row,
+        parent: &Path,
+        count: usize,
+        actions: &mut Vec<Action>,
+    ) {
+        let cell = ui.max_rect();
+        let indent = (parent.len() + 1) as f32 * self.user.prefs.display.indent as f32;
+        let left = cell.left() + indent + 14.0;
+        let line = egui::Rect::from_min_max(
+            egui::pos2(left, cell.bottom() - 2.0),
+            egui::pos2((left + 60.0).min(cell.right()), cell.bottom()),
+        );
+        let id = ui.scope_id().with(("hidden_marker", row.path.to_string()));
+        let response = ui
+            .interact(line.expand2(egui::vec2(0.0, 2.0)), id, Sense::click())
+            .on_hover_text(format!("{count} hidden"));
+        let colour = if response.hovered() {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        ui.painter().rect_filled(line, 1.0, colour);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, format!("{count} hidden"))
+        });
+        egui::Popup::menu(&response).show(|ui| self.hidden_list(ui, parent, actions));
+    }
+
     fn row_menu(&self, ui: &mut egui::Ui, row: &Row, actions: &mut Vec<Action>) {
         let path = &row.path;
         if row.expandable() {
@@ -1289,6 +1359,15 @@ impl ClioApp {
                 actions.push(Action::Toggle(path.clone()));
                 ui.close();
             }
+        }
+        if !path.is_empty() && ui.button("Hide").clicked() {
+            actions.push(Action::HideNode(path.clone()));
+            ui.close();
+        }
+        if row.hidden > 0 {
+            ui.menu_button(format!("Hidden ({})", row.hidden), |ui| {
+                self.hidden_list(ui, path, actions);
+            });
         }
         if row.kind == RowKind::Array && ui.button("Add item").clicked() {
             actions.push(Action::AddItem(path.clone()));
