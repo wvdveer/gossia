@@ -268,6 +268,7 @@ impl Calc {
                     ("enabled when", &control.enabled_when),
                     ("text colour", &control.text_colour),
                     ("fill colour", &control.fill_colour),
+                    ("choices", &control.choices),
                 ];
                 for (what, text) in own {
                     if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {
@@ -280,6 +281,7 @@ impl Calc {
                         ("enabled when", &column.enabled_when),
                         ("text colour", &column.text_colour),
                         ("fill colour", &column.fill_colour),
+                        ("choices", &column.choices),
                     ];
                     for (what, text) in exprs {
                         if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {

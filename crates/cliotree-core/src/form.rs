@@ -73,16 +73,29 @@ pub enum Editor {
     Text,
     /// Several lines of text, for a string.
     Multiline,
+    /// A list to choose from, the items of the field's *choices*.
+    Dropdown,
+    /// A text box that lists the items of the field's *choices* that match
+    /// what is typed.
+    Typeahead,
 }
 
 impl Editor {
-    pub const ALL: [Editor; 3] = [Editor::Auto, Editor::Text, Editor::Multiline];
+    pub const ALL: [Editor; 5] = [
+        Editor::Auto,
+        Editor::Text,
+        Editor::Multiline,
+        Editor::Dropdown,
+        Editor::Typeahead,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Editor::Auto => "Automatic",
             Editor::Text => "One line of text",
             Editor::Multiline => "Several lines of text",
+            Editor::Dropdown => "Dropdown list",
+            Editor::Typeahead => "Type to search",
         }
     }
 }
@@ -283,6 +296,11 @@ pub struct ColumnDesign {
     pub text_colour: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill_colour: Option<String>,
+    /// The acceptable values of a cell, as for a control; runs for each row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choices: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_other: bool,
     /// For the row numbers: how they are written. Absent: `[0]`, `[1]`, ...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numbering: Option<Numbering>,
@@ -359,6 +377,8 @@ impl ColumnDesign {
             enabled_when: None,
             text_colour: None,
             fill_colour: None,
+            choices: None,
+            allow_other: false,
             numbering: None,
             start: None,
         }
@@ -485,6 +505,15 @@ pub struct Control {
     pub text_colour: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill_colour: Option<String>,
+    /// For a field: a Python expression giving the acceptable values, for a
+    /// dropdown or a typeahead. Each item is a value, a `(code, text)` pair,
+    /// or a dict with `value` and `label`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choices: Option<String>,
+    /// For a typeahead with choices: typed text that matches no item is
+    /// entered as the value itself, instead of being refused.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_other: bool,
     /// The typeface of the control's text. Absent: the one of the group it is
     /// in, or the interface font.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -595,6 +624,8 @@ impl Control {
             enabled_when: None,
             text_colour: None,
             fill_colour: None,
+            choices: None,
+            allow_other: false,
             font: None,
             font_size: None,
             title_font: None,
@@ -762,7 +793,7 @@ pub fn form_schema_source() -> &'static str {
         "label": {"type": "string"},
         "help": {"type": "string"},
         "text": {"type": "string"},
-        "editor": {"type": "string", "enum": ["auto", "text", "multiline"]},
+        "editor": {"type": "string", "enum": ["auto", "text", "multiline", "dropdown", "typeahead"]},
         "read_only": {"type": "boolean"},
         "masked": {"type": "boolean"},
         "columns": {"type": "integer", "minimum": 1, "maximum": 6},
@@ -777,6 +808,8 @@ pub fn form_schema_source() -> &'static str {
         "enabled_when": {"type": "string"},
         "text_colour": {"type": "string"},
         "fill_colour": {"type": "string"},
+        "choices": {"type": "string"},
+        "allow_other": {"type": "boolean"},
         "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "title_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
@@ -807,7 +840,7 @@ pub fn form_schema_source() -> &'static str {
         "width": {"type": "integer", "minimum": 24, "maximum": 800},
         "align": {"type": "string", "enum": ["left", "center", "right"]},
         "title_align": {"type": "string", "enum": ["left", "center", "right"]},
-        "editor": {"type": "string", "enum": ["auto", "text", "multiline"]},
+        "editor": {"type": "string", "enum": ["auto", "text", "multiline", "dropdown", "typeahead"]},
         "read_only": {"type": "boolean"},
         "thousands": {"type": "boolean"},
         "decimals": {"type": "integer", "minimum": 0, "maximum": 10},
@@ -818,6 +851,8 @@ pub fn form_schema_source() -> &'static str {
         "enabled_when": {"type": "string"},
         "text_colour": {"type": "string"},
         "fill_colour": {"type": "string"},
+        "choices": {"type": "string"},
+        "allow_other": {"type": "boolean"},
         "numbering": {"type": "string", "enum": ["index", "decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"]},
         "start": {"type": "integer"}
       },
@@ -1637,5 +1672,32 @@ mod tests {
         assert!(FormDesign::from_json(&too_wide).is_err());
         let no_space = text.replace("\"spacing\": 12", "\"spacing\": 60");
         assert!(FormDesign::from_json(&no_space).is_err());
+    }
+
+    #[test]
+    fn choices_and_their_editors_are_stored() {
+        let mut design = FormDesign::default();
+        let mut field = Control::bound(ControlKind::Field, &"city".parse().unwrap());
+        field.choices = Some("[('UT', 'Utrecht')]".into());
+        field.editor = Some(Editor::Typeahead);
+        field.allow_other = true;
+        let mut table = Control::bound(ControlKind::Repeater, &"items".parse().unwrap());
+        let mut column = ColumnDesign::named("sku");
+        column.choices = Some("['A', 'B']".into());
+        column.editor = Some(Editor::Dropdown);
+        table.table_columns.push(column);
+        design.controls.extend([field, table]);
+        let text = design.to_json();
+        assert!(text.contains("\"editor\": \"typeahead\""), "{text}");
+        assert!(text.contains("\"allow_other\": true"), "{text}");
+        assert_eq!(FormDesign::from_json(&text).unwrap(), design);
+        // Absent when not set: an older design reads the same.
+        let plain = Control::bound(ControlKind::Field, &"city".parse().unwrap());
+        let plain = FormDesign {
+            controls: vec![plain],
+            ..FormDesign::default()
+        };
+        assert!(!plain.to_json().contains("choices"));
+        assert!(!plain.to_json().contains("allow_other"));
     }
 }

@@ -20,7 +20,7 @@ use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 
 use crate::app::ClioApp;
-use crate::form_exprs::Gate;
+use crate::form_exprs::{Choice, ChoiceList, Gate, choice_list};
 use crate::form_layout::{
     ColumnEdit, ControlAction, DragItem, FormDialog, LayoutState, drop_allowed,
 };
@@ -534,6 +534,44 @@ impl ClioApp {
 
 // ------------------------------------------------------------------ text
 
+/// What the editor of a field with choices is given.
+struct ChoiceField<'a> {
+    path: &'a Path,
+    key: &'a (String, Path),
+    /// The accessible name of the editor.
+    name: &'a str,
+    /// The text of the value stored, empty for none.
+    current: &'a str,
+    items: &'a [Choice],
+    required: bool,
+    read_only: bool,
+    allow_other: bool,
+    /// The width of the editor; None in a cell of a table.
+    width: Option<f32>,
+}
+
+/// Whether an optional expression has text.
+fn has_text(text: &Option<String>) -> bool {
+    text.as_deref().is_some_and(|t| !t.trim().is_empty())
+}
+
+/// The item whose code is the value stored.
+fn position_of(items: &[Choice], current: &str) -> Option<usize> {
+    if current.is_empty() {
+        return None;
+    }
+    items.iter().position(|item| same_code(&item.code, current))
+}
+
+/// Whether a code is the value stored, as text: the same text, or the same
+/// number (the code `2` is the stored `2.0`), or the same truth.
+fn same_code(code: &str, current: &str) -> bool {
+    code == current
+        || matches!((code.parse::<f64>(), current.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
+        || (matches!(code, "True" | "False" | "true" | "false")
+            && code.eq_ignore_ascii_case(current))
+}
+
 /// The text of a value as a field shows it.
 fn value_text(value: &Value) -> String {
     match value {
@@ -756,6 +794,10 @@ struct Look {
     label_width: Option<f32>,
     /// The height of a several-lines text box.
     height: Option<f32>,
+    /// The list of choices of a dropdown or typeahead, when it has one.
+    choices: Option<ChoiceList>,
+    /// A typeahead enters text that matches no choice as it is.
+    allow_other: bool,
 }
 
 /// Where a control is among the others of its list, for its menu.
@@ -1438,6 +1480,13 @@ impl Painter<'_> {
                 label_position: c.label_position,
                 label_width: c.label_width.or(self.label_width).map(|w| w as f32),
                 height: c.height.map(|h| h as f32),
+                choices: has_text(&c.choices)
+                    .then(|| {
+                        let app = self.app;
+                        choice_list(app.calc(), &app.sheet, self.form, &self.at, None)
+                    })
+                    .flatten(),
+                allow_other: c.allow_other,
             },
         ));
         match (&self.spec.get(ty).kind, c.kind) {
@@ -1604,6 +1653,28 @@ impl Painter<'_> {
             .unwrap_or_default();
         let read_only = read_only || look.read_only;
         let as_text = matches!(look.editor, Some(Editor::Text | Editor::Multiline));
+        // A list of choices, unless the field is to be text, or the list
+        // cannot be had: then the field is a text box of the code, and says
+        // why on hover. On an enumeration its values stay the rule.
+        let mut choice_why = None;
+        let choices = match &look.choices {
+            Some(list) if !as_text => match &list.items {
+                Ok(items) => {
+                    let mut items = items.clone();
+                    if let Kind::Enum { values, .. } = kind {
+                        items.retain(|item| values.contains(&item.code));
+                    }
+                    Some((items, look.editor == Some(Editor::Typeahead)))
+                }
+                Err(why) => {
+                    choice_why = Some(why.clone());
+                    None
+                }
+            },
+            _ => None,
+        };
+        let pending = pending || look.choices.as_ref().is_some_and(|l| l.pending);
+        let mut not_listed = false;
 
         let mut problem = None;
         let mut response = None;
@@ -1615,6 +1686,37 @@ impl Painter<'_> {
                         .strong(),
                 );
                 r.on_hover_text(format!("{} {}", error.kind.code(), error.message));
+            }
+            (value, _)
+                if choices.is_some()
+                    && !matches!(value, Some(Value::Array(_) | Value::Object(_))) =>
+            {
+                let (items, typeahead) = choices.as_ref().expect("matched");
+                let current = value.map(value_text).unwrap_or_default();
+                let field = ChoiceField {
+                    path,
+                    key: &key,
+                    name: &name,
+                    current: &current,
+                    items,
+                    required,
+                    read_only,
+                    allow_other: look.allow_other,
+                    width: if compact {
+                        None
+                    } else if self.sized {
+                        Some(ui.available_width() - if computed || pending { 24.0 } else { 0.0 })
+                    } else {
+                        Some(ui.available_width().min(360.0))
+                    },
+                };
+                let (r, listed) = if *typeahead {
+                    self.typeahead(ui, &field)
+                } else {
+                    self.dropdown(ui, &field)
+                };
+                not_listed = !listed;
+                response = Some(r);
             }
             (_, Kind::Bool) if !as_text => {
                 let mut checked = matches!(value, Some(Value::Bool(true)));
@@ -1791,6 +1893,16 @@ impl Painter<'_> {
             if let Some(message) = &problem {
                 r.clone().on_hover_text(message);
             }
+            if let Some(why) = &choice_why {
+                r.clone().on_hover_text(why);
+            }
+            if not_listed {
+                r.clone()
+                    .on_hover_text("This value is not in the list of choices.");
+            }
+        }
+        if not_listed && !compact {
+            ui.label(RichText::new("not in the list").small().weak().italics());
         }
         if let Some(text) = formula {
             ui.label(RichText::new("fx").italics().weak())
@@ -1803,6 +1915,189 @@ impl Painter<'_> {
             crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
         }
         problem
+    }
+
+    /// A dropdown of the choices of a field: it shows the text of the item
+    /// whose code is stored, and enters the code of the item chosen. Returns
+    /// its response, and whether what is stored is in the list (nothing
+    /// stored is).
+    fn dropdown(&mut self, ui: &mut egui::Ui, f: &ChoiceField) -> (egui::Response, bool) {
+        let selected = position_of(f.items, f.current);
+        let listed = selected.is_some() || f.current.is_empty();
+        let shown = match selected {
+            Some(i) => f.items[i].text.clone(),
+            None if f.current.is_empty() => String::new(),
+            None => format!("{} (not in the list)", f.current),
+        };
+        let mut picked = None;
+        let r = ui
+            .add_enabled_ui(!f.read_only, |ui| {
+                let combo = egui::ComboBox::from_id_salt((
+                    "form_choice",
+                    &self.app.sheet,
+                    f.path.to_string(),
+                ))
+                .selected_text(shown);
+                let combo = match f.width {
+                    Some(width) if self.sized => combo.width(width),
+                    _ => combo,
+                };
+                combo
+                    .show_ui(ui, |ui| {
+                        if !f.required
+                            && ui
+                                .selectable_label(f.current.is_empty(), "(none)")
+                                .clicked()
+                        {
+                            picked = Some(String::new());
+                        }
+                        for (i, item) in f.items.iter().enumerate() {
+                            if ui
+                                .selectable_label(selected == Some(i), &item.text)
+                                .clicked()
+                            {
+                                picked = Some(item.code.clone());
+                            }
+                        }
+                    })
+                    .response
+            })
+            .inner;
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, !f.read_only, f.name));
+        if let Some(code) = picked
+            && !same_code(&code, f.current)
+        {
+            self.actions.push(FormAction::Commit(f.path.clone(), code));
+        }
+        (r, listed)
+    }
+
+    /// A typeahead of the choices of a field: a text box that shows the text
+    /// of the item whose code is stored and, while it has the focus, lists
+    /// the items whose text contains what is typed, best first. The arrows
+    /// move in the list, Enter or a click takes an item; leaving the box
+    /// takes the item whose text (or code) is what was typed, or with *allow
+    /// other values* the text itself, and otherwise refuses it with the
+    /// reason. Returns its response, and whether what is stored is listed.
+    fn typeahead(&mut self, ui: &mut egui::Ui, f: &ChoiceField) -> (egui::Response, bool) {
+        let selected = position_of(f.items, f.current);
+        let listed = selected.is_some() || f.current.is_empty();
+        let shown = selected.map_or_else(|| f.current.to_owned(), |i| f.items[i].text.clone());
+        let id = ui.make_persistent_id(("form_typeahead", f.path.to_string()));
+        let highlight_id = id.with("highlight");
+        let mut text = match self.drafts.get(f.key) {
+            Some(draft) => draft.text.clone(),
+            None => shown.clone(),
+        };
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(id)
+                .desired_width(f.width.unwrap_or(f32::INFINITY))
+                .hint_text("type to search")
+                .interactive(!f.read_only),
+        );
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, f.name));
+        if r.changed() {
+            self.drafts.insert(
+                f.key.clone(),
+                Draft {
+                    text: text.clone(),
+                    error: None,
+                },
+            );
+            ui.data_mut(|d| d.insert_temp(highlight_id, 0usize));
+        }
+        if r.gained_focus() {
+            self.actions.push(FormAction::Select(f.path.clone()));
+        }
+        let typed = self.drafts.get(f.key).map(|d| d.text.clone());
+        let matches = match &typed {
+            Some(typed) => crate::form_exprs::matching(f.items, typed),
+            None => (0..f.items.len()).collect(),
+        };
+        let mut highlight = ui
+            .data(|d| d.get_temp::<usize>(highlight_id))
+            .unwrap_or(0)
+            .min(matches.len().saturating_sub(1));
+        let mut picked: Option<String> = None;
+        if r.has_focus() {
+            let (down, up, escape) = ui.input(|i| {
+                (
+                    i.key_pressed(Key::ArrowDown),
+                    i.key_pressed(Key::ArrowUp),
+                    i.key_pressed(Key::Escape),
+                )
+            });
+            if down {
+                highlight = (highlight + 1).min(matches.len().saturating_sub(1));
+            }
+            if up {
+                highlight = highlight.saturating_sub(1);
+            }
+            ui.data_mut(|d| d.insert_temp(highlight_id, highlight));
+            if escape {
+                self.drafts.remove(f.key);
+                r.surrender_focus();
+            } else if !matches.is_empty() {
+                egui::Area::new(id.with("list"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(r.rect.left_bottom() + egui::vec2(0.0, 2.0))
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.set_min_width(r.rect.width() - 12.0);
+                            egui::ScrollArea::vertical()
+                                .max_height(240.0)
+                                .show(ui, |ui| {
+                                    for (n, &i) in matches.iter().enumerate() {
+                                        let item =
+                                            ui.selectable_label(n == highlight, &f.items[i].text);
+                                        if n == highlight && (down || up) {
+                                            item.scroll_to_me(None);
+                                        }
+                                        // Taken on the press: the box loses the
+                                        // focus when the click ends.
+                                        if item.is_pointer_button_down_on() {
+                                            picked = Some(f.items[i].code.clone());
+                                        }
+                                    }
+                                });
+                        });
+                    });
+            }
+        }
+        if r.lost_focus()
+            && picked.is_none()
+            && let Some(typed) = typed
+        {
+            let enter = ui.input(|i| i.key_pressed(Key::Enter));
+            if enter && let Some(&i) = matches.get(highlight) {
+                picked = Some(f.items[i].code.clone());
+            } else if typed.trim().is_empty() {
+                picked = Some(String::new());
+            } else if let Some(i) = crate::form_exprs::exact(f.items, &typed) {
+                picked = Some(f.items[i].code.clone());
+            } else if f.allow_other {
+                picked = Some(typed.trim().to_owned());
+            } else {
+                let error = format!("\u{201c}{}\u{201d} is not one of the choices", typed.trim());
+                self.drafts.insert(
+                    f.key.clone(),
+                    Draft {
+                        text: typed,
+                        error: Some(error),
+                    },
+                );
+            }
+        }
+        if let Some(code) = picked {
+            self.drafts.remove(f.key);
+            ui.data_mut(|d| d.remove::<usize>(highlight_id));
+            if !same_code(&code, f.current) {
+                self.actions.push(FormAction::Commit(f.path.clone(), code));
+            }
+            r.surrender_focus();
+        }
+        (r, listed)
     }
 
     // ----------------------------------------------------------- repeaters
@@ -1885,7 +2180,7 @@ impl Painter<'_> {
         // The expressions of the columns, out of layout mode: a column whose
         // *visible when* is false is left out; what the others say about the
         // column as a whole goes to each of its cells.
-        let gated = at.filter(|_| self.layout.is_none());
+        let gated = at.clone().filter(|_| self.layout.is_none());
         let mut shown = Vec::new();
         let mut heads = Vec::new();
         for (design, column) in columns {
@@ -1999,6 +2294,18 @@ impl Painter<'_> {
                                     }
                                     Some(column) => {
                                         let cell = column.cell_path(array, index);
+                                        let choices = at
+                                            .as_ref()
+                                            .filter(|_| has_text(&design.choices))
+                                            .and_then(|at| {
+                                                choice_list(
+                                                    self.app.calc(),
+                                                    &self.app.sheet,
+                                                    self.form,
+                                                    at,
+                                                    Some((&design.name, index)),
+                                                )
+                                            });
                                         let look = Look {
                                             help: None,
                                             editor: design.editor,
@@ -2006,6 +2313,8 @@ impl Painter<'_> {
                                             masked: false,
                                             align: design.align,
                                             format: design.format(),
+                                            choices,
+                                            allow_other: design.allow_other,
                                             ..Look::default()
                                         };
                                         let outer = self.look.replace((cell.clone(), look));

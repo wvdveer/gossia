@@ -76,8 +76,11 @@ fn the_procedures_and_expressions_of_forms_are_content() {
     assert!(changed(&mut b, &|c| c.enabled_when = Some("True".into())));
     assert!(changed(&mut b, &|c| c.text_colour = Some("'red'".into())));
     assert!(changed(&mut b, &|c| c.fill_colour = Some("'red'".into())));
+    assert!(changed(&mut b, &|c| c.choices = Some("['a', 'b']".into())));
     let mut column = ColumnDesign::named("qty");
     column.fill_colour = Some("'red' if this > 5 else None".into());
+    assert!(changed(&mut b, &|c| c.table_columns = vec![column.clone()]));
+    column.choices = Some("[this]".into());
     assert!(changed(&mut b, &|c| c.table_columns = vec![column.clone()]));
     assert!(
         !changed(&mut b, &|c| c.label = Some("Run".into())),

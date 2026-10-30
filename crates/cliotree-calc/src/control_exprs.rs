@@ -1,6 +1,6 @@
 //! The expressions on the controls of forms (DESIGN.md, "Forms", "Expressions
-//! on controls"): *visible when*, *enabled when*, and the text and fill
-//! colours. They run as formulas do, on the evaluation thread, at the node the
+//! on controls"): *visible when*, *enabled when*, the text and fill
+//! colours, and the *choices* of a dropdown or typeahead. They run as formulas do, on the evaluation thread, at the node the
 //! control is bound to (the root for a control that is not bound), and what
 //! they read is recorded so that an edit there runs them again. Their results
 //! are kept here, in memory: they are not data, and they are not saved.
@@ -23,14 +23,17 @@ pub enum ExprKind {
     Enabled,
     TextColour,
     FillColour,
+    /// The acceptable values of a field (DESIGN.md, "Forms", "Choices").
+    Choices,
 }
 
 impl ExprKind {
-    pub const ALL: [ExprKind; 4] = [
+    pub const ALL: [ExprKind; 5] = [
         ExprKind::Visible,
         ExprKind::Enabled,
         ExprKind::TextColour,
         ExprKind::FillColour,
+        ExprKind::Choices,
     ];
 
     fn text(self, control: &Control) -> Option<&str> {
@@ -39,6 +42,7 @@ impl ExprKind {
             ExprKind::Enabled => control.enabled_when.as_deref(),
             ExprKind::TextColour => control.text_colour.as_deref(),
             ExprKind::FillColour => control.fill_colour.as_deref(),
+            ExprKind::Choices => control.choices.as_deref(),
         }
         .map(str::trim)
         .filter(|t| !t.is_empty())
@@ -50,6 +54,7 @@ impl ExprKind {
             ExprKind::Enabled => column.enabled_when.as_deref(),
             ExprKind::TextColour => column.text_colour.as_deref(),
             ExprKind::FillColour => column.fill_colour.as_deref(),
+            ExprKind::Choices => column.choices.as_deref(),
         }
         .map(str::trim)
         .filter(|t| !t.is_empty())

@@ -1066,9 +1066,32 @@ impl ClioApp {
             }
             self.expression_error(ui, at, None, expr);
         }
+        if kind == ControlKind::Field {
+            let expr = ExprKind::Choices;
+            if option_text(
+                ui,
+                expr_label(expr),
+                &mut edited.choices,
+                expr_hint(expr),
+                false,
+            ) {
+                merge = Some(key(expr_property(expr)));
+            }
+            self.expression_error(ui, at, None, expr);
+            let node_kind = spec.as_ref().and_then(|spec| {
+                let path = edited.bound_path()?;
+                Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
+            });
+            self.choices_note(ui, at, None, node_kind.as_ref());
+            if edited.choices.is_some() {
+                ui.checkbox(&mut edited.allow_other, "Allow other values")
+                    .on_hover_text("A typeahead enters typed text that matches no item as it is");
+            }
+        }
         ui.weak(
             "Python expressions, run where the control is bound. A colour is a name, \
-             \"#rrggbb\" or (r, g, b); None is the usual colour.",
+             \"#rrggbb\" or (r, g, b); None is the usual colour. Choices is a list of \
+             values, (code, text) pairs or {\"value\": .., \"label\": ..} dicts.",
         );
 
         if kind == ControlKind::Field {
@@ -1274,22 +1297,25 @@ impl ClioApp {
         if !row_number {
             ui.horizontal(|ui| {
                 ui.label("Editor");
-                let mut text = edited.editor.is_some_and(|e| e != Editor::Auto);
+                // A cell has one line: several lines count as one.
+                let mut editor = match edited.editor.unwrap_or(Editor::Auto) {
+                    Editor::Multiline => Editor::Text,
+                    e => e,
+                };
                 let response = egui::ComboBox::from_id_salt("property_column_editor")
-                    .selected_text(if text {
-                        Editor::Text.label()
-                    } else {
-                        Editor::Auto.label()
-                    })
+                    .selected_text(editor.label())
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut text, false, Editor::Auto.label());
-                        ui.selectable_value(&mut text, true, Editor::Text.label());
+                        for e in Editor::ALL.into_iter().filter(|e| *e != Editor::Multiline) {
+                            ui.selectable_value(&mut editor, e, e.label());
+                        }
                     })
                     .response;
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Editor of the column")
                 });
-                edited.editor = text.then_some(Editor::Text);
+                if Some(editor) != edited.editor.or(Some(Editor::Auto)) {
+                    edited.editor = (editor != Editor::Auto).then_some(editor);
+                }
             });
             ui.checkbox(&mut edited.read_only, "Read only");
         }
@@ -1324,6 +1350,22 @@ impl ClioApp {
                     merge = Some(key(expr_property(expr)));
                 }
                 self.expression_error(ui, at, Some(&column.name), expr);
+            }
+            let expr = ExprKind::Choices;
+            if option_text(
+                ui,
+                expr_label(expr),
+                &mut edited.choices,
+                expr_hint(expr),
+                false,
+            ) {
+                merge = Some(key(expr_property(expr)));
+            }
+            self.expression_error(ui, at, Some(&column.name), expr);
+            self.choices_note(ui, at, Some(&column.name), kind.as_ref());
+            if edited.choices.is_some() {
+                ui.checkbox(&mut edited.allow_other, "Allow other values")
+                    .on_hover_text("A typeahead enters typed text that matches no item as it is");
             }
             ui.weak(
                 "Visible when runs once, where the table is bound, and hides the whole \
@@ -1379,6 +1421,56 @@ impl ClioApp {
             egui::RichText::new(text).small().color(color),
         ));
         response.on_hover_text(message);
+    }
+
+    /// Under the *choices* of the control at `at`, or of its column `column`
+    /// (its first row): items that are not of a shape it takes, and on a node
+    /// with an enumeration, how many items are left out because their code is
+    /// not one of its values.
+    fn choices_note(
+        &self,
+        ui: &mut egui::Ui,
+        at: &Address,
+        column: Option<&str>,
+        kind: Option<&Kind>,
+    ) {
+        let calc = self.calc();
+        let form = self.form_name();
+        let state = match column {
+            None => calc.control_expression(&self.sheet, &form, at, ExprKind::Choices),
+            Some(name) => {
+                calc.column_expression(&self.sheet, &form, at, name, Some(0), ExprKind::Choices)
+            }
+        };
+        let Some(Ok(value)) = state.and_then(|s| s.result) else {
+            return;
+        };
+        match crate::form_exprs::choice_items(&value) {
+            Err(error) => {
+                ui.label(egui::RichText::new(error).small().color(error_color(ui)));
+            }
+            Ok(items) => {
+                if let Some(Kind::Enum { values, .. }) = kind {
+                    let dropped = items
+                        .iter()
+                        .filter(|item| !values.contains(&item.code))
+                        .count();
+                    if dropped > 0 {
+                        ui.label(
+                            egui::RichText::new(match dropped {
+                                1 => "1 item is not a value of the enumeration and is left out"
+                                    .to_owned(),
+                                n => format!(
+                                    "{n} items are not values of the enumeration and are left out"
+                                ),
+                            })
+                            .small()
+                            .weak(),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// The formula of the node a field is bound to, edited here, since a form
@@ -1747,6 +1839,7 @@ fn expr_label(kind: ExprKind) -> &'static str {
         ExprKind::Enabled => "Enabled when",
         ExprKind::TextColour => "Text colour",
         ExprKind::FillColour => "Fill colour",
+        ExprKind::Choices => "Choices",
     }
 }
 
@@ -1754,6 +1847,7 @@ fn expr_hint(kind: ExprKind) -> &'static str {
     match kind {
         ExprKind::Visible | ExprKind::Enabled => "expression",
         ExprKind::TextColour | ExprKind::FillColour => "expression giving a colour",
+        ExprKind::Choices => "expression giving a list",
     }
 }
 
@@ -1765,6 +1859,7 @@ fn expr_property(kind: ExprKind) -> &'static str {
         ExprKind::Enabled => "enabled_when",
         ExprKind::TextColour => "text_colour",
         ExprKind::FillColour => "fill_colour",
+        ExprKind::Choices => "choices",
     }
 }
 
