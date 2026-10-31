@@ -102,6 +102,7 @@ impl ClioApp {
         self.follow_tabs();
         let now = ui.input(|i| i.time);
         self.sync_code(now);
+        self.watch_journals(ui.ctx());
         if !self.session.is_idle() {
             ui.ctx().request_repaint_after(Duration::from_millis(30));
         }

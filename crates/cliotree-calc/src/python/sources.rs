@@ -6,17 +6,22 @@
 //! and the prelude raises `SourceError` for the latter, which a formula shows
 //! as `#SOURCE!`.
 
+use cliotree_core::Path;
 use serde_json::{Map, Value as Json, json};
 
 use super::shared::Shared;
+use crate::engine::Depth;
 use crate::http::{self, HttpRequest, Limits};
-use crate::sources::{SourceDef, SourceKind, test};
-use crate::{database, sqlite};
+use crate::sources::{SOURCE_SHEET, SourceDef, SourceKind, test};
+use crate::{database, journal, sqlite};
 
 /// Runs one request and gives the reply as JSON text.
 pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
     let reply = match serde_json::from_str::<Json>(payload) {
-        Ok(payload) => cached(shared, op, &payload),
+        Ok(payload) => {
+            note_read(shared, op, &payload);
+            cached(shared, op, &payload)
+        }
         Err(e) => Err(format!("a request to the data sources did not parse: {e}")),
     };
     match reply {
@@ -26,12 +31,24 @@ pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
     .to_string()
 }
 
+/// A formula that reads a journal depends on it: when one of its files
+/// changes, `Calc::source_changed` runs the formula again.
+fn note_read(shared: &Shared, op: &str, payload: &Json) {
+    if op != "journal" || payload["method"].as_str() == Some("add") {
+        return;
+    }
+    if let (Some(ctx), Some(name)) = (shared.ctx(), payload["name"].as_str()) {
+        ctx.record(SOURCE_SHEET, &Path::root().key(name), Depth::Deep);
+    }
+}
+
 /// Runs a request, from the pass's cache when it is a read made by a formula
 /// or a control's expression: a `query`, or an HTTP `GET`. Procedures and the
 /// Immediate window always read afresh, and leave the cache as it is.
 fn cached(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
     let read = match op {
         "query" => true,
+        "journal" => payload["method"].as_str() != Some("add"),
         "http" => payload["method"]
             .as_str()
             .is_none_or(|m| m.eq_ignore_ascii_case("GET")),
@@ -88,6 +105,7 @@ fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         }
         "http" => call_http(shared, payload),
         "query" | "execute" => call_sql(shared, op, payload),
+        "journal" => call_journal(shared, payload),
         _ => Err(format!("{op} is not a request the data sources know")),
     }
 }
@@ -97,6 +115,12 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
     let store = shared.sources.borrow().clone();
     let name = payload["name"].as_str().unwrap_or_default();
     let def = store.get(name)?.ok_or_else(|| missing(name))?;
+    if def.kind == SourceKind::Beancount {
+        return Err(format!(
+            "{name} is a Beancount journal: it is read with transactions(), balance(), \
+             accounts() and prices(), not with HTTP methods"
+        ));
+    }
     if def.kind != SourceKind::Http {
         return Err(format!(
             "{name} is a {} source: it is read with query(), not with HTTP methods",
@@ -212,6 +236,12 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
             "{name} is an HTTP source: it is read with get(), not with {op}()"
         ));
     }
+    if def.kind == SourceKind::Beancount {
+        return Err(format!(
+            "{name} is a Beancount journal: it is read with transactions(), balance(), \
+             accounts() and prices(), not with {op}()"
+        ));
+    }
     let server = def.kind.is_database();
     let sql = payload["sql"].as_str().unwrap_or_default();
     let params = &payload["params"];
@@ -247,6 +277,43 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         false => sqlite::execute(&def, sql, params, limits),
     })?;
     Ok(Json::from(changed))
+}
+
+/// `source(name).transactions(...)` and the other methods of a journal, and
+/// `.add(...)`, which appends a transaction.
+fn call_journal(shared: &Shared, payload: &Json) -> Result<Json, String> {
+    let store = shared.sources.borrow().clone();
+    let name = payload["name"].as_str().unwrap_or_default();
+    let def = store.get(name)?.ok_or_else(|| missing(name))?;
+    if def.kind != SourceKind::Beancount {
+        let how = match def.kind {
+            SourceKind::Http => "get()",
+            _ => "query()",
+        };
+        return Err(format!(
+            "{name} is a {} source, not a Beancount journal: it is read with {how}",
+            def.kind.label()
+        ));
+    }
+    let method = payload["method"].as_str().unwrap_or_default();
+    let args = &payload["args"];
+    if method != "add" {
+        return unwatched(shared, || journal::read_call(&def, method, args));
+    }
+    if !def.writes {
+        return Err(format!(
+            "{name} does not allow writes, so add() is refused: tick Allow writes in its \
+             definition (Tools > Data sources...)"
+        ));
+    }
+    if !shared.side_effects.get() {
+        return Err(
+            "add() changes the journal, so it can be used only in a button procedure or \
+             the Immediate window, not in a formula"
+                .to_owned(),
+        );
+    }
+    unwatched(shared, || journal::append(&def, args))
 }
 
 /// Runs a call to a data source with the formula's watchdog paused: waiting

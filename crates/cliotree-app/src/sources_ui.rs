@@ -14,6 +14,9 @@ use egui::RichText;
 use crate::app::ClioApp;
 use crate::view::error_color;
 
+/// How often `watch_journals` looks at the journals' files.
+const JOURNAL_CHECK: Duration = Duration::from_secs(2);
+
 /// The panel, while it is open.
 #[derive(Debug, Default)]
 pub struct SourcesPanel {
@@ -175,7 +178,7 @@ impl SourceForm {
                     .ok_or("the port must be a whole number from 1 to 65535")?,
             ),
         };
-        def.pool = match self.pooling && def.kind != SourceKind::Sqlite {
+        def.pool = match self.pooling && !def.kind.is_file() {
             false => None,
             true => Some(
                 self.pool
@@ -230,7 +233,7 @@ impl SourceForm {
         def.url = keep(http, def.url.take());
         def.test_path = keep(http, def.test_path.take());
         def.key_name = keep(keyed, def.key_name.take());
-        def.path = keep(kind == SourceKind::Sqlite, def.path.take());
+        def.path = keep(kind.is_file(), def.path.take());
         if !http {
             def.headers.clear();
             def.auth = HttpAuth::None;
@@ -244,9 +247,11 @@ impl SourceForm {
             &mut def.key_name,
             &mut def.path,
         ] {
-            if field.as_deref().is_some_and(|s| s.trim().is_empty()) {
-                *field = None;
-            }
+            *field = field
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
         }
         match def.problems().into_iter().next() {
             Some(why) => Err(why),
@@ -415,6 +420,14 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                 SourceKind::Sqlite => {
                     text_row(ui, "File", &mut form.draft.path, "C:\\data\\sales.db");
                 }
+                SourceKind::Beancount => {
+                    text_row(
+                        ui,
+                        "Journal file",
+                        &mut form.draft.path,
+                        "C:\\books\\main.beancount",
+                    );
+                }
                 SourceKind::Odbc => {
                     text_row(
                         ui,
@@ -464,7 +477,7 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                 }
             }
 
-            if kind != SourceKind::Sqlite {
+            if !kind.is_file() {
                 ui.label("Pooling");
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut form.pooling, "Keep connections, at most");
@@ -480,7 +493,7 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
             ui.checkbox(&mut form.draft.writes, "Allow writes")
                 .on_hover_text(
                     "Off: SQLite is opened read-only, database sessions are read-only, \
-                 and HTTP may only GET. ODBC asks the driver for read-only access, which \
+                 HTTP may only GET, and nothing is added to a Beancount journal. ODBC asks the driver for read-only access, which \
                  not every driver honours: use a read-only account where it matters.",
                 );
             ui.end_row();
@@ -492,6 +505,37 @@ impl ClioApp {
     pub fn open_sources(&mut self) {
         if self.sources_panel.is_none() {
             self.sources_panel = Some(SourcesPanel::default());
+        }
+    }
+
+    /// Every two seconds, looks at the files of the Beancount journals that
+    /// formulas have read; when one changed, the formulas that read it run
+    /// again (DESIGN.md, "Beancount journals").
+    pub fn watch_journals(&mut self, ctx: &egui::Context) {
+        if self
+            .journals_checked
+            .is_some_and(|t| t.elapsed() < JOURNAL_CHECK)
+        {
+            return;
+        }
+        self.journals_checked = Some(Instant::now());
+        let names = self.calc().sources_read();
+        if names.is_empty() {
+            return;
+        }
+        ctx.request_repaint_after(JOURNAL_CHECK);
+        let mut changed = false;
+        for name in names {
+            let Ok(Some(def)) = self.user.sources.get(&name) else {
+                continue;
+            };
+            if def.kind == SourceKind::Beancount && cliotree_calc::journal::changed(&def) {
+                self.session.calc_mut().source_changed(&name);
+                changed = true;
+            }
+        }
+        if changed {
+            self.session.tick();
         }
     }
 

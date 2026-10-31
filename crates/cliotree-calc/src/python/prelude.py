@@ -230,6 +230,114 @@ class Source:
         procedure or the Immediate window."""
         return _source_call('execute', self._sql(sql, params))
 
+    # A Beancount journal (DESIGN.md, "Beancount journals"). Amounts are
+    # exact `Decimal`s and dates are `date`s.
+
+    def transactions(self, account=None, since=None, until=None, payee=None,
+                     tag=None, link=None):
+        """A Beancount journal: its transactions in date order, as dicts with
+        date, flag, payee, narration, tags, links, meta, file, line, padding
+        and postings (each with account, amount, currency, cost,
+        cost_currency, cost_date, price, price_currency, meta and auto).
+        `account` includes its sub-accounts; `since` and `until` are dates,
+        both included. A formula may use it; it runs again when the journal
+        changes."""
+        return self._journal('transactions', {
+            'account': account, 'since': _day(since), 'until': _day(until),
+            'payee': payee, 'tag': tag, 'link': link,
+        })
+
+    def balance(self, account, until=None):
+        """A Beancount journal: what `account` and its sub-accounts hold, up
+        to and including the date `until`, as a dict of currency to
+        `Decimal`."""
+        return self._journal('balance', {'account': account, 'until': _day(until)})
+
+    def accounts(self):
+        """A Beancount journal: its accounts, as dicts with account, open,
+        close, currencies and booking."""
+        return self._journal('accounts', {})
+
+    def prices(self, currency=None):
+        """A Beancount journal: its price directives, as dicts with date,
+        currency, amount and quote."""
+        return self._journal('prices', {'currency': currency})
+
+    def errors(self):
+        """A Beancount journal: what is wrong with it (postings that do not
+        balance, accounts not open, balance assertions that fail, plugins
+        that are not run), each with its file and line."""
+        return self._journal('errors', {})
+
+    def options(self):
+        """A Beancount journal: its options, as a dict."""
+        return self._journal('options', {})
+
+    def add(self, date, narration, postings, payee=None, flag='*', tags=(),
+            links=(), meta=None, kind='original'):
+        """A Beancount journal that allows writes: appends one transaction
+        to the end of its main file, from a button procedure or the
+        Immediate window. Each posting is a tuple (account, amount, currency)
+        or a dict with account, amount, currency, and optionally cost,
+        cost_currency, price and price_currency; one may leave out its
+        amount. Nothing is written unless the postings balance and the
+        accounts are open. Gives the file, the line and the text added.
+
+        Nothing ClioTree wrote is ever edited or deleted: `kind` is
+        'original', 'adjustment' or 'reversal', and the narration ends with
+        [ClioTree generated <kind> transaction]. `reversal()` and
+        `adjustment()` work out the postings of a correction."""
+        items = []
+        for p in PLAIN(postings):
+            if isinstance(p, (list, tuple)):
+                p = dict(zip(('account', 'amount', 'currency'), p))
+            if not isinstance(p, dict):
+                raise TypeError('a posting is a tuple (account, amount, currency) or a dict')
+            items.append({k: _to_journal(v) for k, v in p.items()})
+        return self._journal('add', {
+            'date': _day(date), 'narration': narration, 'payee': payee,
+            'flag': flag, 'tags': list(PLAIN(tags)), 'links': list(PLAIN(links)),
+            'meta': {str(k): _to_journal(v) for k, v in (PLAIN(meta) or {}).items()},
+            'postings': items, 'kind': kind,
+        })
+
+    def reversal(self, transaction):
+        """The postings that undo `transaction` (a dict from
+        `transactions()`), for `add(..., kind='reversal')`. A formula may use
+        it: it only works them out."""
+        return [
+            {'account': p['account'], 'amount': -p['amount'], 'currency': p['currency']}
+            for p in transaction['postings'] if p['amount'] is not None
+        ]
+
+    def adjustment(self, existing, wanted):
+        """The postings that take what `existing` (transactions from
+        `transactions()`, such as an original and the adjustments made to it
+        since) adds up to, account by account, to what `wanted` says
+        (postings as for `add()`), for `add(..., kind='adjustment')`. Empty
+        when nothing needs adjusting. A formula may use it: it only works
+        them out."""
+        import decimal
+        totals = {}
+        for t in PLAIN(existing):
+            for p in t['postings']:
+                if p['amount'] is not None:
+                    key = (p['account'], p['currency'])
+                    totals[key] = totals.get(key, decimal.Decimal(0)) - p['amount']
+        for p in PLAIN(wanted):
+            if isinstance(p, (list, tuple)):
+                p = dict(zip(('account', 'amount', 'currency'), p))
+            key = (p['account'], p['currency'])
+            totals[key] = totals.get(key, decimal.Decimal(0)) + decimal.Decimal(str(p['amount']))
+        return [
+            {'account': account, 'amount': amount, 'currency': currency}
+            for (account, currency), amount in totals.items() if amount != 0
+        ]
+
+    def _journal(self, method, args):
+        return _from_journal(_source_call(
+            'journal', {'name': self.name, 'method': method, 'args': args}))
+
     def _sql(self, sql, params):
         if not isinstance(sql, str):
             raise TypeError('the SQL of a query is text')
@@ -265,6 +373,55 @@ class Source:
             payload['body'] = str(data)
         what = '%s: %s %s' % (self.name, method, path or '(the base URL)')
         return Response(_source_call('http', payload), what)
+
+
+def _day(value):
+    """A date for a journal, as ISO text: a `date` or text such as
+    '2026-01-31'; None stays None."""
+    value = PLAIN(value)
+    if value is None or isinstance(value, str):
+        return value
+    import datetime
+    if isinstance(value, datetime.datetime):
+        return value.date().isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    raise TypeError('%r is not a date' % (value,))
+
+
+def _to_journal(value):
+    """A value for a journal: numbers as exact decimal text, dates as ISO
+    text."""
+    value = PLAIN(value)
+    import decimal
+    import datetime
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (int, decimal.Decimal)):
+        return {'$dec': str(value)}
+    if isinstance(value, float):
+        # The shortest text that reads back as the same float: 0.1, not
+        # 0.1000000000000000055511151231257827.
+        return {'$dec': repr(value)}
+    if isinstance(value, datetime.date):
+        return {'$date': _day(value)}
+    raise TypeError('%s cannot go into a journal' % type(value).__name__)
+
+
+def _from_journal(value):
+    """What a journal gives: `{"$dec": ...}` as `Decimal` and `{"$date": ...}`
+    as `date`, all the way down."""
+    if isinstance(value, list):
+        return [_from_journal(v) for v in value]
+    if isinstance(value, dict):
+        if len(value) == 1 and '$dec' in value:
+            import decimal
+            return decimal.Decimal(value['$dec'])
+        if len(value) == 1 and '$date' in value:
+            import datetime
+            return datetime.date.fromisoformat(value['$date'])
+        return {k: _from_journal(v) for k, v in value.items()}
+    return value
 
 
 def _to_sql(value):

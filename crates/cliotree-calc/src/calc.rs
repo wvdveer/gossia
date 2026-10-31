@@ -1225,6 +1225,30 @@ impl Calc {
         }
     }
 
+    /// Marks as out of date every formula that read the data source `name`,
+    /// and what read their results: for a journal whose file changed.
+    pub fn source_changed(&mut self, name: &str) {
+        self.mark_dirty_from(crate::sources::SOURCE_SHEET, &Path::root().key(name));
+    }
+
+    /// The data sources that formulas read as dependencies (journals), each
+    /// once.
+    pub fn sources_read(&self) -> Vec<String> {
+        let mut names: IndexSet<String> = IndexSet::new();
+        for sheet in self.sheets.values() {
+            for formula in sheet.formulas.by_path.values() {
+                for dep in &formula.deps {
+                    if dep.loc.sheet == crate::sources::SOURCE_SHEET
+                        && let Some(Segment::Key(name)) = dep.loc.path.segments().first()
+                    {
+                        names.insert(name.clone());
+                    }
+                }
+            }
+        }
+        names.into_iter().collect()
+    }
+
     // ------------------------------------------------------- evaluating
 
     /// A consistent view to evaluate. Take it, evaluate it anywhere, and hand

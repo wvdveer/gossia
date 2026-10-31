@@ -91,6 +91,9 @@ pub struct ClioApp {
     pub pick: Option<crate::pick::Pick>,
     /// When the last place was picked.
     pub picked_at: Option<std::time::Instant>,
+    /// When the Beancount journals that formulas read were last checked for
+    /// changes (`sources_ui::watch_journals`).
+    pub journals_checked: Option<std::time::Instant>,
     pub insert_function: Option<InsertFunction>,
     pub summary: Summary,
     pub show_issues: bool,
@@ -202,6 +205,7 @@ impl ClioApp {
             completion: CompletionUi::default(),
             pick: None,
             picked_at: None,
+            journals_checked: None,
             insert_function: None,
             summary: Summary::default(),
             show_issues: false,

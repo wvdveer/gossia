@@ -486,3 +486,150 @@ fn sqlite_writes_need_allow_writes_and_the_immediate_window() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn formulas_read_a_beancount_journal() {
+    let (dir, main) = crate::journal::journal_tests::books("python");
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::journal::journal_tests::def(&main, true), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("x", "source('Books').balance('Assets:Bank')['AUD']");
+    b.formula(
+        "a",
+        "len(source('Books').transactions(account='Assets:Debtors'))",
+    );
+    b.formula(
+        "name",
+        "str(source('Books').transactions(tag='sale')[0]['postings'][1]['amount'])",
+    );
+    b.formula(
+        "text",
+        "repr(source('Books').transactions(tag='sale')[0]['date'])",
+    );
+    b.formula("note", "source('Books').query('SELECT 1')");
+    b.formula(
+        "flag",
+        "bool(source('Books').add('2025-11-01', 'x', [('Assets:Bank', 1, 'AUD'), ('Revenue:Sales', None, None)]))",
+    );
+    b.run();
+    assert_eq!(b.get("x"), Some(Value::Float(4000.0)), "{}", b.message("x"));
+    assert_eq!(b.get("a"), Some(Value::Int(2)));
+    assert_eq!(b.get("name"), Some(Value::Str("-1000.00".into())));
+    assert_eq!(
+        b.get("text"),
+        Some(Value::Str("datetime.date(2025, 10, 17)".into()))
+    );
+    assert!(
+        b.message("note").contains("Beancount journal"),
+        "{}",
+        b.message("note")
+    );
+    assert!(
+        b.message("flag").contains("button procedure"),
+        "{}",
+        b.message("flag")
+    );
+    assert!(
+        !std::fs::read_to_string(&main)
+            .unwrap()
+            .contains("2025-11-01")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_changed_journal_runs_again_only_the_formulas_that_read_it() {
+    let (dir, main) = crate::journal::journal_tests::books("rerun");
+    let store = SourceStore::in_memory();
+    store
+        .save(
+            crate::journal::journal_tests::def(&main, false),
+            None,
+            false,
+        )
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("a", "len(source('Books').transactions())");
+    b.formula("name", "'unrelated'");
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(5)));
+    assert_eq!(b.calc.sources_read(), vec!["Books".to_owned()]);
+    std::fs::write(
+        dir.join("Expenses").join("power.beancount"),
+        "2025-10-05 * \"Power\"\n  Expenses:Rent  100.00 AUD\n  Assets:Bank\n",
+    )
+    .unwrap();
+    let def = store.get("Books").unwrap().unwrap();
+    assert!(crate::journal::changed(&def));
+    b.calc.source_changed("Books");
+    assert_eq!(b.run(), 1, "only the formula that reads the journal");
+    assert_eq!(b.get("a"), Some(Value::Int(6)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_immediate_window_adds_marked_transactions_and_works_out_corrections() {
+    let (dir, main) = crate::journal::journal_tests::books("pyadd");
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::journal::journal_tests::def(&main, true), None, false)
+        .unwrap();
+    let mut s = session(&store);
+    let added = immediate(
+        &mut s,
+        "source('Books').add('2025-10-17', 'Invoice #10766', \
+         [('Assets:Debtors:Bloggs', 1000, 'AUD'), ('Revenue:Sales', None, None)], \
+         links=['inv-10766'])['line']",
+    );
+    assert!(added.is_ok(), "{added:?}");
+    // The adjustment a formula would work out: a 10% discount.
+    let wanted = immediate(
+        &mut s,
+        "(lambda j: [(p['account'], str(p['amount'])) for p in j.adjustment(\
+         j.transactions(link='inv-10766'), \
+         [('Assets:Debtors:Bloggs', 900, 'AUD'), ('Revenue:Sales', -900, 'AUD')])])\
+         (source('Books'))",
+    );
+    assert_eq!(
+        wanted,
+        Ok("[['Assets:Debtors:Bloggs', '-100'], ['Revenue:Sales', '100']]".to_owned())
+    );
+    let posted = immediate(
+        &mut s,
+        "(lambda j: j.add('2025-10-18', '10% Discount granted on Invoice #10766', \
+         j.adjustment(j.transactions(link='inv-10766'), \
+         [('Assets:Debtors:Bloggs', 900, 'AUD'), ('Revenue:Sales', -900, 'AUD')]), \
+         links=['inv-10766'], kind='adjustment')['text'].splitlines()[0])(source('Books'))",
+    );
+    assert_eq!(
+        posted,
+        Ok(
+            "'2025-10-18 * \"10% Discount granted on Invoice #10766 [ClioTree generated \
+            adjustment transaction]\" ^inv-10766'"
+                .to_owned()
+        )
+    );
+    let reversed = immediate(
+        &mut s,
+        "(lambda j: j.add('2025-10-19', 'Invoice #10766 cancelled', \
+         j.reversal(j.transactions(link='inv-10766')[0]), kind='reversal') and \
+         [t['generated'] for t in j.transactions(since='2025-10-17', until='2025-10-19') \
+         if t['generated']])(source('Books'))",
+    );
+    assert_eq!(
+        reversed,
+        Ok("['original', 'adjustment', 'reversal']".to_owned())
+    );
+    assert_eq!(
+        immediate(
+            &mut s,
+            "str(source('Books').balance('Assets:Debtors:Bloggs')['AUD'])"
+        ),
+        Ok("'-100.00'".to_owned())
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

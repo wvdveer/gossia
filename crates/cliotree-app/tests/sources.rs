@@ -232,3 +232,58 @@ fn f9_runs_the_formulas_again_and_they_read_the_source_afresh() {
         Some(cliotree_core::Value::Str("call 3".into()))
     );
 }
+
+/// A formula that reads a Beancount journal shows what is in it, and runs
+/// again by itself when the journal's file changes.
+#[test]
+fn a_formula_follows_a_beancount_journal_as_its_file_changes() {
+    let dir = std::env::temp_dir().join(format!("cliotree-app-journal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("books.beancount");
+    let books = "2025-01-01 open Assets:Bank AUD\n2025-01-01 open Equity:Opening AUD\n\n\
+                 2025-01-02 * \"Opening\"\n  Assets:Bank  100.00 AUD\n  Equity:Opening\n";
+    std::fs::write(&main, books).unwrap();
+    let mut harness = window();
+    let mut def = SourceDef::new("Books", SourceKind::Beancount);
+    def.path = Some(main.display().to_string());
+    harness.state().user.sources.save(def, None, false).unwrap();
+    let path: cliotree_core::Path = "customer.name".parse().unwrap();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula(
+            "Orders",
+            &path,
+            "str(source('Books').balance('Assets:Bank')['AUD'])",
+        )
+        .unwrap();
+    settle(&mut harness);
+    let name = |h: &Harness<'_, ClioApp>| {
+        h.state()
+            .calc()
+            .data("Orders")
+            .unwrap()
+            .get(&path)
+            .map(|n| n.value().clone())
+    };
+    assert_eq!(
+        name(&harness),
+        Some(cliotree_core::Value::Str("100.00".into()))
+    );
+    std::fs::write(
+        &main,
+        format!("{books}\n2025-01-03 * \"More\"\n  Assets:Bank  50.00 AUD\n  Equity:Opening\n"),
+    )
+    .unwrap();
+    // The next check is due: the window looks at the file on its next frame.
+    harness.state_mut().journals_checked = None;
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(
+        name(&harness),
+        Some(cliotree_core::Value::Str("150.00".into()))
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

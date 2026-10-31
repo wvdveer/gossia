@@ -230,10 +230,37 @@ pub(super) fn to_value(
     if obj.is_instance(&classes.date, vm)? {
         return date_from_py(vm, obj);
     }
+    // A `Decimal` (what a journal gives) is stored as a number. Matched by
+    // name so that the decimal module is not loaded before anyone uses it.
+    if is_decimal(vm, obj) {
+        let x = obj.try_float(vm)?.to_f64();
+        if x.is_finite() {
+            return Ok(Value::Float(x));
+        }
+        return Err(Bad::Value(
+            ErrorKind::Value,
+            format!("{x} cannot be stored: NaN and infinity are not allowed"),
+        ));
+    }
     Err(Bad::Value(
         ErrorKind::Type,
         format!("a {} cannot be stored in a node", obj.class().name()),
     ))
+}
+
+/// Whether `obj` is a `decimal.Decimal`.
+fn is_decimal(vm: &VirtualMachine, obj: &PyObject) -> bool {
+    let class = obj.class();
+    class.name().to_string() == "Decimal"
+        && class
+            .as_object()
+            .get_attr("__module__", vm)
+            .ok()
+            .and_then(|m| {
+                m.downcast_ref::<PyStr>()
+                    .map(|s| s.to_string_lossy().into_owned())
+            })
+            .is_some_and(|m| m == "decimal" || m == "_pydecimal")
 }
 
 fn array_of(shared: &Rc<Shared>, vm: &VirtualMachine, items: &[PyObjectRef]) -> Result<Value, Bad> {

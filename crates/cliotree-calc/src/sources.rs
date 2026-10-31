@@ -21,6 +21,11 @@ pub const SOURCES_FILE: &str = "data-sources.json";
 /// The version of the file that this build writes.
 pub const SOURCES_VERSION: u64 = 1;
 
+/// The tab name under which a formula's reads of a data source are recorded
+/// as dependencies, at the path of the source's name: a name no tab can have,
+/// so that marking `source_changed` reruns only the formulas that read it.
+pub const SOURCE_SHEET: &str = "\u{1}sources";
+
 /// What a source connects to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -31,15 +36,18 @@ pub enum SourceKind {
     Mariadb,
     /// Any database with an ODBC driver: Windows only.
     Odbc,
+    /// A Beancount journal (plain text accounting): a file.
+    Beancount,
 }
 
 impl SourceKind {
-    pub const ALL: [SourceKind; 5] = [
+    pub const ALL: [SourceKind; 6] = [
         SourceKind::Http,
         SourceKind::Sqlite,
         SourceKind::Postgres,
         SourceKind::Mariadb,
         SourceKind::Odbc,
+        SourceKind::Beancount,
     ];
 
     /// The kinds this build can use: ODBC only on Windows, where the driver
@@ -58,6 +66,7 @@ impl SourceKind {
             SourceKind::Postgres => "PostgreSQL",
             SourceKind::Mariadb => "MariaDB",
             SourceKind::Odbc => "ODBC",
+            SourceKind::Beancount => "Beancount journal",
         }
     }
 
@@ -69,6 +78,7 @@ impl SourceKind {
             SourceKind::Postgres => "postgres",
             SourceKind::Mariadb => "mariadb",
             SourceKind::Odbc => "odbc",
+            SourceKind::Beancount => "beancount",
         }
     }
 
@@ -93,6 +103,12 @@ impl SourceKind {
     /// The kinds `database` serves: the servers and ODBC.
     pub fn is_database(self) -> bool {
         self.is_database_server() || self == SourceKind::Odbc
+    }
+
+    /// The kinds that are a file on this computer: no pooling, no
+    /// credentials, and a path.
+    pub fn is_file(self) -> bool {
+        matches!(self, SourceKind::Sqlite | SourceKind::Beancount)
     }
 }
 
@@ -231,7 +247,8 @@ pub struct SourceDef {
     /// What the Test fetches, below the base URL. Absent: the base URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_path: Option<String>,
-    /// SQLite: the file.
+    /// SQLite and Beancount: the file (for Beancount, the journal's main
+    /// file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// ODBC: the name of a DSN, or a connection string (`Driver={...};...`),
@@ -355,6 +372,14 @@ impl SourceDef {
                     problems.push("the port must be from 1 to 65535".to_owned());
                 }
             }
+            SourceKind::Beancount => {
+                if filled(&self.path).is_none() {
+                    problems.push("a Beancount source needs the path of its journal".to_owned());
+                }
+                if self.pool.is_some() {
+                    problems.push("a Beancount source cannot pool connections".to_owned());
+                }
+            }
             SourceKind::Odbc => match filled(&self.connection) {
                 None => {
                     problems.push("an ODBC source needs a DSN or a connection string".to_owned())
@@ -406,6 +431,9 @@ impl SourceDef {
                 }
             }
             SourceKind::Sqlite => format!("sqlite:{}", filled(&self.path).unwrap_or("(no file)")),
+            SourceKind::Beancount => {
+                format!("beancount:{}", filled(&self.path).unwrap_or("(no journal)"))
+            }
             SourceKind::Odbc => {
                 let connection = filled(&self.connection).unwrap_or("(no DSN)");
                 match user {
@@ -773,6 +801,7 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
     }
     match def.kind {
         SourceKind::Sqlite => crate::sqlite::test(def, timeout),
+        SourceKind::Beancount => crate::journal::test(def),
         SourceKind::Http => crate::http::test(def, timeout),
         SourceKind::Postgres | SourceKind::Mariadb | SourceKind::Odbc => {
             crate::database::test(def, timeout)

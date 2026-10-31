@@ -91,3 +91,18 @@ fn saving_adds_renames_and_refuses_a_taken_name() {
     assert_eq!(names, ["Web"]);
     assert_eq!(app.copy_name("Web"), "Web_copy");
 }
+
+#[test]
+fn a_beancount_journal_keeps_its_file_and_never_pools() {
+    let mut form = SourceForm::edit(postgres());
+    form.draft.kind = SourceKind::Beancount;
+    form.draft.path = Some(" C:/books/main.beancount ".into());
+    form.pooling = true;
+    form.pool = "3".into();
+    let def = form.definition().unwrap();
+    assert_eq!(def.path.as_deref(), Some("C:/books/main.beancount"));
+    assert_eq!(def.pool, None);
+    assert_eq!(def.password, None);
+    assert_eq!(def.host, None);
+    assert!(def.problems().is_empty(), "{:?}", def.problems());
+}
