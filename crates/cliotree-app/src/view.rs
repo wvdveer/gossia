@@ -224,6 +224,9 @@ impl ClioApp {
             ctx.copy_text(text);
         }
         let typing_somewhere = ctx.text_edit_focused();
+        if self.picking() && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            self.cancel_pick();
+        }
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
         let redo_y = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
         let redo_z = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
@@ -627,11 +630,44 @@ impl ClioApp {
             if ui.button(fx).on_hover_text("Insert Function").clicked() {
                 self.open_insert_function();
             }
-            self.bar_text(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                self.pick_button(ui);
+                self.bar_text(ui);
+            });
         });
-        if let Some(notice) = &self.notice {
+        if self.picking() {
+            ui.label(RichText::new(crate::pick::PICK_HINT).italics());
+        } else if let Some(notice) = &self.notice {
             let color = error_color(ui);
             ui.colored_label(color, notice);
+        }
+    }
+
+    /// The button right of the formula bar that picks a place for the formula
+    /// being typed; pressed while picking, when a click stops it.
+    fn pick_button(&mut self, ui: &mut egui::Ui) {
+        let picking = self.picking();
+        let enabled = picking || self.editing.as_ref().is_some_and(|e| e.sheet == self.sheet);
+        let text = if crate::icons::ready(ui.ctx()) {
+            RichText::new(crate::icons::CROSSHAIR)
+                .family(egui::FontFamily::Name(crate::style::ICONS.into()))
+        } else {
+            RichText::new("@")
+        };
+        let name = "Pick a place";
+        let response = ui
+            .add_enabled(enabled, egui::Button::new(text).selected(picking))
+            .on_hover_text(
+                "Pick a place: click a node, on this tab or another, to put its address \
+                 into the formula where the cursor is",
+            );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+        if response.clicked() {
+            if picking {
+                self.cancel_pick();
+            } else {
+                self.begin_pick();
+            }
         }
     }
 
@@ -639,6 +675,19 @@ impl ClioApp {
     /// starts editing; Enter enters, Esc cancels.
     fn bar_text(&mut self, ui: &mut egui::Ui) {
         let id = egui::Id::unique("formula_bar_text");
+        if let Some(pick) = &self.pick {
+            // The text set aside while a place is picked.
+            let mut shown = pick.editing.text.clone();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut shown)
+                    .id(id)
+                    .desired_width(f32::INFINITY)
+                    .code_editor()
+                    .interactive(false),
+            );
+            named(&response, "Formula bar");
+            return;
+        }
         let column = self.column_selected().cloned();
         let Some(path) = column
             .as_ref()
@@ -819,6 +868,8 @@ impl ClioApp {
                 .id_salt(("grid", display.type_column, display.formula_column))
                 .striped(true)
                 .resizable(true)
+                // A click anywhere in a row selects it, not only on its name.
+                .sense(Sense::click())
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .max_scroll_height(f32::INFINITY)
                 .column(Column::initial(300.0).at_least(120.0).clip(true));
@@ -853,6 +904,10 @@ impl ClioApp {
                         let selected = self.selection.as_ref() == Some(&row.path);
                         table_row.set_selected(selected);
                         self.draw_row(&mut table_row, row, selected, &mut editing, &mut actions);
+                        // The rest of the row, around what its cells show.
+                        if table_row.response().clicked() {
+                            actions.push(Action::Select(row.path.clone()));
+                        }
                     });
                 });
         }
@@ -864,6 +919,24 @@ impl ClioApp {
     }
 
     pub(crate) fn apply(&mut self, action: Action) {
+        if self.picking() {
+            // A click on a place picks it; opening and closing nodes still
+            // works, to get to it; nothing else does.
+            match action {
+                Action::Select(path)
+                | Action::Extend(path)
+                | Action::BeginEdit(path)
+                | Action::EnterText(path, _) => {
+                    self.finish_pick(&path);
+                    return;
+                }
+                Action::Toggle(_) | Action::Reveal(_) | Action::ToggleTabular(..) => {}
+                _ => return,
+            }
+        }
+        if matches!(action, Action::BeginEdit(_)) && self.just_picked() {
+            return;
+        }
         match action {
             Action::Select(path) => {
                 self.select(&path);

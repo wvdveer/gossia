@@ -88,7 +88,7 @@ def IF(condition, then, otherwise=None):
     return then if condition else otherwise
 
 
-def VLOOKUP(key, items, key_field, result_field):
+def LOOKUP(key, items, key_field, result_field):
     """`result_field` of the first of `items` whose `key_field` equals `key`.
     No such item raises `KeyError` (`#REF!`)."""
     for item in items:

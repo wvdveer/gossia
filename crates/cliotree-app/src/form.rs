@@ -478,6 +478,7 @@ impl ClioApp {
             FormAction::Button(label, procedure) => {
                 let _ = self.click_button(&procedure, &label);
             }
+            FormAction::Select(path) if self.picking() => self.finish_pick(&path),
             FormAction::Select(path) => self.selection = Some(path),
             FormAction::Add(array) => {
                 let before = self.array_len(&array);

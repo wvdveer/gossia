@@ -296,13 +296,11 @@ fn the_excel_named_functions_are_listed_by_group_and_found_by_search() {
     harness.run();
     harness.get_by_label("Search functions").focus();
     harness.run();
-    harness
-        .get_by_label("Search functions")
-        .type_text("vlookup");
+    harness.get_by_label("Search functions").type_text("lookup");
     harness.run();
-    harness.get_by_label("VLOOKUP").click();
+    harness.get_by_label("LOOKUP").click();
     harness.run();
-    harness.get_by_label("VLOOKUP(key, items, key_field, result_field)");
+    harness.get_by_label("LOOKUP(key, items, key_field, result_field)");
 }
 
 #[test]
@@ -1217,4 +1215,76 @@ fn a_tab_is_moved_by_dragging_it() {
     );
     ctrl(&mut harness, Key::Z);
     assert_eq!(order(&harness), before);
+}
+
+#[test]
+fn a_place_on_another_tab_is_picked_into_the_formula_where_the_cursor_was() {
+    let mut harness = window();
+    click(&mut harness, "0.21");
+    click_bar(&mut harness);
+    select_all(&mut harness);
+    harness.get_by_label("Formula bar").type_text("=len(");
+    harness.run();
+    click(&mut harness, "Pick a place");
+    assert!(harness.state().picking());
+    harness.get_by_label(cliotree_app::pick::PICK_HINT);
+    click(&mut harness, "Prices");
+    click(&mut harness, "EUR");
+    // Back on the tab of the formula, with the address put in.
+    assert!(!harness.state().picking());
+    assert_eq!(harness.state().sheet, "Orders");
+    assert_eq!(bar(&harness), "=len(Prices.currency");
+    harness.get_by_label("Formula bar").type_text(") / 100");
+    harness.run();
+    press(&mut harness, Key::Enter);
+    settle(&mut harness);
+    assert_eq!(
+        harness
+            .state()
+            .calc()
+            .formula_text("Orders", &"tax_rate".parse().unwrap())
+            .as_deref(),
+        Some("len(Prices.currency) / 100")
+    );
+    harness.get_by_label("0.03");
+}
+
+#[test]
+fn a_place_on_the_same_tab_is_picked_and_esc_stops_picking() {
+    let mut harness = window();
+    click(&mut harness, "0.21");
+    click_bar(&mut harness);
+    select_all(&mut harness);
+    harness.get_by_label("Formula bar").type_text("=1 + ");
+    harness.run();
+    click(&mut harness, "Pick a place");
+    click(&mut harness, "52.0");
+    assert_eq!(bar(&harness), "=1 + Orders.subtotal");
+    // Picking again, then Esc: the text is as it was, still being typed.
+    click(&mut harness, "Pick a place");
+    press(&mut harness, Key::Escape);
+    assert!(!harness.state().picking());
+    assert_eq!(bar(&harness), "=1 + Orders.subtotal");
+    assert!(harness.state().editing.is_some());
+}
+
+#[test]
+fn a_click_anywhere_in_a_row_of_the_tree_selects_it() {
+    let mut harness = window();
+    // Right of the name, in the empty Formula column of the row.
+    let name = harness.get_by_label("customer").rect();
+    let at = egui::pos2(1000.0, name.center().y);
+    harness.hover_at(at);
+    harness.run();
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        harness.run();
+    }
+    assert_eq!(harness.state().selection, Some("customer".parse().unwrap()));
+    harness.get_by_label("Orders.customer");
 }

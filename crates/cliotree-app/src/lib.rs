@@ -32,6 +32,7 @@ pub mod immediate;
 pub mod import;
 pub mod inspector;
 pub mod options;
+pub mod pick;
 pub mod prefs;
 pub mod raw;
 pub mod replace_inside;

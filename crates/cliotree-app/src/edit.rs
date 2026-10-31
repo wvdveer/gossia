@@ -54,6 +54,9 @@ impl ClioApp {
 
     /// Starts editing the selected cell, with its own text or `initial`.
     pub fn begin_editing(&mut self, path: &Path, in_cell: bool, initial: Option<String>) -> bool {
+        if self.picking() {
+            return false;
+        }
         if !self.can_edit(path) {
             self.notice = Some(self.why_read_only(path));
             return false;
@@ -80,6 +83,9 @@ impl ClioApp {
 
     /// Starts editing the formula of the selected column, in the formula bar.
     pub fn begin_editing_column(&mut self) -> bool {
+        if self.picking() {
+            return false;
+        }
         let Some(column) = self.column_selected().cloned() else {
             return false;
         };

@@ -16,7 +16,7 @@ pub const PYTHON: &str = include_str!("functions.py");
 /// The functions the source defines, which the engine puts in the names a
 /// formula sees.
 pub const NAMES: &[&str] = &[
-    "SUM", "AVERAGE", "MIN", "MAX", "COUNT", "IF", "VLOOKUP", "FILTER", "SORT", "UNIQUE", "CONCAT",
+    "SUM", "AVERAGE", "MIN", "MAX", "COUNT", "IF", "LOOKUP", "FILTER", "SORT", "UNIQUE", "CONCAT",
     "TEXTJOIN", "TEXT", "NA",
 ];
 
@@ -135,9 +135,9 @@ const FUNCTIONS: &[Function] = &[
         Group::Logic,
     ),
     f(
-        "VLOOKUP",
-        "VLOOKUP(",
-        "VLOOKUP(key, items, key_field, result_field)",
+        "LOOKUP",
+        "LOOKUP(",
+        "LOOKUP(key, items, key_field, result_field)",
         "A field of the first item whose key field equals key; none gives #REF!.",
         Group::Lookup,
     ),

@@ -135,13 +135,13 @@ fn if_is_a_conditional_with_none_as_the_default() {
 // ---------------------------------------------------------------- lookups
 
 #[test]
-fn vlookup_finds_a_field_of_the_first_match_and_raises_when_there_is_none() {
+fn lookup_finds_a_field_of_the_first_match_and_raises_when_there_is_none() {
     assert_eq!(
-        eval("x", "VLOOKUP(3, S.items, 'qty', 'price')").get("x"),
+        eval("x", "LOOKUP(3, S.items, 'qty', 'price')").get("x"),
         Some(Value::Float(2.0))
     );
     assert_eq!(
-        eval("x", "VLOOKUP(9, S.items, 'qty', 'price')").error("x"),
+        eval("x", "LOOKUP(9, S.items, 'qty', 'price')").error("x"),
         Some(ErrorKind::Ref)
     );
 }

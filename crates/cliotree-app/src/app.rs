@@ -87,6 +87,10 @@ pub struct ClioApp {
     /// Why an entry was refused, shown under the formula bar.
     pub notice: Option<String>,
     pub completion: CompletionUi,
+    /// Picking a place for the formula being typed (`pick.rs`).
+    pub pick: Option<crate::pick::Pick>,
+    /// When the last place was picked.
+    pub picked_at: Option<std::time::Instant>,
     pub insert_function: Option<InsertFunction>,
     pub summary: Summary,
     pub show_issues: bool,
@@ -196,6 +200,8 @@ impl ClioApp {
             editing: None,
             notice: None,
             completion: CompletionUi::default(),
+            pick: None,
+            picked_at: None,
             insert_function: None,
             summary: Summary::default(),
             show_issues: false,
