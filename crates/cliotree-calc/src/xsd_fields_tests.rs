@@ -67,14 +67,14 @@ fn fields(calc: &Calc, object: &str) -> Vec<String> {
 }
 
 fn xsd_text(calc: &Calc) -> String {
-    calc.export_text("Order schema", ExportFormat::Xml, false)
+    calc.export_text("Order schema", ExportFormat::XML, false)
         .unwrap()
 }
 
 /// The data written as XML, read back against the schema written as XSD:
 /// the two still fit each other.
 fn data_text(calc: &Calc) -> String {
-    let text = calc.export_text("Order", ExportFormat::Xml, false).unwrap();
+    let text = calc.export_text("Order", ExportFormat::XML, false).unwrap();
     let spec = xsd::lower_str(&xsd_text(calc)).unwrap();
     xml::parse(&text, &spec).unwrap();
     text

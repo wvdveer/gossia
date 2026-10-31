@@ -38,6 +38,10 @@ pub(crate) struct Sheet {
     xml: Option<cliotree_core::xml::XmlDocument>,
     /// The formulas that are given to a field of every item of an array.
     columns: Vec<ColumnFormula>,
+    /// The file format the tab is written in (DESIGN.md, "Other file
+    /// formats"): XML for an XSD, JSON or another JSON-shaped format for a
+    /// JSON Schema.
+    format: cliotree_core::dataformat::DataFormat,
 }
 
 /// What a tab is to the schema machinery.
@@ -102,6 +106,9 @@ pub use settings::{Ceilings, Effective, Setting, Unit, WorkbookSettings};
 #[path = "export.rs"]
 mod export;
 pub use export::ExportFormat;
+
+#[path = "formats.rs"]
+mod formats;
 
 #[path = "tabs.rs"]
 mod tabs;
@@ -327,6 +334,11 @@ impl Calc {
         {
             return Err(EditError::DuplicateSheet(name));
         }
+        let format = if spec.xml().is_some() {
+            cliotree_core::dataformat::DataFormat::Xml
+        } else {
+            cliotree_core::dataformat::DataFormat::Json
+        };
         self.sheets.insert(
             name.clone(),
             Sheet {
@@ -336,6 +348,7 @@ impl Calc {
                 schema: SchemaRole::Free,
                 xml: None,
                 columns: Vec::new(),
+                format,
             },
         );
         self.changed(&name, &Path::root());
@@ -988,6 +1001,13 @@ impl Calc {
                 after,
             } => {
                 self.store_auto_update(sheet, if forward { *after } else { *before })?;
+            }
+            Op::Format {
+                sheet,
+                before,
+                after,
+            } => {
+                self.store_format(sheet, if forward { *after } else { *before })?;
             }
             Op::Settings { before, after } => {
                 let target = if forward { after } else { before };

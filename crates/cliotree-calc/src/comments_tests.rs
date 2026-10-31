@@ -122,7 +122,7 @@ fn what_cannot_have_a_comment_is_refused_with_the_reason() {
     assert!(
         calc.comment_refusal("J", &p("a"))
             .unwrap()
-            .contains("only on XML tabs")
+            .contains("JSON has no comments")
     );
 }
 
@@ -168,7 +168,7 @@ fn a_comment_stays_through_a_formula_and_is_written_as_xml() {
         &Value::Int(5)
     );
 
-    let text = calc.export_text("Order", ExportFormat::Xml, true).unwrap();
+    let text = calc.export_text("Order", ExportFormat::XML, true).unwrap();
     assert!(text.contains("<!--First-->\n  <item>2</item>"), "{text}");
     assert!(
         text.contains("<!--Sum of the items-->\n  <total>5</total>"),
@@ -220,7 +220,7 @@ fn the_comments_inside_an_element_are_kept_and_edited() {
     );
     assert_eq!(calc.comment("Order", &customer), Some("who"));
 
-    let written = calc.export_text("Order", ExportFormat::Xml, false).unwrap();
+    let written = calc.export_text("Order", ExportFormat::XML, false).unwrap();
     assert!(
         written.contains("<!--who--><customer>Ada<!--then, again--></customer>"),
         "{written}"

@@ -17,6 +17,8 @@ quick-xml = "0.42.0"
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
+saphyr-parser = "0.3.3"
 
 [dev-dependencies]
 proptest = "1.12.0"

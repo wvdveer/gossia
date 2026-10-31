@@ -23,7 +23,7 @@ Rules for tabs:
 `Error` exists only in memory: it is how a failed formula's node is represented, and it is never written into a data file (see Stored values).
 - Each node has a stable `NodeId`.
 - XML maps onto the same model: attributes become fields prefixed `@`, text becomes `#text`, repeated elements become arrays. A format adapter handles the round trip; the evaluator never sees XML or JSON.
-- Data format follows the schema language: JSON Schema gives JSON data, XSD gives XML data. The two meta-schemas (JSON Schema, XSD) are built in, so schema sheets get ordinary tree editing and validation (see Schema binding).
+- Data format follows the schema language: XSD gives XML data, a COBOL copybook gives `.blk` records (see COBOL copybooks), and JSON Schema gives JSON data or one of the other **JSON-shaped formats** (YAML, TOML, JSON5/JSONC, JSON Lines; see Other file formats). The two meta-schemas (JSON Schema, XSD) are built in, so schema sheets get ordinary tree editing and validation (see Schema binding).
 
 **Comments and structure fidelity.** Round-tripping is lossy only for incidental formatting. What the user wrote deliberately is preserved.
 - **Field order.** Object fields keep the order of the schema's declared properties (JSON) or sequence (XML), and array items keep their order. Export and save write them in that order. A schema's declared order is itself user-authored and preserved.
@@ -901,6 +901,55 @@ An array whose items are objects can be shown as a table instead of as indented 
   - Child order is the merge of the orders seen across instances; if instances disagree irreconcilably, the first-seen order is used and the report says so.
   - **Refused with a clear message:** mixed content (non-whitespace text next to child elements), and more than one namespace. These are outside the v1 XSD subset.
 
+**Other file formats** (chosen by the owner on 2026-10-31, before 0.1.0 is closed: YAML, TOML, JSON Lines and JSON5 now; Excel and ODS in 0.4.0).
+- **Each format is a tab format of its own**, as XML is (owner: "Own tab format"). A tab keeps the format it came in: it is saved in that format inside the `.clio` (`data.yaml`, `data.toml`, `data.json5`, `data.jsonc`, `data.jsonl`; the manifest records the tab's format), and exported in it by default, so a file goes in and comes out with its key order and, where the format has them, its comments.
+- **All of them are JSON-shaped, so they use JSON Schema.** Schema sheets, inference, validation, formulas, forms and Python work exactly as on a JSON tab; Python never sees which format a tab is.
+- **Comments on nodes extend to the formats that have comments**: YAML (`#`), TOML (`#`), JSON5 and JSONC (`//` and `/* */`). A comment on the line or lines above a key or item is that node's comment, as for XML; one at the end of the line it is on is kept with the node too, and is written back on the line above it. JSON and JSON Lines still have none, and their tabs show no comment commands.
+- **Changing a tab's format.** A tab's menu has *Format*, which lists the formats its data can be written in: any JSON-shaped one for a JSON Schema tab, as long as the format can hold the data (TOML needs an object at the root and has no empty value for a missing key; JSON Lines needs an array at the root). Comments are dropped, after asking, when the new format has none. It is one undoable entry. Export may write any of the formats the tab could change to.
+- **Nulls** are treated as on JSON import: absent (see Schema inference). TOML has none.
+- **YAML** (YAML 1.2, the core schema, so `yes`, `no`, `on` and `off` are text and only `true`/`false` are yes or no):
+  - Read with `saphyr-parser` (MIT or Apache-2.0); comments, which YAML parsers drop, are gathered by ClioTree from the lines between the parser's events.
+  - **Anchors and aliases** (`&base`, `*base`, `<<: *base`) are expanded on reading, and the import report says so; the tab holds plain copies and writes them as such.
+  - **Several documents** in one file (`---`) read as an array of the documents, and the tab remembers it, so that it is written back as documents.
+  - **Tags**: the standard ones (`!!str`, `!!int`, `!!float`, `!!bool`, `!!null`) are honoured; any other tag (`!Ref` in a CloudFormation template) is refused with a message naming it and its line.
+  - Written in block style with two spaces, keys and text unquoted where YAML allows it and double-quoted where it does not; flow style (`{a: 1}`) and the original quoting are not kept.
+- **TOML** (TOML 1.0; `toml_edit` 0.25 reads TOML 1.1, which also takes what 1.0 refuses, such as line breaks inside inline tables), read with `toml_edit` (MIT or Apache-2.0) and written by ClioTree:
+  - The root is always an object, so a TOML tab's schema must have an object at its root.
+  - **Dates map onto ClioTree's**: an offset date-time is a zoned date-time, a local date-time a date-time without a zone, a local date a date; a local time (`07:30:00`) has no type of its own in ClioTree and is read as text, with a warning.
+  - Written with a `[table]` for each object that holds other objects, `[[array]]` for arrays of objects, and inline values otherwise; the original choice of inline tables and the spacing are not kept.
+- **JSON5 and JSONC**, one reader for both (ClioTree's own, which already passes over comments and trailing commas):
+  - JSON5 adds unquoted keys, single-quoted strings, hexadecimal numbers, a leading `+` or `.`, and line breaks escaped inside strings. `Infinity` and `NaN` are refused, as ClioTree holds only finite numbers.
+  - The tab remembers which it is, by the file's extension (`.json5` or `.jsonc`): JSONC is written as strict JSON with comments (what VS Code's settings and `tsconfig.json` expect), JSON5 with keys unquoted where they can be.
+- **JSON Lines** (`.jsonl`, `.ndjson`): one JSON value per line, read as an array; blank lines are passed over; a line that is not JSON is refused naming its line. Written as one compact value per line, with a final newline.
+- **Importing and pasting** tell the format from the extension. A paste with no file name is YAML when it starts with `---` or its first line is `key: value`, TOML when it starts with `[table]` or `key = value`, and JSON Lines when several lines each hold a JSON object; otherwise as before.
+- **Built in 11a:** `DataFormat` and the JSON5/JSONC reader and writer (`json5.rs`) in `cliotree-core`; the tab's format in `Calc` (`format`, `formats_for`, `format_problem`, `comments_lost`, `set_format` with its `Op::Format`), in the manifest (`format`, left out for JSON and XML) and as `data.<format>`; export in any format the tab could be written in; the Raw view in the tab's format; import of `.json5`, `.jsonc`, `.jsonl` and `.ndjson`, and a paste of JSON Lines; *Format* on the tab's menu, which asks before it takes comments off. A tab that cannot be rebound to a schema its format cannot hold (JSON Lines needs an array) says so. Tests: `json5_tests.rs`, `dataformat_tests.rs`, `formats_tests.rs`, and the import, paste and *Format* tests in `tab_commands_tests.rs`.
+- **Built in 11b:** `toml_format.rs` in `cliotree-core`, reading through `toml_edit`'s document (comments from the white space it keeps around keys, values, tables and array items) and ClioTree's own writer: the plain values of a table first, then its `[table]` and `[[array]]` sections; an object inside an array of plain values is an inline table, which has no place for comments; a node holding nothing or an error is left out. `.toml` import and paste. Tests: `toml_format_tests.rs`, and `a_toml_file_becomes_a_toml_tab`.
+- **Built in 11c:** `yaml.rs` in `cliotree-core`, and two formats: *YAML* (one document) and *YAML documents* (a list, each item written after a `---` line); a `.yaml` or `.yml` file of several documents becomes the second. How comments are placed, since YAML has no brackets to put them inside:
+  - comment lines above a key or item are its comment, and a comment after a value on its line is added to it;
+  - comment lines at the top of the file are the document's when an empty line parts them from the first key, else the first key's;
+  - comment lines after the last entry of a table or list, indented at least as far as its entries, are at its end; less indented ones go on to what follows.
+  - Merge keys copy in the fields the table does not have itself (the first of several merged tables wins). Aliases copy at most 1,000,000 values in all, and tables and lists nest at most 512 deep, so that a crafted file cannot exhaust memory.
+  - Text that YAML would read as something else is quoted, and so are the words other YAML readers (YAML 1.1) take for yes, no or null, and text that starts like a number; text of several lines is a literal block (`|`). A paste is YAML only when it reads as a table or a list, since any text at all is a YAML string. The Raw view's hint names YAML and TOML. Tests: `yaml_tests.rs`, `dataformat_tests.rs`, and `a_yaml_file_becomes_a_yaml_tab`.
+- **Not done:** Excel and ODS (0.4.0); keeping the original quoting, flow style, inline tables and spacing; YAML's custom tags; comments on JSON and JSON Lines tabs.
+
+**COBOL copybooks** (asked for by the owner on 2026-10-31: a dropped `*.cpy` is imported as a schema, the data tabs that use it import and export `*.blk` files, and character content is EBCDIC).
+- **A third schema language**, beside JSON Schema and XSD (owner: "Copybook schema tab"). A copybook schema tab shows the copybook as a tree under a built-in meta-schema (`builtin:copybook`): each item with its level, name, `PIC`, `USAGE`, `OCCURS` (with `DEPENDING ON`), `REDEFINES` and `VALUE`, nested by level. It is edited like any schema tab and exported back as `.cpy` text in the usual columns (7 to 72). Comment lines (`*` in column 7) are the comments of the items below them.
+- **Lowering.** A group is an object; an elementary item is a string (`PIC X`, `PIC A`) with its length as the maximum, or a number (`PIC 9`, with `S` and `V`) with its digits and decimals as the range; `OCCURS` is an array with that many items at most; `FILLER` takes up its bytes but is not a field. The `01` level is the record; a copybook with several `01` records offers them as choices when a data tab is bound.
+- **The data file, `.blk`**, holds fixed-length records with no record descriptor words (RECFM=FB, owner: "Fixed-length, no RDW"): one after another, each exactly the record's length; a file whose length is not a multiple of it is refused. A data tab is an array of records. `.blk` is the format of data tabs bound to a copybook, as XML is for an XSD.
+- **Character content is EBCDIC.** The code page is a setting of the copybook schema tab, **037 by default** (owner: "Per schema, 037 default"); also 1140 (037 with the euro), 500, 273, 1141, 285 and 297. On reading, trailing spaces of a `PIC X` field are kept as they are in the text; on writing, text is padded with spaces to the field's length, and text too long or with a character the code page lacks is refused naming the field.
+- **Numbers** (owner: all four of these as well as `DISPLAY`):
+  - `DISPLAY` (zoned decimal): a digit a byte, the sign in the zone of the last byte (`C` or `F` positive, `D` negative), or `SIGN LEADING`/`TRAILING SEPARATE`.
+  - `COMP-3` / `PACKED-DECIMAL`: two digits a byte, the sign in the last nibble.
+  - `COMP`, `BINARY`, `COMP-4` and `COMP-5`: big-endian binary of 2, 4 or 8 bytes by the number of digits; `COMP-5` uses the whole range of the bytes, the others are held to the digits of the `PIC`.
+  - The implied decimal point (`V`) gives a number with that many decimals; a whole number is an integer. Bytes that are not a valid number (spaces in a `PIC 9`, a bad sign nibble) are read as an error value naming the field and kept, so the record can still be written back unchanged.
+- **OCCURS DEPENDING ON.** The array has as many items as the counter field says. In fixed-length records the table takes its maximum size in every record; the bytes after the last item are passed over on reading and written as low-values (`X'00'`). The counter is set from the array's length when the record is written.
+- **REDEFINES** (owner, 2026-10-31: "the user picks what is displayed"). Of the layouts over the same bytes (the redefined item and each item that redefines it), **the tab shows one, which the user picks**; it starts on the first. The choice is made on the tab, for that group of layouts in every record, and is an undoable entry saved with the tab.
+  - **Changing it converts the data**: each record's bytes for that area are written from the layout shown and read again with the one picked, so the values are what those bytes mean in the new layout. Bytes the new layout cannot read (letters in a `PIC 9`) become error values naming the field, kept so the bytes can still be written back.
+  - **Formulas in the area are deleted, after asking.** When the layout shown has formulas on its fields (or a column formula on them), the user is asked to agree to deleting them before the change; *No* leaves the layout and the formulas as they were. With no formulas there, the change is made without asking.
+  - The record is always written from the layout shown.
+- **Importing and exporting.** Dropping a `.cpy` makes a copybook schema tab. A `.blk` is imported into a data tab bound to a copybook schema tab already in the workbook (a `.blk` alone says nothing about its layout, so no schema is inferred), and a data tab bound to a copybook exports as `.blk`. It is binary, so the Raw view shows a hexadecimal dump with the EBCDIC text beside it, read-only.
+- **Not done:** variable-length records (RECFM=VB, RDW), `COMP-1` and `COMP-2` (floating point), `SYNC` alignment, `INDEXED BY` (kept but not used), level 66 (`RENAMES`) and 88 (condition names are kept as comments), `COPY ... REPLACING` inside a copybook.
+
 **Exporting.** Any tree tab exports as a standalone file in its own format.
 - Everything the user gave the tab is written: field order, array order, XML attributes and elements as the schema maps them, XML comments (the comments on nodes), namespace prefix and XML declaration, and **unrecognised content** that was preserved on import. The result is what the tab shows, including the latest computed values. Errored nodes are absent (see Stored values).
 - Dates are written in their XML lexical forms, floats with their shortest round-trip spelling, and JSON/XML indentation is two spaces by default with a compact option.
@@ -1206,6 +1255,12 @@ sparse = ["crates/ruff_python_ast", "crates/ruff_python_parser", "crates/ruff_py
    - **10b. Checking and files** *(done)*: *Compile* with its clickable list of problems, export and import of a module as a `.py` file, and the *Forms* branch with the raw text of the customised form designs.
    - **10c. The Immediate window** *(done)*: an expression evaluated against the live workbook on the evaluation thread, its history in `immediate-history.json` and its output limit, and the *Code editor* page of the Options dialog.
 
+11. **Other file formats**, before 0.1.0 is closed (see Import and export, Other file formats), in four parts:
+   - **11a. Tab formats, JSON Lines and JSON5/JSONC** *(done, 2026-10-31)*: the format of a tab in the manifest and the archive, *Format* on the tab's menu, comments on the tabs whose format has them, and the two JSON relatives.
+   - **11b. TOML** *(done, 2026-10-31)*.
+   - **11c. YAML** *(done, 2026-10-31)*.
+   - **11d. COBOL copybooks** (asked for by the owner on 2026-10-31; see Import and export, COBOL copybooks): the copybook schema tab and its meta-schema, lowering, `.blk` records in EBCDIC with zoned, packed and binary numbers, `OCCURS DEPENDING ON` and `REDEFINES`.
+
 Reports and the wasm port are **not part of v1**; see Later versions.
 
 **The last items, and what is not planned** (decided by the owner on 2026-10-31). Of what the decisions below list as not done, only these were still to be built *(all done, 2026-10-31: see the decisions for the last items)*:
@@ -1220,14 +1275,15 @@ The rest are **not planned**: cut (Ctrl+X), dragging out a range with the mouse,
 
 ## Later versions
 
-Deferred features, with what v1 does to keep them possible:
+Deferred features, with what v1 does to keep them possible. Version 1 is release **0.1.0**; **Reports are 0.2.0**, **the web port is 0.3.0**, and **Excel and ODS files are 0.4.0** (owner, 2026-10-31).
 
-- **Reports** (see Reports): `builtin:report` schema, table and text blocks, then charts, then the designer.
+- **Reports, 0.2.0** (see Reports): `builtin:report` schema, table and text blocks, then charts, then the designer.
   - The manifest's tab `kind` and the `reports/` directory name are reserved.
   - A v1 build that opens a file containing reports keeps those entries unchanged on save (the unknown-entries rule in File format) and shows no report tabs.
-- **Web (wasm) port**: the same core in a browser.
+- **Web (wasm) port, 0.3.0**: the same core in a browser.
   - `cliotree-core` and `cliotree-calc` stay free of UI and filesystem code.
   - Open points recorded for it: the binary size (54.6 MB unoptimised in the spike), running Python and terminating a Web Worker in a browser, file access, persistence of trust, credential storage, and database data sources being unavailable.
+- **Excel and ODS files, 0.4.0**: importing `.xlsx`, `.xls` and `.ods` (each sheet a tab with an array of rows, as CSV) and exporting `.xlsx`.
 
 ## Decisions for implementation, and risks
 

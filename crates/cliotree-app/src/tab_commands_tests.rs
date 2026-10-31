@@ -514,7 +514,7 @@ fn a_new_xml_tab_starts_from_a_blank_xsd() {
     assert!(calc.auto_update("DataSchema"));
     assert_eq!(calc.undo_label(), Some("New tab Data"));
     let text = calc
-        .export_text("Data", cliotree_calc::ExportFormat::Xml, false)
+        .export_text("Data", cliotree_calc::ExportFormat::XML, false)
         .unwrap();
     assert!(text.contains("<Data"), "{text}");
 
@@ -536,7 +536,7 @@ fn a_new_xml_tab_starts_from_a_blank_xsd() {
     assert!(valid(&app, "Data"));
     let text = app
         .calc()
-        .export_text("Data", cliotree_calc::ExportFormat::Xml, false)
+        .export_text("Data", cliotree_calc::ExportFormat::XML, false)
         .unwrap();
     assert!(text.contains("<Data><note>hello</note></Data>"), "{text}");
 
@@ -652,4 +652,132 @@ fn a_json_schema_file_is_imported_as_a_schema_tab() {
     );
     app.import(&plan).unwrap();
     assert!(app.calc().is_schema_sheet("odd_schema"));
+}
+
+/// JSON5, JSONC and JSON Lines are tab formats of their own (DESIGN.md,
+/// "Other file formats"): the tab keeps the format and the comments, and the
+/// whole import is one entry.
+#[test]
+fn a_json5_file_becomes_a_json5_tab_with_its_comments() {
+    use cliotree_core::dataformat::DataFormat;
+    let mut app = sample();
+    assert_eq!(format_of("Settings.JSON5"), ImportFormat::Json5);
+    assert_eq!(format_of("a.jsonc"), ImportFormat::Jsonc);
+    assert_eq!(format_of("log.ndjson"), ImportFormat::JsonLines);
+    let text = "// Editor settings\n{\n  // in points\n  fontSize: 12,\n  theme: 'dark',\n}\n";
+    let plan = app.plan_import("editor.json5", text.as_bytes()).unwrap();
+    assert_eq!(plan.choice, SchemaChoice::Inferred);
+    app.import(&plan).unwrap();
+    let calc = app.calc();
+    assert_eq!(calc.format("editor"), Some(DataFormat::Json5));
+    assert_eq!(calc.comment("editor", &p("fontSize")), Some("in points"));
+    assert_eq!(
+        calc.comment("editor", &Path::root()),
+        Some("Editor settings")
+    );
+    assert_eq!(calc.undo_label(), Some("Import editor.json5"));
+    let raw = app.raw_text().to_owned();
+    assert!(raw.contains("// in points\n  fontSize: 12"), "{raw}");
+    app.session.calc_mut().undo().unwrap();
+    assert!(!tabs(&app).contains(&"editor"));
+
+    let lines = "{\"n\": 1}\n{\"n\": 2}\n";
+    assert_eq!(format_of_text(lines), ImportFormat::JsonLines);
+    assert_eq!(format_of_text("{\"n\": 1}"), ImportFormat::Json);
+    let plan = app.plan_import("rows.jsonl", lines.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    assert_eq!(app.calc().format("rows"), Some(DataFormat::JsonLines));
+    let e = app.plan_import("bad.jsonl", b"{}\n{oops}\n").unwrap_err();
+    assert!(e.contains("not JSON Lines") && e.contains("line 2"), "{e}");
+}
+
+/// *Format* on a tab's menu asks before it takes comments off.
+#[test]
+fn changing_a_tab_to_a_format_without_comments_asks_first() {
+    use cliotree_core::dataformat::DataFormat;
+    let mut app = sample();
+    let plan = app
+        .plan_import("editor.jsonc", b"{\n  // big\n  \"size\": 12\n}")
+        .unwrap();
+    app.import(&plan).unwrap();
+    app.begin_set_format("editor", DataFormat::Json5).unwrap();
+    assert_eq!(app.calc().format("editor"), Some(DataFormat::Json5));
+    assert!(
+        app.tab_dialogs.format.is_none(),
+        "nothing to lose, no question"
+    );
+    app.begin_set_format("editor", DataFormat::Json).unwrap();
+    let question = app.tab_dialogs.format.clone().unwrap();
+    assert_eq!(question.lost, 1);
+    assert_eq!(app.calc().format("editor"), Some(DataFormat::Json5));
+    app.set_format("editor", DataFormat::Json).unwrap();
+    assert_eq!(app.calc().comment("editor", &p("size")), None);
+    assert_eq!(app.calc().undo_label(), Some("Write editor as JSON"));
+}
+
+/// TOML is a tab format of its own, with its comments and dates.
+#[test]
+fn a_toml_file_becomes_a_toml_tab() {
+    use cliotree_core::dataformat::DataFormat;
+    let mut app = sample();
+    assert_eq!(format_of("Cargo.TOML"), ImportFormat::Toml);
+    let text = "# The package\n[package]\nname = \"demo\" # short\nreleased = 2025-10-17\n";
+    assert_eq!(format_of_text(text), ImportFormat::Toml);
+    assert_eq!(format_of_text("[1, 2]"), ImportFormat::Json);
+    assert_eq!(format_of_text("a = 1\nb = 'x'"), ImportFormat::Toml);
+    assert_eq!(format_of_text("one = two = three"), ImportFormat::Text);
+    let plan = app.plan_import("Cargo.toml", text.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    let calc = app.calc();
+    assert_eq!(calc.format("Cargo"), Some(DataFormat::Toml));
+    assert_eq!(calc.comment("Cargo", &p("package")), Some("The package"));
+    assert_eq!(calc.comment("Cargo", &p("package.name")), Some("short"));
+    assert!(matches!(
+        calc.data("Cargo")
+            .unwrap()
+            .get(&p("package.released"))
+            .unwrap()
+            .value(),
+        Value::Date(_)
+    ));
+    let raw = app.raw_text().to_owned();
+    assert!(raw.contains("[package]\n# short\nname = \"demo\""), "{raw}");
+    // Orders has an object at the top, so it could be written as TOML.
+    assert!(
+        app.calc()
+            .format_problem("Orders", DataFormat::Toml)
+            .is_none()
+    );
+}
+
+#[test]
+fn a_yaml_file_becomes_a_yaml_tab() {
+    use cliotree_core::dataformat::DataFormat;
+    let mut app = sample();
+    assert_eq!(format_of("compose.YML"), ImportFormat::Yaml);
+    let text = "# Services\nweb:\n  image: nginx # pinned\n  ports:\n    - 80\n";
+    assert_eq!(format_of_text(text), ImportFormat::Yaml);
+    assert_eq!(format_of_text("- a\n- b\n"), ImportFormat::Yaml);
+    assert_eq!(
+        format_of_text("a: 1\n---\na: 2\n"),
+        ImportFormat::YamlDocuments
+    );
+    assert_eq!(
+        format_of_text("Dear Ann: hello\nthere: \"x"),
+        ImportFormat::Text
+    );
+    assert_eq!(format_of_text("one, two"), ImportFormat::Csv);
+    let plan = app.plan_import("compose.yaml", text.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    let calc = app.calc();
+    assert_eq!(calc.format("compose"), Some(DataFormat::Yaml));
+    assert_eq!(calc.comment("compose", &p("web.image")), Some("pinned"));
+    let raw = app.raw_text().to_owned();
+    assert!(raw.contains("  # pinned\n  image: nginx\n"), "{raw}");
+    // Several documents make a tab of YAML documents.
+    let plan = app
+        .plan_import("pods.yaml", b"name: a\n---\nname: b\n")
+        .unwrap();
+    app.import(&plan).unwrap();
+    assert_eq!(app.calc().format("pods"), Some(DataFormat::YamlDocuments));
 }

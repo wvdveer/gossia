@@ -105,3 +105,7 @@ mod settings_tests;
 #[cfg(test)]
 #[path = "tabs_tests.rs"]
 mod tabs_tests;
+
+#[cfg(test)]
+#[path = "formats_tests.rs"]
+mod formats_tests;

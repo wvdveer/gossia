@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use cliotree_core::dataformat::DataFormat;
 use cliotree_core::form::FormDesign;
 use cliotree_core::{ErrorKind, ErrorValue, Path, json, xml};
 use indexmap::IndexMap;
@@ -156,6 +157,11 @@ struct TabEntry {
     /// The customised forms of the tab, in display order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     forms: Vec<String>,
+    /// The file format of a data tab that is not JSON or XML: `json5`,
+    /// `jsonc` or `jsonl` (DESIGN.md, "Other file formats"). Its data is
+    /// `data.<format>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -374,19 +380,22 @@ impl Calc {
                 SchemaRole::Bound(schema_sheet) => (format!("sheet:{schema_sheet}"), false),
             };
 
-            let is_xml = sheet.spec.xml().is_some();
-            let data = if is_xml {
-                let document = sheet.xml.clone().unwrap_or_default();
-                xml::to_string(&sheet.data, &sheet.spec, &document, true)
-                    .map_err(|e| unsavable(format!("tab {name}: {e}")))?
-            } else {
-                json::to_string(&sheet.data, true)
-                    .map_err(|e| unsavable(format!("tab {name}: {e}")))?
-            };
+            let data = match sheet.format {
+                DataFormat::Xml => {
+                    let document = sheet.xml.clone().unwrap_or_default();
+                    xml::to_string(&sheet.data, &sheet.spec, &document, true)
+                }
+                format => format.write(&sheet.data, true),
+            }
+            .map_err(|e| unsavable(format!("tab {name}: {e}")))?;
             files.push((
-                format!("sheets/{name}/data.{}", if is_xml { "xml" } else { "json" }),
+                format!("sheets/{name}/data.{}", sheet.format.extension()),
                 lf(data),
             ));
+            let format = match sheet.format {
+                DataFormat::Json | DataFormat::Xml => None,
+                other => Some(other.code().to_owned()),
+            };
 
             let overlay = self.overlay_of(name, sheet, meta.views.get(name).cloned());
             if !overlay.formulas.is_empty() || !overlay.columns.is_empty() || overlay.view.is_some()
@@ -419,6 +428,7 @@ impl Calc {
                 schema,
                 auto_update,
                 forms: form_names,
+                format,
             });
         }
 
@@ -748,10 +758,25 @@ impl Calc {
                 self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd)
             }
         };
-        let path = format!(
-            "sheets/{name}/data.{}",
-            if xml_data { "xml" } else { "json" }
-        );
+        let format = match &tab.format {
+            None if xml_data => DataFormat::Xml,
+            None => DataFormat::Json,
+            Some(code) => match DataFormat::from_code(code) {
+                Some(format)
+                    if format.json_shaped()
+                        && !xml_data
+                        && matches!(binding, Binding::Sheet(_)) =>
+                {
+                    format
+                }
+                _ => {
+                    return Err(fail(format!(
+                        "the manifest gives it the format {code:?}, which this version cannot                          use for it"
+                    )));
+                }
+            },
+        };
+        let path = format!("sheets/{name}/data.{}", format.extension());
         let text = package
             .text(&path)?
             .ok_or_else(|| fail(format!("the file has no {path}")))?;
@@ -778,12 +803,16 @@ impl Calc {
                     let parsed = xml::parse(text, &spec).map_err(|e| bad(&path, e))?;
                     (parsed.node, Some(parsed.document))
                 } else {
-                    (json::parse(text).map_err(|e| bad(&path, e))?.node, None)
+                    (format.read(text).map_err(|e| bad(&path, e))?.node, None)
                 };
                 self.add_sheet(name, spec, node)
                     .map_err(|e| fail(e.to_string()))?;
                 self.bind_schema(name, schema_sheet)
                     .map_err(|e| fail(e.to_string()))?;
+                if format != DataFormat::Json {
+                    self.store_format(name, format)
+                        .map_err(|e| fail(e.to_string()))?;
+                }
                 if let Some(document) = document {
                     let _ = self.set_xml_document(name, document);
                 }

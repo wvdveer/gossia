@@ -64,7 +64,7 @@ impl ClioApp {
 
     /// The extension of the exported file: `xsd` for an XSD schema tab.
     pub fn export_extension(&self, plan: &ExportPlan) -> &'static str {
-        if plan.format == ExportFormat::Xml
+        if plan.format == ExportFormat::XML
             && self.calc().schema_format(&plan.tab) == Some(SchemaFormat::Xsd)
         {
             "xsd"
@@ -194,12 +194,7 @@ impl ClioApp {
                 if plan.formats.len() > 1 {
                     ui.label("Format");
                     for format in plan.formats.clone() {
-                        let text = match format {
-                            ExportFormat::Json => "JSON",
-                            ExportFormat::Xml => "XML",
-                            ExportFormat::Text => "Text, one line for each string",
-                        };
-                        if ui.radio(plan.format == format, text).clicked() {
+                        if ui.radio(plan.format == format, format.label()).clicked() {
                             plan.format = format;
                         }
                     }

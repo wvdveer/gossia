@@ -3,6 +3,7 @@
 //! schema...*, in the Edit menu and the context menu of a sheet tab.
 
 use cliotree_calc::{Mentions, SchemaFormat};
+use cliotree_core::dataformat::DataFormat;
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
 use cliotree_core::{Node, json, metaschema, xml, xsd};
@@ -55,11 +56,27 @@ pub struct TabDialogs {
     pub new: Option<NewTab>,
     pub delete: Option<DeleteTab>,
     pub bind: Option<BindTab>,
+    /// A change of format waiting for the answer to whether its comments may
+    /// go.
+    pub format: Option<FormatChange>,
+}
+
+/// *Format* on a tab's menu, waiting for the answer to whether the comments
+/// the new format cannot hold may be taken off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatChange {
+    pub sheet: String,
+    pub format: DataFormat,
+    /// How many comments would go.
+    pub lost: usize,
 }
 
 impl TabDialogs {
     /// Closes what was open for a tab that is gone.
     pub fn forget(&mut self, name: &str) {
+        if self.format.as_ref().is_some_and(|f| f.sheet == name) {
+            self.format = None;
+        }
         if self.delete.as_ref().is_some_and(|d| d.name == name) {
             self.delete = None;
         }
@@ -552,8 +569,79 @@ impl ClioApp {
         }
     }
 
+    /// *Format* on a tab's menu: writes the tab in another format. When that
+    /// format has no comments and the tab has some, it asks first (the
+    /// change waits in `tab_dialogs.format`).
+    pub fn begin_set_format(&mut self, sheet: &str, format: DataFormat) -> Result<(), String> {
+        let lost = self.calc().comments_lost(sheet, format);
+        if lost > 0 {
+            self.tab_dialogs.format = Some(FormatChange {
+                sheet: sheet.to_owned(),
+                format,
+                lost,
+            });
+            return Ok(());
+        }
+        self.set_format(sheet, format)
+    }
+
+    /// Writes the tab in `format`, taking off the comments it cannot hold.
+    pub fn set_format(&mut self, sheet: &str, format: DataFormat) -> Result<(), String> {
+        if !self.can_change_tabs() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        self.session
+            .calc_mut()
+            .set_format(sheet, format)
+            .map_err(|e| e.to_string())?;
+        self.session.tick();
+        Ok(())
+    }
+
+    fn format_window(&mut self, ctx: &egui::Context) {
+        let Some(change) = self.tab_dialogs.format.take() else {
+            return;
+        };
+        let (mut yes, mut no, mut open) = (false, false, true);
+        egui::Window::new(format!(
+            "Write {} as {}",
+            change.sheet,
+            change.format.label()
+        ))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "{} has no comments, so the {} on {} will be taken off. Undo puts them back.",
+                change.format.label(),
+                if change.lost == 1 {
+                    "comment".to_owned()
+                } else {
+                    format!("{} comments", change.lost)
+                },
+                change.sheet
+            ));
+            ui.horizontal(|ui| {
+                yes = ui.button("Yes").clicked();
+                no = ui.button("No").clicked();
+            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                no = true;
+            }
+        });
+        if yes {
+            if let Err(why) = self.set_format(&change.sheet, change.format) {
+                self.notice = Some(why);
+            }
+        } else if open && !no {
+            self.tab_dialogs.format = Some(change);
+        }
+    }
+
     /// The dialogs of the tab commands, when they are open.
     pub(crate) fn tab_windows(&mut self, ctx: &egui::Context) {
+        self.format_window(ctx);
         self.new_tab_window(ctx);
         self.delete_tab_window(ctx);
         self.bind_tab_window(ctx);
@@ -595,6 +683,23 @@ impl ClioApp {
                 self.begin_bind_tab(tab);
                 ui.close();
             }
+            // The formats the tab could be written in; one alone is no choice.
+            let formats = self.calc().formats_for(tab);
+            let own = self.calc().format(tab);
+            ui.add_enabled_ui(formats.len() > 1, |ui| {
+                ui.menu_button("Format", |ui| {
+                    for format in formats {
+                        if ui.radio(own == Some(format), format.label()).clicked() {
+                            if own != Some(format)
+                                && let Err(why) = self.begin_set_format(tab, format)
+                            {
+                                self.notice = Some(why);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+            });
         });
     }
 }

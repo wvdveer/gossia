@@ -4,6 +4,7 @@
 //! This crate has no UI and no Python, so that it can be tested headlessly and
 //! reused by a later web port (see DESIGN.md, Application structure).
 
+pub mod dataformat;
 pub mod delimited;
 #[cfg(test)]
 mod delimited_tests;
@@ -13,16 +14,19 @@ pub mod infer;
 #[cfg(test)]
 mod infer_tests;
 pub mod json;
+pub mod json5;
 pub mod jsonschema;
 pub mod metaschema;
 mod num;
 mod path;
+pub mod toml_format;
 mod typespec;
 pub mod validate;
 mod value;
 pub mod xml;
 pub mod xmltree;
 pub mod xsd;
+pub mod yaml;
 
 pub use num::Num;
 pub use path::{ParsePathError, Path, Segment};

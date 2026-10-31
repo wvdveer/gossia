@@ -1178,9 +1178,9 @@ impl ClioApp {
         let cell = ui.max_rect();
         self.comment_marks(ui, cell, &row.path);
         // Behind what the cell shows, so that its widgets keep their clicks:
-        // a right click on the rest of the cell opens its comment menu, on an
-        // XML tab.
-        if calc.is_xml(&self.sheet) && row.node.is_some() {
+        // a right click on the rest of the cell opens its comment menu, on a
+        // tab whose format has comments.
+        if calc.format_has_comments(&self.sheet) && row.node.is_some() {
             let background = ui.interact(
                 cell,
                 ui.scope_id().with(("cell_menu", row.path.to_string())),
@@ -1831,7 +1831,7 @@ impl ClioApp {
         if response.secondary_clicked() && !self.is_in_selection(path) {
             actions.push(Action::Select(path.clone()));
         }
-        let xml = self.calc().is_xml(&self.sheet);
+        let comments = self.calc().format_has_comments(&self.sheet);
         response.context_menu(|ui| {
             let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, action: Action| {
                 if ui
@@ -1856,7 +1856,7 @@ impl ClioApp {
                 "Ctrl+Shift+V",
                 Action::Paste(PasteMode::Values),
             );
-            if xml {
+            if comments {
                 ui.separator();
                 self.comment_menu_items(ui, path, at, actions, true);
             }

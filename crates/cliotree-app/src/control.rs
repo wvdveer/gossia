@@ -167,10 +167,11 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             let mut plan = app.export_plan(&tab)?;
             if let Some(format) = args.get("format").and_then(Json::as_str) {
                 plan.format = match format {
-                    "json" => cliotree_calc::ExportFormat::Json,
-                    "xml" => cliotree_calc::ExportFormat::Xml,
                     "text" => cliotree_calc::ExportFormat::Text,
-                    other => return Err(format!("there is no format {other:?}")),
+                    code => match cliotree_core::dataformat::DataFormat::from_code(code) {
+                        Some(f) => cliotree_calc::ExportFormat::Data(f),
+                        None => return Err(format!("there is no format {code:?}")),
+                    },
                 };
                 if !plan.formats.contains(&plan.format) {
                     return Err(format!("tab {tab} cannot be exported as {format}"));

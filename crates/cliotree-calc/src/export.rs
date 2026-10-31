@@ -2,52 +2,65 @@
 //! "Exporting"): the text of the file, in the tab's own format or as lines of
 //! text. Writing it to disk is the application's job.
 
-use cliotree_core::{Value, json, xml};
+use cliotree_core::dataformat::DataFormat;
+use cliotree_core::{Value, xml};
 
 use super::{Calc, SchemaRole};
 
 /// What an exported file is written as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
-    Json,
-    Xml,
+    /// A file format a tab can be written in.
+    Data(DataFormat),
     /// One line for each string of an array of strings, as text import reads
     /// them.
     Text,
 }
 
 impl ExportFormat {
+    pub const JSON: ExportFormat = ExportFormat::Data(DataFormat::Json);
+    pub const XML: ExportFormat = ExportFormat::Data(DataFormat::Xml);
+
     /// The usual extension of a file of this format.
     pub fn extension(self) -> &'static str {
         match self {
-            ExportFormat::Json => "json",
-            ExportFormat::Xml => "xml",
+            ExportFormat::Data(format) => format.extension(),
             ExportFormat::Text => "txt",
+        }
+    }
+
+    /// What the export dialog calls it.
+    pub fn label(self) -> &'static str {
+        match self {
+            ExportFormat::Data(format) => format.label(),
+            ExportFormat::Text => "Text, one line for each string",
         }
     }
 }
 
 impl Calc {
-    /// The format a tab is written in: XML for a tab whose schema is an XSD
-    /// (an XSD schema tab included), JSON otherwise.
+    /// The format a tab is written in: its own.
     pub fn export_format(&self, tab: &str) -> Option<ExportFormat> {
-        let sheet = self.sheets.get(tab)?;
-        Some(if sheet.spec.xml().is_some() {
-            ExportFormat::Xml
-        } else {
-            ExportFormat::Json
-        })
+        self.format(tab).map(ExportFormat::Data)
     }
 
-    /// The formats a tab can be exported as: its own, and text if its root is
-    /// an array of strings (errored items are not counted, as they are not
-    /// written).
+    /// The formats a tab can be exported as: its own first, the others it
+    /// could be written in (DESIGN.md, "Other file formats"), and text if its
+    /// root is an array of strings (errored items are not counted, as they
+    /// are not written). A schema tab is written only in its own.
     pub fn export_formats(&self, tab: &str) -> Vec<ExportFormat> {
-        let Some(own) = self.export_format(tab) else {
+        let Some(own) = self.format(tab) else {
             return Vec::new();
         };
-        let mut formats = vec![own];
-        if own == ExportFormat::Json && self.text_lines(tab).is_ok() {
+        let mut formats: Vec<ExportFormat> = if self.is_schema_sheet(tab) {
+            vec![ExportFormat::Data(own)]
+        } else {
+            self.formats_for(tab)
+                .into_iter()
+                .map(ExportFormat::Data)
+                .collect()
+        };
+        if own.json_shaped() && self.text_lines(tab).is_ok() {
             formats.push(ExportFormat::Text);
         }
         formats
@@ -75,7 +88,14 @@ impl Calc {
             .sheets
             .get(tab)
             .ok_or_else(|| format!("there is no tab {tab}"))?;
-        let own = self.export_format(tab).expect("the tab is there");
+        // Text says itself why a tab cannot be lines (a line break, say).
+        if format != ExportFormat::Text && !self.export_formats(tab).contains(&format) {
+            return Err(format!(
+                "tab {tab} is {} data and cannot be written as {}",
+                sheet.format.label(),
+                format.label()
+            ));
+        }
         let mut text = match format {
             ExportFormat::Text => {
                 let lines = self.text_lines(tab)?;
@@ -86,18 +106,11 @@ impl Calc {
                 }
                 return Ok(text);
             }
-            _ if format != own => {
-                return Err(format!(
-                    "tab {tab} is {} data and cannot be written as {}",
-                    name(own),
-                    name(format)
-                ));
-            }
-            ExportFormat::Xml => {
+            ExportFormat::Data(DataFormat::Xml) => {
                 let document = sheet.xml.clone().unwrap_or_default();
                 xml::to_string(&sheet.data, &sheet.spec, &document, pretty)
             }
-            ExportFormat::Json => json::to_string(&sheet.data, pretty),
+            ExportFormat::Data(format) => format.write(&sheet.data, pretty),
         }
         .map_err(|e| format!("tab {tab}: {e}"))?;
         if !text.ends_with('\n') {
@@ -134,13 +147,5 @@ impl Calc {
             }
         }
         Ok(lines)
-    }
-}
-
-fn name(format: ExportFormat) -> &'static str {
-    match format {
-        ExportFormat::Json => "JSON",
-        ExportFormat::Xml => "XML",
-        ExportFormat::Text => "text",
     }
 }

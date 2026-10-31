@@ -611,11 +611,17 @@ fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
     run(&mut calc);
     assert_eq!(
         calc.export_formats("Orders"),
-        [crate::ExportFormat::Json],
-        "an object is not lines of text"
+        [
+            crate::ExportFormat::JSON,
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Json5),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Jsonc),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Toml),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Yaml),
+        ],
+        "an object is not lines of text, nor JSON Lines"
     );
     let text = calc
-        .export_text("Orders", crate::ExportFormat::Json, true)
+        .export_text("Orders", crate::ExportFormat::JSON, true)
         .unwrap();
     assert!(text.ends_with("}\n"), "{text}");
     assert!(text.contains("\n  \"customer\": \"Acme\""), "{text}");
@@ -627,7 +633,7 @@ fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
     assert!(!text.contains("parent.qty"), "{text}");
     // Compact is one line.
     let compact = calc
-        .export_text("Orders", crate::ExportFormat::Json, false)
+        .export_text("Orders", crate::ExportFormat::JSON, false)
         .unwrap();
     assert_eq!(compact.lines().count(), 1, "{compact}");
     assert_eq!(
@@ -638,7 +644,7 @@ fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
     assert_eq!(calc.export_schema("Orders"), Some("OrdersSchema"));
     assert_eq!(calc.export_schema("OrdersSchema"), None);
     let schema = calc
-        .export_text("OrdersSchema", crate::ExportFormat::Json, true)
+        .export_text("OrdersSchema", crate::ExportFormat::JSON, true)
         .unwrap();
     jsonschema::lower_str(&schema).unwrap();
 }
@@ -646,19 +652,19 @@ fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
 #[test]
 fn an_exported_xml_tab_and_its_xsd_read_back() {
     let calc = book();
-    assert_eq!(calc.export_format("Note"), Some(crate::ExportFormat::Xml));
-    assert_eq!(calc.export_formats("Note"), [crate::ExportFormat::Xml]);
+    assert_eq!(calc.export_format("Note"), Some(crate::ExportFormat::XML));
+    assert_eq!(calc.export_formats("Note"), [crate::ExportFormat::XML]);
     assert_eq!(calc.export_schema("Note"), Some("NoteSchema"));
     assert_eq!(
         calc.export_format("NoteSchema"),
-        Some(crate::ExportFormat::Xml)
+        Some(crate::ExportFormat::XML)
     );
     let xsd_text = calc
-        .export_text("NoteSchema", crate::ExportFormat::Xml, true)
+        .export_text("NoteSchema", crate::ExportFormat::XML, true)
         .unwrap();
     let spec = xsd::lower_str(&xsd_text).unwrap();
     let text = calc
-        .export_text("Note", crate::ExportFormat::Xml, true)
+        .export_text("Note", crate::ExportFormat::XML, true)
         .unwrap();
     assert!(text.contains("\n  <to>Ward</to>"), "{text}");
     let back = xml::parse(&text, &spec).unwrap();
@@ -667,7 +673,7 @@ fn an_exported_xml_tab_and_its_xsd_read_back() {
         Some(Value::Int(3))
     );
     let compact = calc
-        .export_text("Note", crate::ExportFormat::Xml, false)
+        .export_text("Note", crate::ExportFormat::XML, false)
         .unwrap();
     assert!(
         compact.contains("<note id=\"7\"><to>Ward</to>"),
@@ -675,7 +681,7 @@ fn an_exported_xml_tab_and_its_xsd_read_back() {
     );
     // XML is not written as JSON.
     let error = calc
-        .export_text("Note", crate::ExportFormat::Json, true)
+        .export_text("Note", crate::ExportFormat::JSON, true)
         .unwrap_err();
     assert!(error.contains("XML"), "{error}");
 }
@@ -694,7 +700,15 @@ fn an_array_of_strings_exports_as_lines_of_text() {
     run(&mut calc);
     assert_eq!(
         calc.export_formats("Lines"),
-        [crate::ExportFormat::Json, crate::ExportFormat::Text]
+        [
+            crate::ExportFormat::JSON,
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Json5),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Jsonc),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::JsonLines),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::Yaml),
+            crate::ExportFormat::Data(cliotree_core::dataformat::DataFormat::YamlDocuments),
+            crate::ExportFormat::Text,
+        ]
     );
     // The errored item is left out, as it is from JSON.
     assert_eq!(
@@ -711,7 +725,11 @@ fn an_array_of_strings_exports_as_lines_of_text() {
     // A line break inside a string cannot be written as lines.
     calc.set_value("Lines", &p("[0]"), Value::Str("a\nb".into()))
         .unwrap();
-    assert_eq!(calc.export_formats("Lines"), [crate::ExportFormat::Json]);
+    assert!(
+        !calc
+            .export_formats("Lines")
+            .contains(&crate::ExportFormat::Text)
+    );
     let error = calc
         .export_text("Lines", crate::ExportFormat::Text, true)
         .unwrap_err();

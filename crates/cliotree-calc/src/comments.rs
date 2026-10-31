@@ -1,7 +1,8 @@
-//! Comments on the nodes of an XML tab (DESIGN.md, "Comments and structure
-//! fidelity", "Comments in the UI"). A comment is part of its node and is
-//! written as an XML comment before its element, or inside it, at its start
-//! or its end ([`CommentPlace`]). Formulas cannot see it, so changing one
+//! Comments on the nodes of a tab whose format has comments: XML, JSON5 and
+//! JSONC (DESIGN.md, "Comments and structure fidelity", "Comments in the UI",
+//! "Other file formats"). A comment is part of its node and is written before
+//! it, or inside it, at its start or its end ([`CommentPlace`]); in XML as an
+//! XML comment, in JSON5 and JSONC as `//` lines. Formulas cannot see it, so changing one
 //! recalculates nothing; it is still an edit of the document, an entry in the
 //! history that marks the workbook as modified.
 
@@ -22,18 +23,23 @@ pub fn comment_text_problem(text: &str) -> Option<&'static str> {
 
 impl Calc {
     /// Why the node at `path` cannot carry a comment, or `None` if it can.
-    /// Only the elements of an XML tab can: not an attribute, which XML gives
-    /// no place for a comment, not the text of an element, and not an array,
-    /// whose items are the elements. The node must be there, and not inside
-    /// the result of a formula, which replaces what is inside on every run.
+    /// Only a tab whose format has comments can. On an XML tab only elements
+    /// can: not an attribute, which XML gives no place for a comment, not the
+    /// text of an element, and not an array, whose items are the elements.
+    /// The node must be there, and not inside the result of a formula, which
+    /// replaces what is inside on every run.
     pub fn comment_refusal(&self, sheet: &str, path: &Path) -> Option<String> {
         let Some(s) = self.sheets.get(sheet) else {
             return Some(format!("there is no tab called {sheet}"));
         };
-        if s.spec.xml().is_none() {
-            return Some("Comments are only on XML tabs, since JSON has none.".to_owned());
+        if !s.format.has_comments() {
+            return Some(format!(
+                "{} has no comments; a tab written as XML, JSON5 or JSON with comments can                  have them.",
+                s.format.label()
+            ));
         }
-        if let Some(Segment::Key(key)) = path.segments().last() {
+        let xml = s.spec.xml().is_some();
+        if let Some(Segment::Key(key)) = path.segments().last().filter(|_| xml) {
             if key.starts_with('@') {
                 return Some(
                     "An attribute cannot have a comment: XML has no place for one inside a tag."
@@ -50,7 +56,7 @@ impl Calc {
         let Some(node) = s.data.get(path) else {
             return Some("The node is not there, so it cannot have a comment.".to_owned());
         };
-        if matches!(node.value(), Value::Array(_)) {
+        if xml && matches!(node.value(), Value::Array(_)) {
             return Some("An array cannot have a comment; each of its items can.".to_owned());
         }
         if let Some(formula) = s.formulas.computed_by(path) {
@@ -110,7 +116,12 @@ impl Calc {
             let after = text
                 .filter(|t| !t.trim().is_empty())
                 .map(|t| t.replace("\r\n", "\n"));
-            if let Some(why) = after.as_deref().and_then(comment_text_problem) {
+            let xml = self.is_xml(sheet);
+            if let Some(why) = after
+                .as_deref()
+                .filter(|_| xml)
+                .and_then(comment_text_problem)
+            {
                 return Err(EditError::Path(why.to_owned()));
             }
             let before = self.comment_at(sheet, path, place).map(str::to_owned);

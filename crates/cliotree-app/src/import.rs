@@ -16,10 +16,11 @@ use std::path::Path as FsPath;
 
 use cliotree_calc::SchemaFormat;
 use cliotree_calc::names::{self, Subject};
+use cliotree_core::dataformat::DataFormat;
 use cliotree_core::infer::{self, JsonInference};
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
-use cliotree_core::{Node, delimited, json, metaschema, xml, xmltree, xsd};
+use cliotree_core::{Node, Value, delimited, json, metaschema, xml, xmltree, xsd};
 
 use crate::app::ClioApp;
 use crate::view::{error_color, named};
@@ -29,6 +30,15 @@ use crate::view::{error_color, named};
 pub enum ImportFormat {
     Json,
     Xml,
+    /// JSON5, JSONC and JSON Lines: JSON-shaped, each a tab format of its own
+    /// (DESIGN.md, "Other file formats").
+    Json5,
+    Jsonc,
+    JsonLines,
+    Toml,
+    /// YAML of one document, and of several, which is a list of them.
+    Yaml,
+    YamlDocuments,
     /// Comma-separated values: an array with an object for each row.
     Csv,
     /// Tab-separated values, read as CSV is.
@@ -43,9 +53,41 @@ impl ImportFormat {
         match self {
             ImportFormat::Json => "JSON",
             ImportFormat::Xml => "XML",
+            ImportFormat::Json5 => "JSON5",
+            ImportFormat::Jsonc => "JSON with comments",
+            ImportFormat::JsonLines => "JSON Lines",
+            ImportFormat::Toml => "TOML",
+            ImportFormat::Yaml => "YAML",
+            ImportFormat::YamlDocuments => "YAML documents",
             ImportFormat::Csv => "comma-separated values",
             ImportFormat::Tsv => "tab-separated values",
             ImportFormat::Text => "lines of text",
+        }
+    }
+
+    /// The format of the data tab it makes: its own for the tab formats, and
+    /// JSON for CSV, TSV and text, which are read into JSON.
+    pub fn data_format(self) -> DataFormat {
+        match self {
+            ImportFormat::Xml => DataFormat::Xml,
+            ImportFormat::Json5 => DataFormat::Json5,
+            ImportFormat::Jsonc => DataFormat::Jsonc,
+            ImportFormat::JsonLines => DataFormat::JsonLines,
+            ImportFormat::Toml => DataFormat::Toml,
+            ImportFormat::Yaml => DataFormat::Yaml,
+            ImportFormat::YamlDocuments => DataFormat::YamlDocuments,
+            ImportFormat::Json | ImportFormat::Csv | ImportFormat::Tsv | ImportFormat::Text => {
+                DataFormat::Json
+            }
+        }
+    }
+
+    /// The format, given the text: YAML of several documents is read as
+    /// YAML documents.
+    pub fn refine(self, text: &str) -> ImportFormat {
+        match self.data_format().refine(text) {
+            DataFormat::YamlDocuments => ImportFormat::YamlDocuments,
+            _ => self,
         }
     }
 }
@@ -204,6 +246,11 @@ pub fn format_of(file: &str) -> ImportFormat {
     match extension.as_deref() {
         Some("json") => ImportFormat::Json,
         Some("xml" | "xsd") => ImportFormat::Xml,
+        Some("json5") => ImportFormat::Json5,
+        Some("jsonc") => ImportFormat::Jsonc,
+        Some("jsonl" | "ndjson") => ImportFormat::JsonLines,
+        Some("toml") => ImportFormat::Toml,
+        Some("yaml" | "yml") => ImportFormat::Yaml,
         Some("csv") => ImportFormat::Csv,
         Some("tsv" | "tab") => ImportFormat::Tsv,
         _ => ImportFormat::Text,
@@ -217,10 +264,16 @@ pub fn format_of(file: &str) -> ImportFormat {
 pub fn format_of_text(text: &str) -> ImportFormat {
     let text = text.trim_start_matches('\u{FEFF}').trim_start();
     let first_line = text.lines().next().unwrap_or_default();
-    if text.starts_with(['{', '[']) {
+    if is_json_lines(text) {
+        ImportFormat::JsonLines
+    } else if is_toml(text) {
+        ImportFormat::Toml
+    } else if text.starts_with(['{', '[']) {
         ImportFormat::Json
     } else if text.starts_with('<') {
         ImportFormat::Xml
+    } else if is_yaml(text) {
+        ImportFormat::Yaml.refine(text)
     } else if first_line.contains('\t') {
         ImportFormat::Tsv
     } else if first_line.contains(',') {
@@ -228,6 +281,65 @@ pub fn format_of_text(text: &str) -> ImportFormat {
     } else {
         ImportFormat::Text
     }
+}
+
+/// Whether the text is JSON Lines: two or more lines, each a JSON object on
+/// its own (blank lines aside).
+fn is_json_lines(text: &str) -> bool {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    lines.len() >= 2
+        && lines
+            .iter()
+            .all(|l| l.starts_with('{') && l.ends_with('}') && json::parse(l).is_ok())
+}
+
+/// Whether the text is TOML: not JSON, its first line that is not blank or a
+/// comment a `[table]` header or `key = value`, and the whole of it TOML.
+fn is_toml(text: &str) -> bool {
+    let Some(first) = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+    else {
+        return false;
+    };
+    let key = |k: &str| {
+        !k.is_empty()
+            && k.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-.\"' ".contains(c))
+    };
+    let header = first
+        .strip_prefix('[')
+        .and_then(|l| l.split('#').next())
+        .map(str::trim_end)
+        .and_then(|l| l.strip_suffix(']'))
+        .is_some_and(|l| key(l.trim_start_matches('[').trim_end_matches(']')));
+    let assignment = first.split_once('=').is_some_and(|(k, _)| key(k.trim()));
+    (header || assignment) && json::parse(text).is_err() && DataFormat::Toml.read(text).is_ok()
+}
+
+/// Whether the text is YAML: its first line that is not blank or a comment
+/// is `---`, `key: value`, `key:` or `- item`, and the whole of it a YAML
+/// table or list (any text at all is a YAML string).
+fn is_yaml(text: &str) -> bool {
+    let Some(first) = text
+        .lines()
+        .map(str::trim_end)
+        .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+    else {
+        return false;
+    };
+    let looks = first.starts_with("---")
+        || first.trim_start().starts_with("- ")
+        || first.contains(": ")
+        || first.ends_with(':');
+    looks
+        && cliotree_core::yaml::parse(text)
+            .is_ok_and(|p| matches!(p.node.value(), Value::Object(_) | Value::Array(_)))
 }
 
 /// What the dialog and the undo entry call a paste.
@@ -322,11 +434,9 @@ impl ClioApp {
     pub fn plan_paste(&self, text: &str) -> Result<ImportPlan, String> {
         let format = format_of_text(text);
         let mut plan = self.plan_import_as(PASTED, "Pasted", format, text.as_bytes())?;
-        let tab_is_xml = self.calc().spec(&self.sheet).map(|s| s.xml().is_some());
         let same_format = match format {
-            ImportFormat::Json => tab_is_xml == Some(false),
-            ImportFormat::Xml => tab_is_xml == Some(true),
-            _ => false,
+            ImportFormat::Csv | ImportFormat::Tsv | ImportFormat::Text => false,
+            _ => self.calc().format(&self.sheet) == Some(format.data_format()),
         };
         if same_format && !self.calc().is_schema_sheet(&self.sheet) {
             plan.replace = Some(self.sheet.clone());
@@ -361,11 +471,40 @@ impl ClioApp {
                 capital(file)
             )
         })?;
+        let format = format.refine(&text);
         let calc = self.calc();
         let mut notes = Vec::new();
         let mut schema_file = None;
         let mut schema_problem = None;
         let (data, inferred, candidates) = match format {
+            ImportFormat::Json5
+            | ImportFormat::Jsonc
+            | ImportFormat::JsonLines
+            | ImportFormat::Toml
+            | ImportFormat::Yaml
+            | ImportFormat::YamlDocuments => {
+                let data_format = format.data_format();
+                let parsed = data_format
+                    .read(&text)
+                    .map_err(|e| format!("{} is not {}: {e}", capital(file), format.label()))?;
+                notes.extend(parsed.warnings.iter().map(|w| {
+                    if w.path.is_root() {
+                        format!("{}.", w.message)
+                    } else {
+                        format!("{}: {}.", w.path, w.message)
+                    }
+                }));
+                let inference = infer::infer_json(&parsed.node);
+                notes.extend(inference.dropped.iter().cloned());
+                let data = inference.data.clone();
+                let candidates = self.schema_tabs(SchemaFormat::Json, |spec| {
+                    data_format
+                        .root_problem(&spec.get(spec.root()).kind)
+                        .is_none()
+                        .then(|| validate(spec, &data).len())
+                });
+                (Some(data), Ok(Inferred::Json(inference)), candidates)
+            }
             ImportFormat::Json | ImportFormat::Text | ImportFormat::Csv | ImportFormat::Tsv => {
                 let inference = if format == ImportFormat::Json {
                     let parsed = json::parse_lenient(&text)
@@ -588,6 +727,11 @@ impl ClioApp {
                     }),
             },
         };
+        // A tab format of its own is set in the same entry.
+        let done = done.and_then(|()| match plan.format.data_format() {
+            DataFormat::Json | DataFormat::Xml => Ok(()),
+            format => calc.set_format(name, format),
+        });
         calc.end_entry();
         if let Err(e) = done {
             // A tab made before the failure is taken out again.

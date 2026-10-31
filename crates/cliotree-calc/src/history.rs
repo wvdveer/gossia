@@ -70,6 +70,13 @@ pub(crate) enum Op {
         before: bool,
         after: bool,
     },
+    /// The file format of a tab changes. Comments the new format cannot
+    /// hold are taken off by [`Op::Comment`]s of their own.
+    Format {
+        sheet: String,
+        before: cliotree_core::dataformat::DataFormat,
+        after: cliotree_core::dataformat::DataFormat,
+    },
     /// A column formula (one formula for a field of every item of an array)
     /// is set, changed or removed. The formulas of the items are operations of
     /// their own.
@@ -143,6 +150,7 @@ impl Op {
             }
             Op::AddSheet(saved) | Op::RemoveSheet(saved) => saved.weight(),
             Op::AutoUpdate { .. }
+            | Op::Format { .. }
             | Op::Bind { .. }
             | Op::Column { .. }
             | Op::Settings { .. }

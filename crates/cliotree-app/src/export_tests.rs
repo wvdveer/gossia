@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use cliotree_calc::ExportFormat;
+use cliotree_core::dataformat::DataFormat;
 use serde_json::json;
 
 use crate::ClioApp;
@@ -38,7 +39,16 @@ fn read(path: &std::path::Path) -> String {
 fn the_dialog_starts_on_the_tabs_own_format_indented_without_the_schema() {
     let app = sample();
     let plan = app.export_plan("Orders").unwrap();
-    assert_eq!(plan.formats, [ExportFormat::Json]);
+    assert_eq!(
+        plan.formats,
+        [
+            ExportFormat::JSON,
+            ExportFormat::Data(DataFormat::Json5),
+            ExportFormat::Data(DataFormat::Jsonc),
+            ExportFormat::Data(DataFormat::Toml),
+            ExportFormat::Data(DataFormat::Yaml),
+        ]
+    );
     assert!(plan.pretty);
     assert_eq!(plan.schema.as_deref(), Some("Orders_schema"));
     assert!(!plan.with_schema);
@@ -141,7 +151,18 @@ fn a_text_file_comes_back_out_as_the_same_lines() {
     let plan = app.plan_import("notes.txt", text.as_bytes()).unwrap();
     app.import(&plan).unwrap();
     let plan = app.export_plan("notes").unwrap();
-    assert_eq!(plan.formats, [ExportFormat::Json, ExportFormat::Text]);
+    assert_eq!(
+        plan.formats,
+        [
+            ExportFormat::JSON,
+            ExportFormat::Data(DataFormat::Json5),
+            ExportFormat::Data(DataFormat::Jsonc),
+            ExportFormat::Data(DataFormat::JsonLines),
+            ExportFormat::Data(DataFormat::Yaml),
+            ExportFormat::Data(DataFormat::YamlDocuments),
+            ExportFormat::Text,
+        ]
+    );
 
     let path = dir.join("notes.txt");
     control::run(

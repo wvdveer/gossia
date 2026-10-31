@@ -2664,7 +2664,7 @@ impl Painter<'_> {
             // popup, and outside layout mode the comment commands in the
             // field's menu.
             app.comment_marks(ui, r.rect, path);
-            if self.layout.is_none() && calc.is_xml(&app.sheet) {
+            if self.layout.is_none() && calc.format_has_comments(&app.sheet) {
                 let mut commands = Vec::new();
                 r.context_menu(|ui| {
                     app.comment_menu_items(ui, path, r.rect.right_top(), &mut commands, false);

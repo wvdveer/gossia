@@ -458,8 +458,12 @@ impl Calc {
         if let Err(e) = self.refuse_auto_update_in_use(schema_sheet, sheet) {
             return Some(e.to_string());
         }
-        if let Err(e) = self.lowered(schema_sheet) {
-            return Some(e.to_string());
+        let spec = match self.lowered(schema_sheet) {
+            Ok(spec) => spec,
+            Err(e) => return Some(e.to_string()),
+        };
+        if let Some(why) = s.format.root_problem(&spec.get(spec.root()).kind) {
+            return Some(format!("{sheet} is written as {}: {why}", s.format.label()));
         }
         None
     }

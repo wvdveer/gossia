@@ -36,12 +36,15 @@ pub struct CommentEdit {
 /// The size of the triangle, in points.
 const MARK: f32 = 7.0;
 
-/// What a comment at `place` is called where more than one is shown.
-fn place_label(place: CommentPlace) -> &'static str {
-    match place {
-        CommentPlace::Before => "Comment",
-        CommentPlace::Start => "Comment at the start of the element",
-        CommentPlace::End => "Comment at the end of the element",
+/// What a comment at `place` is called where more than one is shown: inside
+/// an element on an XML tab, inside an object or array otherwise.
+fn place_label(place: CommentPlace, xml: bool) -> &'static str {
+    match (place, xml) {
+        (CommentPlace::Before, _) => "Comment",
+        (CommentPlace::Start, true) => "Comment at the start of the element",
+        (CommentPlace::End, true) => "Comment at the end of the element",
+        (CommentPlace::Start, false) => "Comment at the start, inside the brackets",
+        (CommentPlace::End, false) => "Comment at the end, inside the brackets",
     }
 }
 
@@ -131,7 +134,7 @@ impl ClioApp {
         separate: bool,
     ) {
         let calc = self.calc();
-        if !calc.is_xml(&self.sheet) {
+        if !calc.format_has_comments(&self.sheet) {
             return;
         }
         if separate {
@@ -208,6 +211,7 @@ impl ClioApp {
             return;
         }
         let (width, height) = (display.comment_width as f32, display.comment_height as f32);
+        let xml = self.calc().is_xml(&self.sheet);
         let shown = egui::Area::new(id.with("area"))
             .order(egui::Order::Tooltip)
             .fixed_pos(corner + Vec2::new(4.0, 0.0))
@@ -224,7 +228,9 @@ impl ClioApp {
                             let several = comments.len() > 1;
                             for (place, comment) in &comments {
                                 if several {
-                                    ui.label(RichText::new(place_label(*place)).weak().small());
+                                    ui.label(
+                                        RichText::new(place_label(*place, xml)).weak().small(),
+                                    );
                                 }
                                 ui.add(egui::Label::new(*comment).wrap());
                             }
@@ -254,6 +260,7 @@ impl ClioApp {
                     .is_some_and(|(p, r)| !r.contains(p))
         });
         let place = format!("{}.{}", edit.sheet, edit.path);
+        let xml = self.calc().is_xml(&edit.sheet);
         let shown = egui::Area::new(egui::Id::unique("comment_editor"))
             .order(egui::Order::Foreground)
             .fixed_pos(edit.at)
@@ -269,7 +276,7 @@ impl ClioApp {
                     let focus = std::mem::take(&mut edit.focus);
                     for (i, (place, text)) in edit.texts.iter_mut().enumerate() {
                         if several {
-                            ui.label(RichText::new(place_label(*place)).small());
+                            ui.label(RichText::new(place_label(*place, xml)).small());
                         }
                         let rows = if several { 2 } else { 4 };
                         let response = ui.add(
@@ -277,7 +284,7 @@ impl ClioApp {
                                 .desired_rows(rows)
                                 .desired_width(f32::INFINITY),
                         );
-                        named(&response, place_label(*place));
+                        named(&response, place_label(*place, xml));
                         if focus && i == 0 {
                             response.request_focus();
                         }
