@@ -1,76 +1,113 @@
 //! ClioTree's icon, drawn in code so that no image file is kept in the
-//! repository: a blue rounded square with a white tree, the outline of a
-//! root and two children. The window uses it, and the build script puts it
-//! in the Windows executable (`build.rs`), which is why this file uses
-//! nothing but the standard library.
+//! repository: the "bracket canopy" (from the Canva design thread), a tree
+//! whose crown is a pair of green JSON braces on a white trunk with a flared
+//! base, on a near-black rounded square with a thin white outline. The window
+//! uses it, and the build script puts it in the Windows executable
+//! (`build.rs`), which is why this file uses nothing but the standard library.
 
-/// The blue of the square: the accent of the light palette.
-const BLUE: [u8; 3] = [0x24, 0x7B, 0xC1];
+/// The square behind the tree.
+const BACK: [u8; 3] = [0x14, 0x17, 0x1C];
+/// The braces of the crown.
+const GREEN: [u8; 3] = [0x7C, 0xCC, 0x7E];
+/// The trunk and the outline.
+const WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
 
 /// The pixels of the icon at `size` by `size`, as RGBA rows from the top.
 pub fn pixels(size: u32) -> Vec<u8> {
-    // Each pixel is the share of 4 by 4 samples inside each shape.
+    // Each pixel mixes the colours of 4 by 4 samples.
     const N: u32 = 4;
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for y in 0..size {
         for x in 0..size {
-            let (mut square, mut white) = (0u32, 0u32);
+            let (mut covered, mut sum) = (0u32, [0u32; 3]);
             for sy in 0..N {
                 for sx in 0..N {
                     let u = (x as f32 + (sx as f32 + 0.5) / N as f32) / size as f32;
                     let v = (y as f32 + (sy as f32 + 0.5) / N as f32) / size as f32;
-                    if in_square(u, v) {
-                        square += 1;
-                        if in_tree(u, v) {
-                            white += 1;
+                    if let Some(c) = colour_at(u, v) {
+                        covered += 1;
+                        for (s, c) in sum.iter_mut().zip(c) {
+                            *s += c as u32;
                         }
                     }
                 }
             }
-            let total = (N * N) as f32;
-            let alpha = square as f32 / total;
-            let share = if square == 0 {
-                0.0
-            } else {
-                white as f32 / square as f32
+            let total = N * N;
+            let channel = |s: u32| {
+                if covered == 0 {
+                    0
+                } else {
+                    (s as f32 / covered as f32).round() as u8
+                }
             };
-            let mix = |c: u8| (c as f32 + (255.0 - c as f32) * share).round() as u8;
             out.extend([
-                mix(BLUE[0]),
-                mix(BLUE[1]),
-                mix(BLUE[2]),
-                (alpha * 255.0).round() as u8,
+                channel(sum[0]),
+                channel(sum[1]),
+                channel(sum[2]),
+                (covered as f32 / total as f32 * 255.0).round() as u8,
             ]);
         }
     }
     out
 }
 
-/// Inside the rounded square that fills the icon, with a small margin.
-fn in_square(u: f32, v: f32) -> bool {
-    rounded(u, v, (0.03, 0.03, 0.97, 0.97), 0.2)
+/// The colour at a point of the icon (0 to 1 across and down), or `None`
+/// outside the rounded square.
+fn colour_at(u: f32, v: f32) -> Option<[u8; 3]> {
+    if !rounded(u, v, (0.03, 0.03, 0.97, 0.97), 0.16) {
+        return None;
+    }
+    let outline = rounded(u, v, (0.075, 0.075, 0.925, 0.925), 0.12)
+        && !rounded(u, v, (0.093, 0.093, 0.907, 0.907), 0.102);
+    Some(if in_braces(u, v) {
+        GREEN
+    } else if outline || in_trunk(u, v) {
+        WHITE
+    } else {
+        BACK
+    })
 }
 
-/// Inside the white tree: a root node with its label, a trunk going down
-/// from it, and two branches, each to the label of a child.
-fn in_tree(u: f32, v: f32) -> bool {
-    let line = 0.055;
-    let root = (u - 0.30).powi(2) + (v - 0.29).powi(2) <= 0.09f32.powi(2);
-    let root_label = rounded(u, v, (0.45, 0.24, 0.80, 0.34), 0.05);
-    let trunk = rounded(
-        u,
-        v,
-        (
-            0.30 - line / 2.0,
-            0.29,
-            0.30 + line / 2.0,
-            0.71 + line / 2.0,
-        ),
-        0.0,
-    );
-    let branch = |y: f32| rounded(u, v, (0.30, y - line / 2.0, 0.50, y + line / 2.0), 0.0);
-    let label = |y: f32| rounded(u, v, (0.47, y - 0.05, 0.80, y + 0.05), 0.05);
-    root || root_label || trunk || branch(0.50) || branch(0.71) || label(0.50) || label(0.71)
+/// Inside the crown: a `{` and, mirrored, a `}`, each a bold stroke from
+/// its top arm down past the point in the middle to a bottom arm that bends
+/// in to the trunk.
+fn in_braces(u: f32, v: f32) -> bool {
+    // The left brace; a point right of the middle is taken as its mirror.
+    let u = if u > 0.5 { 1.0 - u } else { u };
+    let points = [
+        (0.41, 0.16),
+        (0.28, 0.16),
+        (0.28, 0.32),
+        (0.19, 0.385),
+        (0.28, 0.45),
+        (0.28, 0.54),
+        (0.295, 0.575),
+        (0.33, 0.60),
+        (0.38, 0.612),
+        (0.47, 0.615),
+    ];
+    points
+        .windows(2)
+        .any(|w| near_segment(u, v, w[0], w[1], 0.04))
+}
+
+/// Inside the trunk: narrow under the crown, flaring out to a flat base.
+fn in_trunk(u: f32, v: f32) -> bool {
+    let (top, base) = (0.60, 0.88);
+    if !(top..=base).contains(&v) {
+        return false;
+    }
+    let t = (v - top) / (base - top);
+    let half = 0.045 + 0.19 * t.powi(3);
+    (u - 0.5).abs() <= half
+}
+
+/// Within `r` of the segment from `a` to `b`.
+fn near_segment(u: f32, v: f32, a: (f32, f32), b: (f32, f32), r: f32) -> bool {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let t = (((u - a.0) * dx + (v - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+    let (px, py) = (a.0 + t * dx, a.1 + t * dy);
+    (u - px).powi(2) + (v - py).powi(2) <= r * r
 }
 
 /// Inside the rectangle `(left, top, right, bottom)` with corners of radius `r`.
@@ -248,7 +285,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_icon_has_a_blue_square_a_white_tree_and_clear_corners() {
+    fn the_icon_has_green_braces_a_white_trunk_and_clear_corners() {
         let size = 64;
         let px = pixels(size);
         let at = |x: u32, y: u32| {
@@ -256,9 +293,12 @@ mod tests {
             [px[i], px[i + 1], px[i + 2], px[i + 3]]
         };
         assert_eq!(at(0, 0)[3], 0, "the corner is clear");
-        assert_eq!(at(8, 58), [BLUE[0], BLUE[1], BLUE[2], 255]);
-        // The root node, white.
-        assert_eq!(at(19, 18), [255, 255, 255, 255]);
+        assert_eq!(at(10, 50), [BACK[0], BACK[1], BACK[2], 255]);
+        // The point of the left brace, and its mirror.
+        assert_eq!(at(13, 27), [GREEN[0], GREEN[1], GREEN[2], 255]);
+        assert_eq!(at(50, 27), [GREEN[0], GREEN[1], GREEN[2], 255]);
+        // The trunk.
+        assert_eq!(at(32, 50), [255, 255, 255, 255]);
     }
 
     #[test]
