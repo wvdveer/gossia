@@ -1167,3 +1167,54 @@ fn the_display_options_change_the_tree_grid() {
     harness.get_by_label("Value");
     harness.get_by_label("62.92");
 }
+
+/// A tab dragged along the bar goes where it is let go; undo puts it back.
+#[test]
+fn a_tab_is_moved_by_dragging_it() {
+    let mut harness = window();
+    let order = |harness: &Harness<'_, ClioApp>| {
+        harness
+            .state()
+            .calc()
+            .sheet_names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let before = order(&harness);
+    let tab = |harness: &Harness<'_, ClioApp>, name: &str| {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Tab, name)
+            .rect()
+    };
+    // The first tab, dragged past the middle of the third.
+    let from = tab(&harness, &before[0]).center();
+    let to = tab(&harness, &before[2]).center() + egui::vec2(10.0, 0.0);
+    harness.hover_at(from);
+    harness.run();
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=5 {
+        harness.hover_at(from.lerp(to, step as f32 / 5.0));
+        harness.run();
+    }
+    harness.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run();
+    harness.remove_cursor();
+    harness.run();
+    let after = order(&harness);
+    assert_eq!(
+        after,
+        [&before[1], &before[2], &before[0]]
+            .into_iter()
+            .chain(&before[3..])
+            .cloned()
+            .collect::<Vec<_>>()
+    );
+    ctrl(&mut harness, Key::Z);
+    assert_eq!(order(&harness), before);
+}

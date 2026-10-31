@@ -45,13 +45,17 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.refresh_rows();
             Ok(Json::Null)
         }
-        // A new tab, as *New tab...* makes it: with its own schema, or with
-        // the schema of `schema`.
+        // A new tab, as *New tab...* makes it: with its own schema (a JSON
+        // Schema, or with `xml` true an XSD), or with the schema of `schema`.
         "new_tab" => {
             let name = text_arg(args, "name")?;
+            let xml = args.get("xml").and_then(Json::as_bool).unwrap_or(false);
             let schema = match args.get("schema").and_then(Json::as_str) {
                 Some(schema) => crate::tab_commands::NewSchema::Existing(schema.to_owned()),
-                None => crate::tab_commands::NewSchema::Own,
+                None if xml => {
+                    crate::tab_commands::NewSchema::Own(cliotree_calc::SchemaFormat::Xsd)
+                }
+                None => crate::tab_commands::NewSchema::Own(cliotree_calc::SchemaFormat::Json),
             };
             app.begin_new_tab();
             let mut dialog = app
@@ -64,6 +68,17 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             dialog.schema = schema;
             app.create_tab(&dialog)?;
             app.refresh_rows();
+            Ok(Json::Null)
+        }
+        // Moves tab `name` to place `to` (0 is the first), as dragging it
+        // along the bar does.
+        "move_tab" => {
+            let name = text_arg(args, "name")?;
+            let to = args
+                .get("to")
+                .and_then(Json::as_u64)
+                .ok_or("move_tab needs a place, to")?;
+            app.move_tab(name, to as usize);
             Ok(Json::Null)
         }
         "delete_tab" => {
@@ -80,7 +95,8 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             Ok(Json::Null)
         }
         // Imports a file with what the dialog starts with, or with `name`,
-        // and `schema` (a schema tab, or `"new"` for the inferred schema).
+        // and `schema` (a schema tab, `"new"` for the inferred schema, or
+        // `"self"` for a file that is a schema, as a schema tab).
         "import" => {
             let path = text_arg(args, "path")?;
             app.begin_import_path(std::path::Path::new(path))?;
@@ -91,6 +107,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             }
             match args.get("schema").and_then(Json::as_str) {
                 Some("new") => plan.choice = crate::import::SchemaChoice::Inferred,
+                Some("self") => plan.choice = crate::import::SchemaChoice::SchemaTab,
                 Some(schema) => {
                     plan.choice = crate::import::SchemaChoice::Existing(schema.to_owned());
                 }
@@ -98,6 +115,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             }
             let schema = match &plan.choice {
                 crate::import::SchemaChoice::Inferred => plan.schema_name.clone(),
+                crate::import::SchemaChoice::SchemaTab => plan.name.clone(),
                 crate::import::SchemaChoice::Existing(s)
                 | crate::import::SchemaChoice::Replace(s) => s.clone(),
             };

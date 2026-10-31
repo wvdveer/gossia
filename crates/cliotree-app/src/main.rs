@@ -28,9 +28,16 @@ fn start() -> ClioApp {
 }
 
 fn main() -> eframe::Result {
+    let size = 64;
+    let icon = egui::IconData {
+        rgba: cliotree_app::app_icon::pixels(size),
+        width: size,
+        height: size,
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ClioTree")
+            .with_icon(std::sync::Arc::new(icon))
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([640.0, 400.0]),
         ..Default::default()

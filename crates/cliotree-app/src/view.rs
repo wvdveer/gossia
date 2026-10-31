@@ -1456,16 +1456,49 @@ impl ClioApp {
         ui.horizontal(|ui| {
             let names: Vec<String> = self.calc().sheet_names().map(str::to_owned).collect();
             ui.spacing_mut().item_spacing.x = 2.0;
-            for name in names {
-                let selected = name == self.sheet;
-                let response = sheet_tab(ui, &name, selected);
+            // A tab dragged along the bar goes where it is let go: before the
+            // first tab whose middle is right of the pointer.
+            let mut rects = Vec::with_capacity(names.len());
+            let mut dragged = None;
+            for (i, name) in names.iter().enumerate() {
+                let selected = *name == self.sheet;
+                let response = sheet_tab(ui, name, selected);
                 if response.clicked() {
-                    self.switch_to(&name);
+                    self.switch_to(name);
                 }
                 if response.double_clicked() {
-                    self.begin_rename_tab(&name);
+                    self.begin_rename_tab(name);
                 }
-                response.context_menu(|ui| self.tab_menu_items(ui, &name));
+                if response.dragged() || response.drag_stopped() {
+                    dragged = Some((i, response.drag_stopped()));
+                }
+                rects.push(response.rect);
+                response.context_menu(|ui| self.tab_menu_items(ui, name));
+            }
+            if let (Some((from, dropped)), Some(x)) =
+                (dragged, ui.ctx().pointer_latest_pos().map(|p| p.x))
+            {
+                let place = rects
+                    .iter()
+                    .position(|r| r.center().x > x)
+                    .unwrap_or(rects.len());
+                if place != from && place != from + 1 {
+                    // The mark where it would go.
+                    let edge = rects
+                        .get(place)
+                        .map_or_else(|| rects[rects.len() - 1].right(), |r| r.left() - 1.0);
+                    let rect = rects[from];
+                    ui.painter().vline(
+                        edge,
+                        rect.y_range(),
+                        egui::Stroke::new(2.0, Palette::of_ui(ui).accent),
+                    );
+                    if dropped {
+                        // Taking it out first shifts the places after it.
+                        let to = if place > from { place - 1 } else { place };
+                        self.move_tab(&names[from], to);
+                    }
+                }
             }
             let add = ui
                 .add(egui::Button::new(crate::icons::PLUS).frame(false))
@@ -1648,7 +1681,7 @@ fn sheet_tab(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
         egui::TextStyle::Button,
     );
     let size = egui::vec2(galley.size().x + 20.0, 30.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::CLICK);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     if ui.is_rect_visible(rect) {
         let fill = if selected {
             palette.panel

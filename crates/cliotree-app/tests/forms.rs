@@ -1149,3 +1149,56 @@ fn target(harness: &Harness<'_, ClioApp>, name: &str) -> egui::Rect {
         )
         .rect()
 }
+
+/// The edge of a column's title is dragged to make the column wider: out
+/// of layout mode for as long as the window is open, in layout mode as the
+/// column's width in the design, which undo takes back.
+#[test]
+fn a_column_of_a_table_is_resized_by_dragging_its_edge() {
+    let mut harness = form();
+    let left =
+        |harness: &Harness<'_, ClioApp>, label: &str| harness.get_by_label(label).rect().left();
+    // Between qty and price, in the row of the titles.
+    let edge = |harness: &Harness<'_, ClioApp>| {
+        let title = harness.get_by_label("qty").rect();
+        let x = left(harness, "Orders.items[0].price") - 3.0;
+        egui::pos2(x, title.center().y)
+    };
+    let before = left(&harness, "Orders.items[0].price");
+    let from = edge(&harness);
+    drag(&mut harness, from, from + egui::vec2(60.0, 0.0));
+    let after = left(&harness, "Orders.items[0].price");
+    assert!(
+        (after - before - 60.0).abs() < 4.0,
+        "the price column moved from {before} to {after}"
+    );
+    let design = harness.state().design_of("Default");
+    let width = |design: &cliotree_core::form::FormDesign| {
+        design
+            .get(&[1])
+            .unwrap()
+            .table_columns
+            .iter()
+            .find(|c| c.name == "qty")
+            .and_then(|c| c.width)
+    };
+    assert_eq!(width(&design), None, "not in the design out of layout mode");
+
+    // In layout mode the width goes into the design.
+    edit_form(&mut harness);
+    let shown = harness
+        .get_by_label("Column qty of Repeater items")
+        .rect()
+        .width();
+    let from = edge(&harness);
+    drag(&mut harness, from, from + egui::vec2(30.0, 0.0));
+    let set = width(&harness.state().design_of("Default")).expect("a width was set");
+    assert!(
+        (set as f32 - shown - 30.0).abs() < 4.0,
+        "{shown} wide, dragged 30 further, became {set}"
+    );
+    assert!(harness.state().can_layout_undo());
+    harness.state_mut().layout_undo();
+    harness.run();
+    assert_eq!(width(&harness.state().design_of("Default")), None);
+}

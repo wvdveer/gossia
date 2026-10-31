@@ -2,10 +2,10 @@
 //! tabs"): the dialogs of *New tab...*, *Delete tab...* and *Change
 //! schema...*, in the Edit menu and the context menu of a sheet tab.
 
-use cliotree_calc::Mentions;
+use cliotree_calc::{Mentions, SchemaFormat};
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
-use cliotree_core::{Node, json};
+use cliotree_core::{Node, json, metaschema, xml, xsd};
 
 use crate::app::ClioApp;
 use crate::import::unique;
@@ -15,8 +15,9 @@ use crate::view::{error_color, named};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewSchema {
     /// A schema tab of its own, empty, with auto-update on, so that its
-    /// fields are added from the data tab (as File > New does).
-    Own,
+    /// fields are added from the data tab (as File > New does): a JSON
+    /// Schema, or an XSD, which makes the tab an XML tab.
+    Own(SchemaFormat),
     /// A schema tab that is there already.
     Existing(String),
 }
@@ -83,6 +84,17 @@ impl TabDialogs {
 /// The schema of a tab made with its own schema, before any field is added.
 const EMPTY_SCHEMA: &str = r#"{"type": "object", "properties": {}}"#;
 
+/// A blank XSD: its root element, named `root`, with no attributes or
+/// elements yet.
+pub fn blank_xsd(root: &str) -> String {
+    format!(
+        "<xs:schema xmlns:xs=\"{}\">\n  <xs:element name=\"{root}\">\n    \
+         <xs:complexType>\n      <xs:sequence/>\n    </xs:complexType>\n  \
+         </xs:element>\n</xs:schema>\n",
+        xsd::XSD_NS
+    )
+}
+
 impl ClioApp {
     fn can_change_tabs(&mut self) -> bool {
         self.session.running_procedure().is_none() && self.commit_editing()
@@ -103,7 +115,7 @@ impl ClioApp {
         self.tab_dialogs.new = Some(NewTab {
             name,
             schema_name,
-            schema: NewSchema::Own,
+            schema: NewSchema::Own(SchemaFormat::Json),
             error: None,
             focused: false,
         });
@@ -116,7 +128,7 @@ impl ClioApp {
             return Some(format!("The tab name: {why}."));
         }
         match &dialog.schema {
-            NewSchema::Own => {
+            NewSchema::Own(_) => {
                 let schema = dialog.schema_name.trim();
                 if let Some(why) = self.calc().tab_name_problem(schema, None) {
                     return Some(format!("The schema tab's name: {why}."));
@@ -151,21 +163,31 @@ impl ClioApp {
         let name = dialog.name.trim();
         let calc = self.session.calc_mut();
         let done = match &dialog.schema {
-            NewSchema::Own => {
+            NewSchema::Own(format) => {
                 let schema_name = dialog.schema_name.trim();
-                let schema = json::parse(EMPTY_SCHEMA).expect("the schema is JSON").node;
+                let empty = Node::new(cliotree_core::Value::Object(Default::default()));
                 calc.begin_entry(&format!("New tab {name}"));
-                let done = calc
-                    .create_json_schema_tab(schema_name, schema)
-                    .and_then(|()| {
-                        calc.create_data_tab(
-                            name,
-                            schema_name,
-                            Node::new(cliotree_core::Value::Object(Default::default())),
-                            None,
-                        )
-                    })
-                    .and_then(|()| calc.set_auto_update(schema_name, true));
+                let done = match format {
+                    SchemaFormat::Json => {
+                        let schema = json::parse(EMPTY_SCHEMA).expect("the schema is JSON").node;
+                        calc.create_json_schema_tab(schema_name, schema)
+                            .and_then(|()| calc.create_data_tab(name, schema_name, empty, None))
+                    }
+                    // The root element is named after the tab.
+                    SchemaFormat::Xsd => {
+                        let schema = xml::parse(&blank_xsd(name), metaschema::xsd_meta())
+                            .expect("the blank XSD is read");
+                        let document = XmlDocument {
+                            declaration: Some(cliotree_core::xmltree::Declaration::default()),
+                            ..XmlDocument::default()
+                        };
+                        calc.create_xsd_schema_tab(schema_name, schema.node, schema.document)
+                            .and_then(|()| {
+                                calc.create_data_tab(name, schema_name, empty, Some(document))
+                            })
+                    }
+                }
+                .and_then(|()| calc.set_auto_update(schema_name, true));
                 calc.end_entry();
                 done
             }
@@ -217,15 +239,33 @@ impl ClioApp {
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    let own = dialog.schema == NewSchema::Own;
-                    if ui.radio(own, "Its own schema, called").clicked() {
-                        dialog.schema = NewSchema::Own;
+                    let own = matches!(dialog.schema, NewSchema::Own(_));
+                    if ui.radio(own, "Its own schema, called").clicked() && !own {
+                        dialog.schema = NewSchema::Own(SchemaFormat::Json);
                     }
                     let response = ui.add_enabled(
                         own,
                         egui::TextEdit::singleline(&mut dialog.schema_name).desired_width(160.0),
                     );
                     named(&response, "New schema tab name");
+                });
+                // The language of its own schema: an XSD makes an XML tab.
+                ui.horizontal(|ui| {
+                    let own = match dialog.schema {
+                        NewSchema::Own(format) => Some(format),
+                        NewSchema::Existing(_) => None,
+                    };
+                    ui.add_space(24.0);
+                    ui.add_enabled_ui(own.is_some(), |ui| {
+                        for (format, text) in [
+                            (SchemaFormat::Json, "JSON Schema (JSON data)"),
+                            (SchemaFormat::Xsd, "XSD (XML data)"),
+                        ] {
+                            if ui.radio(own == Some(format), text).clicked() {
+                                dialog.schema = NewSchema::Own(format);
+                            }
+                        }
+                    });
                 });
                 ui.add_enabled_ui(!schemas.is_empty(), |ui| {
                     ui.horizontal(|ui| {
@@ -237,7 +277,7 @@ impl ClioApp {
                         }
                         let current = match &dialog.schema {
                             NewSchema::Existing(s) => s.clone(),
-                            NewSchema::Own => String::new(),
+                            NewSchema::Own(_) => String::new(),
                         };
                         egui::ComboBox::from_id_salt("new_tab_schema")
                             .selected_text(current.clone())
@@ -278,6 +318,17 @@ impl ClioApp {
             }
         } else if open && !cancel {
             self.tab_dialogs.new = Some(dialog);
+        }
+    }
+
+    /// Moves a tab to place `to` in the order, as dragging it along the bar
+    /// does. Typing in progress is entered first.
+    pub fn move_tab(&mut self, name: &str, to: usize) {
+        if !self.commit_editing() {
+            return;
+        }
+        if let Err(e) = self.session.calc_mut().move_sheet(name, to) {
+            self.notice = Some(e.to_string());
         }
     }
 

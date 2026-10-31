@@ -4,6 +4,7 @@
   reads, so that it can be built on Linux by build-msi.sh. Variables: Version,
   Exe and License, given with -D.
   The UpgradeCode never changes: it is what lets a newer MSI replace an older one.
+  The icon is in the executable (build.rs); .clio files open with it.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="ClioTree" Language="1033" Version="$(var.Version)"
@@ -22,6 +23,17 @@
                         WorkingDirectory="INSTALLDIR" Advertise="yes"/>
             </File>
           </Component>
+          <!-- A workbook (.clio) opens in ClioTree, with its icon. -->
+          <Component Id="WorkbookFiles" Guid="4d2f9a61-7c3e-4b85-9e10-b6a8d5c3f217" Win64="yes">
+            <RegistryValue Root="HKLM" Key="Software\Classes\.clio" Type="string"
+                           Value="ClioTree.Workbook" KeyPath="yes"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\ClioTree.Workbook" Type="string"
+                           Value="ClioTree workbook"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\ClioTree.Workbook\DefaultIcon"
+                           Type="string" Value="&quot;[INSTALLDIR]cliotree.exe&quot;,0"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\ClioTree.Workbook\shell\open\command"
+                           Type="string" Value="&quot;[INSTALLDIR]cliotree.exe&quot; &quot;%1&quot;"/>
+          </Component>
           <Component Id="LicenseFile" Guid="c93a1e7d-24b6-4d58-a0f1-5e8b3c6d7a29" Win64="yes">
             <File Id="LicenseTxt" Name="LICENSE.txt" Source="$(var.License)" KeyPath="yes"/>
           </Component>
@@ -32,6 +44,7 @@
 
     <Feature Id="Everything" Title="ClioTree" Level="1">
       <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="WorkbookFiles"/>
       <ComponentRef Id="LicenseFile"/>
     </Feature>
   </Product>

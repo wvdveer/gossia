@@ -2,6 +2,7 @@
 //! can be driven by tests.
 
 pub mod app;
+pub mod app_icon;
 pub mod clipboard;
 #[cfg(test)]
 mod clipboard_tests;

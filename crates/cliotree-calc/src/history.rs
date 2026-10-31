@@ -82,6 +82,8 @@ pub(crate) enum Op {
     },
     /// A tab is renamed.
     RenameSheet { from: String, to: String },
+    /// The tab at place `from` in the order goes to place `to`.
+    MoveSheet { from: usize, to: usize },
     /// A tab comes into being, as it was then. The reverse of
     /// [`Op::RemoveSheet`].
     AddSheet(Box<crate::calc::SavedTab>),
@@ -145,6 +147,7 @@ impl Op {
             | Op::Column { .. }
             | Op::Settings { .. }
             | Op::RenameSheet { .. }
+            | Op::MoveSheet { .. }
             | Op::RenameModule { .. } => 1,
             Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
             Op::Comment { before, after, .. } => {

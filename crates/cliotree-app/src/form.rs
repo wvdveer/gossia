@@ -714,7 +714,7 @@ struct Painter<'a> {
     column: Option<String>,
     /// In layout mode: the titles of the columns of the table being drawn,
     /// which select the column when clicked.
-    column_targets: Vec<(String, egui::Rect)>,
+    column_targets: Vec<(String, egui::Rect, egui::Rect)>,
     /// Where the control being drawn is in the design, for the expressions
     /// of the columns of its table.
     at: Address,
@@ -1243,8 +1243,9 @@ impl Painter<'_> {
                 }
             }
             self.layout_target(ui, &target, rect, c, slot);
-            for (name, title) in columns {
-                self.column_target(ui, c, slot, &name, title, rect);
+            for (name, title, column) in columns {
+                self.column_target(ui, c, slot, &name, (title, column), rect);
+                self.column_edge(ui, slot, &name, column);
             }
             self.handles(ui, rect, c, slot, free.as_ref());
         }
@@ -1699,13 +1700,60 @@ impl Painter<'_> {
 
     /// The title of a column of a table in layout mode: a click selects the
     /// column, and its menu moves or hides it.
+    /// In layout mode: the right edge of a column's title, which is dragged
+    /// to give the column a width of its own. A line shows where the edge
+    /// goes; letting go sets the width, one step of undo. (The table is drawn
+    /// disabled in layout mode, so its own handles do not work.)
+    fn column_edge(&mut self, ui: &mut egui::Ui, slot: &Slot, name: &str, column: egui::Rect) {
+        let gap = ui.spacing().item_spacing.x;
+        let edge = egui::Rect::from_x_y_ranges(
+            (column.right() - 3.0)..=(column.right() + gap + 3.0),
+            column.y_range(),
+        );
+        let id = ui.scope_id().with(("column_edge", slot.at.clone(), name));
+        let handle = ui.interact(edge, id, Sense::drag());
+        let label = format!("Width of column {name}");
+        handle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, &label));
+        if handle.hovered() || handle.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
+        }
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        if handle.drag_started()
+            && let Some(p) = pointer
+        {
+            ui.data_mut(|d| d.insert_temp(id, p.x));
+        }
+        let origin: Option<f32> = ui.data(|d| d.get_temp(id));
+        let (Some(origin), Some(p)) = (origin, pointer) else {
+            return;
+        };
+        let width = (column.width() + p.x - origin).max(24.0);
+        if handle.dragged() {
+            ui.painter().vline(
+                column.left() + width,
+                column.y_range(),
+                Stroke::new(2.0, ui.visuals().selection.stroke.color),
+            );
+        }
+        if handle.drag_stopped() {
+            ui.data_mut(|d| d.remove::<f32>(id));
+            if (width - column.width()).abs() >= 1.0 {
+                self.actions.push(FormAction::Control(ControlAction::Column(
+                    slot.at.clone(),
+                    name.to_owned(),
+                    ColumnEdit::Width(width.round() as u32),
+                )));
+            }
+        }
+    }
+
     fn column_target(
         &mut self,
         ui: &mut egui::Ui,
         c: &Control,
         slot: &Slot,
         name: &str,
-        title: egui::Rect,
+        (title, _column): (egui::Rect, egui::Rect),
         table: egui::Rect,
     ) {
         let id = ui.scope_id().with(("column", slot.at.clone(), name));
@@ -3017,19 +3065,31 @@ impl Painter<'_> {
             None => crate::style::row_height(ui),
         };
         let header_height = (header_height - 6.0).max(22.0);
+        // Every column can be made wider or narrower by dragging the edge of
+        // its title. The widths dragged to are kept with the table's state,
+        // which starts again when the design's widths change.
+        let design_widths: Vec<Option<u32>> = columns.iter().map(|(d, _)| d.width).collect();
         let mut table = TableBuilder::new(ui)
-            .id_salt(("form_table", &self.app.sheet, array.to_string()))
+            .id_salt((
+                "form_table",
+                &self.app.sheet,
+                array.to_string(),
+                design_widths,
+            ))
             .striped(true)
             .vscroll(false)
             .sense(Sense::click())
             .cell_layout(egui::Layout::left_to_right(Align::Center));
         for (design, column) in columns {
-            table = table.column(match (design.width, column) {
-                (Some(width), _) => TableColumn::exact(width as f32).clip(true),
+            let shape = match (design.width, column) {
+                (Some(width), _) => TableColumn::initial(width as f32).at_least(24.0).clip(true),
                 (None, None) => TableColumn::auto().at_least(32.0),
                 (None, Some(_)) => TableColumn::initial(140.0).at_least(60.0).clip(true),
-            });
+            };
+            table = table.column(shape.resizable(true));
         }
+        // Each column's own place in the header row, without a wider title.
+        let mut drawn: Vec<(String, egui::Rect)> = Vec::new();
         let mut sort = None;
         let mut titles = Vec::new();
         table
@@ -3084,6 +3144,7 @@ impl Painter<'_> {
                     // The column, or its title where that is wider. (The response
                     // of the cell reaches past the column, by the spacing.)
                     titles.push((design.name.clone(), max.union(used)));
+                    drawn.push((design.name.clone(), max));
                 }
             })
             .body(|body| {
@@ -3181,7 +3242,11 @@ impl Painter<'_> {
             self.actions.push(FormAction::Table(command));
         }
         if designed && self.layout.is_some() {
-            self.column_targets = titles;
+            self.column_targets = titles
+                .into_iter()
+                .zip(drawn)
+                .map(|((name, title), (_, column))| (name, title, column))
+                .collect();
         }
     }
 

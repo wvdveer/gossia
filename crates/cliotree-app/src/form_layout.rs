@@ -154,6 +154,9 @@ pub(crate) enum ColumnEdit {
     /// To the left (`true`) or the right of the next column that is shown.
     Move(bool),
     Show(bool),
+    /// A width of its own, in points, as dragging the edge of its title
+    /// gives it.
+    Width(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -681,6 +684,13 @@ impl ClioApp {
                 return false;
             };
             match edit {
+                ColumnEdit::Width(width) => {
+                    if columns[i].width == Some(width) {
+                        return false;
+                    }
+                    columns[i].width = Some(width);
+                    true
+                }
                 ColumnEdit::Show(on) => {
                     let shown = columns
                         .iter()

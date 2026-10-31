@@ -1020,6 +1020,13 @@ impl Calc {
                     self.store_rename(to, from);
                 }
             }
+            Op::MoveSheet { from, to } => {
+                if forward {
+                    self.put_sheet_move(*from, *to);
+                } else {
+                    self.put_sheet_move(*to, *from);
+                }
+            }
             Op::Column {
                 sheet,
                 array,

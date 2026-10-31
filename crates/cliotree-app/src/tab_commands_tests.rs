@@ -492,3 +492,164 @@ fn json_written_by_hand_with_a_trailing_comma_is_imported() {
     app.import(&plan).unwrap();
     assert!(valid(&app, "randomuser"));
 }
+
+// ------------------------------------------------- schema tabs of their own
+
+/// A new tab with its own XSD: an XML tab whose root element is named after
+/// it, with auto-update on, so that fields added from the data tab go into
+/// the XSD.
+#[test]
+fn a_new_xml_tab_starts_from_a_blank_xsd() {
+    let mut app = sample();
+    app.begin_new_tab();
+    let mut dialog = app.tab_dialogs.new.clone().unwrap();
+    dialog.schema = NewSchema::Own(cliotree_calc::SchemaFormat::Xsd);
+    app.create_tab(&dialog).unwrap();
+    let calc = app.calc();
+    assert!(calc.is_xml("Data"));
+    assert_eq!(
+        calc.schema_format("DataSchema"),
+        Some(cliotree_calc::SchemaFormat::Xsd)
+    );
+    assert!(calc.auto_update("DataSchema"));
+    assert_eq!(calc.undo_label(), Some("New tab Data"));
+    let text = calc
+        .export_text("Data", cliotree_calc::ExportFormat::Xml, false)
+        .unwrap();
+    assert!(text.contains("<Data"), "{text}");
+
+    app.session
+        .calc_mut()
+        .add_field(
+            "Data",
+            &Path::root(),
+            "note",
+            cliotree_calc::FieldKind::Text,
+            false,
+        )
+        .unwrap();
+    app.session
+        .calc_mut()
+        .set_value("Data", &p("note"), Value::Str("hello".into()))
+        .unwrap();
+    settle(&mut app);
+    assert!(valid(&app, "Data"));
+    let text = app
+        .calc()
+        .export_text("Data", cliotree_calc::ExportFormat::Xml, false)
+        .unwrap();
+    assert!(text.contains("<Data><note>hello</note></Data>"), "{text}");
+
+    // The control channel makes one too.
+    control::run(
+        &mut app,
+        "new_tab",
+        &json!({ "name": "Notes", "xml": true }),
+    )
+    .unwrap();
+    assert!(app.calc().is_xml("Notes"));
+}
+
+const ORDER_XSD: &str = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <!-- An order -->
+  <xs:element name="order">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="customer" type="xs:string"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+/// An XSD file is imported as a schema tab, which a data tab can then use;
+/// it can still be imported as data instead.
+#[test]
+fn an_xsd_file_is_imported_as_a_schema_tab() {
+    let mut app = sample();
+    let dir = folder("xsd-import");
+    let path = write(&dir, "order.xsd", ORDER_XSD);
+    app.begin_import_path(&path).unwrap();
+    let plan = app.imports.pop_back().unwrap();
+    assert_eq!(plan.choice, SchemaChoice::SchemaTab);
+    assert_eq!(plan.name, "order");
+    assert!(plan.schema_problem.is_none());
+    app.import(&plan).unwrap();
+    let calc = app.calc();
+    assert_eq!(
+        calc.schema_format("order"),
+        Some(cliotree_calc::SchemaFormat::Xsd)
+    );
+    assert!(calc.schema_spec("order").is_ok());
+    assert_eq!(app.sheet, "order");
+    assert_eq!(calc.undo_label(), Some("New tab order"));
+
+    // A data file is then given it.
+    let path = write(
+        &dir,
+        "first.xml",
+        "<order><customer>Acme</customer></order>",
+    );
+    app.begin_import_path(&path).unwrap();
+    let plan = app.imports.pop_back().unwrap();
+    assert_eq!(plan.choice, SchemaChoice::Existing("order".to_owned()));
+
+    // As data, an XSD is XML like any other.
+    let path = write(&dir, "other.xsd", ORDER_XSD);
+    app.begin_import_path(&path).unwrap();
+    let mut plan = app.imports.pop_back().unwrap();
+    plan.choice = SchemaChoice::Inferred;
+    app.import(&plan).unwrap();
+    assert!(app.calc().is_xml("other"));
+}
+
+/// JSON that names the JSON Schema meta-schema, or a `*.schema.json` file,
+/// is imported as a schema tab; one that cannot be lowered still is, with
+/// the reason in the report.
+#[test]
+fn a_json_schema_file_is_imported_as_a_schema_tab() {
+    let mut app = sample();
+    let dir = folder("json-schema-import");
+    let path = write(
+        &dir,
+        "person.json",
+        r#"{"$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object", "properties": {"name": {"type": "string"}}}"#,
+    );
+    app.begin_import_path(&path).unwrap();
+    let plan = app.imports.pop_back().unwrap();
+    assert_eq!(plan.choice, SchemaChoice::SchemaTab);
+    app.import(&plan).unwrap();
+    assert_eq!(
+        app.calc().schema_format("person"),
+        Some(cliotree_calc::SchemaFormat::Json)
+    );
+    assert!(app.calc().schema_spec("person").is_ok());
+
+    // Plain JSON data is not taken for a schema.
+    let path = write(&dir, "data.json", r#"{"name": "Ada"}"#);
+    app.begin_import_path(&path).unwrap();
+    let plan = app.imports.pop_back().unwrap();
+    assert!(plan.schema_file.is_none());
+    assert_ne!(plan.choice, SchemaChoice::SchemaTab);
+
+    // By its name, and one that does not lower.
+    let path = write(
+        &dir,
+        "odd.schema.json",
+        r#"{"type": "object", "properties": {"x": {"type": "frog"}}}"#,
+    );
+    app.begin_import_path(&path).unwrap();
+    let plan = app.imports.pop_back().unwrap();
+    assert_eq!(plan.choice, SchemaChoice::SchemaTab);
+    assert!(plan.schema_problem.is_some());
+    assert!(
+        plan.report()
+            .iter()
+            .any(|l| l.contains("cannot be used as a schema")),
+        "{:?}",
+        plan.report()
+    );
+    app.import(&plan).unwrap();
+    assert!(app.calc().is_schema_sheet("odd_schema"));
+}

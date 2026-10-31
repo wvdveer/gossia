@@ -1,8 +1,16 @@
 //! Writes the main third-party libraries, with the versions Cargo.lock has, for
 //! the About page of the Options dialog (`options.rs`). Reading them from the
 //! lock file means the page cannot fall behind an update.
+//!
+//! For Windows (with the MSVC linker, or lld-link when cross-compiling) it
+//! also links in the executable's icon and version details, as a `.res` file
+//! written here: no resource compiler is needed.
 
 use std::{env, fs, path::Path};
+
+#[path = "src/app_icon.rs"]
+#[allow(dead_code)]
+mod app_icon;
 
 /// The libraries shown: the package in Cargo.lock, the name shown, and its
 /// licence (from the package's own Cargo.toml).
@@ -112,4 +120,14 @@ fn main() {
     out += "];\n";
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
     fs::write(Path::new(&out_dir).join("libraries.rs"), out).expect("write libraries.rs");
+
+    println!("cargo:rerun-if-changed=src/app_icon.rs");
+    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    if windows && msvc {
+        let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+        let res = Path::new(&out_dir).join("cliotree.res");
+        fs::write(&res, app_icon::windows_resources(&version)).expect("write cliotree.res");
+        println!("cargo:rustc-link-arg-bins={}", res.display());
+    }
 }

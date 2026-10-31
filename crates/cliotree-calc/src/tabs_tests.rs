@@ -390,3 +390,28 @@ fn a_tab_is_bound_to_another_schema_and_back() {
     b.calc.redo().unwrap();
     assert_eq!(b.calc.schema_users("Strict"), ["Shop"]);
 }
+
+/// Moving a tab changes only the order: one entry to undo and redo, and
+/// nothing recalculated.
+#[test]
+fn a_tab_is_moved_in_the_order_as_one_entry() {
+    let mut book = Book::new();
+    let calc = &mut book.calc;
+    let order = |calc: &Calc| calc.sheet_names().map(str::to_owned).collect::<Vec<_>>();
+    calc.move_sheet("C", 0).unwrap();
+    assert_eq!(order(calc), ["C", "A", "B"]);
+    assert_eq!(calc.undo_label(), Some("Move tab C"));
+    assert!(calc.is_modified());
+    // Past the end is the last place; the same place is no edit.
+    calc.move_sheet("C", 9).unwrap();
+    assert_eq!(order(calc), ["A", "B", "C"]);
+    calc.move_sheet("C", 2).unwrap();
+    assert_eq!(calc.undo_label(), Some("Move tab C"));
+    calc.undo().unwrap();
+    assert_eq!(order(calc), ["C", "A", "B"]);
+    calc.undo().unwrap();
+    assert_eq!(order(calc), ["A", "B", "C"]);
+    calc.redo().unwrap();
+    assert_eq!(order(calc), ["C", "A", "B"]);
+    assert!(calc.move_sheet("D", 0).is_err());
+}

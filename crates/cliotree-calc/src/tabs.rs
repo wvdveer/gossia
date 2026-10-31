@@ -260,6 +260,33 @@ impl Calc {
         Ok(())
     }
 
+    /// Moves the tab `name` to place `to` in the order of the tabs (0 is
+    /// the first; past the end is the last). One entry in the history;
+    /// nothing is recalculated, since formulas name tabs, not places.
+    pub fn move_sheet(&mut self, name: &str, to: usize) -> Result<(), EditError> {
+        let from = self
+            .sheets
+            .get_index_of(name)
+            .ok_or_else(|| EditError::Path(format!("there is no tab called {name}")))?;
+        let to = to.min(self.sheets.len() - 1);
+        if from == to {
+            return Ok(());
+        }
+        self.put_sheet_move(from, to);
+        self.history.record(
+            format!("Move tab {name}"),
+            vec![Op::MoveSheet { from, to }],
+            None,
+        );
+        Ok(())
+    }
+
+    /// Moves a tab in the order, as an edit and its undo do.
+    pub(super) fn put_sheet_move(&mut self, from: usize, to: usize) {
+        self.sheets.move_index(from, to);
+        self.revision += 1;
+    }
+
     fn record_added(&mut self, name: &str) {
         let Some(saved) = self.saved_tab(name) else {
             return;

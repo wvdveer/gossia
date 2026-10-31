@@ -87,6 +87,15 @@ impl Inferred {
     }
 }
 
+/// A file that is itself a schema, ready to be a schema tab.
+#[derive(Debug, Clone)]
+pub enum SchemaFile {
+    /// A JSON Schema document.
+    Json(Node),
+    /// An XSD, as the XSD meta-schema types it.
+    Xsd { tree: Node, document: XmlDocument },
+}
+
 /// A schema tab the data could be given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
@@ -98,6 +107,8 @@ pub struct Candidate {
 /// Which schema the imported tab is bound to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaChoice {
+    /// No data tab: the file is a schema, and becomes a schema tab.
+    SchemaTab,
     /// A new schema tab, holding the inferred schema.
     Inferred,
     /// A schema tab that is there already.
@@ -132,6 +143,12 @@ pub struct ImportPlan {
     pub choice: SchemaChoice,
     /// The tab whose data a paste may replace instead.
     pub replace: Option<String>,
+    /// The file as a schema, when it is one (an XSD, or JSON that names the
+    /// JSON Schema meta-schema or is called `*.schema.json`).
+    pub schema_file: Option<SchemaFile>,
+    /// Why the schema file cannot be used as a schema as it is, if it
+    /// cannot. It is still imported, and can be corrected on its tab.
+    pub schema_problem: Option<String>,
     /// Why the last attempt was refused.
     pub error: Option<String>,
 }
@@ -159,6 +176,13 @@ impl ImportPlan {
                 }
             }
             SchemaChoice::Replace(_) => {}
+            SchemaChoice::SchemaTab => {
+                if let Some(why) = &self.schema_problem {
+                    lines.push(format!(
+                        "It cannot be used as a schema as it is: {why}. It can be corrected on its tab."
+                    ));
+                }
+            }
         }
         lines
     }
@@ -179,7 +203,7 @@ pub fn format_of(file: &str) -> ImportFormat {
         .map(|e| e.to_string_lossy().to_lowercase());
     match extension.as_deref() {
         Some("json") => ImportFormat::Json,
-        Some("xml") => ImportFormat::Xml,
+        Some("xml" | "xsd") => ImportFormat::Xml,
         Some("csv") => ImportFormat::Csv,
         Some("tsv" | "tab") => ImportFormat::Tsv,
         _ => ImportFormat::Text,
@@ -339,6 +363,8 @@ impl ClioApp {
         })?;
         let calc = self.calc();
         let mut notes = Vec::new();
+        let mut schema_file = None;
+        let mut schema_problem = None;
         let (data, inferred, candidates) = match format {
             ImportFormat::Json | ImportFormat::Text | ImportFormat::Csv | ImportFormat::Tsv => {
                 let inference = if format == ImportFormat::Json {
@@ -351,6 +377,12 @@ impl ClioApp {
                             format!("{}: {}.", w.path, w.message)
                         }
                     }));
+                    if is_json_schema(file, &parsed.node) {
+                        schema_problem = cliotree_core::jsonschema::lower(&parsed.node)
+                            .err()
+                            .map(|e| e.to_string());
+                        schema_file = Some(SchemaFile::Json(parsed.node.clone()));
+                    }
                     infer::infer_json(&parsed.node)
                 } else if format == ImportFormat::Csv {
                     delimited::infer_delimited(&text, ',')
@@ -368,6 +400,15 @@ impl ClioApp {
             ImportFormat::Xml => {
                 let doc = xmltree::parse(&text)
                     .map_err(|e| format!("{} is not well-formed XML: {e}", capital(file)))?;
+                if doc.root.name == "schema" && doc.root.namespace.as_deref() == Some(xsd::XSD_NS) {
+                    let tree = xml::parse(&text, metaschema::xsd_meta())
+                        .map_err(|e| format!("{} is not an XSD: {e}", capital(file)))?;
+                    schema_problem = xsd::lower(&doc.root).err().map(|e| e.to_string());
+                    schema_file = Some(SchemaFile::Xsd {
+                        tree: tree.node,
+                        document: tree.document,
+                    });
+                }
                 let inferred = infer::infer_xsd(&doc).and_then(|inference| {
                     let spec = xsd::lower_str(&inference.text).map_err(|e| e.to_string())?;
                     let schema = xml::parse(&inference.text, metaschema::xsd_meta())
@@ -395,6 +436,7 @@ impl ClioApp {
             taken(n) || n.eq_ignore_ascii_case(&name)
         });
         let choice = match candidates.iter().find(|c| c.problems == 0) {
+            _ if schema_file.is_some() => SchemaChoice::SchemaTab,
             Some(fits) => SchemaChoice::Existing(fits.schema.clone()),
             None if inferred.is_ok() => SchemaChoice::Inferred,
             None => match candidates.first() {
@@ -419,6 +461,8 @@ impl ClioApp {
             schema_name,
             choice,
             replace: None,
+            schema_file,
+            schema_problem,
             error: None,
         })
     }
@@ -489,6 +533,23 @@ impl ClioApp {
             self.show_tab(&tab);
             return self.paste_document(&plan.text);
         }
+        if plan.choice == SchemaChoice::SchemaTab {
+            let name = plan.name.trim();
+            let calc = self.session.calc_mut();
+            let done = match &plan.schema_file {
+                Some(SchemaFile::Json(node)) => calc.create_json_schema_tab(name, node.clone()),
+                Some(SchemaFile::Xsd { tree, document }) => {
+                    calc.create_xsd_schema_tab(name, tree.clone(), document.clone())
+                }
+                None => return Err("the file is not a schema".to_owned()),
+            };
+            done.map_err(|e| e.to_string())?;
+            self.follow_tabs();
+            self.show_tab(name);
+            self.notice = None;
+            self.session.tick();
+            return Ok(());
+        }
         let name = plan.name.trim();
         let schema_name = plan.schema_name.trim();
         let before = self.calc().history_len().0;
@@ -511,7 +572,9 @@ impl ClioApp {
                     )
                 }),
             (SchemaChoice::Inferred, Err(why)) => Err(cliotree_calc::EditError::Path(why.clone())),
-            (SchemaChoice::Replace(_), _) => unreachable!("replacing returned above"),
+            (SchemaChoice::Replace(_) | SchemaChoice::SchemaTab, _) => {
+                unreachable!("replacing and schema tabs returned above")
+            }
             (SchemaChoice::Existing(schema), _) => match &plan.data {
                 Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
                 None => calc
@@ -566,7 +629,25 @@ impl ClioApp {
                     named(&response, "Import tab name");
                 });
                 ui.add_space(4.0);
-                ui.label("Schema");
+                if plan.schema_file.is_some() {
+                    let chosen = plan.choice == SchemaChoice::SchemaTab;
+                    let what = match plan.schema_file {
+                        Some(SchemaFile::Xsd { .. }) => "an XSD",
+                        _ => "a JSON Schema",
+                    };
+                    if ui
+                        .radio(
+                            chosen,
+                            format!("The file is {what}: import it as a schema tab"),
+                        )
+                        .clicked()
+                    {
+                        plan.choice = SchemaChoice::SchemaTab;
+                    }
+                    ui.label("Or as data, with the schema");
+                } else {
+                    ui.label("Schema");
+                }
                 for candidate in &plan.candidates {
                     let text = if candidate.problems == 0 {
                         format!("{}: the data fits it", candidate.schema)
@@ -718,6 +799,19 @@ fn too_large(file: &str, limit: u64) -> String {
         capital(file),
         limit >> 20
     )
+}
+
+/// Whether JSON is a JSON Schema document: an object whose `$schema` names
+/// the JSON Schema meta-schema, or a file called `*.schema.json`.
+fn is_json_schema(file: &str, node: &Node) -> bool {
+    let named = file.to_lowercase().ends_with(".schema.json");
+    let declared = match node.value() {
+        cliotree_core::Value::Object(fields) => fields.get("$schema").is_some_and(
+            |s| matches!(s.value(), cliotree_core::Value::Str(s) if s.contains("json-schema.org")),
+        ),
+        _ => false,
+    };
+    named || declared
 }
 
 /// A file name as it starts a sentence: as it is, but "The pasted text".
