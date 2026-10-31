@@ -115,6 +115,45 @@ fn a_new_tab_can_use_a_schema_that_is_there() {
     );
 }
 
+#[test]
+fn a_new_tab_can_hold_yaml_or_another_format_of_json_shaped_data() {
+    use cliotree_core::dataformat::DataFormat;
+    let mut app = sample();
+    app.begin_new_tab();
+    let mut dialog = app.tab_dialogs.new.clone().unwrap();
+    assert_eq!(dialog.format, DataFormat::Json);
+    dialog.name = "Config".to_owned();
+    dialog.schema_name = "ConfigSchema".to_owned();
+    dialog.format = DataFormat::Yaml;
+    app.create_tab(&dialog).unwrap();
+    assert_eq!(app.calc().format("Config"), Some(DataFormat::Yaml));
+    assert_eq!(app.raw_text(), "{}");
+    // One entry makes both tabs and sets the format.
+    assert_eq!(app.calc().undo_label(), Some("New tab Config"));
+    app.undo();
+    assert!(!tabs(&app).contains(&"Config"));
+    assert!(!tabs(&app).contains(&"ConfigSchema"));
+
+    // A format that holds a list gets a schema of a list.
+    dialog.format = DataFormat::JsonLines;
+    app.create_tab(&dialog).unwrap();
+    assert_eq!(app.calc().format("Config"), Some(DataFormat::JsonLines));
+    assert_eq!(
+        app.calc().data("Config").unwrap().value(),
+        &Value::Array(Vec::new())
+    );
+
+    // With a schema that is there, the format must fit its root.
+    dialog.name = "Order2".to_owned();
+    dialog.schema = NewSchema::Existing("Orders_schema".to_owned());
+    let why = app.new_tab_problem(&dialog).unwrap();
+    assert!(why.contains("JSON Lines"), "{why}");
+    dialog.format = DataFormat::Toml;
+    app.create_tab(&dialog).unwrap();
+    assert_eq!(app.calc().format("Order2"), Some(DataFormat::Toml));
+    assert!(valid(&app, "Order2"));
+}
+
 // ------------------------------------------------------------ deleting
 
 #[test]

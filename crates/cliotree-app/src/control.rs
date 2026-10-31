@@ -46,7 +46,8 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             Ok(Json::Null)
         }
         // A new tab, as *New tab...* makes it: with its own schema (a JSON
-        // Schema, or with `xml` true an XSD), or with the schema of `schema`.
+        // Schema, or with `xml` true an XSD), or with the schema of `schema`;
+        // `format` is the data format of a JSON Schema tab ("yaml", "toml", ...).
         "new_tab" => {
             let name = text_arg(args, "name")?;
             let xml = args.get("xml").and_then(Json::as_bool).unwrap_or(false);
@@ -66,6 +67,11 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             dialog.name = name.to_owned();
             dialog.schema_name = format!("{name}Schema");
             dialog.schema = schema;
+            if let Some(code) = args.get("format").and_then(Json::as_str) {
+                dialog.format = cliotree_core::dataformat::DataFormat::from_code(code)
+                    .filter(|f| f.json_shaped())
+                    .ok_or_else(|| format!("{code} is not a format of JSON-shaped data"))?;
+            }
             app.create_tab(&dialog)?;
             app.refresh_rows();
             Ok(Json::Null)

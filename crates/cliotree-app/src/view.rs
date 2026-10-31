@@ -54,6 +54,9 @@ pub(crate) enum Action {
     EnterText(Path, String),
     AddItem(Path),
     InsertAbove(Path),
+    // The entries of a map: the dialog asks for the key.
+    AddEntry(Path),
+    RenameKey(Path),
     Delete(Path),
     Commit,
     Cancel,
@@ -207,6 +210,7 @@ impl ClioApp {
         self.schema_window(ui.ctx());
         self.form_window(ui.ctx());
         self.rename_tab_window(ui.ctx());
+        self.key_window(ui.ctx());
         self.tab_windows(ui.ctx());
         self.file_windows(ui.ctx());
         self.options_window(ui.ctx());
@@ -966,6 +970,8 @@ impl ClioApp {
                 self.enter_directly(&path, &text);
             }
             Action::AddItem(path) => self.insert_item(&path, None),
+            Action::AddEntry(path) => self.begin_add_entry(&path),
+            Action::RenameKey(path) => self.begin_rename_key(&path),
             Action::InsertAbove(path) => {
                 if let (Some(parent), Some(Segment::Index(i))) =
                     (path.parent(), path.segments().last())
@@ -1468,6 +1474,17 @@ impl ClioApp {
         }
         if row.kind == RowKind::Array && ui.button("Add item").clicked() {
             actions.push(Action::AddItem(path.clone()));
+            ui.close();
+        }
+        if row.kind == RowKind::Map && ui.button("Add entry...").clicked() {
+            actions.push(Action::AddEntry(path.clone()));
+            ui.close();
+        }
+        let map_entry = row.node.is_some()
+            && matches!(path.segments().last(), Some(Segment::Key(_)))
+            && path.parent().is_some_and(|map| self.is_map(&map));
+        if map_entry && ui.button("Rename key...").clicked() {
+            actions.push(Action::RenameKey(path.clone()));
             ui.close();
         }
         if row.kind == RowKind::Array {

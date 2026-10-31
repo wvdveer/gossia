@@ -197,6 +197,7 @@ fn the_preferences_are_written_and_read_by_the_next_session() {
     dialog.texts.insert(Field::Scale, "150".into());
     dialog.texts.insert(Field::UndoEntries, "50".into());
     dialog.texts.insert(Field::ImportBytes, "2".into());
+    dialog.binary_copy = cliotree_core::binary::BinaryText::Base64;
     // The appearance is previewed while the dialog is open.
     assert_eq!(app.appearance().theme, ThemeChoice::Dark);
     app.apply_options().unwrap();
@@ -208,12 +209,17 @@ fn the_preferences_are_written_and_read_by_the_next_session() {
         json!({ "theme": "dark", "scale_percent": 150 })
     );
     assert_eq!(file["files"]["max_import_bytes"], 2 << 20);
+    assert_eq!(file["files"]["copy_records_as"], "base64");
     assert_eq!(file["undo"]["max_entries"], 50);
 
     let user = folder.user();
     assert_eq!(user.prefs.appearance.theme, ThemeChoice::Dark);
     assert_eq!(user.prefs.appearance.scale_percent, 150);
     assert_eq!(user.prefs.max_import_bytes, 2 << 20);
+    assert_eq!(
+        user.prefs.binary_copy,
+        cliotree_core::binary::BinaryText::Base64
+    );
     assert_eq!(user.prefs.history_entries, 50);
 }
 

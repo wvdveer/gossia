@@ -85,6 +85,7 @@ impl ClioApp {
         let name = match self.calc().schema_format(schema)? {
             SchemaFormat::Json => format!("{stem}.schema.json"),
             SchemaFormat::Xsd => format!("{stem}.xsd"),
+            SchemaFormat::Copybook => format!("{stem}.cpy"),
         };
         Some(path.with_file_name(name))
     }
@@ -101,6 +102,8 @@ impl ClioApp {
                 "json" => "JSON",
                 "xml" => "XML",
                 "xsd" => "XSD",
+                "blk" => "COBOL records",
+                "cpy" => "COBOL copybook",
                 _ => "Text",
             };
             self.files.browser = crate::workbook_file::new_browser()
@@ -129,9 +132,9 @@ impl ClioApp {
         } else {
             path.with_extension(self.export_extension(&plan))
         };
-        let text = self
+        let bytes = self
             .calc()
-            .export_text(&plan.tab, plan.format, plan.pretty)?;
+            .export_bytes(&plan.tab, plan.format, plan.pretty)?;
         let schema = match self.export_schema_path(&plan, &path) {
             Some(schema_path) => {
                 if schema_path == path {
@@ -152,7 +155,7 @@ impl ClioApp {
             }
             None => None,
         };
-        save_atomic(&path, text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+        save_atomic(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         if let Some((schema_path, schema_text)) = schema {
             save_atomic(&schema_path, schema_text.as_bytes())
                 .map_err(|e| format!("{}: {e}", schema_path.display()))?;

@@ -568,34 +568,9 @@ impl ClioApp {
             self.notice = Some("type the key of the new entry first".to_owned());
             return;
         }
-        let exists = self
-            .calc()
-            .data(&self.sheet)
-            .and_then(|d| d.get(&map.key(key)))
-            .is_some();
-        if exists {
-            self.notice = Some(format!("{} already has an entry {key}", self.name_of(map)));
+        if let Err(why) = self.add_map_entry(map, key) {
+            self.notice = Some(why);
             return;
-        }
-        let value = self.calc().spec(&self.sheet).and_then(|spec| {
-            match &spec.get(spec.resolve(map)?.ty).kind {
-                Kind::Map { value } => Some(ClioApp::default_value(spec, *value)),
-                _ => None,
-            }
-        });
-        let Some(value) = value else {
-            return;
-        };
-        let map_present = self
-            .calc()
-            .data(&self.sheet)
-            .is_some_and(|d| d.get(map).is_some());
-        if map_present {
-            self.set_node(&map.key(key), value);
-        } else {
-            let mut fields = std::collections::BTreeMap::new();
-            fields.insert(key.to_owned(), Node::new(value));
-            self.set_node(map, Value::Object(fields.into_iter().collect()));
         }
         self.form
             .new_keys

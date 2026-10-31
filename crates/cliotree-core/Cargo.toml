@@ -19,6 +19,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
 toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
 saphyr-parser = "0.3.3"
+base64 = "0.22.1"
 
 [dev-dependencies]
 proptest = "1.12.0"

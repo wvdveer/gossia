@@ -391,6 +391,8 @@ pub struct OptionsDialog {
     pub wrap: bool,
     /// Clear the Immediate window's history on OK.
     pub clear_history: bool,
+    /// How *Copy* writes COBOL records.
+    pub binary_copy: cliotree_core::binary::BinaryText,
 }
 
 impl OptionsDialog {
@@ -416,6 +418,7 @@ impl OptionsDialog {
             highlighting: prefs.code.highlighting,
             wrap: prefs.code.wrap,
             clear_history: false,
+            binary_copy: prefs.binary_copy,
         }
     }
 
@@ -518,6 +521,7 @@ impl OptionsDialog {
         prefs.limits.total = get(Field::TotalBytes);
         prefs.limits.entry = get(Field::EntryBytes);
         prefs.max_import_bytes = get(Field::ImportBytes);
+        prefs.binary_copy = self.binary_copy;
     }
 }
 
@@ -937,6 +941,17 @@ impl ClioApp {
                 });
                 section(ui, "Import", |ui| {
                     number(ui, dialog, Field::ImportBytes, None);
+                });
+                section(ui, "COBOL records", |ui| {
+                    ui.label("Copy as");
+                    ui.vertical(|ui| {
+                        for kind in cliotree_core::binary::BinaryText::ALL {
+                            if ui.radio(dialog.binary_copy == kind, kind.label()).clicked() {
+                                dialog.binary_copy = kind;
+                            }
+                        }
+                    });
+                    ui.end_row();
                 });
                 note(
                     ui,

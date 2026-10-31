@@ -28,7 +28,7 @@ mod trie;
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, EditError,
     Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind, FieldPlaces, Fingerprint,
-    Mentions, ModuleProblem, ModuleStatus, SchemaFormat, Setting, TrustStore, Unit,
+    Mentions, ModuleProblem, ModuleStatus, RedefineGroup, SchemaFormat, Setting, TrustStore, Unit,
     WorkbookSettings, comment_text_problem,
 };
 pub use calc::{
@@ -109,3 +109,7 @@ mod tabs_tests;
 #[cfg(test)]
 #[path = "formats_tests.rs"]
 mod formats_tests;
+
+#[cfg(test)]
+#[path = "copybooks_tests.rs"]
+mod copybooks_tests;

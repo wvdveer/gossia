@@ -3,7 +3,11 @@
 //! See DESIGN.md, "Schema model". Types are held by id in an arena, not inlined,
 //! so a type can refer to itself (a tree of folders that contain folders).
 
+use std::sync::Arc;
+
 use regex::Regex;
+
+use crate::copybook::Layout;
 
 use crate::num::Num;
 use crate::path::{Path, Segment};
@@ -25,6 +29,8 @@ pub struct TypeSpec {
     types: Vec<TypeDef>,
     root: TypeId,
     xml: Option<XmlInfo>,
+    /// For a schema lowered from a COBOL copybook, the bytes of a record.
+    copybook: Option<Arc<Layout>>,
 }
 
 /// What a schema lowered from an XSD says about the XML document itself.
@@ -45,12 +51,23 @@ impl TypeSpec {
             types,
             root,
             xml: None,
+            copybook: None,
         }
     }
 
     pub(crate) fn with_xml(mut self, xml: XmlInfo) -> TypeSpec {
         self.xml = Some(xml);
         self
+    }
+
+    pub(crate) fn with_copybook(mut self, layout: Layout) -> TypeSpec {
+        self.copybook = Some(Arc::new(layout));
+        self
+    }
+
+    /// For a schema lowered from a copybook, how its records are laid out.
+    pub fn copybook(&self) -> Option<&Layout> {
+        self.copybook.as_deref()
     }
 
     /// For a schema lowered from an XSD, how its documents are put together.

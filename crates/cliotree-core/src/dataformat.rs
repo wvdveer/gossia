@@ -27,11 +27,14 @@ pub enum DataFormat {
     Yaml,
     /// YAML of several documents, each after a `---` line: a list.
     YamlDocuments,
+    /// Fixed-length COBOL records, `.blk`: goes with a copybook, and is bytes,
+    /// not text (see `copybook::records`).
+    Blk,
 }
 
 impl DataFormat {
     /// Every format, in the order menus list them.
-    pub const ALL: [DataFormat; 8] = [
+    pub const ALL: [DataFormat; 9] = [
         DataFormat::Json,
         DataFormat::Json5,
         DataFormat::Jsonc,
@@ -40,6 +43,7 @@ impl DataFormat {
         DataFormat::Yaml,
         DataFormat::YamlDocuments,
         DataFormat::Xml,
+        DataFormat::Blk,
     ];
 
     /// The formats that go with a JSON Schema.
@@ -64,6 +68,7 @@ impl DataFormat {
             DataFormat::Toml => "toml",
             DataFormat::Yaml => "yaml",
             DataFormat::YamlDocuments => "yaml-documents",
+            DataFormat::Blk => "blk",
         }
     }
 
@@ -82,6 +87,7 @@ impl DataFormat {
             DataFormat::Toml => "TOML",
             DataFormat::Yaml => "YAML",
             DataFormat::YamlDocuments => "YAML documents",
+            DataFormat::Blk => "COBOL records",
         }
     }
 
@@ -104,6 +110,7 @@ impl DataFormat {
             "jsonl" | "ndjson" => DataFormat::JsonLines,
             "toml" => DataFormat::Toml,
             "yaml" | "yml" => DataFormat::Yaml,
+            "blk" => DataFormat::Blk,
             _ => return None,
         })
     }
@@ -124,7 +131,7 @@ impl DataFormat {
 
     /// Whether the format goes with a JSON Schema.
     pub fn json_shaped(self) -> bool {
-        self != DataFormat::Xml
+        !matches!(self, DataFormat::Xml | DataFormat::Blk)
     }
 
     /// Why data whose root is of this kind cannot be written in the format,
@@ -167,6 +174,11 @@ impl DataFormat {
                 column: 1,
                 message: "XML is read with its schema".to_owned(),
             }),
+            DataFormat::Blk => Err(ParseError {
+                line: 1,
+                column: 1,
+                message: "COBOL records are bytes, read with their copybook".to_owned(),
+            }),
         }
     }
 
@@ -186,6 +198,12 @@ impl DataFormat {
                 return Err(WriteError {
                     path: Path::root(),
                     message: "XML is written with its schema".to_owned(),
+                });
+            }
+            DataFormat::Blk => {
+                return Err(WriteError {
+                    path: Path::root(),
+                    message: "COBOL records are bytes, written with their copybook".to_owned(),
                 });
             }
         };

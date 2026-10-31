@@ -215,6 +215,67 @@ pub fn xsd_meta() -> &'static TypeSpec {
     META.get_or_init(|| xsd::lower_str(xsd_source()).expect("the bundled meta-schema is valid"))
 }
 
+/// The text of the copybook meta-schema (`builtin:copybook`), a JSON
+/// Schema: a copybook's code page and its items, each with its clauses and
+/// the items below it. Lowering the copybook checks the rest.
+pub fn copybook_source() -> String {
+    let usages: Vec<String> = crate::copybook::Usage::ALL
+        .iter()
+        .map(|u| format!("\"{}\"", u.code()))
+        .collect();
+    let signs: Vec<String> = crate::copybook::Sign::CODES
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect();
+    let pages: Vec<String> = crate::copybook::CodePage::ALL
+        .iter()
+        .map(|p| format!("\"{}\"", p.code()))
+        .collect();
+    format!(
+        r##"{{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "title": "COBOL copybook",
+  "properties": {{
+    "codePage": {{"type": "string", "enum": [{pages}]}},
+    "items": {{"type": "array", "items": {{"$ref": "#/$defs/Item"}}}}
+  }},
+  "required": ["codePage", "items"],
+  "$defs": {{
+    "Item": {{
+      "type": "object",
+      "properties": {{
+        "level": {{"type": "integer", "minimum": 1, "maximum": 77}},
+        "name": {{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$"}},
+        "redefines": {{"type": "string"}},
+        "picture": {{"type": "string"}},
+        "usage": {{"type": "string", "enum": [{usages}]}},
+        "sign": {{"type": "string", "enum": [{signs}]}},
+        "occursFrom": {{"type": "integer", "minimum": 0}},
+        "occurs": {{"type": "integer", "minimum": 1}},
+        "dependingOn": {{"type": "string"}},
+        "value": {{"type": "string"}},
+        "other": {{"type": "string"}},
+        "items": {{"type": "array", "items": {{"$ref": "#/$defs/Item"}}}}
+      }},
+      "required": ["level", "name"]
+    }}
+  }}
+}}"##,
+        pages = pages.join(", "),
+        usages = usages.join(", "),
+        signs = signs.join(", "),
+    )
+}
+
+/// The lowered meta-schema for copybook schema tabs, made once.
+pub fn copybook_meta() -> &'static TypeSpec {
+    static META: OnceLock<TypeSpec> = OnceLock::new();
+    META.get_or_init(|| {
+        jsonschema::lower_str(&copybook_source()).expect("the bundled meta-schema is valid")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

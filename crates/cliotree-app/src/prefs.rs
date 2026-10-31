@@ -556,6 +556,8 @@ pub struct Preferences {
     pub limits: Limits,
     /// The largest file that is imported.
     pub max_import_bytes: u64,
+    /// How *Copy* in the Raw view writes COBOL records as text.
+    pub binary_copy: cliotree_core::binary::BinaryText,
     /// The bounds of the undo history: entries, and a rough weight.
     pub history_entries: usize,
     pub history_weight: usize,
@@ -579,6 +581,7 @@ impl Default for Preferences {
             ceilings: Ceilings::default(),
             limits: Limits::default(),
             max_import_bytes: DEFAULT_MAX_IMPORT_BYTES,
+            binary_copy: Default::default(),
             history_entries: cliotree_calc::DEFAULT_MAX_ENTRIES,
             history_weight: cliotree_calc::DEFAULT_MAX_WEIGHT,
             code: CodePrefs::default(),
@@ -641,6 +644,22 @@ impl Preferences {
             defaults.max_import_bytes,
             warnings,
         );
+        let binary_copy = match files.and_then(|o| o.get("copy_records_as")) {
+            None => defaults.binary_copy,
+            Some(value) => match value
+                .as_str()
+                .and_then(cliotree_core::binary::BinaryText::from_key)
+            {
+                Some(kind) => kind,
+                None => {
+                    warnings.push(format!(
+                        "In {PREFERENCES_FILE}, files.copy_records_as is {value}, which cannot \
+                         be used; records are copied as a hex dump."
+                    ));
+                    defaults.binary_copy
+                }
+            },
+        };
         let section = object_at(&raw, "appearance");
         let theme = match section.and_then(|o| o.get("theme")) {
             None => ThemeChoice::default(),
@@ -718,6 +737,7 @@ impl Preferences {
             ceilings,
             limits,
             max_import_bytes,
+            binary_copy,
             history_entries,
             history_weight,
             code,
@@ -761,6 +781,7 @@ impl Preferences {
                 ("max_total_bytes", json!(self.limits.total)),
                 ("max_entry_bytes", json!(self.limits.entry)),
                 ("max_import_bytes", json!(self.max_import_bytes)),
+                ("copy_records_as", json!(self.binary_copy.key())),
             ],
         );
         section(

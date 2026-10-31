@@ -72,11 +72,35 @@ fn text(s: &str) -> Node {
 }
 
 /// The language a schema tab is written in. It fixes the format of the data of
-/// the tabs bound to it: JSON Schema gives JSON data, XSD gives XML data.
+/// the tabs bound to it: JSON Schema gives JSON data (or JSON-shaped), XSD
+/// gives XML data, and a COBOL copybook gives `.blk` records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaFormat {
     Json,
     Xsd,
+    Copybook,
+}
+
+impl SchemaFormat {
+    /// The schema language of a lowered type: the one its data goes with.
+    pub fn of(spec: &TypeSpec) -> SchemaFormat {
+        if spec.xml().is_some() {
+            SchemaFormat::Xsd
+        } else if spec.copybook().is_some() {
+            SchemaFormat::Copybook
+        } else {
+            SchemaFormat::Json
+        }
+    }
+
+    /// What its data is called, for messages.
+    pub fn data_label(self) -> &'static str {
+        match self {
+            SchemaFormat::Json => "JSON data, described by a JSON Schema",
+            SchemaFormat::Xsd => "XML data, described by an XSD",
+            SchemaFormat::Copybook => "COBOL records, described by a copybook",
+        }
+    }
 }
 
 /// Where an object type is used, for a command that changes it.
@@ -148,6 +172,27 @@ impl Calc {
         Ok(())
     }
 
+    /// Adds a tab that holds a COBOL copybook, as the tree the bundled
+    /// copybook meta-schema types (see `cliotree_core::copybook::to_node`).
+    /// It is kept as JSON5, which holds the comments of its items.
+    pub fn add_copybook_sheet(
+        &mut self,
+        name: impl Into<String>,
+        tree: Node,
+    ) -> Result<(), EditError> {
+        let name = name.into();
+        self.add_sheet(name.clone(), metaschema::copybook_meta().clone(), tree)?;
+        let sheet = self.sheet_mut(&name)?;
+        sheet.format = cliotree_core::dataformat::DataFormat::Json5;
+        sheet.schema = SchemaRole::Document {
+            format: SchemaFormat::Copybook,
+            auto_update: false,
+            error: None,
+        };
+        self.relower_schema(&name);
+        Ok(())
+    }
+
     /// The language of a schema tab, if the tab is one.
     pub fn schema_format(&self, sheet: &str) -> Option<SchemaFormat> {
         match &self.sheets.get(sheet)?.schema {
@@ -205,7 +250,8 @@ impl Calc {
                  switch that off first"
             )));
         }
-        let spec = self.lowered(schema_sheet)?;
+        let record = self.sheets.get(sheet).and_then(|s| s.record.clone());
+        let spec = self.lowered_for(schema_sheet, record.as_deref())?;
         let s = self.sheet_mut(sheet)?;
         s.spec = Arc::new(spec);
         s.schema = SchemaRole::Bound(schema_sheet.to_owned());
@@ -316,6 +362,16 @@ impl Calc {
     // --------------------------------------------------------- lowering
 
     pub(super) fn lowered(&self, schema_sheet: &str) -> Result<TypeSpec, EditError> {
+        self.lowered_for(schema_sheet, None)
+    }
+
+    /// The type of a schema tab's document for a tab that holds `record`,
+    /// which only a copybook has a choice of.
+    pub(super) fn lowered_for(
+        &self,
+        schema_sheet: &str,
+        record: Option<&str>,
+    ) -> Result<TypeSpec, EditError> {
         let s = self
             .sheets
             .get(schema_sheet)
@@ -332,6 +388,10 @@ impl Calc {
                     .unwrap_or_else(|| xsd::default_document().declarations);
                 xsd::lower_node(&s.data, &declarations).map_err(|e| e.to_string())
             }
+            SchemaRole::Document {
+                format: SchemaFormat::Copybook,
+                ..
+            } => cliotree_core::copybook::lower_node_record(&s.data, record),
             _ => jsonschema::lower(&s.data).map_err(|e| e.to_string()),
         };
         lowered.map_err(|e| {
@@ -351,9 +411,22 @@ impl Calc {
         let error = match self.lowered(schema_sheet) {
             Ok(spec) => {
                 let spec = Arc::new(spec);
-                for s in self.sheets.values_mut() {
+                // A tab of COBOL records may hold another 01 record.
+                let records: Vec<(String, Option<String>)> = self
+                    .sheets
+                    .iter()
+                    .filter(|(_, s)| s.record.is_some())
+                    .map(|(name, s)| (name.clone(), s.record.clone()))
+                    .collect();
+                let mut own = std::collections::HashMap::new();
+                for (name, record) in records {
+                    if let Ok(spec) = self.lowered_for(schema_sheet, record.as_deref()) {
+                        own.insert(name, Arc::new(spec));
+                    }
+                }
+                for (name, s) in self.sheets.iter_mut() {
                     if matches!(&s.schema, SchemaRole::Bound(b) if b == schema_sheet) {
-                        s.spec = Arc::clone(&spec);
+                        s.spec = own.remove(name).unwrap_or_else(|| Arc::clone(&spec));
                     }
                 }
                 None
@@ -384,6 +457,12 @@ impl Calc {
             )));
         };
         let is_xsd = self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd);
+        if self.schema_format(schema_sheet) == Some(SchemaFormat::Copybook) {
+            return Err(EditError::Path(format!(
+                "the fields of {sheet} are items of the copybook in {schema_sheet}, which are \
+                 changed there"
+            )));
+        }
         if !self.auto_update(schema_sheet) {
             return Err(EditError::Path(format!(
                 "switch on auto-update on {schema_sheet} to change the schema from {sheet}"

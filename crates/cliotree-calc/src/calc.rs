@@ -42,6 +42,12 @@ pub(crate) struct Sheet {
     /// formats"): XML for an XSD, JSON or another JSON-shaped format for a
     /// JSON Schema.
     format: cliotree_core::dataformat::DataFormat,
+    /// For a tab of COBOL records, which layout of each group of `REDEFINES`
+    /// it shows (DESIGN.md, "COBOL copybooks"); one not given is the first.
+    redefines: Vec<usize>,
+    /// For a tab of COBOL records, the 01 record of its copybook it holds;
+    /// None is the first.
+    record: Option<String>,
 }
 
 /// What a tab is to the schema machinery.
@@ -109,6 +115,10 @@ pub use export::ExportFormat;
 
 #[path = "formats.rs"]
 mod formats;
+
+#[path = "copybooks.rs"]
+mod copybooks;
+pub use copybooks::RedefineGroup;
 
 #[path = "tabs.rs"]
 mod tabs;
@@ -336,6 +346,8 @@ impl Calc {
         }
         let format = if spec.xml().is_some() {
             cliotree_core::dataformat::DataFormat::Xml
+        } else if spec.copybook().is_some() {
+            cliotree_core::dataformat::DataFormat::Blk
         } else {
             cliotree_core::dataformat::DataFormat::Json
         };
@@ -349,6 +361,8 @@ impl Calc {
                 xml: None,
                 columns: Vec::new(),
                 format,
+                redefines: Vec::new(),
+                record: None,
             },
         );
         self.changed(&name, &Path::root());
@@ -532,6 +546,98 @@ impl Calc {
         ops.extend(self.sync_columns(sheet, path));
         self.history.record(
             format!("Remove {}", Loc::new(sheet, path.clone())),
+            ops,
+            None,
+        );
+        Ok(())
+    }
+
+    /// Renames the entry `from` of the map at `map` to `to`, in its place.
+    /// The formulas on the entry and inside it go with it, as a renamed tab
+    /// takes its formulas; a column formula inside it ends for those items.
+    /// One entry in the history.
+    pub fn rename_key(
+        &mut self,
+        sheet: &str,
+        map: &Path,
+        from: &str,
+        to: &str,
+    ) -> Result<(), EditError> {
+        let old = map.key(from);
+        self.refuse_inside_computed(sheet, &old)?;
+        if to.is_empty() {
+            return Err(EditError::Path("a key cannot be empty".to_owned()));
+        }
+        let s = self.sheet_mut(sheet)?;
+        let before = s
+            .data
+            .get(map)
+            .cloned()
+            .ok_or_else(|| EditError::Path(format!("there is no node at {map}")))?;
+        let Value::Object(fields) = before.value() else {
+            return Err(EditError::Path(format!("{map} is not a map")));
+        };
+        if !fields.contains_key(from) {
+            return Err(EditError::Path(format!("{map} has no entry {from}")));
+        }
+        if from == to {
+            return Ok(());
+        }
+        if fields.contains_key(to) {
+            return Err(EditError::Path(format!("{map} already has an entry {to}")));
+        }
+        let mut after = before.clone();
+        if let Value::Object(fields) = after.value_mut() {
+            let position = fields.get_index_of(from).unwrap_or(fields.len());
+            if let Some(entry) = fields.shift_remove(from) {
+                fields.shift_insert(position, to.to_owned(), entry);
+            }
+        }
+        // The formulas that go with the entry, with where they go.
+        let new = map.key(to);
+        let mut moving: Vec<Path> = s.formulas.below(&old);
+        if s.formulas.by_path.contains_key(&old) {
+            moving.insert(0, old.clone());
+        }
+        let moving: Vec<(Path, Path, String)> = moving
+            .into_iter()
+            .filter_map(|path| {
+                let text = self.formula_text(sheet, &path)?;
+                let rest: Vec<Segment> = path.segments()[old.len()..].to_vec();
+                let mut target = new.clone();
+                for segment in rest {
+                    target.push(segment);
+                }
+                Some((path, target, text))
+            })
+            .collect();
+        self.sheet_mut(sheet)?
+            .data
+            .replace(map, after.clone())
+            .map_err(|e| EditError::Path(e.to_string()))?;
+        self.changed_by_structure(sheet, &old);
+        self.changed_by_structure(sheet, &new);
+        let mut ops = vec![Op::Replace {
+            sheet: sheet.to_owned(),
+            path: map.clone(),
+            before,
+            after,
+        }];
+        for (path, target, text) in moving {
+            ops.extend(self.release_column(sheet, &path));
+            if self.drop_formula(sheet, &path) {
+                ops.push(Op::Formula {
+                    sheet: sheet.to_owned(),
+                    path,
+                    before: Some(text.clone()),
+                    after: None,
+                    value: None,
+                });
+            }
+            ops.push(self.formula_op(sheet, &target, &text));
+        }
+        self.history.record(
+            format!("Rename {} to {to}", Loc::new(sheet, old)),
             ops,
             None,
         );
@@ -1009,6 +1115,14 @@ impl Calc {
             } => {
                 self.store_format(sheet, if forward { *after } else { *before })?;
             }
+            Op::Redefine {
+                sheet,
+                set,
+                before,
+                after,
+            } => {
+                self.store_redefine(sheet, *set, if forward { *after } else { *before })?;
+            }
             Op::Settings { before, after } => {
                 let target = if forward { after } else { before };
                 self.store_settings((**target).clone());
@@ -1027,7 +1141,8 @@ impl Calc {
                 after,
             } => {
                 if forward {
-                    let spec = self.lowered(after)?;
+                    let record = self.sheets.get(sheet).and_then(|s| s.record.clone());
+                    let spec = self.lowered_for(after, record.as_deref())?;
                     self.store_binding(sheet, Some(after.clone()), Arc::new(spec))?;
                 } else {
                     self.store_binding(sheet, before.clone(), Arc::clone(before_spec))?;

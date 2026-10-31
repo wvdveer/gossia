@@ -194,6 +194,29 @@ impl Calc {
         data: Node,
         xml: Option<XmlDocument>,
     ) -> Result<(), EditError> {
+        self.create_tab_of(name, schema_sheet, None, data, xml)
+    }
+
+    /// Adds a tab of COBOL records bound to a copybook schema tab, holding
+    /// its 01 record `record` (None is the first).
+    pub fn create_records_tab(
+        &mut self,
+        name: &str,
+        schema_sheet: &str,
+        record: Option<&str>,
+        data: Node,
+    ) -> Result<(), EditError> {
+        self.create_tab_of(name, schema_sheet, record, data, None)
+    }
+
+    fn create_tab_of(
+        &mut self,
+        name: &str,
+        schema_sheet: &str,
+        record: Option<&str>,
+        data: Node,
+        xml: Option<XmlDocument>,
+    ) -> Result<(), EditError> {
         self.refuse_tab_name(name)?;
         if !self.is_schema_sheet(schema_sheet) {
             return Err(EditError::Path(format!(
@@ -201,11 +224,12 @@ impl Calc {
             )));
         }
         self.refuse_auto_update_in_use(schema_sheet, name)?;
-        let spec = self.lowered(schema_sheet)?;
+        let spec = self.lowered_for(schema_sheet, record)?;
         let xml_data = spec.xml().is_some();
         self.add_sheet(name, spec, data)?;
         let sheet = self.sheet_mut(name)?;
         sheet.schema = SchemaRole::Bound(schema_sheet.to_owned());
+        sheet.record = record.map(str::to_owned);
         if xml_data {
             sheet.xml = Some(xml.unwrap_or_else(|| XmlDocument {
                 declaration: Some(cliotree_core::xmltree::Declaration::default()),
@@ -233,6 +257,14 @@ impl Calc {
     ) -> Result<(), EditError> {
         self.refuse_tab_name(name)?;
         self.add_xsd_sheet(name, tree, document)?;
+        self.record_added(name);
+        Ok(())
+    }
+
+    /// Adds a copybook schema tab, as one entry in the history.
+    pub fn create_copybook_schema_tab(&mut self, name: &str, tree: Node) -> Result<(), EditError> {
+        self.refuse_tab_name(name)?;
+        self.add_copybook_sheet(name, tree)?;
         self.record_added(name);
         Ok(())
     }
@@ -419,7 +451,8 @@ impl Calc {
             return Ok(());
         }
         let before_spec = Arc::clone(&self.sheet_mut(sheet)?.spec);
-        let spec = self.lowered(schema_sheet)?;
+        let record = self.sheets[sheet].record.clone();
+        let spec = self.lowered_for(schema_sheet, record.as_deref())?;
         self.store_binding(sheet, Some(schema_sheet.to_owned()), Arc::new(spec))?;
         self.history.record(
             format!("Bind {sheet} to {schema_sheet}"),
@@ -447,18 +480,17 @@ impl Calc {
         let Some(format) = self.schema_format(schema_sheet) else {
             return Some(format!("{schema_sheet} is not a schema tab"));
         };
-        let xml = s.spec.xml().is_some();
-        if xml != (format == SchemaFormat::Xsd) {
-            return Some(if xml {
-                format!("{sheet} holds XML data, so its schema must be an XSD")
-            } else {
-                format!("{sheet} holds JSON data, so its schema must be a JSON Schema")
-            });
+        let own = SchemaFormat::of(&s.spec);
+        if own != format {
+            return Some(format!(
+                "{sheet} holds {}, so it cannot be bound to {schema_sheet}",
+                own.data_label()
+            ));
         }
         if let Err(e) = self.refuse_auto_update_in_use(schema_sheet, sheet) {
             return Some(e.to_string());
         }
-        let spec = match self.lowered(schema_sheet) {
+        let spec = match self.lowered_for(schema_sheet, s.record.as_deref()) {
             Ok(spec) => spec,
             Err(e) => return Some(e.to_string()),
         };
@@ -472,6 +504,30 @@ impl Calc {
     /// before it is in a tab.
     pub fn schema_spec(&self, schema_sheet: &str) -> Result<TypeSpec, EditError> {
         self.lowered(schema_sheet)
+    }
+
+    /// The type of a copybook schema tab for its 01 record `record`.
+    pub fn record_spec(&self, schema_sheet: &str, record: &str) -> Result<TypeSpec, EditError> {
+        self.lowered_for(schema_sheet, Some(record))
+    }
+
+    /// The names of the 01 records of a copybook schema tab, in order; none
+    /// for any other tab.
+    pub fn copybook_records(&self, schema_sheet: &str) -> Vec<String> {
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Copybook) {
+            return Vec::new();
+        }
+        self.sheets
+            .get(schema_sheet)
+            .and_then(|s| cliotree_core::copybook::from_node(&s.data).ok())
+            .map(|(copybook, _)| cliotree_core::copybook::record_names(&copybook))
+            .unwrap_or_default()
+    }
+
+    /// The 01 record a tab of COBOL records holds: the one its layout is of.
+    pub fn record_of(&self, sheet: &str) -> Option<String> {
+        let s = self.sheets.get(sheet)?;
+        s.spec.copybook().map(|layout| layout.record.clone())
     }
 
     pub(super) fn store_binding(

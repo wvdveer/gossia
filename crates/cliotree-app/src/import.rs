@@ -16,6 +16,8 @@ use std::path::Path as FsPath;
 
 use cliotree_calc::SchemaFormat;
 use cliotree_calc::names::{self, Subject};
+use cliotree_core::binary::BinaryText;
+use cliotree_core::copybook::{self, CodePage};
 use cliotree_core::dataformat::DataFormat;
 use cliotree_core::infer::{self, JsonInference};
 use cliotree_core::validate::validate;
@@ -43,6 +45,11 @@ pub enum ImportFormat {
     Csv,
     /// Tab-separated values, read as CSV is.
     Tsv,
+    /// A COBOL copybook (`.cpy`), which becomes a copybook schema tab.
+    Copybook,
+    /// COBOL records (`.blk`), read with a copybook schema tab already in
+    /// the workbook.
+    Blk,
     /// Anything else: an array of its lines.
     Text,
 }
@@ -61,6 +68,8 @@ impl ImportFormat {
             ImportFormat::YamlDocuments => "YAML documents",
             ImportFormat::Csv => "comma-separated values",
             ImportFormat::Tsv => "tab-separated values",
+            ImportFormat::Copybook => "a COBOL copybook",
+            ImportFormat::Blk => "COBOL records",
             ImportFormat::Text => "lines of text",
         }
     }
@@ -76,6 +85,8 @@ impl ImportFormat {
             ImportFormat::Toml => DataFormat::Toml,
             ImportFormat::Yaml => DataFormat::Yaml,
             ImportFormat::YamlDocuments => DataFormat::YamlDocuments,
+            ImportFormat::Copybook => DataFormat::Json5,
+            ImportFormat::Blk => DataFormat::Blk,
             ImportFormat::Json | ImportFormat::Csv | ImportFormat::Tsv | ImportFormat::Text => {
                 DataFormat::Json
             }
@@ -136,12 +147,16 @@ pub enum SchemaFile {
     Json(Node),
     /// An XSD, as the XSD meta-schema types it.
     Xsd { tree: Node, document: XmlDocument },
+    /// A COBOL copybook, as the copybook meta-schema types it.
+    Copybook(Node),
 }
 
 /// A schema tab the data could be given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub schema: String,
+    /// For COBOL records, the 01 record of the copybook they are read as.
+    pub record: Option<String>,
     /// How many problems validation finds in the data under it.
     pub problems: usize,
 }
@@ -169,6 +184,10 @@ pub struct ImportPlan {
     /// The text of the file, which an XML file is read from again for the
     /// schema it is given.
     text: String,
+    /// The bytes of a `.blk` file, read again with the copybook chosen.
+    bytes: Vec<u8>,
+    /// For COBOL records, the 01 record chosen with the schema tab.
+    pub record: Option<String>,
     /// JSON or text data, without its nulls.
     data: Option<Node>,
     /// What reading the file noticed: dropped nulls, a dropped DOCTYPE,
@@ -206,7 +225,10 @@ impl ImportPlan {
                 }
             }
             SchemaChoice::Existing(schema) => {
-                if let Some(c) = self.candidates.iter().find(|c| &c.schema == schema)
+                if let Some(c) = self
+                    .candidates
+                    .iter()
+                    .find(|c| &c.schema == schema && c.record == self.record)
                     && c.problems > 0
                 {
                     lines.push(format!(
@@ -253,6 +275,8 @@ pub fn format_of(file: &str) -> ImportFormat {
         Some("yaml" | "yml") => ImportFormat::Yaml,
         Some("csv") => ImportFormat::Csv,
         Some("tsv" | "tab") => ImportFormat::Tsv,
+        Some("cpy") => ImportFormat::Copybook,
+        Some("blk") => ImportFormat::Blk,
         _ => ImportFormat::Text,
     }
 }
@@ -432,6 +456,9 @@ impl ClioApp {
     /// shows. The tab is called `Pasted`. When the text is in the format of
     /// the tab shown, the dialog also offers to replace that tab's data.
     pub fn plan_paste(&self, text: &str) -> Result<ImportPlan, String> {
+        if let Some(plan) = self.plan_records_paste(text) {
+            return plan;
+        }
         let format = format_of_text(text);
         let mut plan = self.plan_import_as(PASTED, "Pasted", format, text.as_bytes())?;
         let same_format = match format {
@@ -442,6 +469,58 @@ impl ClioApp {
             plan.replace = Some(self.sheet.clone());
         }
         Ok(plan)
+    }
+
+    /// A paste of COBOL records as text: on a tab of records, a dump, hex
+    /// digits or Base64, whichever Options says to copy; anywhere, a dump. None when the text is none of these, and it is read as other
+    /// text is. On a tab whose records it fits, the dialog also offers to
+    /// replace them.
+    fn plan_records_paste(&self, text: &str) -> Option<Result<ImportPlan, String>> {
+        let calc = self.calc();
+        let layout = calc.spec(&self.sheet).and_then(|s| s.copybook());
+        let (kind, bytes) = match layout {
+            Some(_) => BinaryText::read_any(text)?,
+            None => (BinaryText::Dump, BinaryText::Dump.read(text)?),
+        };
+        let fits = layout.is_some_and(|l| bytes.len() == l.length);
+        let mut plan = match self.plan_records(PASTED, "Pasted", &bytes) {
+            Ok(plan) => plan,
+            Err(why) if !fits => return Some(Err(why)),
+            Err(_) => ImportPlan {
+                file: PASTED.to_owned(),
+                format: ImportFormat::Blk,
+                text: String::new(),
+                bytes: bytes.clone(),
+                record: None,
+                data: None,
+                notes: Vec::new(),
+                inferred: Err("a .blk file does not say how its records are laid out".to_owned()),
+                candidates: Vec::new(),
+                name: name_from_file("Pasted", |n| calc.tab_name_problem(n, None).is_some()),
+                schema_name: String::new(),
+                choice: SchemaChoice::Replace(self.sheet.clone()),
+                replace: None,
+                schema_file: None,
+                schema_problem: None,
+                error: None,
+            },
+        };
+        plan.notes.insert(
+            0,
+            format!(
+                "Read as {} bytes of {}.",
+                bytes.len(),
+                kind.label()
+                    .split(',')
+                    .next()
+                    .unwrap_or_default()
+                    .to_lowercase()
+            ),
+        );
+        if fits {
+            plan.replace = Some(self.sheet.clone());
+        }
+        Some(Ok(plan))
     }
 
     /// Opens the import dialog for pasted text, or says why it cannot be read.
@@ -464,6 +543,9 @@ impl ClioApp {
         if bytes.len() as u64 > limit {
             return Err(too_large(file, limit));
         }
+        if format == ImportFormat::Blk {
+            return self.plan_records(file, name_from, bytes);
+        }
         let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
         let text = String::from_utf8(bytes.to_vec()).map_err(|_| {
             format!(
@@ -477,6 +559,19 @@ impl ClioApp {
         let mut schema_file = None;
         let mut schema_problem = None;
         let (data, inferred, candidates) = match format {
+            ImportFormat::Copybook => {
+                let book = copybook::parse(&text)
+                    .map_err(|e| format!("{} is not a COBOL copybook: {e}", capital(file)))?;
+                schema_problem = copybook::lower(&book, CodePage::default())
+                    .err()
+                    .map(|e| e.to_string());
+                schema_file = Some(SchemaFile::Copybook(copybook::to_node(
+                    &book,
+                    CodePage::default(),
+                )));
+                (None, Err("it is a copybook".to_owned()), Vec::new())
+            }
+            ImportFormat::Blk => unreachable!("COBOL records are planned above"),
             ImportFormat::Json5
             | ImportFormat::Jsonc
             | ImportFormat::JsonLines
@@ -592,6 +687,8 @@ impl ClioApp {
             file: file.to_owned(),
             format,
             text,
+            bytes: Vec::new(),
+            record: None,
             data,
             notes,
             inferred,
@@ -602,6 +699,80 @@ impl ClioApp {
             replace: None,
             schema_file,
             schema_problem,
+            error: None,
+        })
+    }
+
+    /// Reads a `.blk` file for importing: with each copybook schema tab in the
+    /// workbook, and each of its records, whose length is the file's: a
+    /// `.blk` file holds one record.
+    /// A `.blk` file says nothing of its layout, so no schema is inferred.
+    fn plan_records(
+        &self,
+        file: &str,
+        name_from: &str,
+        bytes: &[u8],
+    ) -> Result<ImportPlan, String> {
+        let calc = self.calc();
+        let mut candidates = Vec::new();
+        for schema in calc.sheet_names() {
+            if calc.schema_format(schema) != Some(SchemaFormat::Copybook)
+                || (calc.auto_update(schema) && !calc.schema_users(schema).is_empty())
+            {
+                continue;
+            }
+            let records = calc.copybook_records(schema);
+            let several = records.len() > 1;
+            for record in records {
+                let Ok(spec) = calc.record_spec(schema, &record) else {
+                    continue;
+                };
+                let Some(layout) = spec.copybook() else {
+                    continue;
+                };
+                if let Ok(parsed) = copybook::records::read(bytes, layout, &[]) {
+                    candidates.push(Candidate {
+                        schema: schema.to_owned(),
+                        record: several.then(|| record.clone()),
+                        problems: count_errors(&parsed.node),
+                    });
+                }
+            }
+        }
+        let taken = |n: &str| calc.tab_name_problem(n, None).is_some();
+        let name = name_from_file(name_from, taken);
+        let schema_name = unique(&format!("{name}Schema"), |n| {
+            taken(n) || n.eq_ignore_ascii_case(&name)
+        });
+        let chosen = candidates
+            .iter()
+            .find(|c| c.problems == 0)
+            .or(candidates.first())
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "{file} cannot be imported: a .blk file does not say how its record is \
+                     laid out, and no copybook schema tab in the workbook has a record of its \
+                     {} bytes. Import its copybook (.cpy) first.",
+                    bytes.len()
+                )
+            })?;
+        Ok(ImportPlan {
+            file: file.to_owned(),
+            format: ImportFormat::Blk,
+            text: String::new(),
+            bytes: bytes.to_vec(),
+            record: chosen.record.clone(),
+            data: None,
+            notes: Vec::new(),
+            inferred: Err("a .blk file does not say how its records are laid out".to_owned()),
+            candidates,
+            name,
+            schema_name,
+            choice: SchemaChoice::Existing(chosen.schema),
+            replace: None,
+            schema_file: None,
+            schema_problem: None,
             error: None,
         })
     }
@@ -624,6 +795,7 @@ impl ClioApp {
                 let spec = calc.schema_spec(s).ok()?;
                 Some(Candidate {
                     schema: s.to_owned(),
+                    record: None,
                     problems: check(&spec)?,
                 })
             })
@@ -670,6 +842,11 @@ impl ClioApp {
         if let SchemaChoice::Replace(tab) = &plan.choice {
             let tab = tab.clone();
             self.show_tab(&tab);
+            if plan.format == ImportFormat::Blk {
+                let result = self.replace_records(&tab, &plan.bytes);
+                self.raw.error = result.as_ref().err().cloned();
+                return result;
+            }
             return self.paste_document(&plan.text);
         }
         if plan.choice == SchemaChoice::SchemaTab {
@@ -679,6 +856,9 @@ impl ClioApp {
                 Some(SchemaFile::Json(node)) => calc.create_json_schema_tab(name, node.clone()),
                 Some(SchemaFile::Xsd { tree, document }) => {
                     calc.create_xsd_schema_tab(name, tree.clone(), document.clone())
+                }
+                Some(SchemaFile::Copybook(tree)) => {
+                    calc.create_copybook_schema_tab(name, tree.clone())
                 }
                 None => return Err("the file is not a schema".to_owned()),
             };
@@ -714,6 +894,21 @@ impl ClioApp {
             (SchemaChoice::Replace(_) | SchemaChoice::SchemaTab, _) => {
                 unreachable!("replacing and schema tabs returned above")
             }
+            (SchemaChoice::Existing(schema), _) if plan.format == ImportFormat::Blk => {
+                let record = plan.record.as_deref();
+                let spec = match record {
+                    Some(record) => calc.record_spec(schema, record),
+                    None => calc.schema_spec(schema),
+                };
+                spec.and_then(|spec| {
+                    let layout = spec.copybook().ok_or_else(|| {
+                        cliotree_calc::EditError::Path(format!("{schema} is not a copybook"))
+                    })?;
+                    copybook::records::read(&plan.bytes, layout, &[])
+                        .map_err(|e| cliotree_calc::EditError::Path(e.to_string()))
+                })
+                .and_then(|parsed| calc.create_records_tab(name, schema, record, parsed.node))
+            }
             (SchemaChoice::Existing(schema), _) => match &plan.data {
                 Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
                 None => calc
@@ -729,7 +924,8 @@ impl ClioApp {
         };
         // A tab format of its own is set in the same entry.
         let done = done.and_then(|()| match plan.format.data_format() {
-            DataFormat::Json | DataFormat::Xml => Ok(()),
+            // XML and COBOL records are the formats of their schema tabs.
+            DataFormat::Json | DataFormat::Xml | DataFormat::Blk => Ok(()),
             format => calc.set_format(name, format),
         });
         calc.end_entry();
@@ -773,7 +969,10 @@ impl ClioApp {
                     named(&response, "Import tab name");
                 });
                 ui.add_space(4.0);
-                if plan.schema_file.is_some() {
+                // A copybook is a schema and nothing else.
+                if matches!(plan.schema_file, Some(SchemaFile::Copybook(_))) {
+                    ui.label("The file is a COBOL copybook: it is imported as a schema tab.");
+                } else if plan.schema_file.is_some() {
                     let chosen = plan.choice == SchemaChoice::SchemaTab;
                     let what = match plan.schema_file {
                         Some(SchemaFile::Xsd { .. }) => "an XSD",
@@ -793,21 +992,28 @@ impl ClioApp {
                     ui.label("Schema");
                 }
                 for candidate in &plan.candidates {
+                    let schema = match &candidate.record {
+                        Some(record) => format!("{} ({record})", candidate.schema),
+                        None => candidate.schema.clone(),
+                    };
                     let text = if candidate.problems == 0 {
-                        format!("{}: the data fits it", candidate.schema)
+                        format!("{schema}: the data fits it")
                     } else {
                         format!(
-                            "{}: {} would not fit",
-                            candidate.schema,
+                            "{schema}: {} would not fit",
                             plural(candidate.problems, "value", "values")
                         )
                     };
-                    let chosen = plan.choice == SchemaChoice::Existing(candidate.schema.clone());
+                    let chosen = plan.choice == SchemaChoice::Existing(candidate.schema.clone())
+                        && plan.record == candidate.record;
                     if ui.radio(chosen, text).clicked() {
                         plan.choice = SchemaChoice::Existing(candidate.schema.clone());
+                        plan.record = candidate.record.clone();
                     }
                 }
+                let copybook = matches!(plan.schema_file, Some(SchemaFile::Copybook(_)));
                 match &plan.inferred {
+                    _ if copybook => {}
                     Ok(_) => {
                         ui.horizontal(|ui| {
                             let chosen = plan.choice == SchemaChoice::Inferred;
@@ -934,6 +1140,17 @@ impl ClioApp {
             egui::FontId::proportional(18.0),
             palette.text,
         );
+    }
+}
+
+/// How many error values a tree holds: the bytes of COBOL records that do
+/// not read as their field.
+fn count_errors(node: &Node) -> usize {
+    match node.value() {
+        Value::Error(_) => 1,
+        Value::Object(fields) => fields.values().map(count_errors).sum(),
+        Value::Array(items) => items.iter().map(count_errors).sum(),
+        _ => 0,
     }
 }
 

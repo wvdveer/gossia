@@ -15,6 +15,8 @@ pub enum ExportFormat {
     /// One line for each string of an array of strings, as text import reads
     /// them.
     Text,
+    /// A copybook schema tab as `.cpy` text.
+    Copybook,
 }
 
 impl ExportFormat {
@@ -26,6 +28,7 @@ impl ExportFormat {
         match self {
             ExportFormat::Data(format) => format.extension(),
             ExportFormat::Text => "txt",
+            ExportFormat::Copybook => "cpy",
         }
     }
 
@@ -34,6 +37,7 @@ impl ExportFormat {
         match self {
             ExportFormat::Data(format) => format.label(),
             ExportFormat::Text => "Text, one line for each string",
+            ExportFormat::Copybook => "COBOL copybook",
         }
     }
 }
@@ -41,7 +45,7 @@ impl ExportFormat {
 impl Calc {
     /// The format a tab is written in: its own.
     pub fn export_format(&self, tab: &str) -> Option<ExportFormat> {
-        self.format(tab).map(ExportFormat::Data)
+        self.export_formats(tab).into_iter().next()
     }
 
     /// The formats a tab can be exported as: its own first, the others it
@@ -52,6 +56,9 @@ impl Calc {
         let Some(own) = self.format(tab) else {
             return Vec::new();
         };
+        if self.schema_format(tab) == Some(super::SchemaFormat::Copybook) {
+            return vec![ExportFormat::Copybook];
+        }
         let mut formats: Vec<ExportFormat> = if self.is_schema_sheet(tab) {
             vec![ExportFormat::Data(own)]
         } else {
@@ -73,6 +80,24 @@ impl Calc {
             SchemaRole::Bound(schema) => Some(schema),
             _ => None,
         }
+    }
+
+    /// The bytes of the tab as a standalone file: its records for COBOL
+    /// records, and otherwise its text (see [`Calc::export_text`]).
+    pub fn export_bytes(
+        &self,
+        tab: &str,
+        format: ExportFormat,
+        pretty: bool,
+    ) -> Result<Vec<u8>, String> {
+        if format == ExportFormat::Data(DataFormat::Blk) {
+            if !self.export_formats(tab).contains(&format) {
+                return Err(format!("tab {tab} does not hold COBOL records"));
+            }
+            return self.records_bytes(tab);
+        }
+        self.export_text(tab, format, pretty)
+            .map(String::into_bytes)
     }
 
     /// The text of the tab as a standalone file: what the tab shows, with the
@@ -105,6 +130,16 @@ impl Calc {
                     text.push('\n');
                 }
                 return Ok(text);
+            }
+            ExportFormat::Copybook => {
+                let (copybook, _) = cliotree_core::copybook::from_node(&sheet.data)
+                    .map_err(|e| format!("tab {tab}: {e}"))?;
+                return Ok(cliotree_core::copybook::to_text(&copybook));
+            }
+            ExportFormat::Data(DataFormat::Blk) => {
+                return Err(format!(
+                    "tab {tab} holds COBOL records, which are bytes, not text"
+                ));
             }
             ExportFormat::Data(DataFormat::Xml) => {
                 let document = sheet.xml.clone().unwrap_or_default();

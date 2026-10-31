@@ -31,13 +31,17 @@ impl Calc {
                 "{sheet} is a schema tab, which is written as its schema language is"
             ));
         }
-        let xml = s.spec.xml().is_some();
-        if xml != (format == DataFormat::Xml) {
-            return Some(if xml {
-                format!("{sheet} holds XML data, described by an XSD")
-            } else {
-                format!("{sheet} is described by a JSON Schema, so it cannot be XML")
-            });
+        let fits = match SchemaFormat::of(&s.spec) {
+            SchemaFormat::Xsd => format == DataFormat::Xml,
+            SchemaFormat::Copybook => format == DataFormat::Blk,
+            SchemaFormat::Json => format.json_shaped(),
+        };
+        if !fits {
+            return Some(format!(
+                "{sheet} holds {}, so it cannot be {}",
+                SchemaFormat::of(&s.spec).data_label(),
+                format.label()
+            ));
         }
         format.root_problem(&s.spec.get(s.spec.root()).kind)
     }

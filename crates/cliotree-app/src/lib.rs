@@ -31,6 +31,7 @@ pub mod icons;
 pub mod immediate;
 pub mod import;
 pub mod inspector;
+pub mod map_keys;
 pub mod options;
 pub mod pick;
 pub mod prefs;
@@ -182,7 +183,11 @@ mod workbook_file_tests;
 mod workbook_state_tests;
 
 #[cfg(test)]
+mod copybook_tests;
+#[cfg(test)]
 mod export_tests;
+#[cfg(test)]
+mod map_keys_tests;
 #[cfg(test)]
 mod options_tests;
 #[cfg(test)]

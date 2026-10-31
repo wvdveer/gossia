@@ -77,6 +77,14 @@ pub(crate) enum Op {
         before: cliotree_core::dataformat::DataFormat,
         after: cliotree_core::dataformat::DataFormat,
     },
+    /// A tab of COBOL records shows another layout of a group of
+    /// `REDEFINES`. Its data changes by [`Op::Replace`]s of its own.
+    Redefine {
+        sheet: String,
+        set: usize,
+        before: usize,
+        after: usize,
+    },
     /// A column formula (one formula for a field of every item of an array)
     /// is set, changed or removed. The formulas of the items are operations of
     /// their own.
@@ -151,6 +159,7 @@ impl Op {
             Op::AddSheet(saved) | Op::RemoveSheet(saved) => saved.weight(),
             Op::AutoUpdate { .. }
             | Op::Format { .. }
+            | Op::Redefine { .. }
             | Op::Bind { .. }
             | Op::Column { .. }
             | Op::Settings { .. }

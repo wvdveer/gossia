@@ -3,6 +3,7 @@
 //! schema...*, in the Edit menu and the context menu of a sheet tab.
 
 use cliotree_calc::{Mentions, SchemaFormat};
+use cliotree_core::copybook::CodePage;
 use cliotree_core::dataformat::DataFormat;
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
@@ -29,6 +30,9 @@ pub struct NewTab {
     pub name: String,
     pub schema_name: String,
     pub schema: NewSchema,
+    /// The format the data tab is written in, for a JSON Schema: JSON,
+    /// JSON5, YAML, TOML and the rest (DESIGN.md, "Other file formats").
+    pub format: DataFormat,
     pub error: Option<String>,
     focused: bool,
 }
@@ -59,6 +63,23 @@ pub struct TabDialogs {
     /// A change of format waiting for the answer to whether its comments may
     /// go.
     pub format: Option<FormatChange>,
+    /// Another layout of a group of `REDEFINES`, waiting for the answer to
+    /// whether the formulas in the one shown may be deleted.
+    pub redefine: Option<RedefineChange>,
+}
+
+/// *Layouts* on the menu of a tab of COBOL records, waiting for the answer
+/// to whether the formulas in the layout shown may be deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedefineChange {
+    pub sheet: String,
+    pub set: usize,
+    pub member: usize,
+    /// The COBOL names of the layout shown and the one picked.
+    pub from: String,
+    pub to: String,
+    /// How many formulas would be deleted.
+    pub formulas: usize,
 }
 
 /// *Format* on a tab's menu, waiting for the answer to whether the comments
@@ -76,6 +97,9 @@ impl TabDialogs {
     pub fn forget(&mut self, name: &str) {
         if self.format.as_ref().is_some_and(|f| f.sheet == name) {
             self.format = None;
+        }
+        if self.redefine.as_ref().is_some_and(|r| r.sheet == name) {
+            self.redefine = None;
         }
         if self.delete.as_ref().is_some_and(|d| d.name == name) {
             self.delete = None;
@@ -100,6 +124,11 @@ impl TabDialogs {
 
 /// The schema of a tab made with its own schema, before any field is added.
 const EMPTY_SCHEMA: &str = r#"{"type": "object", "properties": {}}"#;
+
+/// The same, for a format that holds a list (JSON Lines, YAML documents):
+/// a list of objects.
+const EMPTY_LIST_SCHEMA: &str =
+    r#"{"type": "array", "items": {"type": "object", "properties": {}}}"#;
 
 /// A blank XSD: its root element, named `root`, with no attributes or
 /// elements yet.
@@ -133,6 +162,7 @@ impl ClioApp {
             name,
             schema_name,
             schema: NewSchema::Own(SchemaFormat::Json),
+            format: DataFormat::Json,
             error: None,
             focused: false,
         });
@@ -155,8 +185,17 @@ impl ClioApp {
                 }
             }
             NewSchema::Existing(schema) => {
-                if let Err(e) = self.calc().schema_spec(schema) {
-                    return Some(e.to_string());
+                let spec = match self.calc().schema_spec(schema) {
+                    Ok(spec) => spec,
+                    Err(e) => return Some(e.to_string()),
+                };
+                if self.calc().schema_format(schema) == Some(SchemaFormat::Json)
+                    && let Some(why) = dialog.format.root_problem(&spec.get(spec.root()).kind)
+                {
+                    return Some(format!(
+                        "{schema} cannot be written as {}: {why}.",
+                        dialog.format.label()
+                    ));
                 }
                 if self.calc().auto_update(schema) && !self.calc().schema_users(schema).is_empty() {
                     return Some(format!(
@@ -178,17 +217,53 @@ impl ClioApp {
             return Err(why);
         }
         let name = dialog.name.trim();
+        let json_data = match &dialog.schema {
+            NewSchema::Own(format) => *format == SchemaFormat::Json,
+            NewSchema::Existing(schema) => {
+                self.calc().schema_format(schema) == Some(SchemaFormat::Json)
+            }
+        };
+        // Only JSON-shaped data has a choice of format.
+        let data_format = if json_data {
+            dialog.format
+        } else {
+            DataFormat::Json
+        };
+        let before = self.calc().history_len().0;
         let calc = self.session.calc_mut();
+        calc.begin_entry(&format!("New tab {name}"));
         let done = match &dialog.schema {
             NewSchema::Own(format) => {
                 let schema_name = dialog.schema_name.trim();
                 let empty = Node::new(cliotree_core::Value::Object(Default::default()));
-                calc.begin_entry(&format!("New tab {name}"));
-                let done = match format {
+                match format {
                     SchemaFormat::Json => {
-                        let schema = json::parse(EMPTY_SCHEMA).expect("the schema is JSON").node;
+                        let list = matches!(
+                            data_format,
+                            DataFormat::JsonLines | DataFormat::YamlDocuments
+                        );
+                        let (text, data) = if list {
+                            (
+                                EMPTY_LIST_SCHEMA,
+                                Node::new(cliotree_core::Value::Array(Vec::new())),
+                            )
+                        } else {
+                            (EMPTY_SCHEMA, empty)
+                        };
+                        let schema = json::parse(text).expect("the schema is JSON").node;
                         calc.create_json_schema_tab(schema_name, schema)
-                            .and_then(|()| calc.create_data_tab(name, schema_name, empty, None))
+                            .and_then(|()| calc.create_data_tab(name, schema_name, data, None))
+                    }
+                    // A record named after the tab, with one field.
+                    // Its fields are added on the copybook tab, so auto-update
+                    // stays off.
+                    SchemaFormat::Copybook => {
+                        let copybook = cliotree_core::copybook::parse(&blank_copybook(name))
+                            .expect("the blank copybook is read");
+                        let tree = cliotree_core::copybook::to_node(&copybook, Default::default());
+                        let records = Node::new(cliotree_core::Value::Object(Default::default()));
+                        calc.create_copybook_schema_tab(schema_name, tree)
+                            .and_then(|()| calc.create_data_tab(name, schema_name, records, None))
                     }
                     // The root element is named after the tab.
                     SchemaFormat::Xsd => {
@@ -204,9 +279,10 @@ impl ClioApp {
                             })
                     }
                 }
-                .and_then(|()| calc.set_auto_update(schema_name, true));
-                calc.end_entry();
-                done
+                .and_then(|()| match format {
+                    SchemaFormat::Copybook => Ok(()),
+                    _ => calc.set_auto_update(schema_name, true),
+                })
             }
             NewSchema::Existing(schema) => calc.schema_spec(schema).and_then(|spec| {
                 let data = Node::new(ClioApp::default_value(&spec, spec.root()));
@@ -216,7 +292,18 @@ impl ClioApp {
                 });
                 calc.create_data_tab(name, schema, data, xml)
             }),
-        };
+        }
+        // The format is set in the same entry.
+        .and_then(|()| match data_format {
+            DataFormat::Json => Ok(()),
+            format => calc.set_format(name, format),
+        });
+        calc.end_entry();
+        // A tab made before the failure is taken out again.
+        if done.is_err() && self.calc().history_len().0 > before {
+            let _ = self.session.calc_mut().undo();
+            let _ = self.session.calc_mut().take_removed();
+        }
         done.map_err(|e| e.to_string())?;
         self.follow_tabs();
         self.show_tab(name);
@@ -277,6 +364,7 @@ impl ClioApp {
                         for (format, text) in [
                             (SchemaFormat::Json, "JSON Schema (JSON data)"),
                             (SchemaFormat::Xsd, "XSD (XML data)"),
+                            (SchemaFormat::Copybook, "COBOL copybook (records)"),
                         ] {
                             if ui.radio(own == Some(format), text).clicked() {
                                 dialog.schema = NewSchema::Own(format);
@@ -311,6 +399,44 @@ impl ClioApp {
                                     egui::Role::ComboBox,
                                     true,
                                     "Schema of the new tab",
+                                )
+                            });
+                    });
+                });
+                // The format of JSON-shaped data: what the Raw view shows,
+                // and what the tab is saved and exported as.
+                let json_data = match &dialog.schema {
+                    NewSchema::Own(format) => *format == SchemaFormat::Json,
+                    NewSchema::Existing(schema) => {
+                        self.calc().schema_format(schema) == Some(SchemaFormat::Json)
+                    }
+                };
+                ui.add_enabled_ui(json_data, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Data format");
+                        let shown = if json_data {
+                            dialog.format.label()
+                        } else {
+                            "set by the schema"
+                        };
+                        egui::ComboBox::from_id_salt("new_tab_format")
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                for format in DataFormat::JSON_SHAPED {
+                                    if ui
+                                        .selectable_label(dialog.format == format, format.label())
+                                        .clicked()
+                                    {
+                                        dialog.format = format;
+                                    }
+                                }
+                            })
+                            .response
+                            .widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::Role::ComboBox,
+                                    true,
+                                    "Data format of the new tab",
                                 )
                             });
                     });
@@ -479,13 +605,11 @@ impl ClioApp {
         };
         let calc = self.calc();
         let current = calc.schema_of(&dialog.sheet).map(str::to_owned);
-        let xml = calc.is_xml(&dialog.sheet);
+        // Schema tabs of the language the tab's data is in.
+        let family = calc.spec(&dialog.sheet).map(SchemaFormat::of);
         let schemas: Vec<String> = calc
             .sheet_names()
-            .filter(|s| {
-                calc.schema_format(s)
-                    .is_some_and(|f| (f == cliotree_calc::SchemaFormat::Xsd) == xml)
-            })
+            .filter(|s| family.is_some() && calc.schema_format(s) == family)
             .map(str::to_owned)
             .collect();
         let problem = calc.rebind_problem(&dialog.sheet, &dialog.schema);
@@ -639,9 +763,130 @@ impl ClioApp {
         }
     }
 
+    /// *Layouts* on a tab of COBOL records: shows another layout of a group
+    /// of `REDEFINES`. When the layout shown has formulas, it asks first (the
+    /// change waits in `tab_dialogs.redefine`).
+    pub fn begin_set_redefine(
+        &mut self,
+        sheet: &str,
+        set: usize,
+        member: usize,
+    ) -> Result<(), String> {
+        let formulas = self.calc().redefine_formulas(sheet, set).len();
+        if formulas > 0 {
+            let group = self
+                .calc()
+                .redefine_groups(sheet)
+                .into_iter()
+                .nth(set)
+                .ok_or("there is no such group of layouts")?;
+            let name = |i: usize| group.names.get(i).cloned().unwrap_or_default();
+            self.tab_dialogs.redefine = Some(RedefineChange {
+                sheet: sheet.to_owned(),
+                set,
+                member,
+                from: name(group.shown),
+                to: name(member),
+                formulas,
+            });
+            return Ok(());
+        }
+        self.set_redefine(sheet, set, member)
+    }
+
+    /// Shows another layout of a group of `REDEFINES`, deleting the formulas
+    /// in the one shown.
+    pub fn set_redefine(&mut self, sheet: &str, set: usize, member: usize) -> Result<(), String> {
+        if !self.can_change_tabs() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        self.session
+            .calc_mut()
+            .set_redefine(sheet, set, member)
+            .map_err(|e| e.to_string())?;
+        self.rows_key = None;
+        self.summary.key = None;
+        self.raw.key = None;
+        self.tables.layout = None;
+        self.tables.rev += 1;
+        self.session.tick();
+        Ok(())
+    }
+
+    fn redefine_window(&mut self, ctx: &egui::Context) {
+        let Some(change) = self.tab_dialogs.redefine.take() else {
+            return;
+        };
+        let (mut yes, mut no, mut open) = (false, false, true);
+        egui::Window::new(format!("Show {} in {}", change.to, change.sheet))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "{} has {} on its fields, which showing {} deletes. Delete {}? Undo puts {} back.",
+                    change.from,
+                    if change.formulas == 1 {
+                        "a formula".to_owned()
+                    } else {
+                        format!("{} formulas", change.formulas)
+                    },
+                    change.to,
+                    if change.formulas == 1 { "it" } else { "them" },
+                    if change.formulas == 1 { "it" } else { "them" },
+                ));
+                ui.horizontal(|ui| {
+                    yes = ui.button("Yes").clicked();
+                    no = ui.button("No").clicked();
+                });
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    no = true;
+                }
+            });
+        if yes {
+            if let Err(why) = self.set_redefine(&change.sheet, change.set, change.member) {
+                self.notice = Some(why);
+            }
+        } else if open && !no {
+            self.tab_dialogs.redefine = Some(change);
+        }
+    }
+
+    /// *Code page* on a copybook schema tab: the EBCDIC code page of its
+    /// records' text, one entry in the history.
+    pub fn set_code_page(&mut self, sheet: &str, page: CodePage) -> Result<(), String> {
+        if !self.can_change_tabs() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        self.session
+            .calc_mut()
+            .set_value(
+                sheet,
+                &cliotree_core::Path::root().key("codePage"),
+                cliotree_core::Value::Str(page.code().to_owned()),
+            )
+            .map_err(|e| e.to_string())?;
+        self.raw.key = None;
+        self.session.tick();
+        Ok(())
+    }
+
+    /// The code page a copybook schema tab gives its records.
+    fn code_page_of(&self, sheet: &str) -> Option<CodePage> {
+        let data = self.calc().data(sheet)?;
+        match data
+            .get(&cliotree_core::Path::root().key("codePage"))?
+            .value()
+        {
+            cliotree_core::Value::Str(code) => CodePage::from_code(code),
+            _ => None,
+        }
+    }
+
     /// The dialogs of the tab commands, when they are open.
     pub(crate) fn tab_windows(&mut self, ctx: &egui::Context) {
         self.format_window(ctx);
+        self.redefine_window(ctx);
         self.new_tab_window(ctx);
         self.delete_tab_window(ctx);
         self.bind_tab_window(ctx);
@@ -700,6 +945,48 @@ impl ClioApp {
                     }
                 });
             });
+            // A copybook schema tab: the code page of its records' text.
+            if self.calc().schema_format(tab) == Some(SchemaFormat::Copybook) {
+                let own = self.code_page_of(tab);
+                ui.menu_button("Code page", |ui| {
+                    for page in CodePage::ALL {
+                        if ui.radio(own == Some(page), page.label()).clicked() {
+                            if own != Some(page)
+                                && let Err(why) = self.set_code_page(tab, page)
+                            {
+                                self.notice = Some(why);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            // A tab of COBOL records: which layout of each group of
+            // REDEFINES it shows. FILLER has no fields to show.
+            let groups = self.calc().redefine_groups(tab);
+            if !groups.is_empty() {
+                ui.menu_button("Layouts", |ui| {
+                    for (set, group) in groups.iter().enumerate() {
+                        ui.menu_button(group.names.join(" / "), |ui| {
+                            for (member, name) in group.names.iter().enumerate() {
+                                let filler = group.filler.get(member).copied().unwrap_or(false);
+                                let response = ui.add_enabled(
+                                    !filler,
+                                    egui::RadioButton::new(group.shown == member, name),
+                                );
+                                if response.clicked() {
+                                    if group.shown != member
+                                        && let Err(why) = self.begin_set_redefine(tab, set, member)
+                                    {
+                                        self.notice = Some(why);
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
+                });
+            }
         });
     }
 }
@@ -714,4 +1001,22 @@ pub(crate) fn delete_mentions_text(name: &str, mentions: Mentions) -> Option<Str
         "{count}; {} will show #NAME! until the tab is back.",
         if one { "it" } else { "they" }
     ))
+}
+
+/// The copybook a new copybook schema tab starts with: a record named after
+/// the tab, with one field of text.
+fn blank_copybook(tab: &str) -> String {
+    let name: String = tab
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = name.trim_matches('-');
+    let name = if name.is_empty() { "RECORD" } else { name };
+    format!("       01  {name}-REC.\n           05  {name}-ID  PIC X(10).\n")
 }

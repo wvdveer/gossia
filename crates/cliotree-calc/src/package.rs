@@ -149,7 +149,7 @@ struct TabEntry {
     name: String,
     /// `data` in version 1; `report` is reserved for a later version.
     kind: String,
-    /// `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
+    /// `builtin:jsonschema`, `builtin:xsd`, `builtin:copybook`, or `sheet:<Tab>`.
     schema: String,
     /// Whether the tabs that use this schema tab follow its changes.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -162,6 +162,14 @@ struct TabEntry {
     /// `data.<format>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     format: Option<String>,
+    /// For a tab of COBOL records, the layout it shows of each group of
+    /// `REDEFINES`, where that is not the first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    redefines: Vec<usize>,
+    /// For a tab of COBOL records, the 01 record of its copybook it holds,
+    /// where that is not the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    record: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -172,6 +180,7 @@ fn is_false(b: &bool) -> bool {
 enum Binding {
     JsonSchema,
     Xsd,
+    Copybook,
     Sheet(String),
 }
 
@@ -180,6 +189,7 @@ impl Binding {
         match text {
             "builtin:jsonschema" => Some(Binding::JsonSchema),
             "builtin:xsd" => Some(Binding::Xsd),
+            "builtin:copybook" => Some(Binding::Copybook),
             _ => text
                 .strip_prefix("sheet:")
                 .filter(|name| !name.is_empty())
@@ -374,25 +384,35 @@ impl Calc {
                     match format {
                         SchemaFormat::Json => "builtin:jsonschema".to_owned(),
                         SchemaFormat::Xsd => "builtin:xsd".to_owned(),
+                        SchemaFormat::Copybook => "builtin:copybook".to_owned(),
                     },
                     *auto_update,
                 ),
                 SchemaRole::Bound(schema_sheet) => (format!("sheet:{schema_sheet}"), false),
             };
 
-            let data = match sheet.format {
-                DataFormat::Xml => {
+            // COBOL records are saved as bytes; a tab with a value that
+            // cannot be written as one is saved as JSON, so no edit is lost.
+            let records = (sheet.format == DataFormat::Blk)
+                .then(|| self.records_bytes(name).ok())
+                .flatten();
+            let saved_as = match (&records, sheet.format) {
+                (None, DataFormat::Blk) => DataFormat::Json,
+                (_, format) => format,
+            };
+            let data = match (records, saved_as) {
+                (Some(bytes), _) => bytes,
+                (None, DataFormat::Xml) => {
                     let document = sheet.xml.clone().unwrap_or_default();
-                    xml::to_string(&sheet.data, &sheet.spec, &document, true)
+                    lf(xml::to_string(&sheet.data, &sheet.spec, &document, true)
+                        .map_err(|e| unsavable(format!("tab {name}: {e}")))?)
                 }
-                format => format.write(&sheet.data, true),
-            }
-            .map_err(|e| unsavable(format!("tab {name}: {e}")))?;
-            files.push((
-                format!("sheets/{name}/data.{}", sheet.format.extension()),
-                lf(data),
-            ));
-            let format = match sheet.format {
+                (None, format) => lf(format
+                    .write(&sheet.data, true)
+                    .map_err(|e| unsavable(format!("tab {name}: {e}")))?),
+            };
+            files.push((format!("sheets/{name}/data.{}", saved_as.extension()), data));
+            let format = match saved_as {
                 DataFormat::Json | DataFormat::Xml => None,
                 other => Some(other.code().to_owned()),
             };
@@ -429,6 +449,8 @@ impl Calc {
                 auto_update,
                 forms: form_names,
                 format,
+                redefines: sheet.redefines.clone(),
+                record: sheet.record.clone(),
             });
         }
 
@@ -746,41 +768,53 @@ impl Calc {
             tab: name.to_owned(),
             message,
         };
-        let xml_data = match &binding {
-            Binding::JsonSchema => false,
-            Binding::Xsd => true,
+        let language = match &binding {
+            Binding::JsonSchema | Binding::Copybook => SchemaFormat::Json,
+            Binding::Xsd => SchemaFormat::Xsd,
             Binding::Sheet(schema_sheet) => {
                 if !self.is_schema_sheet(schema_sheet) {
                     return Err(fail(format!(
                         "the schema tab {schema_sheet} is not in the file"
                     )));
                 }
-                self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd)
+                self.schema_format(schema_sheet)
+                    .unwrap_or(SchemaFormat::Json)
             }
         };
         let format = match &tab.format {
-            None if xml_data => DataFormat::Xml,
+            None if language == SchemaFormat::Xsd => DataFormat::Xml,
             None => DataFormat::Json,
             Some(code) => match DataFormat::from_code(code) {
+                Some(DataFormat::Json5) if matches!(binding, Binding::Copybook) => {
+                    DataFormat::Json5
+                }
+                Some(DataFormat::Blk) if language == SchemaFormat::Copybook => DataFormat::Blk,
                 Some(format)
                     if format.json_shaped()
-                        && !xml_data
+                        && language != SchemaFormat::Xsd
                         && matches!(binding, Binding::Sheet(_)) =>
                 {
                     format
                 }
                 _ => {
                     return Err(fail(format!(
-                        "the manifest gives it the format {code:?}, which this version cannot                          use for it"
+                        "the manifest gives it the format {code:?}, which this version cannot \
+                         use for it"
                     )));
                 }
             },
         };
         let path = format!("sheets/{name}/data.{}", format.extension());
-        let text = package
-            .text(&path)?
-            .ok_or_else(|| fail(format!("the file has no {path}")))?;
+        if package.get(&path).is_none() {
+            return Err(fail(format!("the file has no {path}")));
+        }
         used.insert(path.clone());
+        // COBOL records are bytes, not text.
+        let text = if format == DataFormat::Blk {
+            ""
+        } else {
+            package.text(&path)?.unwrap_or_default()
+        };
         match &binding {
             Binding::JsonSchema => {
                 let parsed = json::parse(text).map_err(|e| bad(&path, e))?;
@@ -793,24 +827,46 @@ impl Calc {
                 self.add_xsd_sheet(name, parsed.node, parsed.document)
                     .map_err(|e| fail(e.to_string()))?;
             }
+            Binding::Copybook => {
+                let parsed = format.read(text).map_err(|e| bad(&path, e))?;
+                self.add_copybook_sheet(name, parsed.node)
+                    .map_err(|e| fail(e.to_string()))?;
+            }
             Binding::Sheet(schema_sheet) => {
-                let spec = self.lowered(schema_sheet).map_err(|e| {
-                    fail(format!(
-                        "its schema tab {schema_sheet} cannot be used as a type: {e}"
-                    ))
-                })?;
+                let spec = self
+                    .lowered_for(schema_sheet, tab.record.as_deref())
+                    .map_err(|e| {
+                        fail(format!(
+                            "its schema tab {schema_sheet} cannot be used as a type: {e}"
+                        ))
+                    })?;
                 let (node, document) = if spec.xml().is_some() {
                     let parsed = xml::parse(text, &spec).map_err(|e| bad(&path, e))?;
                     (parsed.node, Some(parsed.document))
+                } else if let (DataFormat::Blk, Some(layout)) = (format, spec.copybook()) {
+                    let bytes = package.get(&path).unwrap_or_default();
+                    let parsed =
+                        cliotree_core::copybook::records::read(bytes, layout, &tab.redefines)
+                            .map_err(|e| bad(&path, e))?;
+                    (parsed.node, None)
                 } else {
                     (format.read(text).map_err(|e| bad(&path, e))?.node, None)
                 };
                 self.add_sheet(name, spec, node)
                     .map_err(|e| fail(e.to_string()))?;
+                if let Some(record) = &tab.record {
+                    self.sheet_mut(name)
+                        .map_err(|e| fail(e.to_string()))?
+                        .record = Some(record.clone());
+                }
                 self.bind_schema(name, schema_sheet)
                     .map_err(|e| fail(e.to_string()))?;
-                if format != DataFormat::Json {
+                if !matches!(format, DataFormat::Json | DataFormat::Blk) {
                     self.store_format(name, format)
+                        .map_err(|e| fail(e.to_string()))?;
+                }
+                for (set, member) in tab.redefines.iter().enumerate() {
+                    self.store_redefine(name, set, *member)
                         .map_err(|e| fail(e.to_string()))?;
                 }
                 if let Some(document) = document {

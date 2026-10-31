@@ -34,7 +34,8 @@ impl Calc {
         };
         if !s.format.has_comments() {
             return Some(format!(
-                "{} has no comments; a tab written as XML, JSON5 or JSON with comments can                  have them.",
+                "{} has no comments; a tab written as XML, JSON5, JSON with comments, \
+                 TOML or YAML can have them.",
                 s.format.label()
             ));
         }
