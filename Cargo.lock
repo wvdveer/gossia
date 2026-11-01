@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -977,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-calc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "beancount-parser",
  "bytes",
@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-std"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cliotree-core",
 ]

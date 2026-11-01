@@ -1337,7 +1337,7 @@ The rest are **not planned**: cut (Ctrl+X), dragging out a range with the mouse,
 
 ## Later versions
 
-Deferred features, with what v1 does to keep them possible. Version 1 is release **0.1.0**; **Reports are 0.2.0**, **the web port is 0.3.0**, and **Excel and ODS files are 0.4.0** (owner, 2026-10-31).
+Deferred features, with what v1 does to keep them possible. Version 1 is release **0.1.0**; **Reports are 0.2.0**, **the web port is 0.3.0**, and **Excel and ODS files are 0.4.0** (owner, 2026-10-31). Version 1 was closed on 2026-11-01, and the version is now **0.2.0**: the work on Reports (owner, 2026-11-01).
 
 - **Reports, 0.2.0** (see Reports): `builtin:report` schema, table and text blocks, then charts, then the designer.
   - The manifest's tab `kind` and the `reports/` directory name are reserved.
