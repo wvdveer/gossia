@@ -2,7 +2,7 @@
 
 A spreadsheet-like desktop application (Rust + egui, later wasm) in which each sheet is a **tree defined by a schema** (JSON Schema or XSD) rather than a 2D grid. Cells at any node can hold a **Python expression** whose result must match the node's schema type.
 
-**Scope.** Version 1 is the desktop application. **Reports** and the **web (wasm) port** are deliberately deferred to a later version; their designs are kept in this document for planning and are marked as such (see Later versions).
+**Scope.** Version 1 (0.1.0) is the desktop application, and is closed. **Reports** are version 0.2.0, the work now in progress. The **web (wasm) port** (0.3.0) and **Excel and ODS files** (0.4.0) are deferred; their designs are kept in this document for planning and are marked as such (see Later versions).
 
 **Status.** The design for v1 is complete. Every question raised during design review has been decided, and the decisions are in the sections below. What remains is implementation, in the order given under Build order, plus the risks listed at the end that can only be settled by building and measuring.
 
@@ -263,7 +263,7 @@ Most built-ins are one-line Python over the stdlib. Only the tree-aware pieces (
 
 ## Names and reserved words
 
-Formulas, form button procedures, and report expressions share one flat namespace per workbook. It holds tab names (Data Tabs and Report Tabs), data source names, module-level functions, built-in functions, Python builtins, the special names `this`, `parent`, `root`, `ErrorValue`, and `PropagatedError`, workbook module names, and the exposed stdlib modules (`math`, `datetime`, ...). Every name in it must be unique and mean the same thing everywhere. **Shadowing is not permitted**, with one exception (below).
+Formulas, form button procedures, and report expressions share one flat namespace per workbook. It holds tab names (Data Tabs and Report Tabs), data source names, module-level functions, built-in functions, Python builtins, the special names `this`, `parent`, `root`, `ErrorValue`, and `PropagatedError` (and, in report expressions only, `params` and `page`), workbook module names, and the exposed stdlib modules (`math`, `datetime`, ...). Every name in it must be unique and mean the same thing everywhere. **Shadowing is not permitted**, with one exception (below).
 
 **Reserved names.** These cannot be used as tab names, report names, data source names, or module-level function names:
 - Python keywords (`keyword.iskeyword`). `class` passes `isidentifier()` but is not usable.
@@ -333,28 +333,154 @@ Custom Python lives in **modules** stored in the workbook. The design follows Ex
 
 ## Reports
 
-> **Deferred to a later version.** Reports are not part of v1. This section records the intended design so that v1 does not rule it out. Other sections that mention reports (names, trust, evaluation, undo, file format) describe how they will fit in, and apply once reports exist.
+> **Version 0.2.0.** Reports were not part of v1 (0.1.0) and are the work of 0.2.0. Other sections that mention reports (names, trust, evaluation, undo, file format) describe how they fit in.
 
-A **report** is a tab that takes data from other tabs and presents it visually: tables, text, and charts such as bar, line, pie, and scatter. A report holds no data of its own and is never the target of a formula or form.
+A **report** is a tab that takes data from other tabs and presents it visually: text, values, tables, and charts such as bar, line, pie, and scatter. A report holds no data of its own and is never the target of a formula or form.
 
 **Report design** specifies:
-- **Sources**: one or more Data Tabs the report reads. Each source is exposed to the report's expressions under its sheet name, through the same proxies formulas use.
-- **Layout**: a vertical flow of blocks (optionally in rows or columns). Block kinds:
-  - `text`: static text or an f-string-style template filled from expressions.
-  - `table`: rows from an array (or any list) with chosen columns, each column an expression over the row.
-  - `chart`: a chart type, plus series. Each series gives expressions for its x and y values (or label and value for pie). Titles, axis labels, and colours are settable.
-  - `group`: a titled container, optionally repeated once per item of a list (e.g. one section per customer).
-- **Expressions** are Python, evaluated like formulas. Block data comes from expressions such as `[o.total for o in Orders.items]` or `AVERAGE(...)`.
+- **Kind**: *single page* or *multipage* (owner, 2026-11-02; see Single page and multipage reports below).
+- **Parameters**: values the user chooses when the report is shown, such as a date, a period or org units (see Report parameters below).
+- **Layout**: a tree of controls, the same design tree as a form's (see The report designer below): groups that choose Flow, Grid or Free; labels, fixed or templates; fields that show an expression; repeaters whose items come from an expression, shown as a table or as designed items; charts (see Chart functions below); and separators.
+- **Expressions** are Python, evaluated like formulas. Data comes from expressions such as `[o.total for o in Orders.items]` or `AVERAGE(...)`. They name tabs, data sources and modules directly through the workbook namespace, as formulas and form expressions do, so **a report does not declare the tabs it reads**. *(The first design had a list of sources; it was dropped on 2026-11-02 so that reports behave as forms do.)*
 
-The design is stored as a JSON document validated against a built-in schema (`builtin:report`), like forms. A report tab's content is that design document, and a report designer is a visual editor over it.
+The design is stored as a JSON document validated against a built-in schema (`builtin:report`), like forms. A report tab's content is that design document, and the report designer, which is the form designer, edits it.
+
+### Single page and multipage reports
+
+*(Owner, 2026-11-02.)* A report's design says which of the two it is.
+
+**Single page.** A Flow group at the top, as a form's top level is, shown as one continuous page that scrolls, like a dashboard. Its width follows the window, and it has no page breaks. Its page setup is used only by the PDF (below).
+
+**Multipage.** A banded report, as in Crystal Reports or Power BI's paginated reports: a repeating row layout surrounded by section headers and footers, with page headers and footers on every page.
+- **Page setup**: paper size (A4, A3, Letter, Legal), orientation, and margins.
+- **Bands.** A band is a group, laid out as Flow, Grid or Free like any group (Free unless chosen, as in Crystal Reports). It is as tall as its content. The bands are:
+  - **Page header** and **page footer**, drawn at the top and bottom of every page.
+  - **Report header** and **report footer**, drawn once, at the start and at the end. Both are optional.
+  - **Section header** and **section footer**, drawn around each occurrence of a section.
+  - **Detail row**, the repeating row.
+- **Sections are repeaters, and they nest.** A section is a repeater whose items come from an expression returning a list (or array), with its item named, for example `units_for(params.org_units) as unit`, and with designed items: for each item it draws its header group, then its body, then its footer group. Its body is either another section, whose items expression can use the outer item (`months(params.period) as month`), or the detail rows. **The detail rows are a repeater shown as a table**, with its own items expression and item name, one row per item, and the column properties of a form's table. A report body can hold several sections one after another.
+- **Names in a band.** Expressions in a band can use the item of every repeater around it, by its name. A repeater's whole list can also be named in the design (`as rows`), so a header or footer can use it, for example to total it: `SUM(r.amount for r in rows)`. A table can also have a totals row (see the form additions under Forms).
+- **Page values.** Page headers and footers, and only they, can use `page.number` and `page.count`.
+- **Breaking into pages.** Page breaks fall between bands, never inside one, with one exception: **a table is split between its rows**, the detail rows or a table in any band, and its title row is repeated at the top of the next page. A section can be set to start each occurrence on a new page, to keep its header with its first row, and to repeat its header at the top of a page it continues on. A band taller than the page that is not a table is cut at the page end, and the report shows a warning naming it.
+- **On screen**, a multipage report is shown page by page, with page navigation and zoom, as it will look in the PDF.
+- **Limit.** A multipage report stops after the number of detail rows set in Options (default 100,000) and says so in its last page, so a wrong items expression cannot hang the application.
+
+**PDF export** *(in 0.2.0, owner 2026-11-02)*. *Export as PDF...* on the report tab's menu saves the report with the current parameter values. A multipage report is saved page by page with its page setup; a single page report becomes one page as wide as its page setup's paper (less the margins) and as tall as its content. Charts go in as vector graphics from their SVG, and text with the fonts embedded.
+- **The PDF writer is krilla** (with `krilla-svg` for the charts), both MIT OR Apache-2.0, so compatible with ClioTree's Apache-2.0 licence (checked 2026-11-02, krilla 0.8.2; the owner requires every PDF library to be compatible with Apache-2.0). It embeds fonts as subsets, reads them with `skrifa`, which egui uses too, and is the PDF library of Typst. Its dependencies are checked with `cargo deny` when it is added. Text is placed glyph by glyph from the widths `cliotree-layout` measured, so the PDF breaks lines where the screen does. printpdf (MIT) was the alternative; it has less complete font handling.
+- **The fonts may be embedded** (checked 2026-11-02). The six bundled text fonts are under the SIL Open Font License 1.1, which allows embedding them, whole or as subsets, in documents such as PDFs; a document with embedded fonts is not a modified version of the font, so the Reserved Font Name of Dancing Script does not apply. Each font's embedding flag (`fsType` in its OS/2 table) is 0, meaning embedding without restriction. Phosphor (MIT) and egui's fallback fonts (Ubuntu Font Licence, Hack under MIT and Bitstream Vera, Noto Emoji under the OFL) allow it too. Printing from the application is not in 0.2.0; the PDF can be printed.
+
+### The report designer
+
+*(Owner, 2026-11-02.)* **The report designer is the form designer**, so that the two behave the same. Reports leave out what only makes sense for entering data, and forms gain what reports need (see *Additions in 0.2.0, shared with reports* under Forms).
+
+- **One design model.** A report's layout uses the model of forms (`cliotree_core::form`): the controls, the three group layouts (Flow, Grid, Free) and their tracks, anchors, spans and spacing; the size, place and alignment of a control; label positions and label widths; fonts; number and date formats; the properties of table columns; and designed items. `builtin:report` takes these definitions from `builtin:form`, so a property has one name in both.
+- **The controls of a report** are labels (fixed text or templates), fields that show an expression, groups, repeaters whose items come from an expression (as a table or as designed items), charts, and separators. **Not in a report**, because a report does not edit: fields bound to a path, editors, choices, masked fields, *enabled when*, buttons, and the formula of a node on the property page.
+- **The expressions of a control** are those of forms, with the same rules (evaluated on the evaluation thread, pending marker, error in a tooltip and under the expression, nothing run when untrusted): *visible when*, *text colour* and *fill colour* on any control and any table column, and the colours can also be fixed colours.
+- **One unit, the point.** Sizes and places are in points. On paper a point is 1/72 inch; on screen, at 100% zoom, it is the point of a form, so the same design is the same size in both.
+- **Editing is layout mode.** *Edit report* on the report tab's menu turns it on, as *Edit form* does, and everything in layout mode works as for a form: the palette, selecting, dragging, the resize handles, the 4-point grid and snapping with guide lines, the arrow keys, several controls selected with Ctrl for Align, Same width, Same height and Distribute, the property page with the numbers that can be typed, and **Undo layout** and **Redo layout**, which last while layout mode is on. As for forms, edits to a design are not in the workbook's undo history. In layout mode a multipage report shows each band once, in order and labelled, drawn with the first item of each repeater, as a designer's page would show them.
+- **The raw design** is in the code editor's project explorer, in a *Reports* branch beside *Forms*, as text that can be edited and reviewed.
+- **A starting point.** A report is made with the `+` after the last tab (*New tab...*, choosing Report) or *New report...*, which asks for the name and the kind and, optionally, an array of a tab (see Managing tabs). With an array, the report starts with what the generated form of that array has, made by the same code: a table for scalar or flat items, designed items otherwise, with the items from an expression (`Orders.items as order`) and fields showing expressions (`order.qty`) in place of paths. Without one, it starts empty.
+- **Reports have their own layout calculation; forms stay on egui** *(owner, 2026-11-02, revising the first harmonisation, which moved forms onto it too)*.
+  - **Reports** are measured and laid out by code that does not depend on egui, in a crate of its own (`cliotree-layout`): the sizes and places of controls, text measured from the application's bundled font files, line breaks and page breaks. It is used on screen as well as for the PDF. On screen egui only draws: each line of text is drawn where `cliotree-layout` broke it, without egui wrapping it again, so the page view and the PDF break lines and pages in the same places.
+  - **Forms are unchanged**: egui measures their text and sizes their widgets, as before.
+  - **The placement rules are shared.** How Flow, Grid and Free groups arrange their controls (`flow_rows`, `grid_cells`, `free_place` in `cliotree_core::form`) is already independent of egui and is used by both. Only the measuring of content differs.
+  - **What this costs.** A form and a report with the same design can differ by a point or two where a size is automatic, because their text is measured in two ways; sizes set in points come out the same. Drawing is written twice, through egui widgets for forms and through the report painter for reports, so each form addition shared with reports is drawn in both. The benefit is that forms are not moved, so nothing about them can change.
+
+### Report parameters
+
+*(Owner, 2026-11-02.)* A report declares parameters, which the user sets when the report is shown. Typically these are the relevant date, a period (start and end date), and categories from which the user picks one or a subset, such as org units within an organisation.
+
+- **Declaring.** Each parameter has a name (a Python identifier, unique in the report), a label, a kind, a default, and whether it is required.
+- **Kinds:**
+  - `date`: one date.
+  - `period`: a start and end date, with presets (this month, last month, this quarter, last quarter, this year, last year, year to date) as well as any two dates.
+  - `choice`: one value from a list.
+  - `choices`: a subset of a list, with *Select all* and a search box when the list is long.
+  - `number`, `text` and `yes/no`, for the less common cases.
+- **The lists of choices** come from an expression, such as `[u.name for u in OrgUnits.items]`, or a fixed list written in the design. An item can be a value, or a `(value, label)` pair to show something other than the value. The list is live: if a chosen value disappears from it, it is dropped from the choice and the parameter bar shows that it was.
+- **Defaults** are an expression (`TODAY()`) or, for a period, a preset.
+- **In expressions** the values are `params.<name>`: a `date` is a date, a `period` has `.start` and `.end`, a `choice` is the value, `choices` is a list, and a parameter left empty is `None`. `params` is a special name that exists only in report expressions. Chart functions see parameters only as the arguments they are given.
+- **The parameter bar** sits above the report, with a control for each parameter (the date picker of forms, a period picker, a drop-down, a drop-down list with check boxes). **The report stays live:** changing a value redraws it at once, as a change to its data does.
+- **Required parameters.** While one is empty the report is not drawn; it says which parameters to fill in.
+- **Remembered values.** The last values used are kept in the report's results cache (see Report storage and the results cache below). They are not executable content, so they are not in the trust digest, and changing them is not an undoable edit.
+
+### Report storage and the results cache
+
+*(Owner, 2026-11-02.)* Each report keeps a **cache of the values calculated for its last run**, with the parameter values of that run. It is to a report what stored values are to formulas (see Stored values): the report can be drawn without running any Python.
+
+- **Files.** A report is a directory, as a tab is: `reports/<Report>/design.json` (the design) and `reports/<Report>/cache.json` (the cache). *(The reserved name was `reports/<Report>.json`; no version wrote it, so it is changed.)*
+- **What the cache holds:**
+  - the **parameter values** of the run, and the lists of choices they were chosen from;
+  - the **result of every expression**: for each control and property (a field's value, a label's template parts, a repeater's items, a chart's arguments, *visible when*, colours, totals), and inside repeaters for each item, by the item's place in each repeater around it; an error is kept as its kind and message, as the overlay keeps a formula's error;
+  - **the SVG each chart function returned**;
+  - when the values were calculated, and a digest of the design they were calculated for.
+  
+  The layout and the page breaks are not stored. They are worked out again from the values, which needs no Python.
+- **The last run** is the report as last calculated. A report is calculated while it is shown and when it is exported, so its cache is what was last on screen or in a PDF. Saving waits for its outstanding evaluation, as for formulas, and writes the cache with the workbook. A report that was not shown during a session keeps the cache it had, which may be older than the data; the report says when it was calculated whenever it is drawn from the cache.
+- **On open**, a report is drawn from its cache, with its remembered parameter values in the parameter bar.
+  - In a **trusted** workbook it is then calculated again when it is shown, keeping the cached values on screen with the pending marker until the new ones arrive, as cells do.
+  - In an **untrusted** workbook nothing runs: the report is drawn from its cache with the `#UNTRUSTED!` mark and the time it was calculated, and its parameters cannot be changed. It can still be exported as PDF from the cache, and the export dialog says so.
+  - A report whose cache was made for another design (the digest differs, for example because the design was edited outside the application), or that has no cache, is drawn as never calculated: pending in a trusted workbook, `#UNTRUSTED!` in an untrusted one, with its parameters at their defaults.
+- **Stable files.** The cache is written in a stable order, and its time is kept from the last save if the values have not changed, so that saving an unchanged workbook still gives identical bytes (see File format).
+- **Not executable.** The cache is data, like stored values: it is not in the trust digest, and a cache in a file from elsewhere is only drawn, never run. The cached SVG is drawn with the same restrictions as a chart's (no files, URLs or scripts).
+- **Keep report results in the file** (a workbook setting, on by default). Off, the cache keeps only the parameter values, so the file stays small and holds no copies of report data; the report is then drawn as never calculated on open.
+- **Batch export** (`cliotree-cli`) never uses the cache: it always starts with a fresh, empty one, so the PDF is calculated from the data, with the parameters given on the command line or their defaults (never the remembered values). It never saves the workbook, so it does not change the cache either.
 
 **Behaviour**
-- A report is live. Its expressions record dependencies like formulas, so editing a source node re-renders only the affected blocks.
-- An error in an expression is shown in place, in the block that failed, as an error value (`#REF!`, `#TYPE!`, ...). Other blocks still render.
-- A chart series must resolve to numeric (or date) values for numeric axes and to strings for labels. A mismatch shows `#TYPE!` in the chart area.
+- A report is live. Its expressions record dependencies like formulas, so editing a source node or a parameter re-renders only the affected controls (in a multipage report, the affected band occurrences, and the pages after them when their heights change).
+- An error in an expression is shown in place, in the control that failed, as an error value (`#REF!`, `#TYPE!`, ...). Other controls still render.
+- The built-in charts need numeric (or date) values for numeric axes and strings for labels. A mismatch shows `#TYPE!` in the chart area.
 - Reports are read-only for the data they show. They cannot write to any sheet.
 - A report's name is a Python identifier like any tab, but no other formula can reference it.
-- Export (image, PDF, HTML) is a later feature and is not in v1.
+- Export as PDF is in 0.2.0 (above); export as an image or HTML, and printing, are later features.
+
+### Chart functions
+
+*(Owner, 2026-11-01.)* Users can create their own chart types in Python modules. **A chart type is a function that takes the data to draw as its parameters and returns an SVG image.** Every chart is drawn this way, including the built-in ones, so charts have one rendering path and `egui_plot` is not used.
+
+- **Declaring.** A module function becomes a chart type with the built-in `@chart` decorator, which gives the name shown in the designer: `@chart("Funnel")` above `def funnel(stages, counts, title=None, *, width, height):`. Undecorated functions are not chart types. The decorator does not change the function, so it can still be called from formulas and the Immediate window. Two chart types with the same name (ignoring case) are a load error for the second module.
+- **Where.** A chart is a control, in a report or on a form (see the form additions under Forms).
+- **Parameters.** The property page shows one expression field for each parameter except `width` and `height`. A parameter without a default must be filled in; one with a default can be left empty. The expressions are evaluated like formulas, and their reads are the chart's dependencies.
+- **Size.** The host passes `width` and `height`, the control's size in points, as keyword arguments, so text and spacing can be laid out for the real size. Resizing the control (or the window, for a control that fills its width) calls the function again, once the size has stopped changing. An SVG of another size is scaled to fit the control by its `viewBox`, keeping its proportions.
+- **Result.** The function returns SVG as a `str` or as a bytes value. Anything else is `#TYPE!` in the chart area. SVG that does not parse is `#VALUE!` with the parser's message, and an exception is shown as the error value it maps to, as in formulas.
+- **Drawing.** The SVG is drawn with resvg (through egui_extras' `svg` feature) on the UI thread, from the last result, so a pending chart keeps showing its previous image. Nothing outside the SVG is loaded: no files or URLs (images only as `data:` URIs) and no scripts, which resvg does not run anyway. Text uses the application's fonts; a `font-family` the application does not have falls back to the interface font. An SVG larger than the limit set in Options (default 5 MB) is `#VALUE!`.
+- **Built-in charts.** Bar, line, pie and scatter are chart functions in a built-in, read-only module, written in Python like a user's. The code editor shows it, so it can be read and copied as the start of a new chart type. Its names are in the workbook namespace like any module's public functions.
+- **Running.** A chart function runs on the evaluation thread under the formula budget, like any expression, and a module edit re-draws the charts that use it (module generations, see Python modules).
+- **Trust.** The decorated functions are module source and the parameter expressions are report expressions, so both are covered by the trust digest. In an untrusted workbook a chart shows `#UNTRUSTED!`, built-in charts included.
+- **Export.** Because every chart is already SVG, exporting a report needs no second way of drawing: SVG and HTML embed the images, PNG renders them with resvg, and PDF converts them.
+
+### Batch export from the command line
+
+*(Owner, 2026-11-02.)* A report can be run from the command line: open a `.clio` file, run a named report with parameters given on the command line, export it as PDF, and exit, without opening a window.
+
+- **A separate program, `cliotree-cli.exe`**, installed next to `cliotree.exe`. A release `cliotree.exe` is a Windows GUI program (no console), so a shell does not wait for it, and its output and exit code do not reach a script reliably. `cliotree-cli` is a console program built on `cliotree-core`, `cliotree-calc`, the report layout (`cliotree-layout`, see The report designer) and the report paging and PDF code (`cliotree-report`), none of which depend on egui or a window. The command takes subcommands so that other batch tasks can join it later.
+- **The command:**
+  ```
+  cliotree-cli report <workbook.clio> <Report> --out <file.pdf>
+               [--param <name>=<value>]... [--trust-digest <sha256>]
+               [--overwrite] [--timeout <seconds>]
+  cliotree-cli report <workbook.clio> <Report> --list-params
+  ```
+  `--list-params` prints the report's parameters, with their kinds, defaults and current lists of choices, and writes nothing.
+- **Parameter values** are text, read by the parameter's kind:
+  - `date`: `2026-10-31`.
+  - `period`: `2026-10-01..2026-10-31`, or a preset name (`this-month`, `last-month`, `this-quarter`, `last-quarter`, `this-year`, `last-year`, `year-to-date`).
+  - `choice`: one value of the list, matched exactly against the values (not the labels).
+  - `choices`: `--param` given once per value (`--param units=Sales --param units=Finance`), so values may contain commas.
+  - `number`, `text`, and `yes/no` (`yes`, `no`, `true`, `false`).
+  - A parameter not given takes its default. A required parameter with neither, an unknown name, a value that does not read, or a value not in the list is an error naming the parameter, and nothing is written.
+- **What it does.** It opens the workbook as the application would, fully recalculates it (data sources are read, with the credentials stored for the Windows user it runs as), evaluates the report, waits until everything is calculated, lays it out and writes the PDF. The PDF is written to a temporary file in the same folder and renamed, so a failed run leaves no half-written file. **The workbook is never saved**, and the remembered parameter values are not changed.
+- **Trust.** It runs Python only in a trusted workbook. The workbook is trusted if this Windows user's trust record trusts it (as in the application), or if `--trust-digest` is given and equals the workbook's trust digest, which lets a scheduled job on another account run exactly the content that was checked and nothing changed since. Otherwise it refuses and runs nothing.
+- **Copy batch command** on the report tab's menu copies a full command line for the report, with its current parameter values and the workbook's trust digest.
+- **Output.** Messages go to stderr; the path of the PDF written goes to stdout. Exit codes:
+  - `0`: written.
+  - `1`: the command line is wrong.
+  - `2`: the workbook does not open, or has no report of that name.
+  - `3`: the workbook is not trusted.
+  - `4`: a parameter error.
+  - `5`: written, but some controls show error values. They are listed on stderr, by band and control.
+  - `6`: the timeout passed (default 600 seconds) or the row limit was reached; nothing is written.
+- **Limits** are the workbook's settings and the user's options, as in the application (formula budget, detail-row limit).
 
 ## Forms
 
@@ -403,6 +529,18 @@ A Data Tab can be shown in more than one way. Each way is a **view** of the tab.
 - **Paths are literal**, like formula references. A control whose path no longer exists in the schema (after a rename or delete) is drawn as a placeholder naming the missing path, and the rest of the form works. Layout mode lists **fields not on the form**, each with an *Add* button, and **broken controls**, each with *Re-bind* and *Remove*. *Reset to default* (on Default) and *Delete* (on the others) discard a design; Default then goes back to being generated.
 - **Edits to a design** are not in the workbook's undo history in version 1, like module edits and tab operations (see Undo and redo). Layout mode has its own Undo and Redo, which last for the session in layout mode.
 - **Stored** as a JSON document validated against a built-in schema (`builtin:form`), so it is diff-friendly and versioned with the workbook (see File format). The code area offers the same document as raw text in an editor pane, for direct editing and for review. A design is valid only if its field paths exist in the tab's schema; one that is not is still opened, with the broken controls as above.
+
+**Additions in 0.2.0, shared with reports** *(owner, 2026-11-02)*. The report designer is the form designer (see Reports, The report designer), so what reports need is added to forms, where it is also useful. Every addition is a property of the shared model and has the same name in `builtin:form` and `builtin:report`; a design that does not use one is stored as before.
+- **A field can show an expression** instead of a path (*Value*, on its property page): a bare Python expression whose result the field shows, read-only and with the computed styling. It keeps the label, the label position and width, the font and the number or date format of a field. It is not in the tab's data, and it is executable content, in the trust digest; in an untrusted workbook it shows `#UNTRUSTED!`.
+- **A label can be a template**: its text is fixed, or a template in which each `{expression}` is filled in as in a Python f-string (`{total:,.2f}` included). A template is executable content; in an untrusted workbook its fixed text is shown and each expression part as `#UNTRUSTED!`.
+- **A repeater's items can come from an expression** (*Items*) instead of a path, shown as a table or as designed items. Such a repeater is read-only: no row commands, no *New* or *Delete*, and its cells are not editable. On a form it shows related records, such as the orders of the customer shown.
+- **A repeater can name its item** (`as order`) and its whole list (`as rows`), for the expressions of the controls inside it, at any depth. `this` and `parent` keep their meaning; in a repeater whose items come from an expression, an item has no node, so `this` in its controls is the item.
+- **Designed items nest.** A repeater inside the designed items of another can have its own items designed (before, it always showed generated items), to any depth.
+- **Fixed colours, bold and italic.** *Text colour* and *fill colour* take a fixed colour (chosen, or `#rrggbb`) or an expression. A fixed colour runs no Python, so it is shown in an untrusted workbook too. A font has **bold** and **italic** as well as typeface and size, inherited in the same way.
+- **Borders and fill on groups**: a border width (0 to 8 points), a border colour and a fill colour, and a **separator** can be horizontal or vertical. Reports need boxes and lines; forms use them for the same.
+- **More number formats**: **percent** (the value times 100, with `%`), and a **prefix** and **suffix**, such as `€ ` or ` kg`, beside thousands and decimals.
+- **Charts on forms** *(optional; may follow after reports)*: the chart control of reports, with the same chart functions (see Chart functions).
+- **A totals row on tables** *(optional; may follow after reports)*: each column can have a summary expression, run with `this` the list of the table (`SUM(i.qty for i in this)`), shown in a row under the table in the column's format.
 
 **Expressions on controls** (*visible when*, *enabled when*, *text colour*, *fill colour*) are executable content. A field whose node has a formula that was not run, because the workbook is not trusted, shows the `#UNTRUSTED!` mark of the grid beside it, and a value out of date in grey. A colour expression returns the colour to use: a name (`"red"`), `"#rrggbb"`, or an `(r, g, b)` tuple; `None` is the usual look. They are evaluated by the same machinery as formulas: dependencies are recorded, they run on the evaluation thread, never on the UI thread, and the result is kept in memory, not written to the data. While one is out of date the control keeps its last state, with the pending marker. An expression that is an error leaves the control visible and disabled, and says why in a tooltip. In an untrusted workbook they do not run (see Trust model): a control stays visible, and a control with an *enabled when* is disabled.
 
@@ -542,7 +680,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - Data, stored values, and stored errors display, and data editing works. Formula cells show the stored value with an `#UNTRUSTED!` badge.
 - Formulas can be typed or edited but are not evaluated. Dependents of anything the user edits are shown as **stale** (greyed), since they cannot recalculate. Entering a formula prompts for trust; refusing keeps the text unevaluated.
 - Form buttons are disabled, since they all run Python. Form fields still edit the tab directly.
-- Reports show blocks that need no Python (static text) and an `#UNTRUSTED!` placeholder elsewhere.
+- Reports are drawn from their results cache with the `#UNTRUSTED!` mark, and fixed text and fixed colours as designed; what the cache does not have shows the `#UNTRUSTED!` placeholder (see Report storage and the results cache).
 
 **What containment can and cannot do.** Trust is the real security boundary, and the trust banner says plainly that trusting a workbook allows it to run code. Containment is defence in depth against accidents and casual abuse, not a determined attacker, because sandboxing Python is notoriously leaky:
 - The Python engine is built without any operating-system access: no `os`, `subprocess`, `socket`, or file I/O modules exist in it (see Python engine for what this rests on). External access is only through named data sources (see Data sources), which a trusted workbook may use when they are defined on the machine.
@@ -697,6 +835,7 @@ All settings are edited in one **ClioTree Options** dialog, laid out like Excel'
 | Code editor | All workbooks | *Editor*: font family (Geist Mono, the one monospace font bundled; see the 10c decisions) and size [13 pt]; indent width, 2 to 8 spaces [4]; show line numbers [on]; syntax highlighting [on]; wrap long lines [off]. *Immediate window*: history entries kept [100]; maximum output size of one result [64 KB]. |
 | Evaluation | This workbook | *Time limits*: formula time limit, button procedure time limit, recalculation time limit. *Cancellation*: cancel grace period; maximum abandoned threads, the number currently abandoned, and the *Save and restart* button. *Guards*: maximum range length. |
 | Data sources | This workbook | *Limits*: call timeout and maximum response size. The definitions themselves are not workbook settings: they belong to the user and the machine, and are edited in *Tools > Data sources...* (see Data sources). |
+| Reports *(0.2.0)* | This workbook | *Limits*: most detail rows in a multipage report [100,000]; largest SVG a chart function may return [5 MB]. Both have ceilings, as other workbook limits do. *Storage*: keep report results in the file [on] (see Report storage and the results cache). |
 | Trust and security | All workbooks | *Trusted workbooks*: the list, each with *Revoke*. *Ceilings*: the maximum for each workbook setting (see below). |
 | Files and import | All workbooks | *Reading files*: maximum zip entries, maximum total uncompressed size, maximum nesting depth. *Import*: maximum import file size. *COBOL records*: what *Copy* in the Raw view copies them as (a hex dump, hex digits, or Base64). |
 | About | All workbooks | The usual About box: the name, version, a line on what ClioTree is, its licence and repository; the main third-party libraries with their versions and licences (RustPython with its revision); the bundled fonts and their licences. |
@@ -1028,7 +1167,8 @@ manifest.json            first entry in the archive
 sheets/<Tab>/data.json   (or data.xml)   the tab's data tree, with stored values
 sheets/<Tab>/overlay.json                formulas and their status
 sheets/<Tab>/forms/<Form>.json           a customised form design of the tab
-reports/<Report>.json                    report design (later version; reserved)
+reports/<Report>/design.json             a report's design (0.2.0)
+reports/<Report>/cache.json              its results cache: the values of its last run and their parameters (0.2.0)
 modules/<name>.py                        Python modules
 datasources.json                         data source definitions, no secrets
 settings.json                            workbook settings that differ from the defaults (see Settings and limits)
@@ -1038,7 +1178,7 @@ view.json                                view state of the whole workbook: the f
 - **Tabs** are one directory each. Tab names are valid identifiers and unique ignoring case (see Names and reserved words), so they are safe as file names on every platform. A schema sheet is stored the same way as any tree sheet (JSON or XML data, according to its meta-schema).
 - **Data files** hold the plain data, including the latest computed values, exactly as other tools would expect (see Stored values). Errored nodes are absent from them.
 - **Overlay** holds, per node path: the formula text, and its status (ok, pending, or the error kind, message, and traceback). Entries are sorted by path. It also holds the tab's view state, such as which view is current and which arrays are shown as tables. Comments are not in the overlay: they are XML comments in `data.xml`.
-- **Reports** are the design documents described in their section, with the report name as the file name. **Forms** are stored under the tab they are views of: `sheets/<Tab>/forms/<Form>.json`. A form that has not been customised has no file, so the generated Default form is never stored.
+- **Reports** are one directory each, named by the report: the design document described in their section, and the results cache (see Report storage and the results cache). **Forms** are stored under the tab they are views of: `sheets/<Tab>/forms/<Form>.json`. A form that has not been customised has no file, so the generated Default form is never stored.
 - **Modules** are plain `.py` files, so they can be edited, diffed, and linted with ordinary tools.
 
 **Manifest** (`manifest.json`) records:
@@ -1046,7 +1186,7 @@ view.json                                view state of the whole workbook: the f
 - The **workbook id** used by the trust model.
 - The **reserved-names version** (see Names and reserved words).
 - The **Python engine and its version**, so a file written against one RustPython release can be flagged when opened with another.
-- The list of tabs in tab order, each with its kind (`data` in v1; `report` is reserved for the later version) and, for tree sheets, its **schema binding**: `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
+- The list of tabs in tab order, each with its kind (`data`, or from 0.2.0 `report`) and, for tree sheets, its **schema binding**: `builtin:jsonschema`, `builtin:xsd`, or `sheet:<Tab>`.
 - The list of modules in display order, and for each Data Tab the customised forms in display order.
 
 **Writing**
@@ -1073,7 +1213,7 @@ Cargo workspace:
 **Workbook file format**: a zip with the extension `.clio` (see File format).
 
 **UI**
-- Sheet tabs along the bottom; formula bar above a tree grid. (In a later version, a report tab will show the rendered report instead, with charts drawn through `egui_plot`.)
+- Sheet tabs along the bottom; formula bar above a tree grid. A report tab (0.2.0) shows its parameter bar above the rendered report instead, page by page for a multipage report (see Reports).
 - Tree grid columns: `Name | Type | Value | Formula`; expandable nodes, array items as indexed rows.
 - Type-aware editors: toggles for booleans, dropdowns for enums, numeric fields.
 - Schema violations get a red outline; computed cells get a distinct fill.
@@ -1100,10 +1240,15 @@ A tab is renamed from the window, as in Excel.
 
 Tabs are added, deleted and given another schema from the window. The commands are in the Edit menu (for the current tab) and in a sheet tab's context menu, together with *Rename tab...* and *Import...*; a `+` after the last tab is *New tab...*.
 - **New tab...** asks for the name and the schema: **its own schema**, a new empty JSON Schema sheet `<Name>Schema` with auto-update on, so that its fields are added from the data tab (as *File > New* makes), or **the schema of** a schema sheet already there, in which case the tab starts with what a new item of that type holds (required fields filled in). Both names are checked as a rename is. New tabs go at the end, and the new tab is shown.
+  - **Data or report** *(0.2.0, owner 2026-11-02)*: the dialog starts with what kind of tab to make, **Data** (the default, with the choices of schema and data format described here) or **Report**. For a report it asks the name, the kind (single page or multipage) and, optionally, a tab and an array in it to start from (see Reports, The report designer, *A starting point*); the schema and format choices are not shown. The name is checked as any tab name is. *New report...* on the Edit menu and the tab menu opens the same dialog with Report chosen. The new report tab goes at the end and is shown, and, as *New tab Orders* is, it is one entry in the edit log (*New report Sales*).
   - **Data format** (asked for by the owner on 2026-11-01): for a JSON Schema, own or there already, the dialog also asks what the data is written in: JSON, JSON5, JSON with comments, JSON Lines, TOML, YAML or YAML documents. It is the tab's format from the start, as *Format* on the tab's menu would set it, so the Raw view, saving and export use it; it is set in the same history entry. Its own schema for JSON Lines or YAML documents is a list of objects, since those formats hold a list; a schema that is there must have a root the format can hold (TOML an object, the two list formats an array), or the dialog says why. An XSD or a copybook sets the format itself, and the choice is greyed. The control channel's `new_tab` takes `format` (`"yaml"`, `"toml"`, ...).
 - **Delete tab...** asks first, and says how many formulas and modules use the tab's name (*3 formulas use Orders; they will show #NAME! until the tab is back*). It is refused for the only tab of a workbook, and for a schema sheet that tabs use (*Orders uses this schema; delete that tab or give it another schema first*). The tab after it is shown, or the one before for the last tab.
 - **Change schema...** binds a data tab to another schema sheet of the same format: JSON data takes a JSON Schema and XML data an XSD, because a tab keeps its format. The data is not changed; the dialog says how many values would not fit, and they are flagged. A schema sheet with auto-update on that another tab uses is refused, as for any binding.
-- **Undo.** Each is one entry in the edit log (*New tab Notes*, *Delete tab Orders*, *Bind Prices to Orders_schema*). Undoing a delete puts the tab back with its data, formulas, column formulas, forms and place; formulas that named it find it again. What the window kept for a deleted tab (open nodes, tables, the current view) is not kept.
+- **Report tabs** *(0.2.0, owner 2026-11-02)*. A report tab's menu has *Edit report*, *Export as PDF...*, *Copy batch command*, *Rename tab...*, *Duplicate* and *Delete tab...*.
+  - **Rename** checks the name as for any tab. Nothing in the workbook names a report, so nothing changes elsewhere, and the dialog gives no warning (command lines that name the report are the user's to change).
+  - **Duplicate** makes a copy of the design, named `<Report>_2` (or the next free number) and placed after it, with no results cache, so it is drawn as never calculated until it is shown.
+  - **Delete** asks first and takes the design and the cache with it.
+- **Undo.** Each is one entry in the edit log (*New tab Notes*, *Delete tab Orders*, *Bind Prices to Orders_schema*, *Duplicate report Sales*). Undoing a delete puts the tab back with its data, formulas, column formulas, forms and place; formulas that named it find it again. What the window kept for a deleted tab (open nodes, tables, the current view) is not kept.
 - **Trust.** Like a rename, these are edits made in the app and keep the workbook's trust.
 - **The control channel** gets `new_tab`, `delete_tab`, `bind_schema` and `import` for the end-to-end tests.
 
@@ -1128,6 +1273,11 @@ The project has automated tests at several levels, and **all of them run in a CI
 - **Test the real thing.** Application-level tests drive the actual application code, including the evaluation thread and the RustPython engine, not mocks. The Python engine is real in every test above the unit level.
 - **No sleeping.** The status bar's pending count is observable (see Evaluation and scheduling), and the application exposes "wait until idle" for tests. Tests wait for that condition with a timeout, never for a fixed delay.
 - **Deterministic.** The clock and random numbers are injected, so `NOW` and `RAND` can be fixed. Fonts used in rendered tests are bundled. Tests use temporary directories and never touch the network except to local servers they start.
+- **Reports** *(0.2.0, owner 2026-11-02)* are tested as the rest:
+  - **End to end**, through the control channel, which gains commands to make a report, set its parameters, switch layout mode on and off, export a PDF, and report the pages and the error values a report shows.
+  - **Snapshots** of report pages, single page and multipage, in both themes, like the form snapshots. The page view on screen is also compared with the PDF: the same lines on each page, broken at the same words.
+  - **PDF output**: the text of each page, read back from the PDF, and where the page breaks fell, for fixed data, compared with expected files; and that the fonts are embedded.
+  - **`cliotree-cli`**: each exit code, from a run that writes to each kind of failure (a wrong command line, a missing report, an untrusted workbook, a bad parameter, error values, the timeout), that a failed run leaves no file, that the workbook file is unchanged afterwards, and that the cache is not used.
 - **Every rule in this document gets a test**, and every fixed bug gets a regression test. Test names refer to the section of this document that they check.
 
 **Levels**
@@ -1193,6 +1343,8 @@ The jobs run on a self-hosted GitHub Actions runner (label `cliotree`; see the R
 - Runs stay short because the runner is persistent: `target/` and `vendor/` stay in its workspace (the checkout is told not to clean them), and RustPython takes several minutes to build only the first time. `Swatinem/rust-cache` is not used, because its cleanup deletes `rustup` from `~/.cargo/bin` on a shared machine. A job on a throwaway runner would need a cache.
 - On failure the job uploads logs, snapshot diffs, and screenshots as artifacts.
 - **The Windows installer** is built on the Linux runner: `packaging/windows/build-msi.sh` cross-compiles the release application for `x86_64-pc-windows-msvc` with `cargo-xwin` (which downloads the Microsoft CRT and Windows SDK once, accepting their licence terms, into `~/.cache/cliotree-msi`) and packages it with `wixl` from msitools, from `packaging/windows/cliotree.wxs` (the WiX 3 dialect wixl reads). Nothing is installed system-wide, so the runner needs no root. The MSI installs `cliotree.exe` and the licence under Program Files, adds a Start Menu shortcut, and upgrades in place (`UpgradeCode` never changes; the version is the workspace version). The release exe is a GUI program (no console window); debug builds and the test control build keep the console. Not yet: code signing (SmartScreen will warn), an icon, a version resource in the exe, and the `.clio` file association (with the workbook layer). *(The icon, the version resource and the association were added later: see the decisions for the last items. Code signing is not planned.)* The job is advisory and uploads the MSI as the `windows-installer` artifact.
+  - **From 0.2.0 the MSI also installs `cliotree-cli.exe`** next to `cliotree.exe` (owner, 2026-11-02). It is not put on the `PATH`; scripts name it by its full path.
+- **Linux packages** *(0.2.0, owner 2026-11-02)*: one package for each family of distributions, each built in a container of that distribution so that it links against that distribution's libraries: a **`.deb`** (Debian and Ubuntu, with `cargo-deb`), an **`.rpm`** (Fedora and openSUSE, with `cargo-generate-rpm`) and an **Arch package** (`.pkg.tar.zst`, from a `PKGBUILD` built with `makepkg` in an Arch container). Each installs `cliotree` and `cliotree-cli` in `/usr/bin`, the licence, a `.desktop` file with the icon, and a MIME type for `.clio` files that opens them in ClioTree, and declares the system libraries the application needs (OpenGL, X11 and Wayland, unixODBC). The packaging files are under `packaging/linux/`. The jobs are advisory, like the MSI's, and upload the packages as artifacts.
 - **The console window.** A release build on Windows is a GUI program with no console. A debug build keeps its console on purpose, so that panics and logs are seen while developing (owner, 2026-11-01).
 - Coverage is reported with `cargo llvm-cov` for information, not as a gate.
 - Because development happens on Windows, a Windows job running levels 1 to 3 is added once the basic pipeline is stable. It exists to catch path, case-sensitivity, and line-ending differences, which this design has several rules about (tab names unique ignoring case, per-tab files).
@@ -1339,7 +1491,7 @@ The rest are **not planned**: cut (Ctrl+X), dragging out a range with the mouse,
 
 Deferred features, with what v1 does to keep them possible. Version 1 is release **0.1.0**; **Reports are 0.2.0**, **the web port is 0.3.0**, and **Excel and ODS files are 0.4.0** (owner, 2026-10-31). Version 1 was closed on 2026-11-01, and the version is now **0.2.0**: the work on Reports (owner, 2026-11-01).
 
-- **Reports, 0.2.0** (see Reports): `builtin:report` schema, table and text blocks, then charts, then the designer.
+- **Reports, 0.2.0** (see Reports): the report layout calculation (`cliotree-layout`; forms stay on egui); the form designer additions shared with reports (see Forms); the `builtin:report` schema, from the definitions of `builtin:form`; report tabs and single page reports, edited in layout mode; charts (chart functions returning SVG, user-defined with `@chart`, and the built-in bar, line, pie and scatter); report parameters and the parameter bar; multipage reports (bands, nested sections, page setup, page view); export as PDF; batch export with `cliotree-cli`, in the MSI and the Linux packages (.deb, .rpm, Arch); then the optional form additions (charts on forms, totals rows).
   - The manifest's tab `kind` and the `reports/` directory name are reserved.
   - A v1 build that opens a file containing reports keeps those entries unchanged on save (the unknown-entries rule in File format) and shows no report tabs.
 - **Web (wasm) port, 0.3.0**: the same core in a browser.
@@ -2020,4 +2172,4 @@ Deferred features, with what v1 does to keep them possible. Version 1 is release
 - **RustPython.** It is young and not production-ready by its own account, it builds only from a pinned git revision, and the single long builtin call cannot be interrupted. Mitigations: the `PythonEngine` trait, the pinned and vendored build, the abandoned-thread backstop, and the test-suite probes.
 - **Proxy layer speed.** The budgets are under Python engine. A miss is addressed by the mitigations listed there.
 - **Schema inference and conformance.** Inference over real-world files and the selected conformance cases will turn up cases not yet foreseen. The corpus and the must-reject tests are the way to find them.
-- **Report rendering and export** (later version). Charts are drawn live in egui, so producing the same output as an image or PDF needs a second rendering path. The layout model should stay renderer-neutral to allow it.
+- **Report rendering and PDF export** (0.2.0). Charts are SVG (see Chart functions), so they need no second rendering path; text, tables and the page layout do. Layout and pagination must therefore be computed once, independent of egui, and drawn both on screen and into the PDF, with the same fonts so that page breaks match. This is `cliotree-layout` (see The report designer); forms stay on egui's own layout (owner, 2026-11-02). The risk is that the page view, drawn by egui, drifts from `cliotree-layout`'s line breaks, for example if egui positions glyphs differently from the widths measured; the tests that compare the page view with the PDF catch it.
