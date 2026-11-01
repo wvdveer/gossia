@@ -186,6 +186,10 @@ struct NodeData {
     /// The comments inside the node's element, at its start and at its end
     /// (rare, so kept apart to keep nodes small).
     inner: Option<Box<[Option<String>; 2]>>,
+    /// An empty line before the node, above its comment, in a YAML or TOML
+    /// file (DESIGN.md, "Other file formats"). Like a comment, it goes where
+    /// the node goes.
+    blank: bool,
 }
 
 /// Where a comment on a node is written in XML (DESIGN.md, "Comments").
@@ -236,7 +240,19 @@ impl Node {
             value,
             comment: None,
             inner: None,
+            blank: false,
         }))
+    }
+
+    /// Whether an empty line comes before the node in a YAML or TOML file.
+    pub fn blank_before(&self) -> bool {
+        self.0.blank
+    }
+
+    pub fn set_blank_before(&mut self, blank: bool) {
+        if self.0.blank != blank {
+            Arc::make_mut(&mut self.0).blank = blank;
+        }
     }
 
     /// The same node with a comment (or with none), keeping its id.
@@ -291,11 +307,13 @@ impl Node {
         self.0.comment.is_some() || self.0.inner.is_some()
     }
 
-    /// The same node with the comments of `other`, at every place.
+    /// The same node with the comments of `other`, at every place, and its
+    /// empty line before.
     pub fn with_comments_of(mut self, other: &Node) -> Node {
         let data = Arc::make_mut(&mut self.0);
         data.comment = other.0.comment.clone();
         data.inner = other.0.inner.clone();
+        data.blank = other.0.blank;
         self
     }
 

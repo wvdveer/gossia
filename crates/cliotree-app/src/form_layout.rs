@@ -1363,14 +1363,17 @@ impl ClioApp {
                 merge = Some(key(expr_property(expr)));
             }
             self.expression_error(ui, at, None, expr);
-            let node_kind = spec.as_ref().and_then(|spec| {
+            let node_type = spec.as_ref().and_then(|spec| {
                 let path = design.path_in_item(at, &edited, 0)?;
-                Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
+                Some(spec.get(spec.resolve(&path)?.ty).clone())
             });
-            self.choices_note(ui, at, None, node_kind.as_ref());
-            if edited.choices.is_some() {
-                ui.checkbox(&mut edited.allow_other, "Allow other values")
-                    .on_hover_text("A typeahead enters typed text that matches no item as it is");
+            self.choices_note(ui, at, None, node_type.as_ref().map(|t| &t.kind));
+            // A field whose type names values (COBOL condition names) has
+            // them as its choices when it has none of its own.
+            let has_named = node_type.as_ref().is_some_and(|t| !t.choices.is_empty());
+            if edited.choices.is_some() || has_named {
+                ui.checkbox(&mut edited.allow_other, ALLOW_OTHER)
+                    .on_hover_text(ALLOW_OTHER_HELP);
             }
         }
         ui.weak(
@@ -1610,9 +1613,13 @@ impl ClioApp {
                 let design = self.design_of(&self.form_name());
                 let columns = crate::form::columns_of(spec, &design, at)?;
                 let ty = columns.iter().find(|c| c.name == column.name)?.ty;
-                Some(spec.get(ty).kind.clone())
+                Some((spec.get(ty).kind.clone(), !spec.get(ty).choices.is_empty()))
             })
             .flatten();
+        let (kind, has_named) = match kind {
+            Some((kind, has_named)) => (Some(kind), has_named),
+            None => (None, false),
+        };
         if !row_number {
             ui.horizontal(|ui| {
                 ui.label("Editor");
@@ -1682,9 +1689,9 @@ impl ClioApp {
             }
             self.expression_error(ui, at, Some(&column.name), expr);
             self.choices_note(ui, at, Some(&column.name), kind.as_ref());
-            if edited.choices.is_some() {
-                ui.checkbox(&mut edited.allow_other, "Allow other values")
-                    .on_hover_text("A typeahead enters typed text that matches no item as it is");
+            if edited.choices.is_some() || has_named {
+                ui.checkbox(&mut edited.allow_other, ALLOW_OTHER)
+                    .on_hover_text(ALLOW_OTHER_HELP);
             }
             ui.weak(
                 "Visible when runs once, where the table is bound, and hides the whole \
@@ -2047,6 +2054,10 @@ fn sibling_count(design: &FormDesign, at: &[usize]) -> usize {
 }
 
 /// The sizes the property page offers, in points.
+/// The property that lets a field with choices take a code not in the list.
+const ALLOW_OTHER: &str = "Allow other values (write-in codes)";
+const ALLOW_OTHER_HELP: &str = "A dropdown offers Other... to type a code that is not listed; a typeahead enters typed text that matches no item as it is";
+
 const FONT_SIZE_CHOICES: [u32; 16] = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 
 /// The font of a control or a column: a typeface and a size, each *Inherited*

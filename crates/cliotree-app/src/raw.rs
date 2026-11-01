@@ -50,9 +50,14 @@ impl ClioApp {
         }
         match calc.spec(&self.sheet).and_then(|s| s.copybook()) {
             Some(layout) => format!(
-                "COBOL record {} ({} bytes), code page {}, read-only",
+                "COBOL record {} ({} bytes{}), code page {}, read-only",
                 layout.record,
                 layout.length,
+                if calc.is_variable(&self.sheet) {
+                    ", variable length after a record descriptor word"
+                } else {
+                    ""
+                },
                 layout.code_page.label()
             ),
             None => self.raw_format().label().to_owned(),
@@ -138,6 +143,9 @@ impl ClioApp {
 
     fn try_paste_document(&mut self, text: &str) -> Result<(), String> {
         let sheet = self.sheet.clone();
+        if self.calc().schema_format(&sheet) == Some(SchemaFormat::Copybook) {
+            return self.paste_copybook(&sheet, text);
+        }
         let (node, document) = {
             let Some(spec) = self.calc().spec(&sheet) else {
                 return Err("there is no such tab".to_owned());
@@ -182,6 +190,27 @@ impl ClioApp {
         if let Some(document) = document {
             let _ = self.session.calc_mut().set_xml_document(&sheet, document);
         }
+        self.notice = None;
+        self.session.tick();
+        Ok(())
+    }
+
+    /// Puts copybook text in place of a copybook schema tab's, keeping its
+    /// code page and floating point format, which the text does not say.
+    fn paste_copybook(&mut self, sheet: &str, text: &str) -> Result<(), String> {
+        let mut book =
+            copybook::parse(text).map_err(|e| format!("Not pasted: it is not a copybook: {e}"))?;
+        let (old, code_page) = self
+            .calc()
+            .data(sheet)
+            .and_then(|data| copybook::from_node(data).ok())
+            .unwrap_or_default();
+        book.float = old.float;
+        let tree = copybook::to_node(&book, code_page);
+        self.session
+            .calc_mut()
+            .set_value(sheet, &Path::root(), tree.value().clone())
+            .map_err(|e| format!("Not pasted: {e}"))?;
         self.notice = None;
         self.session.tick();
         Ok(())
@@ -235,7 +264,9 @@ impl ClioApp {
                     None => ui.ctx().copy_text(text.clone()),
                 }
             }
-            ui.weak("Press Ctrl+V to import the clipboard: JSON, XML, YAML, TOML, CSV or TSV.");
+            ui.weak(
+                "Press Ctrl+V to import the clipboard: JSON, XML, YAML, TOML, CSV, TSV or a COBOL copybook.",
+            );
         });
         if let Some(error) = &self.raw.error {
             let color = error_color(ui);

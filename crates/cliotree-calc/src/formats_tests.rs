@@ -82,24 +82,28 @@ fn a_tab_offers_the_formats_that_can_hold_it() {
 }
 
 #[test]
-fn comments_follow_the_format_and_a_change_that_drops_them_is_undone_whole() {
+fn comments_follow_the_tab_through_a_change_of_format() {
     let mut calc = book();
-    // JSON has no comments, though the data came with one.
-    assert!(calc.comment_refusal("Settings", &p("name")).is_some());
-    calc.set_format("Settings", DataFormat::Json5).unwrap();
+    // JSON has none in the file, so the workbook keeps them (owner,
+    // 2026-11-01): the comment the data came with is there.
+    assert!(calc.comment_refusal("Settings", &p("name")).is_none());
     assert!(calc.format_has_comments("Settings"));
+    assert_eq!(calc.comment("Settings", &p("name")), Some("who"));
+    calc.set_format("Settings", DataFormat::Json5).unwrap();
     assert_eq!(calc.comment("Settings", &p("name")), Some("who"));
     // An array can have one here, unlike on an XML tab, and `--` is fine.
     calc.set_comment("Settings", &p("tags"), Some("a -- b-"))
         .unwrap();
-    assert_eq!(calc.comments_lost("Settings", DataFormat::Json), 2);
-    assert_eq!(calc.comments_lost("Settings", DataFormat::Jsonc), 0);
+    // Back to JSON: nothing is lost, so nothing is asked, but export leaves
+    // them out.
+    assert_eq!(calc.comments_lost("Settings", DataFormat::Json), 0);
+    assert_eq!(calc.comments_left_out("Settings", DataFormat::Json), 2);
+    assert_eq!(calc.comments_left_out("Settings", DataFormat::Jsonc), 0);
     calc.set_format("Settings", DataFormat::Json).unwrap();
-    assert_eq!(calc.comment("Settings", &p("name")), None);
+    assert_eq!(calc.comment("Settings", &p("tags")), Some("a -- b-"));
     calc.undo().unwrap();
     assert_eq!(calc.format("Settings"), Some(DataFormat::Json5));
     assert_eq!(calc.comment("Settings", &p("name")), Some("who"));
-    assert_eq!(calc.comment("Settings", &p("tags")), Some("a -- b-"));
 }
 
 #[test]

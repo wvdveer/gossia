@@ -433,7 +433,8 @@ fn results_are_converted_strictly() {
     );
     assert_eq!(b.error("c"), Some(ErrorKind::Value), "beyond 64 bits");
     assert_eq!(b.error("x"), Some(ErrorKind::Value), "NaN");
-    assert_eq!(b.error("name"), Some(ErrorKind::Type));
+    // Bytes are read as the node: text, as UTF-8 (DESIGN.md, "Raw memory").
+    assert_eq!(b.get("name"), Some(Value::Str("bytes".into())));
     assert_eq!(
         b.error("flag"),
         Some(ErrorKind::Type),

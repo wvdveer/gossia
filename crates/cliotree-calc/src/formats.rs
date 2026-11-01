@@ -12,10 +12,22 @@ impl Calc {
         self.sheets.get(sheet).map(|s| s.format)
     }
 
-    /// Whether the tab's format can hold comments, so that it has the
-    /// comment commands.
+    /// Whether the tab can have comments, so that it has the comment
+    /// commands: every tab but one of COBOL records. A JSON or JSON Lines
+    /// tab keeps them in the workbook only.
     pub fn format_has_comments(&self, sheet: &str) -> bool {
-        self.format(sheet).is_some_and(DataFormat::has_comments)
+        self.format(sheet).is_some_and(DataFormat::keeps_comments)
+    }
+
+    /// How many nodes with comments the tab has, which a file of `format`
+    /// leaves out because it has no comments (export says so).
+    pub fn comments_left_out(&self, sheet: &str, format: DataFormat) -> usize {
+        if format.has_comments() {
+            return 0;
+        }
+        self.sheets
+            .get(sheet)
+            .map_or(0, |s| commented(&s.data, &Path::root()).len())
     }
 
     /// Why the tab cannot be written in `format`, or None. A schema tab keeps
@@ -63,7 +75,7 @@ impl Calc {
     /// How many comments changing the tab to `format` would take off, as the
     /// format has none.
     pub fn comments_lost(&self, sheet: &str, format: DataFormat) -> usize {
-        if format.has_comments() {
+        if format.keeps_comments() {
             return 0;
         }
         self.sheets
@@ -84,7 +96,7 @@ impl Calc {
             return Ok(());
         }
         let mut ops = Vec::new();
-        if !format.has_comments() {
+        if !format.keeps_comments() {
             let data = self.sheets[sheet].data.clone();
             for path in commented(&data, &Path::root()) {
                 let node = data.get(&path).expect("the path was just found");
@@ -132,7 +144,7 @@ impl Calc {
 }
 
 /// The paths of the nodes under (and at) `path` that have a comment.
-fn commented(node: &Node, path: &Path) -> Vec<Path> {
+pub(super) fn commented(node: &Node, path: &Path) -> Vec<Path> {
     let mut out = Vec::new();
     if node.has_comments() {
         out.push(path.clone());

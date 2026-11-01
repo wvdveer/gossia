@@ -296,6 +296,8 @@ pub fn format_of_text(text: &str) -> ImportFormat {
         ImportFormat::Json
     } else if text.starts_with('<') {
         ImportFormat::Xml
+    } else if is_copybook(text) {
+        ImportFormat::Copybook
     } else if is_yaml(text) {
         ImportFormat::Yaml.refine(text)
     } else if first_line.contains('\t') {
@@ -305,6 +307,12 @@ pub fn format_of_text(text: &str) -> ImportFormat {
     } else {
         ImportFormat::Text
     }
+}
+
+/// Whether the text is a COBOL copybook: entries that start with level
+/// numbers and end with periods, at least one of them.
+fn is_copybook(text: &str) -> bool {
+    copybook::parse(text).is_ok_and(|book| !book.items.is_empty())
 }
 
 /// Whether the text is JSON Lines: two or more lines, each a JSON object on
@@ -422,6 +430,10 @@ impl ClioApp {
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
+        let bytes = match copied_in(path, &file, &bytes) {
+            Some(expanded) => expanded.into_bytes(),
+            None => bytes,
+        };
         let plan = self.plan_import(&file, &bytes)?;
         self.imports.push_back(plan);
         Ok(())
@@ -461,6 +473,13 @@ impl ClioApp {
         }
         let format = format_of_text(text);
         let mut plan = self.plan_import_as(PASTED, "Pasted", format, text.as_bytes())?;
+        // Copybook text pasted on a copybook schema tab can be its text.
+        if format == ImportFormat::Copybook {
+            if self.calc().schema_format(&self.sheet) == Some(SchemaFormat::Copybook) {
+                plan.replace = Some(self.sheet.clone());
+            }
+            return Ok(plan);
+        }
         let same_format = match format {
             ImportFormat::Csv | ImportFormat::Tsv | ImportFormat::Text => false,
             _ => self.calc().format(&self.sheet) == Some(format.data_format()),
@@ -908,6 +927,18 @@ impl ClioApp {
                         .map_err(|e| cliotree_calc::EditError::Path(e.to_string()))
                 })
                 .and_then(|parsed| calc.create_records_tab(name, schema, record, parsed.node))
+                .and_then(|()| {
+                    // A variable-length record is written back as one.
+                    let variable = calc
+                        .spec(name)
+                        .and_then(|spec| spec.copybook())
+                        .is_some_and(|layout| copybook::records::has_rdw(&plan.bytes, layout));
+                    if variable {
+                        calc.set_variable(name, true)
+                    } else {
+                        Ok(())
+                    }
+                })
             }
             (SchemaChoice::Existing(schema), _) => match &plan.data {
                 Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
@@ -971,7 +1002,17 @@ impl ClioApp {
                 ui.add_space(4.0);
                 // A copybook is a schema and nothing else.
                 if matches!(plan.schema_file, Some(SchemaFile::Copybook(_))) {
-                    ui.label("The file is a COBOL copybook: it is imported as a schema tab.");
+                    if plan.replace.is_some() {
+                        let chosen = plan.choice == SchemaChoice::SchemaTab;
+                        if ui
+                            .radio(chosen, "It is a COBOL copybook: import it as a schema tab")
+                            .clicked()
+                        {
+                            plan.choice = SchemaChoice::SchemaTab;
+                        }
+                    } else {
+                        ui.label("The file is a COBOL copybook: it is imported as a schema tab.");
+                    }
                 } else if plan.schema_file.is_some() {
                     let chosen = plan.choice == SchemaChoice::SchemaTab;
                     let what = match plan.schema_file {
@@ -1186,3 +1227,37 @@ fn capital(file: &str) -> String {
 
 /// The imports waiting for their dialog.
 pub type Imports = VecDeque<ImportPlan>;
+
+/// The text of a copybook file with the members its `COPY` statements name
+/// copied in, read from the file's folder (`NAME.cpy`, `NAME.cbl`, `NAME`,
+/// as written or in lower case). None for any other file, or a copybook
+/// with no `COPY` statement: it is planned as it is, and says what is wrong.
+fn copied_in(path: &FsPath, file: &str, bytes: &[u8]) -> Option<String> {
+    if format_of(file) != ImportFormat::Copybook {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)).ok()?;
+    if copybook::parse(text).is_ok() {
+        return None;
+    }
+    let folder = path.parent()?;
+    let mut load = |name: &str| {
+        let names = [name.to_owned(), name.to_ascii_lowercase()];
+        names.iter().find_map(|name| {
+            ["cpy", "CPY", "cbl", "CBL", "cob", "COB", ""]
+                .iter()
+                .map(|ext| {
+                    if ext.is_empty() {
+                        folder.join(name)
+                    } else {
+                        folder.join(format!("{name}.{ext}"))
+                    }
+                })
+                .find(|p| p.is_file())
+                .and_then(|p| std::fs::read(p).ok())
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+        })
+    };
+    let book = copybook::parse_with(text, &mut load).ok()?;
+    Some(copybook::to_text(&book))
+}

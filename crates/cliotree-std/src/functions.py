@@ -8,6 +8,14 @@
 # `Node` and `PLAIN`. It is trusted code.
 
 
+from _cliotree import (
+    base64encode as _base64encode,
+    base64decode as _base64decode,
+    hexencode as _hexencode,
+    hexdecode as _hexdecode,
+)
+
+
 class NotAvailable(Exception):
     """Raised by `NA()`. It is what a node holding `#N/A` came from."""
 
@@ -170,3 +178,36 @@ def TEXT(value, spec=''):
 def NA():
     """Raises `#N/A`, for a value that is not available."""
     raise NotAvailable('not available')
+
+
+def _not_error(value):
+    if isinstance(value, ErrorValue):
+        raise PropagatedError(value)
+    return value
+
+
+def RAW(node):
+    """The bytes of a node as its tab holds them (DESIGN.md, "Raw memory"):
+    a COBOL field's own bytes, the record for the root, or the node written
+    as text in its tab's format."""
+    return _raw_access(node)
+
+
+def BASE64ENCODE(data):
+    """Bytes as Base64 text."""
+    return _base64encode(_not_error(data))
+
+
+def BASE64DECODE(text):
+    """The bytes of Base64 text."""
+    return _base64decode(_not_error(text))
+
+
+def HEXENCODE(data):
+    """Bytes as hex digits, two upper-case digits a byte."""
+    return _hexencode(_not_error(data))
+
+
+def HEXDECODE(text):
+    """The bytes of hex digits; white space between them is passed over."""
+    return _hexdecode(_not_error(text))

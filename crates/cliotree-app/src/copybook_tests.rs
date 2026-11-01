@@ -226,3 +226,130 @@ fn records_are_copied_as_options_say_and_pasted_back() {
     let plan = app.plan_paste("name,age\nAnn,3\n").unwrap();
     assert_eq!(plan.format, ImportFormat::Csv);
 }
+
+#[test]
+fn holding_another_record_asks_before_deleting_formulas() {
+    let mut app = with_copybook();
+    let plan = app.plan_import("people.blk", &ebcdic("0001ABCD")).unwrap();
+    app.import(&plan).unwrap();
+    assert_eq!(
+        app.calc().record_of("people").as_deref(),
+        Some("CUSTOMER-REC")
+    );
+    let why = app.begin_set_record("people", "SHORT-REC").unwrap_err();
+    assert!(why.contains("4 bytes"), "{why}");
+
+    app.session
+        .calc_mut()
+        .set_formula("people", &p("CUST_ID"), "7")
+        .unwrap();
+    app.begin_set_record("people", "PAIR-REC").unwrap();
+    let change = app.tab_dialogs.record.clone().unwrap();
+    assert_eq!(change.formulas, 1);
+    assert_eq!(
+        app.calc().record_of("people").as_deref(),
+        Some("CUSTOMER-REC")
+    );
+    app.set_record("people", "PAIR-REC").unwrap();
+    assert_eq!(app.calc().record_of("people").as_deref(), Some("PAIR-REC"));
+    assert!(matches!(at(&app, "people", "PAIR"), Value::Str(s) if s.ends_with("ABCD")));
+}
+
+#[test]
+fn floating_point_is_set_on_the_copybook_tab() {
+    use cliotree_core::copybook::FloatFormat;
+    let mut app = sample();
+    let text = "       01  R.\n           05  A COMP-1.\n";
+    let plan = app.plan_import("floats.cpy", text.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    let plan = app
+        .plan_import("one.blk", &[0x3F, 0x80, 0x00, 0x00])
+        .unwrap();
+    app.import(&plan).unwrap();
+    // IBM hexadecimal: 0.5 times 16 to the power -1.
+    assert_eq!(at(&app, "one", "A"), Value::Float(0.03125));
+    app.set_float_format("floats", FloatFormat::Ieee).unwrap();
+    let calc = app.calc();
+    assert_eq!(
+        calc.spec("one").unwrap().copybook().unwrap().float,
+        FloatFormat::Ieee
+    );
+    assert_eq!(calc.records_bytes("one").unwrap().len(), 4);
+}
+
+#[test]
+fn a_file_with_a_record_descriptor_word_is_a_variable_length_record() {
+    let mut app = sample();
+    let text = "       01  R.\n           05  N PIC 9.\n           05  T PIC X OCCURS 0 TO 5 DEPENDING ON N.\n";
+    let plan = app.plan_import("vb.cpy", text.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    let file = [0x00, 0x07, 0x00, 0x00, 0xF2, 0xC1, 0xC2];
+    let plan = app.plan_import("two.blk", &file).unwrap();
+    app.import(&plan).unwrap();
+    assert!(app.calc().is_variable("two"));
+    assert_eq!(app.calc().records_bytes("two").unwrap(), file);
+    app.set_variable("two", false).unwrap();
+    assert_eq!(app.calc().records_bytes("two").unwrap().len(), 6);
+}
+
+#[test]
+fn copybook_text_pasted_on_a_copybook_tab_can_be_its_text() {
+    let mut app = with_copybook();
+    app.set_code_page("customer", CodePage::Cp500).unwrap();
+    let text = "       01  NEW-REC.\n           05  X PIC X.\n";
+    // On another tab it is a new copybook schema tab.
+    let other = app
+        .calc()
+        .sheet_names()
+        .find(|n| *n != "customer")
+        .unwrap()
+        .to_owned();
+    app.show_tab(&other);
+    let plan = app.plan_paste(text).unwrap();
+    assert_eq!(plan.format, ImportFormat::Copybook);
+    assert_eq!(plan.replace, None);
+    app.show_tab("customer");
+    let mut plan = app.plan_paste(text).unwrap();
+    assert_eq!(plan.replace.as_deref(), Some("customer"));
+    assert_eq!(plan.choice, SchemaChoice::SchemaTab);
+    plan.choice = SchemaChoice::Replace("customer".into());
+    app.import(&plan).unwrap();
+    assert_eq!(app.calc().copybook_records("customer"), ["NEW-REC"]);
+    // The code page is a setting of the tab, which the text does not say.
+    assert_eq!(
+        at(&app, "customer", "codePage"),
+        Value::Str(CodePage::Cp500.code().into())
+    );
+}
+
+#[test]
+fn copy_members_are_read_from_the_folder_of_the_file() {
+    let dir = std::env::temp_dir().join(format!(
+        "cliotree-copy-members-{}-{}",
+        std::process::id(),
+        crate::workbook_file::new_workbook_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("ADDR.cpy"),
+        "           05  :P:-STREET     PIC X(10).\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.cpy"),
+        "       01  CUSTOMER.\n           05  ID PIC 9(4).\n           COPY ADDR REPLACING ==:P:== BY ==HOME==.\n",
+    )
+    .unwrap();
+    let mut app = sample();
+    app.begin_import_path(&dir.join("main.cpy")).unwrap();
+    let plan = app.imports.pop_front().unwrap();
+    app.import(&plan).unwrap();
+    let spec = app.calc().schema_spec("main").unwrap();
+    assert_eq!(spec.copybook().unwrap().length, 14);
+    assert!(spec.resolve(&p("HOME_STREET")).is_some());
+    // A member that is not there says so.
+    std::fs::remove_file(dir.join("ADDR.cpy")).unwrap();
+    let why = app.begin_import_path(&dir.join("main.cpy")).unwrap_err();
+    assert!(why.contains("no member ADDR"), "{why}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

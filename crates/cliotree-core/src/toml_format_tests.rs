@@ -127,3 +127,21 @@ fn objects_in_plain_arrays_are_inline_tables_and_nothing_is_left_out() {
     let list = crate::json::parse("[1]").unwrap().node;
     assert!(to_string(&list).unwrap_err().message.contains("object"));
 }
+
+#[test]
+fn empty_lines_between_keys_are_kept() {
+    let text = "a = 1\n\n# about b\nb = 2\nc = 3\n\n[t]\n\nx = 1\n\ny = 2\n";
+    let node = read(text);
+    assert!(!at(&node, "a").blank_before());
+    assert!(at(&node, "b").blank_before());
+    assert!(!at(&node, "c").blank_before());
+    // Not before the first key of a table.
+    assert!(!at(&node, "t.x").blank_before());
+    assert!(at(&node, "t.y").blank_before());
+    let written = to_string(&node).unwrap();
+    assert_eq!(
+        written,
+        "a = 1\n\n# about b\nb = 2\nc = 3\n\n[t]\nx = 1\n\ny = 2\n"
+    );
+    assert_eq!(read(&written), node);
+}

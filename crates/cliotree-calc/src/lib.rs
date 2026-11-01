@@ -19,6 +19,7 @@ pub mod http;
 pub mod journal;
 mod model;
 pub mod names;
+mod node_bytes;
 pub mod python;
 mod session;
 pub mod sources;
@@ -37,8 +38,8 @@ pub use calc::{
 };
 pub use check::Computed;
 pub use engine::{
-    Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleInfo, ModuleReport,
-    ModuleSpec, Read, Syntax, SyntaxError, Write, WriteOp,
+    Answer, Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleInfo,
+    ModuleReport, ModuleSpec, Read, Syntax, SyntaxError, Write, WriteOp,
 };
 pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
@@ -113,3 +114,7 @@ mod formats_tests;
 #[cfg(test)]
 #[path = "copybooks_tests.rs"]
 mod copybooks_tests;
+
+#[cfg(test)]
+#[path = "node_bytes_tests.rs"]
+mod node_bytes_tests;

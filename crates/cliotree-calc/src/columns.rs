@@ -37,7 +37,7 @@ impl ColumnFormula {
     }
 
     /// Whether `path` is this field of some item.
-    pub(super) fn holds(&self, path: &Path) -> bool {
+    pub(crate) fn holds(&self, path: &Path) -> bool {
         let depth = self.array.len();
         let segments = path.segments();
         segments.len() == depth + 2

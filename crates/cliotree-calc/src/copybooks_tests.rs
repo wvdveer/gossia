@@ -184,3 +184,88 @@ fn records_export_as_blk_and_the_copybook_as_cpy() {
             .is_err()
     );
 }
+
+/// A tab of COBOL records bound to a schema tab of `text`, holding the
+/// record that `bytes` is.
+fn book_of(text: &str, bytes: &[u8]) -> Calc {
+    let mut calc = Calc::new(Arc::new(PythonSyntax));
+    let tree = copybook::to_node(&copybook::parse(text).unwrap(), CodePage::Cp037);
+    calc.create_copybook_schema_tab("Book", tree).unwrap();
+    let spec = calc.schema_spec("Book").unwrap();
+    let data = copybook::records::read(bytes, spec.copybook().unwrap(), &[])
+        .unwrap()
+        .node;
+    calc.create_data_tab("People", "Book", data, None).unwrap();
+    calc
+}
+
+#[test]
+fn a_tab_can_hold_another_record_of_the_same_length() {
+    let text = format!(
+        "{COPYBOOK}       01  OTHER-REC.\n           05  WHOLE PIC X(16).\n       01  SHORT-REC.\n           05  S PIC X(2).\n"
+    );
+    let mut calc = book_of(&text, &record("0002", "Bo", "ABCD"));
+    assert_eq!(calc.record_of("People").as_deref(), Some("CUSTOMER-REC"));
+    let problem = calc.record_problem("People", "SHORT-REC").unwrap();
+    assert!(problem.contains("2 bytes"), "{problem}");
+    assert!(calc.set_record("People", "SHORT-REC").is_err());
+    assert!(calc.record_problem("People", "OTHER-REC").is_none());
+
+    calc.set_formula("People", &p("CUST_NAME"), "'Cy'").unwrap();
+    calc.recalc(&PythonEngine::new());
+    calc.set_record("People", "OTHER-REC").unwrap();
+    assert_eq!(calc.record_of("People").as_deref(), Some("OTHER-REC"));
+    assert_eq!(at(&calc, "WHOLE"), Value::Str("0002Cy      ABCD".into()));
+    assert!(calc.formula_text("People", &p("CUST_NAME")).is_none());
+    // Saved and opened, it holds the record still.
+    let package = calc.to_package(&Meta::default()).unwrap();
+    let back = Calc::from_package(Arc::new(PythonSyntax), &package)
+        .unwrap()
+        .calc;
+    assert_eq!(back.record_of("People").as_deref(), Some("OTHER-REC"));
+
+    calc.undo().unwrap();
+    assert_eq!(calc.record_of("People").as_deref(), Some("CUSTOMER-REC"));
+    assert_eq!(at(&calc, "CUST_NAME"), Value::Str("Cy".into()));
+    assert!(calc.formula_text("People", &p("CUST_NAME")).is_some());
+}
+
+#[test]
+fn a_variable_length_record_is_saved_after_its_record_descriptor_word() {
+    let text = "       01  R.\n           05  N PIC 9.\n           05  T PIC X OCCURS 0 TO 5 DEPENDING ON N.\n";
+    let file = [0x00, 0x07, 0x00, 0x00, 0xF2, 0xC1, 0xC2];
+    let mut calc = book_of(text, &file);
+    assert!(!calc.is_variable("People"));
+    assert_eq!(calc.records_bytes("People").unwrap().len(), 6);
+    calc.set_variable("People", true).unwrap();
+    assert_eq!(calc.records_bytes("People").unwrap(), file);
+    let package = calc.to_package(&Meta::default()).unwrap();
+    assert_eq!(package.get("sheets/People/data.blk"), Some(&file[..]));
+    let back = Calc::from_package(Arc::new(PythonSyntax), &package)
+        .unwrap()
+        .calc;
+    assert!(back.is_variable("People"));
+    assert_eq!(back.data("People"), calc.data("People"));
+    calc.undo().unwrap();
+    assert!(!calc.is_variable("People"));
+}
+
+#[test]
+fn a_renames_is_shown_as_another_layout() {
+    let text = format!("{COPYBOOK}       66  WHO RENAMES CUST-ID THRU CUST-NAME.\n");
+    let mut calc = book_of(&text, &record("0002", "Bo", "ABCD"));
+    let groups = calc.redefine_groups("People");
+    assert_eq!(groups[1].names, ["CUST-ID THRU CUST-NAME", "WHO"]);
+    calc.set_redefine("People", 1, 1).unwrap();
+    assert_eq!(at(&calc, "WHO"), Value::Str("0002Bo      ".into()));
+    let fields: Vec<String> = match calc.data("People").unwrap().value() {
+        Value::Object(fields) => fields.keys().cloned().collect(),
+        _ => Vec::new(),
+    };
+    assert_eq!(fields, ["WHO", "AREA_TEXT"]);
+    calc.set_value("People", &p("WHO"), Value::Str("0003Al".into()))
+        .unwrap();
+    calc.set_redefine("People", 1, 0).unwrap();
+    assert_eq!(at(&calc, "CUST_ID"), Value::Int(3));
+    assert_eq!(at(&calc, "CUST_NAME"), Value::Str("Al      ".into()));
+}

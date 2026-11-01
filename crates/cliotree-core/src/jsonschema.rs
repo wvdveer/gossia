@@ -319,6 +319,7 @@ impl<'a> Lowerer<'a> {
             name: None,
             title: None,
             description: None,
+            choices: Vec::new(),
         });
         TypeId(u32::try_from(self.types.len() - 1).expect("fewer than 2^32 types"))
     }
@@ -493,6 +494,7 @@ impl<'a> Lowerer<'a> {
             name: None,
             title: annotation(obj, "title", ptr)?,
             description: annotation(obj, "description", ptr)?,
+            choices: Vec::new(),
         })
     }
 

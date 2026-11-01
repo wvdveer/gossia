@@ -226,6 +226,21 @@ impl ClioApp {
                     }
                 });
                 ui.weak("Formulas are not written: the values they computed are.");
+                let format = match plan.format {
+                    ExportFormat::Data(format) => Some(format),
+                    _ => None,
+                };
+                let left_out = format.map_or(0, |f| self.calc().comments_left_out(&plan.tab, f));
+                if left_out > 0 {
+                    ui.weak(format!(
+                        "{} has no place for comments, so the {} of {} {} not written; the workbook keeps {}.",
+                        format.map(|f| f.label()).unwrap_or_default(),
+                        if left_out == 1 { "comment" } else { "comments" },
+                        plan.tab,
+                        if left_out == 1 { "is" } else { "are" },
+                        if left_out == 1 { "it" } else { "them" },
+                    ));
+                }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     choose = ui.button("Export...").clicked();

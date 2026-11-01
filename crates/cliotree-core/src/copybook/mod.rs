@@ -6,6 +6,7 @@
 //! into the type of its data tabs and the byte [`Layout`] of a record, and
 //! [`records`] reads and writes `.blk` files of fixed-length records.
 
+mod copies;
 pub mod ebcdic;
 mod lower;
 pub mod records;
@@ -17,10 +18,11 @@ use indexmap::IndexMap;
 
 use crate::value::{CommentPlace, Node, Value};
 
+pub use copies::parse_with;
 pub use ebcdic::CodePage;
 pub use lower::{
-    Counter, Element, Layout, NumUsage, Numeric, RedefineSet, SignPlace, Slot, SlotOccurs, lower,
-    lower_node, lower_node_record, lower_record, record_names,
+    Condition, Counter, Element, Layout, NumUsage, Numeric, RedefineSet, SignPlace, Slot,
+    SlotOccurs, lower, lower_node, lower_node_record, lower_record, record_names,
 };
 
 /// A copybook: its items nested by level, and the comment after the last.
@@ -28,6 +30,43 @@ pub use lower::{
 pub struct Copybook {
     pub items: Vec<Item>,
     pub end_comment: Option<String>,
+    /// How its `COMP-1` and `COMP-2` items hold their numbers: a setting of
+    /// the schema tab, as the code page is, which the text does not say.
+    pub float: FloatFormat,
+}
+
+/// How floating point items (`COMP-1`, `COMP-2`) are held (owner,
+/// 2026-11-01: IBM hexadecimal unless the copybook tab says IEEE 754).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum FloatFormat {
+    /// IBM hexadecimal floating point (HFP), as z/OS COBOL holds them.
+    #[default]
+    Hex,
+    /// IEEE 754 binary floating point, big-endian (`FLOAT-BINARY`, and
+    /// `ARITH(EXTEND)` with `FLOAT(NATIVE)` off z/OS).
+    Ieee,
+}
+
+impl FloatFormat {
+    pub const ALL: [FloatFormat; 2] = [FloatFormat::Hex, FloatFormat::Ieee];
+
+    pub fn code(self) -> &'static str {
+        match self {
+            FloatFormat::Hex => "hex",
+            FloatFormat::Ieee => "ieee",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FloatFormat::Hex => "IBM hexadecimal",
+            FloatFormat::Ieee => "IEEE 754",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<FloatFormat> {
+        FloatFormat::ALL.into_iter().find(|f| f.code() == code)
+    }
 }
 
 /// One data description entry, with the entries below it.
@@ -38,6 +77,9 @@ pub struct Item {
     pub name: String,
     pub picture: Option<String>,
     pub usage: Option<Usage>,
+    /// `SYNC`: a binary or floating point item starts at a multiple of its
+    /// size from the start of the record.
+    pub sync: bool,
     pub sign: Option<Sign>,
     pub occurs: Option<Occurs>,
     pub redefines: Option<String>,
@@ -46,9 +88,36 @@ pub struct Item {
     /// Clauses kept as written that do not change the layout (`JUSTIFIED`,
     /// `BLANK WHEN ZERO`, `INDEXED BY`, `KEY IS`).
     pub other: Option<String>,
-    /// The comment lines above it, and condition names (level 88) below it.
+    /// The comment lines above it.
     pub comment: Option<String>,
+    /// Its condition names (level 88).
+    pub conditions: Vec<ConditionName>,
     pub items: Vec<Item>,
+    /// For a record (level 01), its RENAMES entries (level 66), which come
+    /// after its last item.
+    pub renames: Vec<Renames>,
+}
+
+/// A RENAMES entry (level 66): another name for an item of the record, or
+/// for the run of items from one to another.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Renames {
+    pub name: String,
+    pub from: String,
+    pub thru: Option<String>,
+    /// The comment lines above it.
+    pub comment: Option<String>,
+}
+
+/// A condition name (level 88): a name for some values of the item above.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConditionName {
+    pub name: String,
+    /// The literals after `VALUE`, as written: `'A'`, `'C' 'X'`,
+    /// `1 THRU 9`.
+    pub values: String,
+    /// The comment lines above it.
+    pub comment: Option<String>,
 }
 
 /// How an item's value is held.
@@ -61,10 +130,14 @@ pub enum Usage {
     Comp5,
     Binary,
     PackedDecimal,
+    /// Floating point, 4 bytes, with no picture.
+    Comp1,
+    /// Floating point, 8 bytes, with no picture.
+    Comp2,
 }
 
 impl Usage {
-    pub const ALL: [Usage; 7] = [
+    pub const ALL: [Usage; 9] = [
         Usage::Display,
         Usage::Comp,
         Usage::Comp3,
@@ -72,6 +145,8 @@ impl Usage {
         Usage::Comp5,
         Usage::Binary,
         Usage::PackedDecimal,
+        Usage::Comp1,
+        Usage::Comp2,
     ];
 
     pub fn code(self) -> &'static str {
@@ -83,6 +158,8 @@ impl Usage {
             Usage::Comp5 => "COMP-5",
             Usage::Binary => "BINARY",
             Usage::PackedDecimal => "PACKED-DECIMAL",
+            Usage::Comp1 => "COMP-1",
+            Usage::Comp2 => "COMP-2",
         }
     }
 
@@ -96,6 +173,8 @@ impl Usage {
             "COMP-5" | "COMPUTATIONAL-5" => Usage::Comp5,
             "BINARY" => Usage::Binary,
             "PACKED-DECIMAL" => Usage::PackedDecimal,
+            "COMP-1" | "COMPUTATIONAL-1" => Usage::Comp1,
+            "COMP-2" | "COMPUTATIONAL-2" => Usage::Comp2,
             _ => return None,
         })
     }
@@ -311,9 +390,14 @@ fn continue_literal(out: &mut [Token], code: &str, line: usize) -> Result<(), Pa
     Ok(())
 }
 
-/// Reads the text of a copybook.
+/// Reads the text of a copybook. A `COPY` statement in it is refused: see
+/// [`parse_with`] for one that copies members in.
 pub fn parse(text: &str) -> Result<Copybook, ParseError> {
-    let (tokens, end_comment) = tokens(text)?;
+    parse_with(text, &mut |_| None)
+}
+
+/// Reads a copybook from its tokens.
+fn parse_tokens(tokens: Vec<Token>, end_comment: Option<String>) -> Result<Copybook, ParseError> {
     let mut entries: Vec<(Item, usize)> = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
@@ -339,23 +423,29 @@ pub fn parse(text: &str) -> Result<Copybook, ParseError> {
         })?;
         let comment = sentence[0].comment.clone();
         match level {
-            88 | 66 => {
-                // Condition names and RENAMES are kept as comments of the
-                // item they follow.
-                let text: Vec<&str> = sentence.iter().map(|t| t.text.as_str()).collect();
-                let text = format!("{}.", text.join(" "));
+            88 => {
                 let Some((last, _)) = entries.last_mut() else {
                     return Err(ParseError {
                         line,
-                        message: format!("a level {level} entry must follow an item"),
+                        message: "a level 88 entry must follow an item".into(),
                     });
                 };
-                let joined = [last.comment.take(), comment, Some(text)]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                last.comment = Some(joined);
+                last.conditions
+                    .push(condition(&sentence[1..], comment, line)?);
+                continue;
+            }
+            66 => {
+                // A RENAMES entry belongs to the record before it.
+                let renames = renames(&sentence[1..], comment, line)?;
+                let at = entries
+                    .iter()
+                    .rposition(|(e, _)| e.level == 1)
+                    .or((!entries.is_empty()).then_some(0))
+                    .ok_or_else(|| ParseError {
+                        line,
+                        message: "a level 66 entry must follow a record".into(),
+                    })?;
+                entries[at].0.renames.push(renames);
                 continue;
             }
             1..=49 | 77 => {}
@@ -372,7 +462,70 @@ pub fn parse(text: &str) -> Result<Copybook, ParseError> {
         entries.push((item, line));
     }
     let items = nest(entries)?;
-    Ok(Copybook { items, end_comment })
+    Ok(Copybook {
+        items,
+        end_comment,
+        float: FloatFormat::default(),
+    })
+}
+
+/// A RENAMES entry after its level number: `NAME RENAMES A` or
+/// `NAME RENAMES A THRU B`.
+fn renames(words: &[Token], comment: Option<String>, line: usize) -> Result<Renames, ParseError> {
+    let upper: Vec<String> = words.iter().map(|w| w.text.to_ascii_uppercase()).collect();
+    let error = || ParseError {
+        line,
+        message: "a level 66 entry is NAME RENAMES item, or NAME RENAMES item THRU item".into(),
+    };
+    let text = |k: usize| words.get(k).map(|t| t.text.clone()).ok_or_else(error);
+    if upper.get(1).map(String::as_str) != Some("RENAMES") {
+        return Err(error());
+    }
+    let thru = match upper.get(3).map(String::as_str) {
+        None => None,
+        Some("THRU" | "THROUGH") if words.len() == 5 => Some(text(4)?),
+        Some(_) => return Err(error()),
+    };
+    Ok(Renames {
+        name: text(0)?,
+        from: text(2)?,
+        thru,
+        comment,
+    })
+}
+
+/// A condition name entry after its level number: the name, `VALUE` (or
+/// `VALUES`, with `IS` or `ARE`) and the literals.
+fn condition(
+    words: &[Token],
+    comment: Option<String>,
+    line: usize,
+) -> Result<ConditionName, ParseError> {
+    let (name, rest) = words.split_first().ok_or_else(|| ParseError {
+        line,
+        message: "a level 88 entry names a condition".into(),
+    })?;
+    let mut rest = rest;
+    for skip in [["VALUE", "VALUES"], ["IS", "ARE"]] {
+        if rest
+            .first()
+            .is_some_and(|w| skip.contains(&w.text.to_ascii_uppercase().as_str()))
+        {
+            rest = &rest[1..];
+        }
+    }
+    if rest.is_empty() {
+        return Err(ParseError {
+            line,
+            message: format!("the condition {} has no VALUE", name.text),
+        });
+    }
+    let values: Vec<&str> = rest.iter().map(|t| t.text.as_str()).collect();
+    Ok(ConditionName {
+        name: name.text.clone(),
+        values: values.join(" "),
+        comment,
+    })
 }
 
 /// The clauses of an entry after its level number.
@@ -495,16 +648,10 @@ fn entry(words: &[Token], line: usize) -> Result<Item, ParseError> {
                 item.sign = Some(Sign { leading, separate });
             }
             "SYNC" | "SYNCHRONIZED" => {
-                return Err(error(format!(
-                    "{} is not supported: ClioTree does not align binary items",
-                    words[k - 1].text
-                )));
-            }
-            "COMP-1" | "COMP-2" | "COMPUTATIONAL-1" | "COMPUTATIONAL-2" => {
-                return Err(error(format!(
-                    "{} (floating point) is not supported",
-                    words[k - 1].text
-                )));
+                item.sync = true;
+                if upper.get(k).is_some_and(|w| w == "LEFT" || w == "RIGHT") {
+                    k += 1;
+                }
             }
             "EXTERNAL" | "GLOBAL" | "IS" => {}
             _ => {
@@ -521,12 +668,7 @@ fn entry(words: &[Token], line: usize) -> Result<Item, ParseError> {
 }
 
 fn usage_of(word: &str) -> Result<Usage, String> {
-    Usage::from_word(word).ok_or_else(|| match word {
-        "COMP-1" | "COMP-2" | "COMPUTATIONAL-1" | "COMPUTATIONAL-2" => {
-            format!("{word} (floating point) is not supported")
-        }
-        _ => format!("{word} is not a usage ClioTree reads"),
-    })
+    Usage::from_word(word).ok_or_else(|| format!("{word} is not a usage ClioTree reads"))
 }
 
 /// Nests the entries by their level numbers.
@@ -604,6 +746,9 @@ fn write_item(out: &mut String, item: &Item, depth: usize) {
     if let Some(usage) = item.usage {
         words.push(usage.code().into());
     }
+    if item.sync {
+        words.push("SYNC".into());
+    }
     if let Some(sign) = item.sign {
         words.push("SIGN".into());
         words.push(if sign.leading { "LEADING" } else { "TRAILING" }.into());
@@ -632,6 +777,65 @@ fn write_item(out: &mut String, item: &Item, depth: usize) {
         words.push("VALUE".into());
         words.push(value.clone());
     }
+    write_entry(out, words, depth);
+    for condition in &item.conditions {
+        write_comment(out, condition.comment.as_deref());
+        let mut words = vec!["88".to_owned(), condition.name.clone(), "VALUE".to_owned()];
+        words.extend(literal_words(&condition.values));
+        write_entry(out, words, depth + 1);
+    }
+    for child in &item.items {
+        write_item(out, child, depth + 1);
+    }
+    for renames in &item.renames {
+        write_comment(out, renames.comment.as_deref());
+        let mut words = vec![
+            "66".to_owned(),
+            renames.name.clone(),
+            "RENAMES".to_owned(),
+            renames.from.clone(),
+        ];
+        if let Some(thru) = &renames.thru {
+            words.push("THRU".into());
+            words.push(thru.clone());
+        }
+        write_entry(out, words, depth);
+    }
+}
+
+/// The literals of a VALUE clause as words, a quoted literal one word.
+pub(crate) fn literal_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(q) => {
+                word.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None if c == '\'' || c == '"' => {
+                word.push(c);
+                quote = Some(c);
+            }
+            None if c.is_whitespace() => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            None => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// Writes one entry, its level first, at the indentation of `depth`.
+fn write_entry(out: &mut String, mut words: Vec<String>, depth: usize) {
     if let Some(last) = words.last_mut() {
         last.push('.');
     }
@@ -680,9 +884,6 @@ fn write_item(out: &mut String, item: &Item, depth: usize) {
     }
     out.push_str(&line);
     out.push('\n');
-    for child in &item.items {
-        write_item(out, child, depth + 1);
-    }
 }
 
 // ------------------------------------------------- the schema tab's tree
@@ -694,6 +895,12 @@ pub fn to_node(copybook: &Copybook, code_page: CodePage) -> Node {
         "codePage".to_owned(),
         Node::new(Value::Str(code_page.code().to_owned())),
     );
+    if copybook.float != FloatFormat::Hex {
+        fields.insert(
+            "floatFormat".to_owned(),
+            Node::new(Value::Str(copybook.float.code().to_owned())),
+        );
+    }
     fields.insert("items".to_owned(), items_node(&copybook.items));
     let mut node = Node::new(Value::Object(fields));
     node.set_comment_at(CommentPlace::End, copybook.end_comment.clone());
@@ -717,6 +924,9 @@ fn item_node(item: &Item) -> Node {
     }
     if let Some(u) = item.usage {
         f.insert("usage".to_owned(), text(u.code()));
+    }
+    if item.sync {
+        f.insert("sync".to_owned(), Node::new(Value::Bool(true)));
     }
     if let Some(s) = item.sign {
         f.insert("sign".to_owned(), text(s.code()));
@@ -742,12 +952,144 @@ fn item_node(item: &Item) -> Node {
     if let Some(o) = &item.other {
         f.insert("other".to_owned(), text(o));
     }
+    if !item.conditions.is_empty() {
+        let conditions = item
+            .conditions
+            .iter()
+            .map(|c| {
+                let mut f = IndexMap::new();
+                f.insert("name".to_owned(), text(&c.name));
+                f.insert("values".to_owned(), text(&c.values));
+                let mut node = Node::new(Value::Object(f));
+                node.set_comment(c.comment.clone());
+                node
+            })
+            .collect();
+        f.insert("conditions".to_owned(), Node::new(Value::Array(conditions)));
+    }
     if !item.items.is_empty() {
         f.insert("items".to_owned(), items_node(&item.items));
+    }
+    if !item.renames.is_empty() {
+        let renames = item
+            .renames
+            .iter()
+            .map(|r| {
+                let mut f = IndexMap::new();
+                f.insert("name".to_owned(), text(&r.name));
+                f.insert("from".to_owned(), text(&r.from));
+                if let Some(thru) = &r.thru {
+                    f.insert("thru".to_owned(), text(thru));
+                }
+                let mut node = Node::new(Value::Object(f));
+                node.set_comment(r.comment.clone());
+                node
+            })
+            .collect();
+        f.insert("renames".to_owned(), Node::new(Value::Array(renames)));
     }
     let mut node = Node::new(Value::Object(f));
     node.set_comment(item.comment.clone());
     node
+}
+
+/// The condition names of an item's tree. Before they had a place of their
+/// own they were kept as comment lines (`88 ACTIVE VALUE 'A'.`), which are
+/// read as condition names too.
+type Entries = (Vec<ConditionName>, Vec<Renames>, Option<String>);
+
+fn conditions_of(
+    f: &IndexMap<String, Node>,
+    comment: Option<&str>,
+    at: &str,
+) -> Result<Entries, String> {
+    let mut conditions = Vec::new();
+    if let Some(list) = f.get("conditions") {
+        let Value::Array(list) = list.value() else {
+            return Err(format!("{at}.conditions is a list of condition names"));
+        };
+        for (i, node) in list.iter().enumerate() {
+            let here = format!("{at}.conditions[{i}]");
+            let Value::Object(c) = node.value() else {
+                return Err(format!("{here} is a table of name and values"));
+            };
+            let text = |key: &str| match c.get(key).map(Node::value) {
+                Some(Value::Str(s)) if !s.trim().is_empty() => Ok(s.trim().to_owned()),
+                _ => Err(format!("{here}.{key} is text")),
+            };
+            conditions.push(ConditionName {
+                name: text("name")?,
+                values: text("values")?,
+                comment: node.comment().map(str::to_owned),
+            });
+        }
+    }
+    let mut renames = Vec::new();
+    if let Some(list) = f.get("renames") {
+        let Value::Array(list) = list.value() else {
+            return Err(format!("{at}.renames is a list of RENAMES entries"));
+        };
+        for (i, node) in list.iter().enumerate() {
+            let here = format!("{at}.renames[{i}]");
+            let Value::Object(r) = node.value() else {
+                return Err(format!("{here} is a table of name, from and thru"));
+            };
+            let text = |key: &str| match r.get(key).map(Node::value) {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::Str(s)) if s.trim().is_empty() => Ok(None),
+                Some(Value::Str(s)) => Ok(Some(s.trim().to_owned())),
+                _ => Err(format!("{here}.{key} is text")),
+            };
+            renames.push(Renames {
+                name: text("name")?.ok_or_else(|| format!("{here}.name is text"))?,
+                from: text("from")?.ok_or_else(|| format!("{here}.from is text"))?,
+                thru: text("thru")?,
+                comment: node.comment().map(str::to_owned),
+            });
+        }
+    }
+    let mut kept = Vec::new();
+    for line in comment.into_iter().flat_map(str::lines) {
+        let words = literal_words(line.trim().trim_end_matches('.'));
+        let upper: Vec<String> = words.iter().map(|w| w.to_ascii_uppercase()).collect();
+        // A RENAMES entry was kept as a comment line too.
+        if upper.first().map(String::as_str) == Some("66")
+            && upper.get(2).map(String::as_str) == Some("RENAMES")
+        {
+            let tokens: Vec<Token> = words[1..]
+                .iter()
+                .map(|w| Token {
+                    text: w.clone(),
+                    line: 0,
+                    comment: None,
+                    ends: false,
+                })
+                .collect();
+            if let Ok(r) = self::renames(&tokens, None, 0) {
+                renames.push(r);
+                continue;
+            }
+        }
+        if upper.first().map(String::as_str) == Some("88") && words.len() >= 3 {
+            let mut k = 2;
+            for skip in [["VALUE", "VALUES"], ["IS", "ARE"]] {
+                if upper.get(k).is_some_and(|w| skip.contains(&w.as_str())) {
+                    k += 1;
+                }
+            }
+            if k < words.len() {
+                conditions.push(ConditionName {
+                    name: words[1].clone(),
+                    values: words[k..].join(" "),
+                    comment: None,
+                });
+                continue;
+            }
+        }
+        kept.push(line);
+    }
+    let comment = (!kept.is_empty()).then(|| kept.join("\n"));
+    Ok((conditions, renames, comment))
 }
 
 /// The copybook a schema tab's tree holds, and its code page.
@@ -761,17 +1103,40 @@ pub fn from_node(node: &Node) -> Result<(Copybook, CodePage), String> {
             .ok_or_else(|| format!("{code} is not a code page ClioTree knows"))?,
         Some(_) => return Err("codePage is text, such as 037".into()),
     };
-    let items = match fields.get("items") {
+    let float = match fields.get("floatFormat").map(Node::value) {
+        None | Some(Value::Null) => FloatFormat::default(),
+        Some(Value::Str(code)) => FloatFormat::from_code(code)
+            .ok_or_else(|| format!("{code} is not a floating point format: hex or ieee"))?,
+        Some(_) => return Err("floatFormat is text: hex or ieee".into()),
+    };
+    let mut items = match fields.get("items") {
         Some(items) => items_of(items, "items")?,
         None => Vec::new(),
     };
+    // RENAMES entries kept as comment lines of an item inside a record
+    // belong to the record.
+    for item in &mut items {
+        let mut found = Vec::new();
+        for child in &mut item.items {
+            take_renames(child, &mut found);
+        }
+        item.renames.extend(found);
+    }
     Ok((
         Copybook {
             items,
             end_comment: node.comment_at(CommentPlace::End).map(str::to_owned),
+            float,
         },
         code_page,
     ))
+}
+
+fn take_renames(item: &mut Item, out: &mut Vec<Renames>) {
+    out.append(&mut item.renames);
+    for child in &mut item.items {
+        take_renames(child, out);
+    }
 }
 
 fn items_of(node: &Node, at: &str) -> Result<Vec<Item>, String> {
@@ -835,18 +1200,27 @@ fn item_of(node: &Node, at: &str) -> Result<Item, String> {
         Some(items) => items_of(items, &format!("{at}.items"))?,
         None => Vec::new(),
     };
+    let (conditions, renames, comment) = conditions_of(f, node.comment(), at)?;
+    let sync = match f.get("sync").map(Node::value) {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(format!("{at}.sync is true or false")),
+    };
     Ok(Item {
         level,
         name,
         picture: text("picture")?.map(|p| p.to_ascii_uppercase()),
         usage,
+        sync,
         sign,
         occurs,
         redefines: text("redefines")?,
         value: text("value")?,
         other: text("other")?,
-        comment: node.comment().map(str::to_owned),
+        comment,
+        conditions,
         items,
+        renames,
     })
 }
 

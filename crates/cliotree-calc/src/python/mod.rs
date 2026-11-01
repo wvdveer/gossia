@@ -32,7 +32,7 @@ use rustpython::vm::{
     AsObject, Interpreter, PyObjectRef, PyPayload, PyRef, PyResult, Settings, VirtualMachine,
 };
 
-use crate::engine::{Call, Context, Depth, Engine, Failure, Read, Write};
+use crate::engine::{Answer, Call, Context, Depth, Engine, Failure, Read, Write};
 use shared::{Classes, Shared};
 use watchdog::Watchdog;
 
@@ -290,10 +290,13 @@ impl PythonEngine {
         vm: &VirtualMachine,
         text: &str,
         ctx: &Rc<dyn Context>,
-    ) -> Result<Value, Failure> {
+    ) -> Result<Answer, Failure> {
         let result = self.run_object(vm, text, ctx, true)?;
+        if let Some(bytes) = result.downcast_ref::<rustpython::vm::builtins::PyBytes>() {
+            return Ok(Answer::Bytes(bytes.as_bytes().to_vec()));
+        }
         match convert::to_value(&self.shared, vm, &result) {
-            Ok(value) => Ok(value),
+            Ok(value) => Ok(Answer::Value(value)),
             Err(convert::Bad::Value(kind, message)) => Err(Failure::new(kind, message)),
             Err(convert::Bad::Raised(exc)) => Err(convert::failure(&self.shared, vm, &exc)),
         }
@@ -539,6 +542,17 @@ impl Engine for PythonEngine {
     }
 
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure> {
+        match self.eval_answer(formula, ctx)? {
+            Answer::Value(value) => Ok(value),
+            // Only a node's schema can read bytes (DESIGN.md, "Raw memory").
+            Answer::Bytes(_) => Err(Failure::new(
+                ErrorKind::Type,
+                "this expression gave bytes, which only a formula on a node can give:                  the node's schema reads them",
+            )),
+        }
+    }
+
+    fn eval_answer(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Answer, Failure> {
         self.evaluations.set(self.evaluations.get() + 1);
         let text = formula.trim();
         self.interp.enter(|vm| {
@@ -577,6 +591,10 @@ fn set_up(
         shared: shared.clone(),
     };
     prelude.set_item("_source_access", access.into_ref(&vm.ctx).into(), vm)?;
+    let raw = node::_cliotree::RawAccess {
+        shared: shared.clone(),
+    };
+    prelude.set_item("_raw_access", raw.into_ref(&vm.ctx).into(), vm)?;
 
     let datetime = vm.import("datetime", 0)?;
     shared.set_classes(Classes {
@@ -623,6 +641,7 @@ fn set_up(
         "PLAIN",
         "JSONPATH",
         "XMLPATH",
+        "raw",
         "range",
         "source",
         "sources",

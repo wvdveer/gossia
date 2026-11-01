@@ -3,7 +3,7 @@
 //! schema...*, in the Edit menu and the context menu of a sheet tab.
 
 use cliotree_calc::{Mentions, SchemaFormat};
-use cliotree_core::copybook::CodePage;
+use cliotree_core::copybook::{CodePage, FloatFormat};
 use cliotree_core::dataformat::DataFormat;
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
@@ -66,6 +66,19 @@ pub struct TabDialogs {
     /// Another layout of a group of `REDEFINES`, waiting for the answer to
     /// whether the formulas in the one shown may be deleted.
     pub redefine: Option<RedefineChange>,
+    /// Another record of the copybook, waiting for the answer to whether
+    /// the tab's formulas may be deleted.
+    pub record: Option<RecordChange>,
+}
+
+/// *Record* on the menu of a tab of COBOL records, waiting for the answer
+/// to whether the tab's formulas may be deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordChange {
+    pub sheet: String,
+    pub record: String,
+    /// How many formulas would be deleted.
+    pub formulas: usize,
 }
 
 /// *Layouts* on the menu of a tab of COBOL records, waiting for the answer
@@ -852,6 +865,134 @@ impl ClioApp {
         }
     }
 
+    /// *Record* on a tab of COBOL records: makes it hold another record of
+    /// its copybook, of the same length. When the tab has formulas, it asks
+    /// first (the change waits in `tab_dialogs.record`).
+    pub fn begin_set_record(&mut self, sheet: &str, record: &str) -> Result<(), String> {
+        if let Some(why) = self.calc().record_problem(sheet, record) {
+            return Err(why);
+        }
+        let root = cliotree_core::Path::root();
+        let formulas = self.calc().formulas_inside(sheet, &root).len()
+            + usize::from(self.calc().formula_text(sheet, &root).is_some());
+        if formulas > 0 {
+            self.tab_dialogs.record = Some(RecordChange {
+                sheet: sheet.to_owned(),
+                record: record.to_owned(),
+                formulas,
+            });
+            return Ok(());
+        }
+        self.set_record(sheet, record)
+    }
+
+    /// Makes a tab of COBOL records hold another record of its copybook,
+    /// deleting its formulas.
+    pub fn set_record(&mut self, sheet: &str, record: &str) -> Result<(), String> {
+        if !self.can_change_tabs() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        self.session
+            .calc_mut()
+            .set_record(sheet, record)
+            .map_err(|e| e.to_string())?;
+        self.rows_key = None;
+        self.summary.key = None;
+        self.raw.key = None;
+        self.tables.layout = None;
+        self.tables.rev += 1;
+        self.session.tick();
+        Ok(())
+    }
+
+    /// *Variable length (VB)* on a tab of COBOL records: whether its file is
+    /// a variable-length record after a record descriptor word.
+    pub fn set_variable(&mut self, sheet: &str, on: bool) -> Result<(), String> {
+        if !self.can_change_tabs() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        self.session
+            .calc_mut()
+            .set_variable(sheet, on)
+            .map_err(|e| e.to_string())?;
+        self.raw.key = None;
+        self.session.tick();
+        Ok(())
+    }
+
+    fn record_window(&mut self, ctx: &egui::Context) {
+        let Some(change) = self.tab_dialogs.record.take() else {
+            return;
+        };
+        let (mut yes, mut no, mut open) = (false, false, true);
+        let one = change.formulas == 1;
+        egui::Window::new(format!("Hold {} in {}", change.record, change.sheet))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "{} has {}, which holding {} deletes: its fields are others. Delete {}? Undo puts {} back.",
+                    change.sheet,
+                    if one {
+                        "a formula".to_owned()
+                    } else {
+                        format!("{} formulas", change.formulas)
+                    },
+                    change.record,
+                    if one { "it" } else { "them" },
+                    if one { "it" } else { "them" },
+                ));
+                ui.horizontal(|ui| {
+                    yes = ui.button("Yes").clicked();
+                    no = ui.button("No").clicked();
+                });
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    no = true;
+                }
+            });
+        if yes {
+            if let Err(why) = self.set_record(&change.sheet, &change.record) {
+                self.notice = Some(why);
+            }
+        } else if open && !no {
+            self.tab_dialogs.record = Some(change);
+        }
+    }
+
+    /// *Floating point* on a copybook schema tab: how its `COMP-1` and
+    /// `COMP-2` items hold their numbers, one entry in the history.
+    pub fn set_float_format(&mut self, sheet: &str, format: FloatFormat) -> Result<(), String> {
+        if !self.can_change_tabs() {
+            return Err(self.notice.clone().unwrap_or_default());
+        }
+        self.session
+            .calc_mut()
+            .set_value(
+                sheet,
+                &cliotree_core::Path::root().key("floatFormat"),
+                cliotree_core::Value::Str(format.code().to_owned()),
+            )
+            .map_err(|e| e.to_string())?;
+        self.raw.key = None;
+        self.session.tick();
+        Ok(())
+    }
+
+    /// How a copybook schema tab's floating point items hold their numbers.
+    fn float_format_of(&self, sheet: &str) -> FloatFormat {
+        let node = self
+            .calc()
+            .data(sheet)
+            .and_then(|d| d.get(&cliotree_core::Path::root().key("floatFormat")));
+        match node.map(|n| n.value()) {
+            Some(cliotree_core::Value::Str(code)) => {
+                FloatFormat::from_code(code).unwrap_or_default()
+            }
+            _ => FloatFormat::default(),
+        }
+    }
+
     /// *Code page* on a copybook schema tab: the EBCDIC code page of its
     /// records' text, one entry in the history.
     pub fn set_code_page(&mut self, sheet: &str, page: CodePage) -> Result<(), String> {
@@ -887,6 +1028,7 @@ impl ClioApp {
     pub(crate) fn tab_windows(&mut self, ctx: &egui::Context) {
         self.format_window(ctx);
         self.redefine_window(ctx);
+        self.record_window(ctx);
         self.new_tab_window(ctx);
         self.delete_tab_window(ctx);
         self.bind_tab_window(ctx);
@@ -958,6 +1100,62 @@ impl ClioApp {
                             }
                             ui.close();
                         }
+                    }
+                });
+                let own = self.float_format_of(tab);
+                ui.menu_button("Floating point", |ui| {
+                    for format in FloatFormat::ALL {
+                        if ui.radio(own == format, format.label()).clicked() {
+                            if own != format
+                                && let Err(why) = self.set_float_format(tab, format)
+                            {
+                                self.notice = Some(why);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            // A tab of COBOL records: which record of its copybook it holds,
+            // and whether its file is a variable-length record.
+            if let (Some(own), Some(schema)) = (
+                self.calc().record_of(tab),
+                self.calc().schema_of(tab).map(str::to_owned),
+            ) {
+                let records = self.calc().copybook_records(&schema);
+                let variable = self.calc().is_variable(tab);
+                ui.menu_button("Record", |ui| {
+                    for record in &records {
+                        let problem = self.calc().record_problem(tab, record);
+                        let mine = record.eq_ignore_ascii_case(&own);
+                        let response = ui.add_enabled(
+                            mine || problem.is_none(),
+                            egui::RadioButton::new(mine, record),
+                        );
+                        let response = match &problem {
+                            Some(why) if !mine => response.on_disabled_hover_text(why),
+                            _ => response,
+                        };
+                        if response.clicked() {
+                            if !mine && let Err(why) = self.begin_set_record(tab, record) {
+                                self.notice = Some(why);
+                            }
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    let mut on = variable;
+                    if ui
+                        .checkbox(
+                            &mut on,
+                            "Variable length (VB, with a record descriptor word)",
+                        )
+                        .clicked()
+                    {
+                        if let Err(why) = self.set_variable(tab, on) {
+                            self.notice = Some(why);
+                        }
+                        ui.close();
                     }
                 });
             }

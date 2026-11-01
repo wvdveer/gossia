@@ -30,10 +30,11 @@ use indexmap::IndexSet;
 use crate::calc::{ExprJob, ExprOutcome};
 use crate::check::{Computed, finish, store};
 use crate::engine::{
-    Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleReport, ModuleSpec,
-    Read, Write,
+    Answer, Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleReport,
+    ModuleSpec, Read, Write,
 };
 use crate::model::{Dep, Formulas, Loc};
+use crate::node_bytes::{self, TabInfo};
 
 /// One tab as the evaluator sees it.
 #[derive(Debug, Clone)]
@@ -41,6 +42,8 @@ pub(crate) struct SheetSnap {
     pub spec: Arc<TypeSpec>,
     pub data: Node,
     pub formulas: Arc<Formulas>,
+    /// What bytes are to the tab: its format and the rest.
+    pub info: Arc<TabInfo>,
 }
 
 /// A consistent view of the workbook and the list of formulas to run. Cheap to
@@ -162,6 +165,11 @@ impl Snapshot {
                 .sheets
                 .iter()
                 .map(|(name, s)| (name.clone(), Arc::clone(&s.spec)))
+                .collect(),
+            infos: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), Arc::clone(&s.info)))
                 .collect(),
             names: self
                 .sheets
@@ -541,8 +549,9 @@ impl Run<'_> {
         };
         let text = formula.text.clone();
         let spec = Arc::clone(&snap.spec);
+        let info = Arc::clone(&snap.info);
         let ctx = self.context(loc, false);
-        let result = self.engine.eval(&text, ctx.clone());
+        let result = self.engine.eval_answer(&text, ctx.clone());
         let reads = ctx.reads.take();
         drop(ctx);
 
@@ -584,6 +593,23 @@ impl Run<'_> {
                 .collect();
             return Attempt::Blocked(blockers);
         }
+        let result = match result {
+            Ok(Answer::Value(value)) => Ok(value),
+            Ok(Answer::Bytes(_)) if info.columns.iter().any(|c| c.holds(&loc.path)) => {
+                Err(Failure::new(
+                    ErrorKind::Type,
+                    "a column formula cannot give bytes: give the field its own formula",
+                ))
+            }
+            Ok(Answer::Bytes(bytes)) => {
+                let data = &self.sheets[&loc.sheet].data;
+                node_bytes::read(&spec, &info, data, &loc.path, &bytes).map_err(|error| Failure {
+                    error,
+                    traceback: None,
+                })
+            }
+            Err(failure) => Err(failure),
+        };
         let (computed, traceback) = finish(&spec, loc, result);
         self.record(loc, computed, traceback, deps);
         Attempt::Finished
@@ -604,6 +630,11 @@ impl Run<'_> {
                 .sheets
                 .iter()
                 .map(|(name, s)| (name.clone(), Arc::clone(&s.spec)))
+                .collect(),
+            infos: self
+                .sheets
+                .iter()
+                .map(|(name, s)| (name.clone(), Arc::clone(&s.info)))
                 .collect(),
             names: self
                 .sheets
@@ -706,6 +737,7 @@ struct EvalContext {
     loc: Loc,
     data: HashMap<String, Node>,
     specs: HashMap<String, Arc<TypeSpec>>,
+    infos: HashMap<String, Arc<TabInfo>>,
     /// Tab names, shared, so that a read does not have to make a string.
     names: HashMap<String, Rc<str>>,
     reads: RefCell<Vec<(Rc<str>, Path, Depth)>>,
@@ -758,6 +790,22 @@ impl Context for EvalContext {
 
     fn sheets(&self) -> Vec<String> {
         self.data.keys().cloned().collect()
+    }
+
+    fn raw(&self, sheet: &str, path: &Path) -> Result<Vec<u8>, ErrorValue> {
+        self.log(sheet, path, Depth::Deep);
+        let (Some(data), Some(spec), Some(info)) = (
+            self.data.get(sheet),
+            self.specs.get(sheet),
+            self.infos.get(sheet),
+        ) else {
+            return Err(ErrorValue {
+                kind: ErrorKind::Ref,
+                message: format!("there is no tab {sheet}"),
+                origin: None,
+            });
+        };
+        node_bytes::raw(spec, info, data, path)
     }
 }
 

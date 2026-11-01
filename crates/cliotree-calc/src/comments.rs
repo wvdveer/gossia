@@ -32,10 +32,9 @@ impl Calc {
         let Some(s) = self.sheets.get(sheet) else {
             return Some(format!("there is no tab called {sheet}"));
         };
-        if !s.format.has_comments() {
+        if !s.format.keeps_comments() {
             return Some(format!(
-                "{} has no comments; a tab written as XML, JSON5, JSON with comments, \
-                 TOML or YAML can have them.",
+                "{} have no comments; every other tab can have them.",
                 s.format.label()
             ));
         }

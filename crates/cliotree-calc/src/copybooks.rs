@@ -1,6 +1,7 @@
 //! Tabs of COBOL records (DESIGN.md, "Import and export", "COBOL
-//! copybooks"): the bytes of their one record, and which layout of each
-//! group of `REDEFINES` they show.
+//! copybooks"): the bytes of their one record, which layout of each group
+//! of `REDEFINES` they show, which record of the copybook they hold, and
+//! whether their file is a variable-length record.
 
 use cliotree_core::Value;
 use cliotree_core::copybook::{Layout, records};
@@ -28,12 +29,168 @@ impl Calc {
             .ok_or_else(|| EditError::Path(format!("{sheet} does not hold COBOL records")))
     }
 
-    /// The tab's data as a `.blk` file: its record, in its copybook's layout.
-    /// Refused, naming the field, for a value that cannot be written.
+    /// The tab's data as a `.blk` file: its record, in its copybook's
+    /// layout, after a record descriptor word when the tab is a
+    /// variable-length record. Refused, naming the field, for a value that
+    /// cannot be written.
     pub fn records_bytes(&self, sheet: &str) -> Result<Vec<u8>, String> {
         let layout = self.layout(sheet).map_err(|e| e.to_string())?;
-        let data = &self.sheets[sheet].data;
-        records::write(data, layout).map_err(|e| format!("tab {sheet}: {e}"))
+        let s = &self.sheets[sheet];
+        let written = if s.variable {
+            records::write_variable(&s.data, layout)
+        } else {
+            records::write(&s.data, layout)
+        };
+        written.map_err(|e| format!("tab {sheet}: {e}"))
+    }
+
+    /// Whether the tab of COBOL records is a variable-length record
+    /// (`RECFM=VB`), whose file starts with a record descriptor word.
+    pub fn is_variable(&self, sheet: &str) -> bool {
+        self.sheets.get(sheet).is_some_and(|s| s.variable)
+    }
+
+    /// Writes the tab as a variable-length record, or as a fixed-length one.
+    /// One entry in the history.
+    pub fn set_variable(&mut self, sheet: &str, on: bool) -> Result<(), EditError> {
+        self.layout(sheet)?;
+        let before = self.is_variable(sheet);
+        if before == on {
+            return Ok(());
+        }
+        self.store_variable(sheet, on)?;
+        self.history.record(
+            format!(
+                "Write {sheet} as a {} record",
+                if on {
+                    "variable-length"
+                } else {
+                    "fixed-length"
+                }
+            ),
+            vec![Op::Variable {
+                sheet: sheet.to_owned(),
+                before,
+                after: on,
+            }],
+            None,
+        );
+        Ok(())
+    }
+
+    pub(super) fn store_variable(&mut self, sheet: &str, on: bool) -> Result<(), EditError> {
+        self.sheet_mut(sheet)?.variable = on;
+        self.revision += 1;
+        Ok(())
+    }
+
+    /// Why the tab cannot hold the copybook's record `record`, or None when
+    /// it can: the record must be as long as the one it holds now.
+    pub fn record_problem(&self, sheet: &str, record: &str) -> Option<String> {
+        let layout = match self.layout(sheet) {
+            Ok(layout) => layout,
+            Err(e) => return Some(e.to_string()),
+        };
+        let schema = self.schema_of(sheet)?;
+        match self.lowered_for(schema, Some(record)) {
+            Err(e) => Some(e.to_string()),
+            Ok(spec) => match spec.copybook() {
+                Some(new) if new.length != layout.length => Some(format!(
+                    "{record} has {} bytes, and {} has {}",
+                    new.length, layout.record, layout.length
+                )),
+                Some(_) => None,
+                None => Some(format!("{schema} is not a copybook")),
+            },
+        }
+    }
+
+    /// Makes the tab hold another 01 record of its copybook, of the same
+    /// length: its bytes are read with that record's layout, showing the
+    /// first layout of each group of `REDEFINES`. Its formulas are deleted
+    /// (the window asks first). One entry in the history.
+    pub fn set_record(&mut self, sheet: &str, record: &str) -> Result<(), EditError> {
+        if let Some(why) = self.record_problem(sheet, record) {
+            return Err(EditError::Path(why));
+        }
+        let old = self.layout(sheet)?.clone();
+        if old.record.eq_ignore_ascii_case(record) {
+            return Ok(());
+        }
+        let schema = self.schema_of(sheet).unwrap_or_default().to_owned();
+        let spec = self.lowered_for(&schema, Some(record))?;
+        let new = spec.copybook().expect("checked above").clone();
+        let data = self.sheets[sheet].data.clone();
+        let bytes = records::write_record(&data, &old, &Path::root())
+            .map_err(|e| EditError::Path(format!("the record cannot be converted: {e}")))?;
+        let read = records::read_record(&bytes, &new, &[]);
+        let mut ops = Vec::new();
+        if let Some(text) = self.formula_text(sheet, &Path::root()) {
+            ops.extend(self.release_column(sheet, &Path::root()));
+            if self.drop_formula(sheet, &Path::root()) {
+                ops.push(Op::Formula {
+                    sheet: sheet.to_owned(),
+                    path: Path::root(),
+                    before: Some(text),
+                    after: None,
+                    value: None,
+                });
+            }
+        }
+        ops.extend(self.clear_formulas_below(sheet, &Path::root()));
+        let choices = self.sheets[sheet].redefines.clone();
+        for (set, member) in choices.iter().enumerate().rev() {
+            if *member != 0 {
+                self.store_redefine(sheet, set, 0)?;
+                ops.push(Op::Redefine {
+                    sheet: sheet.to_owned(),
+                    set,
+                    before: *member,
+                    after: 0,
+                });
+            }
+        }
+        let before = self.sheets[sheet].record.clone();
+        let after = Some(new.record.clone());
+        self.store_record(sheet, after.clone())?;
+        ops.push(Op::Record {
+            sheet: sheet.to_owned(),
+            before,
+            after,
+        });
+        self.sheet_mut(sheet)?
+            .data
+            .replace(&Path::root(), read.clone())
+            .map_err(|e| EditError::Path(e.to_string()))?;
+        self.changed(sheet, &Path::root());
+        ops.push(Op::Replace {
+            sheet: sheet.to_owned(),
+            path: Path::root(),
+            before: data,
+            after: read,
+        });
+        self.history
+            .record(format!("Hold {} in {sheet}", new.record), ops, None);
+        Ok(())
+    }
+
+    /// Sets the record a tab holds and gives it that record's type.
+    pub(super) fn store_record(
+        &mut self,
+        sheet: &str,
+        record: Option<String>,
+    ) -> Result<(), EditError> {
+        let schema = self
+            .schema_of(sheet)
+            .ok_or_else(|| EditError::Path(format!("{sheet} is not bound to a copybook")))?
+            .to_owned();
+        let spec = self.lowered_for(&schema, record.as_deref())?;
+        let s = self.sheet_mut(sheet)?;
+        s.record = record;
+        s.spec = Arc::new(spec);
+        self.changed(sheet, &Path::root());
+        self.revision += 1;
+        Ok(())
     }
 
     /// Reads a `.blk` file in the layout of the tab's copybook, showing the
@@ -60,7 +217,7 @@ impl Calc {
             .enumerate()
             .map(|(i, set)| RedefineGroup {
                 names: set.names.clone(),
-                filler: set.keys.iter().map(Option::is_none).collect(),
+                filler: set.keys.iter().map(Vec::is_empty).collect(),
                 shown: chosen.get(i).copied().unwrap_or(0),
             })
             .collect()
@@ -84,11 +241,10 @@ impl Calc {
             return Vec::new();
         };
         let shown = s.redefines.get(set).copied().unwrap_or(0);
-        let Some(Some(key)) = group.keys.get(shown) else {
-            return Vec::new();
-        };
         let mut places = Vec::new();
-        find_key(&s.data, &Path::root(), key, &mut places);
+        for key in group.keys.get(shown).into_iter().flatten() {
+            find_key(&s.data, &Path::root(), key, &mut places);
+        }
         places
     }
 
@@ -122,9 +278,9 @@ impl Calc {
             .redefines
             .get(set)
             .ok_or_else(|| EditError::Path(format!("{sheet} has no such group of layouts")))?;
-        let new_key = match group.keys.get(member) {
-            Some(Some(key)) => key.clone(),
-            Some(None) => {
+        let new_keys = match group.keys.get(member) {
+            Some(keys) if !keys.is_empty() => keys.clone(),
+            Some(_) => {
                 return Err(EditError::Path(
                     "that layout is FILLER, which has no fields to show".into(),
                 ));
@@ -139,16 +295,17 @@ impl Calc {
         if before == member {
             return Ok(());
         }
-        let old_key = group.keys[before].clone();
+        let old_keys = group.keys.get(before).cloned().unwrap_or_default();
         choices[set] = member;
         // The new record, worked out before anything changes.
         let record = self.sheets[sheet].data.clone();
         let bytes = records::write_record(&record, &layout, &Path::root())
             .map_err(|e| EditError::Path(format!("the record cannot be converted: {e}")))?;
         let read = records::read_record(&bytes, &layout, &choices);
-        let after = match &old_key {
-            Some(old_key) => swap(&record, &read, old_key, &new_key),
-            None => read,
+        let after = if old_keys.is_empty() {
+            read
+        } else {
+            swap(&record, &read, &old_keys, &new_keys)
         };
         let replaced = (after != record).then(|| (Path::root(), record.clone(), after));
         let mut ops = Vec::new();
@@ -236,30 +393,38 @@ fn find_key(node: &Node, path: &Path, key: &str, out: &mut Vec<Path>) {
     }
 }
 
-/// The record `old` with the field `old_key` put in place of by `new_key`
-/// as `read` has it, wherever `read` has it in the same place; the rest of
-/// `old` is kept as it is.
-fn swap(old: &Node, read: &Node, old_key: &str, new_key: &str) -> Node {
+/// The record `old` with the fields `old_keys` put in place of by
+/// `new_keys` as `read` has them, wherever `read` has them in the same
+/// place; the rest of `old` is kept as it is.
+fn swap(old: &Node, read: &Node, old_keys: &[String], new_keys: &[String]) -> Node {
     let mut node = old.clone();
     match (node.value_mut(), read.value()) {
         (Value::Object(fields), Value::Object(read_fields)) => {
-            if fields.contains_key(old_key)
-                && let Some(new) = read_fields.get(new_key)
+            let position = old_keys.iter().filter_map(|k| fields.get_index_of(k)).min();
+            if let Some(position) = position
+                && new_keys.iter().any(|k| read_fields.contains_key(k))
             {
-                let position = fields.get_index_of(old_key).unwrap_or(fields.len());
-                fields.shift_remove(old_key);
-                fields.shift_insert(position, new_key.to_owned(), new.clone());
+                for key in old_keys {
+                    fields.shift_remove(key);
+                }
+                let mut at = position.min(fields.len());
+                for key in new_keys {
+                    if let Some(new) = read_fields.get(key) {
+                        fields.shift_insert(at, key.clone(), new.clone());
+                        at += 1;
+                    }
+                }
             } else {
                 for (k, child) in fields.iter_mut() {
                     if let Some(r) = read_fields.get(k) {
-                        *child = swap(child, r, old_key, new_key);
+                        *child = swap(child, r, old_keys, new_keys);
                     }
                 }
             }
         }
         (Value::Array(items), Value::Array(read_items)) => {
             for (item, r) in items.iter_mut().zip(read_items) {
-                *item = swap(item, r, old_key, new_key);
+                *item = swap(item, r, old_keys, new_keys);
             }
         }
         _ => {}

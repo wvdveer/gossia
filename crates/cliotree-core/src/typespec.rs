@@ -65,6 +65,22 @@ impl TypeSpec {
         self
     }
 
+    /// The same types with `ty` as the root: the schema of one node of this
+    /// one's data. For an XSD, `element` names the node's element, which is
+    /// then the root element; a local element is in the target namespace
+    /// only when the schema qualifies local elements.
+    pub fn rooted_at(&self, ty: TypeId, element: Option<&str>) -> TypeSpec {
+        let mut spec = self.clone();
+        spec.root = ty;
+        if let (Some(xml), Some(name)) = (&mut spec.xml, element) {
+            xml.root = name.to_owned();
+            if !xml.qualified {
+                xml.target_namespace = None;
+            }
+        }
+        spec
+    }
+
     /// For a schema lowered from a copybook, how its records are laid out.
     pub fn copybook(&self) -> Option<&Layout> {
         self.copybook.as_deref()
@@ -174,6 +190,10 @@ pub struct TypeDef {
     pub name: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
+    /// Values the source names, offered as choices without limiting the
+    /// type: the condition names (level 88) of a COBOL item, with the value
+    /// each stands for.
+    pub choices: Vec<(crate::value::Value, String)>,
 }
 
 /// What a type is.

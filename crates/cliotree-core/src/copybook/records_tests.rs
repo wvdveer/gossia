@@ -208,3 +208,105 @@ fn a_record_whose_top_item_has_occurs_is_that_table() {
     let text = "10 T OCCURS 1 TO 3 DEPENDING ON N.\n 15 A PIC X.\n";
     assert!(lower(&parse(text).unwrap(), page).is_err());
 }
+
+#[test]
+fn floating_point_numbers_are_hexadecimal_or_ieee() {
+    use crate::copybook::FloatFormat;
+    let cases: [(f64, FloatFormat, &[u8]); 8] = [
+        (1.0, FloatFormat::Hex, &[0x41, 0x10, 0x00, 0x00]),
+        (-1.0, FloatFormat::Hex, &[0xC1, 0x10, 0x00, 0x00]),
+        (100.0, FloatFormat::Hex, &[0x42, 0x64, 0x00, 0x00]),
+        (0.1, FloatFormat::Hex, &[0x40, 0x19, 0x99, 0x9A]),
+        (0.0, FloatFormat::Hex, &[0, 0, 0, 0]),
+        (1.0, FloatFormat::Hex, &[0x41, 0x10, 0, 0, 0, 0, 0, 0]),
+        (1.0, FloatFormat::Ieee, &[0x3F, 0x80, 0x00, 0x00]),
+        (0.5, FloatFormat::Ieee, &[0x3F, 0xE0, 0, 0, 0, 0, 0, 0]),
+    ];
+    for (value, format, bytes) in cases {
+        let mut field = vec![0; bytes.len()];
+        encode_float(value, format, &mut field).unwrap();
+        assert_eq!(field, bytes, "{value} as {format:?}");
+        // A COMP-1 reads back with the fewest digits that are its bytes.
+        assert_eq!(decode_float(bytes, format), Some(Value::Float(value)));
+    }
+    let mut field = [0; 4];
+    assert!(encode_float(1e300, FloatFormat::Hex, &mut field).is_err());
+    assert!(encode_float(1e300, FloatFormat::Ieee, &mut field).is_err());
+
+    let mut book = parse("01 R.\n 05 A COMP-1.\n 05 B COMP-2.\n").unwrap();
+    book.float = FloatFormat::Ieee;
+    let spec = lower(&book, CodePage::Cp037).unwrap();
+    let layout = spec.copybook().unwrap();
+    let bytes = [&[0x3F, 0x80, 0, 0][..], &[0x3F, 0xE0, 0, 0, 0, 0, 0, 0]].concat();
+    let node = read(&bytes, layout, &[]).unwrap().node;
+    assert_eq!(
+        node.get(&"B".parse().unwrap()).unwrap().value(),
+        &Value::Float(0.5)
+    );
+    assert_eq!(write(&node, layout).unwrap(), bytes);
+}
+
+#[test]
+fn variable_length_records_end_after_their_last_item() {
+    let book = parse("01 R.\n 05 N PIC 9.\n 05 T PIC X OCCURS 0 TO 5 DEPENDING ON N.\n").unwrap();
+    let spec = lower(&book, CodePage::Cp037).unwrap();
+    let layout = spec.copybook().unwrap();
+    assert_eq!(layout.length, 6);
+    // A record descriptor word of 7 bytes, then N = 2 and two items.
+    let file = [0x00, 0x07, 0x00, 0x00, 0xF2, 0xC1, 0xC2];
+    assert!(has_rdw(&file, layout));
+    let node = read(&file, layout, &[]).unwrap().node;
+    assert_eq!(
+        node.get(&"T".parse().unwrap()).unwrap().value(),
+        &Value::Array(vec![
+            Node::new(Value::Str("A".into())),
+            Node::new(Value::Str("B".into()))
+        ])
+    );
+    assert_eq!(write_variable(&node, layout).unwrap(), file);
+    // A fixed-length record is the layout's length.
+    let fixed = write(&node, layout).unwrap();
+    assert_eq!(fixed.len(), 6);
+    assert!(!has_rdw(&fixed, layout));
+    assert_eq!(read(&fixed, layout, &[]).unwrap().node, node);
+    // A record whose length is not what its table says is refused.
+    let wrong = [0x00, 0x05, 0x00, 0x00, 0xF2];
+    let e = read(&wrong, layout, &[]).unwrap_err();
+    assert!(e.message.contains("record descriptor word"), "{e}");
+    // A variable-length record as long as a fixed one is told by where its
+    // items end: N = 1 and one item make 2 bytes, and the word 6.
+    let same = [0x00, 0x06, 0x00, 0x00, 0xF1, 0xC1];
+    assert!(has_rdw(&same, layout));
+    assert_eq!(
+        read(&same, layout, &[])
+            .unwrap()
+            .node
+            .get(&"N".parse().unwrap())
+            .unwrap()
+            .value(),
+        &Value::Int(1)
+    );
+}
+
+#[test]
+fn a_renamed_run_is_read_and_written_as_one_field() {
+    let book =
+        parse("01 R.\n 05 A PIC X.\n 05 B PIC X(2).\n 05 C PIC X.\n66 BC RENAMES B THRU C.\n")
+            .unwrap();
+    let spec = lower(&book, CodePage::Cp037).unwrap();
+    let layout = spec.copybook().unwrap();
+    let bytes = CodePage::Cp037.encode("WXYZ").unwrap();
+    let both = read(&bytes, layout, &[1]).unwrap().node;
+    assert_eq!(
+        both.get(&"BC".parse().unwrap()).unwrap().value(),
+        &Value::Str("XYZ".into())
+    );
+    assert!(both.get(&"B".parse().unwrap()).is_none());
+    assert_eq!(write(&both, layout).unwrap(), bytes);
+    let apart = read(&bytes, layout, &[]).unwrap().node;
+    assert_eq!(
+        apart.get(&"C".parse().unwrap()).unwrap().value(),
+        &Value::Str("Z".into())
+    );
+    assert_eq!(write(&apart, layout).unwrap(), bytes);
+}

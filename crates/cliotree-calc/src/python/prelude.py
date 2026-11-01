@@ -141,6 +141,11 @@ def XMLPATH(query, node):
     return _xmlpath(query, node)
 
 
+def raw(node):
+    """The bytes of a node, as its tab holds them: `RAW`."""
+    return _raw_access(node)
+
+
 _range = range
 
 

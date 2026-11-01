@@ -79,6 +79,13 @@ fn others() -> &'static [Function] {
             Data,
         ),
         f(
+            "raw",
+            "raw(",
+            "raw(node)",
+            "The bytes of a node, as its tab holds them: RAW.",
+            Data,
+        ),
+        f(
             "abs",
             "abs(",
             "abs(x)",

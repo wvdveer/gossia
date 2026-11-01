@@ -115,8 +115,15 @@ impl DataFormat {
         })
     }
 
-    /// Whether the format can hold comments, so that its tabs have the
-    /// comment commands.
+    /// Whether its tabs can have comments, so that they have the comment
+    /// commands: in the file, for a format that has comments, and in the
+    /// workbook only for JSON and JSON Lines, which have none (owner,
+    /// 2026-11-01). Only COBOL records have none.
+    pub fn keeps_comments(self) -> bool {
+        self != DataFormat::Blk
+    }
+
+    /// Whether the format's files can hold comments.
     pub fn has_comments(self) -> bool {
         matches!(
             self,

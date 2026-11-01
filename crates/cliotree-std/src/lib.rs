@@ -16,8 +16,25 @@ pub const PYTHON: &str = include_str!("functions.py");
 /// The functions the source defines, which the engine puts in the names a
 /// formula sees.
 pub const NAMES: &[&str] = &[
-    "SUM", "AVERAGE", "MIN", "MAX", "COUNT", "IF", "LOOKUP", "FILTER", "SORT", "UNIQUE", "CONCAT",
-    "TEXTJOIN", "TEXT", "NA",
+    "SUM",
+    "AVERAGE",
+    "MIN",
+    "MAX",
+    "COUNT",
+    "IF",
+    "LOOKUP",
+    "FILTER",
+    "SORT",
+    "UNIQUE",
+    "CONCAT",
+    "TEXTJOIN",
+    "TEXT",
+    "NA",
+    "RAW",
+    "BASE64ENCODE",
+    "BASE64DECODE",
+    "HEXENCODE",
+    "HEXDECODE",
 ];
 
 /// The exception class `NA()` raises, which the engine turns into `#N/A`.
@@ -189,6 +206,41 @@ const FUNCTIONS: &[Function] = &[
         "NA()",
         "Gives #N/A, for a value that is not available.",
         Group::Errors,
+    ),
+    f(
+        "RAW",
+        "RAW(",
+        "RAW(node)",
+        "The bytes of a node as its tab holds them: a COBOL field's own bytes, or text.",
+        Group::Data,
+    ),
+    f(
+        "BASE64ENCODE",
+        "BASE64ENCODE(",
+        "BASE64ENCODE(data)",
+        "Bytes as Base64 text.",
+        Group::Text,
+    ),
+    f(
+        "BASE64DECODE",
+        "BASE64DECODE(",
+        "BASE64DECODE(text)",
+        "The bytes of Base64 text; a formula on a node reads them as the node.",
+        Group::Text,
+    ),
+    f(
+        "HEXENCODE",
+        "HEXENCODE(",
+        "HEXENCODE(data)",
+        "Bytes as hex digits, two a byte.",
+        Group::Text,
+    ),
+    f(
+        "HEXDECODE",
+        "HEXDECODE(",
+        "HEXDECODE(text)",
+        "The bytes of hex digits; spaces between them are passed over.",
+        Group::Text,
     ),
 ];
 

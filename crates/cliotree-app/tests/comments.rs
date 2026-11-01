@@ -159,7 +159,7 @@ fn resting_on_a_cell_shows_its_comment_and_an_attribute_has_none() {
 }
 
 #[test]
-fn a_json_tab_has_no_comment_commands() {
+fn a_json_tab_has_the_comment_commands() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1000.0, 600.0))
         .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), ClioApp::sample());
@@ -170,12 +170,10 @@ fn a_json_tab_has_no_comment_commands() {
             .wait_idle(Duration::from_secs(60))
     );
     harness.run();
-    harness.get_by_label("62.92").click_secondary();
-    harness.run();
-    assert!(harness.query_by_label("Insert Comment").is_none());
+    // JSON has no comments, so the workbook keeps them (owner, 2026-11-01).
     harness.get_by_label("customer").click_secondary();
     harness.run();
-    assert!(harness.query_by_label("Insert Comment").is_none());
+    assert!(harness.query_by_label("Insert Comment").is_some());
 }
 
 /// Comments read from inside an element (at its start and its end) are shown

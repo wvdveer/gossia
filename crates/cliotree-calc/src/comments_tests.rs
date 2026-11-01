@@ -113,17 +113,13 @@ fn what_cannot_have_a_comment_is_refused_with_the_reason() {
     );
     assert!(!calc.is_modified());
 
-    // A JSON tab has no comments.
+    // A JSON tab keeps its comments in the workbook (owner, 2026-11-01).
     let spec =
         jsonschema::lower_str(r#"{"type": "object", "properties": {"a": {"type": "integer"}}}"#)
             .unwrap();
     calc.add_sheet("J", spec, json::parse(r#"{"a": 1}"#).unwrap().node)
         .unwrap();
-    assert!(
-        calc.comment_refusal("J", &p("a"))
-            .unwrap()
-            .contains("JSON has no comments")
-    );
+    assert_eq!(calc.comment_refusal("J", &p("a")), None);
 }
 
 #[test]

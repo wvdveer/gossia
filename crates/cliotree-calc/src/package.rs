@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use cliotree_core::dataformat::DataFormat;
 use cliotree_core::form::FormDesign;
-use cliotree_core::{ErrorKind, ErrorValue, Path, json, xml};
+use cliotree_core::{CommentPlace, ErrorKind, ErrorValue, Path, json, xml};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -170,6 +170,9 @@ struct TabEntry {
     /// where that is not the first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     record: Option<String>,
+    /// For a tab of COBOL records saved as a variable-length record, `VB`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recfm: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -223,6 +226,20 @@ struct Overlay {
     /// carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     view: Option<Json>,
+    /// The comments of a tab whose file has no place for them (JSON and
+    /// JSON Lines): kept in the workbook only (owner, 2026-11-01).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    comments: Vec<OverlayComment>,
+}
+
+/// A comment of a node, in a tab whose file cannot hold it.
+#[derive(Debug, Serialize, Deserialize)]
+struct OverlayComment {
+    path: String,
+    /// `before` (left out), `start` or `end`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    place: Option<String>,
+    text: String,
 }
 
 /// A formula for a field of every item of an array.
@@ -417,8 +434,14 @@ impl Calc {
                 other => Some(other.code().to_owned()),
             };
 
-            let overlay = self.overlay_of(name, sheet, meta.views.get(name).cloned());
-            if !overlay.formulas.is_empty() || !overlay.columns.is_empty() || overlay.view.is_some()
+            let mut overlay = self.overlay_of(name, sheet, meta.views.get(name).cloned());
+            if !saved_as.has_comments() {
+                overlay.comments = overlay_comments(&sheet.data);
+            }
+            if !overlay.formulas.is_empty()
+                || !overlay.columns.is_empty()
+                || overlay.view.is_some()
+                || !overlay.comments.is_empty()
             {
                 files.push((format!("sheets/{name}/overlay.json"), json_text(&overlay)));
             }
@@ -451,6 +474,7 @@ impl Calc {
                 format,
                 redefines: sheet.redefines.clone(),
                 record: sheet.record.clone(),
+                recfm: sheet.variable.then(|| "VB".to_owned()),
             });
         }
 
@@ -547,6 +571,7 @@ impl Calc {
             formulas,
             columns,
             view,
+            comments: Vec::new(),
         }
     }
 }
@@ -859,6 +884,11 @@ impl Calc {
                         .map_err(|e| fail(e.to_string()))?
                         .record = Some(record.clone());
                 }
+                if tab.recfm.as_deref() == Some("VB") {
+                    self.sheet_mut(name)
+                        .map_err(|e| fail(e.to_string()))?
+                        .variable = true;
+                }
                 self.bind_schema(name, schema_sheet)
                     .map_err(|e| fail(e.to_string()))?;
                 if !matches!(format, DataFormat::Json | DataFormat::Blk) {
@@ -881,6 +911,14 @@ impl Calc {
             if let Some(view) = overlay.view {
                 views.insert(name.to_owned(), view);
             }
+            for comment in overlay.comments {
+                if let Err(message) = self.restore_comment(name, &comment) {
+                    warnings.push(format!(
+                        "Tab {name}: the comment on {} is dropped: {message}",
+                        comment.path
+                    ));
+                }
+            }
             for column in overlay.columns {
                 if let Err(message) = self.restore_column(name, &column) {
                     warnings.push(format!(
@@ -898,6 +936,22 @@ impl Calc {
             }
             self.restore_column_items(name);
         }
+        Ok(())
+    }
+
+    /// Puts a comment kept in the overlay back on its node, recording
+    /// nothing.
+    fn restore_comment(&mut self, sheet: &str, comment: &OverlayComment) -> Result<(), String> {
+        let path: Path = comment.path.parse().map_err(|e| format!("{e}"))?;
+        let place = match comment.place.as_deref() {
+            None | Some("before") => CommentPlace::Before,
+            Some("start") => CommentPlace::Start,
+            Some("end") => CommentPlace::End,
+            Some(other) => return Err(format!("{other} is not a place for a comment")),
+        };
+        let s = self.sheet_mut(sheet).map_err(|e| e.to_string())?;
+        let node = s.data.get_mut(&path).ok_or("the node is not there")?;
+        node.set_comment_at(place, Some(comment.text.clone()));
         Ok(())
     }
 
@@ -1001,4 +1055,29 @@ impl Calc {
 
 fn short(revision: &str) -> &str {
     revision.get(..12).unwrap_or(revision)
+}
+
+/// The comments of a tree, by path, for the overlay of a tab whose file has
+/// no place for them.
+fn overlay_comments(data: &Node) -> Vec<OverlayComment> {
+    let mut out = Vec::new();
+    for path in super::formats::commented(data, &Path::root()) {
+        let Some(node) = data.get(&path) else {
+            continue;
+        };
+        for place in CommentPlace::ALL {
+            if let Some(text) = node.comment_at(place) {
+                out.push(OverlayComment {
+                    path: path.to_string(),
+                    place: match place {
+                        CommentPlace::Before => None,
+                        CommentPlace::Start => Some("start".to_owned()),
+                        CommentPlace::End => Some("end".to_owned()),
+                    },
+                    text: text.to_owned(),
+                });
+            }
+        }
+    }
+    out
 }

@@ -51,9 +51,14 @@ fn a_copybook_is_read_in_fixed_form_with_its_comments() {
     assert_eq!(record.items[1].comment.as_deref(), Some("Name as printed"));
     assert_eq!(record.items[2].usage, Some(Usage::Comp3));
     assert_eq!(record.items[2].picture.as_deref(), Some("S9(7)V99"));
+    assert_eq!(record.items[4].comment, None);
     assert_eq!(
-        record.items[4].comment.as_deref(),
-        Some("88 ACTIVE VALUE 'A'.")
+        record.items[4].conditions,
+        [ConditionName {
+            name: "ACTIVE".into(),
+            values: "'A'".into(),
+            comment: None,
+        }]
     );
     let phones = record.items[7].occurs.as_ref().unwrap();
     assert_eq!(
@@ -129,8 +134,13 @@ fn copybooks_that_cannot_be_used_say_why() {
     assert!(bad("01 R.\n 05 A PIC X COMP-3.\n").contains("characters"));
     assert!(bad("01 R.\n 05 T OCCURS 2 DEPENDING ON N PIC X.\n").contains("not in the record"));
     assert!(bad("01 R.\n 05 A-B PIC X.\n 05 A_B PIC X.\n").contains("two items"));
-    assert!(parse("01 R.\n 05 A PIC X SYNC.\n").is_err());
-    assert!(parse("01 R.\n 05 A COMP-1.\n").is_err());
+    assert!(bad("01 R.\n 05 A PIC X COMP-1.\n").contains("no PIC"));
+    assert!(bad("01 R.\n 05 A PIC X.\n 05 B PIC X.\n66 C RENAMES B THRU A.\n").contains("before"));
+    assert!(
+        bad("01 R.\n 05 T OCCURS 2.\n 10 A PIC X.\n66 C RENAMES A.\n").contains("inside a table")
+    );
+    assert!(bad("01 R.\n 05 A PIC X.\n66 C RENAMES Z.\n").contains("not an item"));
+    assert!(parse("01 R.\n 05 A PIC X.\n66 C RENAMES.\n").is_err());
     assert!(bad("      * only a comment\n").contains("no record"));
     assert!(parse("01 R.\n 05 A PIC X\n").is_err(), "no period");
 }
@@ -239,4 +249,278 @@ fn a_copybook_copied_in_under_an_01_has_its_records_at_its_own_level() {
     assert_eq!(parse(&to_text(&book)).unwrap(), book);
     let (back, _) = from_node(&to_node(&book, CodePage::Cp037)).unwrap();
     assert_eq!(back, book);
+}
+
+#[test]
+fn condition_names_are_choices_of_their_field() {
+    let text = "\
+       01  ACCOUNT-REC.
+           05  STATE          PIC X(2).
+               88  OPEN-STATE     VALUE 'OP'.
+               88  SHUT-STATE     VALUES ARE 'CL' 'X'.
+               88  ODD-STATE      VALUE 'A' THRU 'F'.
+               88  NO-STATE       VALUE SPACES.
+           05  LEVEL          PIC S9(3) COMP-3.
+               88  TOP-LEVEL      VALUE 999.
+               88  LOW-LEVEL      VALUE -1 0.
+               88  MID-LEVEL      VALUE 1 THRU 3.
+               88  ANY-LEVEL      VALUE 1 THRU 500.
+           05  CODES          PIC X OCCURS 2.
+               88  YES-CODE       VALUE 'Y'.
+";
+    let spec = lower(&parse(text).unwrap(), CodePage::Cp037).unwrap();
+    let choices = |path: &str| -> Vec<(crate::Value, String)> {
+        let ty = spec.resolve(&path.parse().unwrap()).unwrap().ty;
+        spec.get(ty).choices.clone()
+    };
+    let s = |v: &str| crate::Value::Str(v.into());
+    assert_eq!(
+        choices("STATE"),
+        [
+            (s("OP"), "OPEN-STATE".into()),
+            (s("CL"), "SHUT-STATE".into()),
+            (s("X "), "SHUT-STATE".into()),
+            // A range is each character in it, in the code page's order.
+            (s("A "), "ODD-STATE".into()),
+            (s("B "), "ODD-STATE".into()),
+            (s("C "), "ODD-STATE".into()),
+            (s("D "), "ODD-STATE".into()),
+            (s("E "), "ODD-STATE".into()),
+            (s("F "), "ODD-STATE".into()),
+            (s("  "), "NO-STATE".into()),
+        ]
+    );
+    assert_eq!(
+        choices("LEVEL"),
+        [
+            (crate::Value::Int(999), "TOP-LEVEL".into()),
+            (crate::Value::Int(-1), "LOW-LEVEL".into()),
+            (crate::Value::Int(0), "LOW-LEVEL".into()),
+            (crate::Value::Int(1), "MID-LEVEL".into()),
+            (crate::Value::Int(2), "MID-LEVEL".into()),
+            (crate::Value::Int(3), "MID-LEVEL".into()),
+            // A range of more than 100 values is no list to pick from.
+        ]
+    );
+    assert_eq!(choices("CODES[0]"), [(s("Y"), "YES-CODE".into())]);
+    // The field's type is not limited: other text is still a string.
+    let ty = spec.resolve(&"STATE".parse().unwrap()).unwrap().ty;
+    assert!(matches!(spec.get(ty).kind, Kind::String(_)));
+}
+
+#[test]
+fn condition_names_are_entries_of_their_own_in_the_text_and_the_tree() {
+    let copybook = parse(CUSTOMER).unwrap();
+    let text = to_text(&copybook);
+    assert!(
+        text.contains("\n               88  ACTIVE VALUE 'A'.\n"),
+        "{text}"
+    );
+    assert_eq!(parse(&text).unwrap(), copybook);
+    let tree = to_node(&copybook, CodePage::Cp037);
+    let status = tree.get(&"items[0].items[4]".parse().unwrap()).unwrap();
+    assert_eq!(status.comment(), None);
+    assert_eq!(
+        status
+            .get(&"conditions[0].values".parse().unwrap())
+            .unwrap()
+            .value(),
+        &crate::Value::Str("'A'".into())
+    );
+    assert_eq!(from_node(&tree).unwrap().0, copybook);
+
+    // A tree saved when they were comment lines reads them as conditions.
+    let mut old = tree.clone();
+    old.remove(&"items[0].items[4].conditions".parse().unwrap())
+        .unwrap();
+    old.get_mut(&"items[0].items[4]".parse().unwrap())
+        .unwrap()
+        .set_comment(Some("Open or not\n88 ACTIVE VALUE 'A'.".into()));
+    let item = &from_node(&old).unwrap().0.items[0].items[4];
+    assert_eq!(item.comment.as_deref(), Some("Open or not"));
+    assert_eq!(item.conditions[0].name, "ACTIVE");
+}
+
+#[test]
+fn floating_point_items_have_no_picture() {
+    let text = "\
+       01  R.
+           05  A              COMP-1.
+           05  B              USAGE COMP-2.
+           05  G              COMPUTATIONAL-1.
+               10  H.
+               10  I.
+";
+    let book = parse(text).unwrap();
+    assert_eq!(book.items[0].items[0].usage, Some(Usage::Comp1));
+    assert_eq!(parse(&to_text(&book)).unwrap(), book);
+    let spec = lower(&book, CodePage::Cp037).unwrap();
+    let layout = spec.copybook().unwrap();
+    assert_eq!(layout.length, 4 + 8 + 4 + 4);
+    assert_eq!(layout.float, FloatFormat::Hex);
+    let ty = spec.resolve(&"A".parse().unwrap()).unwrap().ty;
+    assert!(matches!(
+        spec.get(ty).kind,
+        Kind::Number(crate::typespec::Range {
+            min: None,
+            max: None
+        })
+    ));
+    // The format is a setting of the tab, kept in its tree.
+    let mut ieee = book.clone();
+    ieee.float = FloatFormat::Ieee;
+    let tree = to_node(&ieee, CodePage::Cp037);
+    assert_eq!(
+        tree.get(&"floatFormat".parse().unwrap()).unwrap().value(),
+        &crate::Value::Str("ieee".into())
+    );
+    assert_eq!(from_node(&tree).unwrap().0, ieee);
+    let tree = to_node(&book, CodePage::Cp037);
+    assert!(tree.get(&"floatFormat".parse().unwrap()).is_none());
+}
+
+#[test]
+fn sync_items_start_on_their_boundary() {
+    let text = "\
+       01  R.
+           05  A              PIC X.
+           05  B              PIC S9(4) COMP SYNC.
+           05  C              PIC X.
+           05  D              PIC S9(9) BINARY SYNCHRONIZED.
+           05  E              COMP-2 SYNC.
+           05  T              OCCURS 2.
+               10  Y          PIC S9(9) COMP SYNC.
+               10  Z          PIC X.
+           05  U              PIC X.
+";
+    let book = parse(text).unwrap();
+    assert!(book.items[0].items[1].sync);
+    assert_eq!(parse(&to_text(&book)).unwrap(), book);
+    let (back, _) = from_node(&to_node(&book, CodePage::Cp037)).unwrap();
+    assert_eq!(back, book);
+    let spec = lower(&book, CodePage::Cp037).unwrap();
+    let layout = spec.copybook().unwrap();
+    let place = |name: &str| {
+        let slot = layout.slots.iter().find(|s| s.name == name).unwrap();
+        (slot.offset, slot.size)
+    };
+    assert_eq!(place("A"), (0, 1));
+    assert_eq!(place("B"), (2, 2), "a halfword");
+    assert_eq!(place("C"), (4, 1));
+    assert_eq!(place("D"), (8, 4), "a fullword");
+    assert_eq!(place("E"), (16, 8), "a doubleword");
+    // Each occurrence of the table is 8 bytes, so the next starts aligned.
+    assert_eq!(place("T"), (24, 8));
+    assert_eq!(place("U"), (40, 1));
+    assert_eq!(layout.length, 41);
+}
+
+#[test]
+fn renames_are_a_layout_over_the_items_they_rename() {
+    let text = "\
+       01  R.
+           05  A              PIC X(2).
+           05  B              PIC 9(3).
+           05  C              PIC X.
+           05  D              PIC 9(2).
+      * The middle part
+       66  MIDDLE RENAMES B THRU C.
+       66  DD RENAMES D.
+";
+    let book = parse(text).unwrap();
+    assert_eq!(
+        book.items[0].renames[0],
+        Renames {
+            name: "MIDDLE".into(),
+            from: "B".into(),
+            thru: Some("C".into()),
+            comment: Some("The middle part".into()),
+        }
+    );
+    let written = to_text(&book);
+    assert!(
+        written.contains("\n       66  MIDDLE RENAMES B THRU C.\n"),
+        "{written}"
+    );
+    assert_eq!(parse(&written).unwrap(), book);
+    let (back, _) = from_node(&to_node(&book, CodePage::Cp037)).unwrap();
+    assert_eq!(back, book);
+
+    let spec = lower(&book, CodePage::Cp037).unwrap();
+    let layout = spec.copybook().unwrap();
+    assert_eq!(layout.length, 8);
+    assert_eq!(layout.redefines[0].names, ["B THRU C", "MIDDLE"]);
+    assert_eq!(
+        layout.redefines[0].keys,
+        [
+            vec!["B".to_owned(), "C".to_owned()],
+            vec!["MIDDLE".to_owned()]
+        ]
+    );
+    let middle = layout.slots.iter().find(|s| s.name == "MIDDLE").unwrap();
+    assert_eq!((middle.offset, middle.size), (2, 4));
+    assert_eq!(middle.element, Element::Text);
+    // A renamed item alone keeps what it is.
+    let dd = layout.slots.iter().find(|s| s.name == "DD").unwrap();
+    assert!(matches!(dd.element, Element::Number(_)));
+
+    // A tree saved when they were comment lines reads them as RENAMES.
+    let mut old = book.clone();
+    old.items[0].renames.clear();
+    old.items[0].items[3].comment = Some("66 MIDDLE RENAMES B THRU C.".into());
+    let (read, _) = from_node(&to_node(&old, CodePage::Cp037)).unwrap();
+    assert_eq!(read.items[0].renames[0].thru.as_deref(), Some("C"));
+    assert_eq!(read.items[0].items[3].comment, None);
+}
+
+#[test]
+fn copy_statements_copy_members_in() {
+    let members: std::collections::HashMap<&str, &str> = [
+        (
+            "ADDR",
+            "           05  :P:-STREET     PIC X(10).\n           05  :P:-CITY       PIC X(8).\n",
+        ),
+        ("CODES", "           05  OLD-CODE       PIC X(2).\n"),
+        ("SELF", "           COPY SELF.\n"),
+        (
+            "DEEP",
+            "           COPY CODES REPLACING LEADING ==OLD== BY ==NEW==.\n",
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut load = |name: &str| members.get(name).map(|t| (*t).to_owned());
+    let text = "\
+       01  CUSTOMER.
+           05  ID             PIC 9(4).
+      * The home address
+           COPY ADDR REPLACING ==:P:== BY ==HOME==.
+           COPY 'CODES' OF LIB REPLACING OLD-CODE BY KIND.
+           COPY DEEP.
+";
+    let book = parse_with(text, &mut load).unwrap();
+    let names: Vec<&str> = book.items[0]
+        .items
+        .iter()
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["ID", "HOME-STREET", "HOME-CITY", "KIND", "NEW-CODE"]
+    );
+    assert_eq!(
+        book.items[0].items[1].comment.as_deref(),
+        Some("The home address")
+    );
+    let e = parse_with("01 R.\n COPY NOPE.\n", &mut load).unwrap_err();
+    assert!(e.message.contains("no member NOPE"), "{e}");
+    let e = parse_with("01 R.\n COPY SELF.\n", &mut load).unwrap_err();
+    assert!(e.message.contains("deep"), "{e}");
+    // Without members to copy in, COPY is refused with the reason.
+    assert!(
+        parse("01 R.\n COPY ADDR.\n")
+            .unwrap_err()
+            .message
+            .contains("ADDR")
+    );
 }

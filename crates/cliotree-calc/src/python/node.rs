@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use cliotree_core::{Node, Path, Segment, Value};
-use rustpython::vm::builtins::{PyInt, PyList, PySlice, PyStr, PyStrRef};
+use rustpython::vm::builtins::{PyBytes, PyInt, PyList, PySlice, PyStr, PyStrRef};
 use rustpython::vm::function::{FuncArgs, PySetterValue};
 use rustpython::vm::protocol::{PyMapping, PyMappingMethods};
 use rustpython::vm::types::{AsMapping, Callable, GetAttr, Iterable, Representable, SetAttr};
@@ -92,6 +92,64 @@ pub(super) mod _cliotree {
                 super::super::sources::access(&zelf.shared, op.expect_str(), payload.expect_str());
             Ok(vm.ctx.new_str(reply).into())
         }
+    }
+
+    /// `_raw_access(node)`, which the prelude's `RAW` and `raw` call: the
+    /// bytes of a node, as its tab holds them.
+    #[pyattr]
+    #[pyclass(module = "_cliotree", name = "RawAccess")]
+    #[derive(Debug, PyPayload)]
+    pub struct RawAccess {
+        pub(in crate::python) shared: Rc<Shared>,
+    }
+
+    #[pyclass(with(Callable))]
+    impl RawAccess {}
+
+    impl Callable for RawAccess {
+        type Args = (PyObjectRef,);
+
+        fn call(zelf: &Py<Self>, (node,): Self::Args, vm: &VirtualMachine) -> PyResult {
+            super::run_raw(&zelf.shared, &node, vm)
+        }
+    }
+
+    /// `BASE64ENCODE(data)`.
+    #[pyfunction]
+    fn base64encode(data: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        let bytes = super::bytes_arg(&data, "BASE64ENCODE", vm)?;
+        Ok(cliotree_core::binary::to_base64(&bytes))
+    }
+
+    /// `HEXENCODE(data)`.
+    #[pyfunction]
+    fn hexencode(data: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        let bytes = super::bytes_arg(&data, "HEXENCODE", vm)?;
+        Ok(cliotree_core::binary::to_hex(&bytes))
+    }
+
+    /// `BASE64DECODE(text)`.
+    #[pyfunction]
+    fn base64decode(text: PyObjectRef, vm: &VirtualMachine) -> PyResult {
+        super::decode(
+            &text,
+            "BASE64DECODE",
+            "Base64",
+            cliotree_core::binary::from_base64,
+            vm,
+        )
+    }
+
+    /// `HEXDECODE(text)`.
+    #[pyfunction]
+    fn hexdecode(text: PyObjectRef, vm: &VirtualMachine) -> PyResult {
+        super::decode(
+            &text,
+            "HEXDECODE",
+            "hex digits",
+            cliotree_core::binary::from_hex,
+            vm,
+        )
     }
 
     /// `JSONPATH(query, node)`: see `jsonpath.rs`.
@@ -296,6 +354,15 @@ fn child(zelf: &NodeProxy, segment: Segment, asked: Asked, vm: &VirtualMachine) 
     let ctx = zelf.shared.ctx().ok_or_else(|| no_context(vm))?;
     ctx.record(&zelf.sheet, &path, Depth::Shallow);
     match parent.child(&segment) {
+        Some(node) if !matches!(node.value(), Value::Array(_) | Value::Object(_)) => {
+            // A single value comes back as a plain Python value, which does
+            // not know where it came from: kept here so that `RAW` of it can
+            // find its node.
+            let object = convert::node_to_py(&zelf.shared, vm, &zelf.sheet, path.clone(), node)?;
+            *zelf.shared.last_value.borrow_mut() =
+                Some((object.clone(), Rc::clone(&zelf.sheet), path));
+            Ok(object)
+        }
         Some(node) => convert::node_to_py(&zelf.shared, vm, &zelf.sheet, path, node),
         None if matches!(segment, Segment::Key(_)) && ctx.absent_ok(&zelf.sheet, &path) => {
             // An optional field that is not there reads as `None`.
@@ -601,6 +668,69 @@ fn path_base<'a>(
     base.downcast_ref::<NodeProxy>()
         .map(|p| &**p)
         .ok_or_else(|| vm.new_type_error(usage))
+}
+
+/// `RAW(node)`: the bytes of a node as its tab holds them (DESIGN.md, "Raw
+/// memory"). A tab or a node that holds other values is a proxy; a single
+/// value is the one the formula read last, such as `Orders[0].BALANCE`.
+fn run_raw(shared: &Rc<Shared>, node: &PyObject, vm: &VirtualMachine) -> PyResult {
+    let place = match node.downcast_ref::<NodeProxy>() {
+        Some(proxy) => Some((Rc::clone(&proxy.sheet), proxy.path.clone())),
+        None => shared
+            .last_value
+            .borrow()
+            .as_ref()
+            .filter(|(object, _, _)| object.is(node))
+            .map(|(_, sheet, path)| (Rc::clone(sheet), path.clone())),
+    };
+    let Some((sheet, path)) = place else {
+        return Err(vm.new_type_error(format!(
+            "RAW takes a node, such as RAW(Orders.items[0].price), not a {} worked out by the formula",
+            node.class().name()
+        )));
+    };
+    let ctx = shared.ctx().ok_or_else(|| no_context(vm))?;
+    match ctx.raw(&sheet, &path) {
+        Ok(bytes) => Ok(vm.ctx.new_bytes(bytes).into()),
+        Err(error) => {
+            // Raised as `PropagatedError`, so the formula's node gets the
+            // error with its kind.
+            let value = convert::error_to_py(shared, vm, &sheet, &error)?;
+            let raised = shared.classes().propagated.call((value,), vm)?;
+            Err(raised
+                .downcast::<rustpython::vm::builtins::PyBaseException>()
+                .map_err(|_| vm.new_type_error("PropagatedError is not an exception"))?)
+        }
+    }
+}
+
+/// The bytes a conversion function was given.
+fn bytes_arg(data: &PyObject, name: &str, vm: &VirtualMachine) -> PyResult<Vec<u8>> {
+    data.downcast_ref::<PyBytes>()
+        .map(|b| b.as_bytes().to_vec())
+        .ok_or_else(|| {
+            vm.new_type_error(format!("{name} takes bytes, not {}", data.class().name()))
+        })
+}
+
+/// Bytes from text by `from`; empty text is no bytes.
+fn decode(
+    text: &PyObject,
+    name: &str,
+    what: &str,
+    from: fn(&str) -> Option<Vec<u8>>,
+    vm: &VirtualMachine,
+) -> PyResult {
+    let Some(text) = text.downcast_ref::<PyStr>() else {
+        return Err(vm.new_type_error(format!("{name} takes text, not {}", text.class().name())));
+    };
+    let text = text.to_string_lossy();
+    let bytes = if text.trim().is_empty() {
+        Vec::new()
+    } else {
+        from(&text).ok_or_else(|| vm.new_value_error(format!("{name}: the text is not {what}")))?
+    };
+    Ok(vm.ctx.new_bytes(bytes).into())
 }
 
 /// Reads the node of `proxy` and everything below it.

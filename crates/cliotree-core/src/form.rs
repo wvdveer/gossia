@@ -1566,6 +1566,11 @@ fn generated(spec: &TypeSpec, ty: crate::TypeId, path: &Path, name: &str) -> Con
     };
     let mut control = Control::bound(kind, path);
     control.label = label;
+    // Values the type names (COBOL condition names) are its choices; the
+    // field takes others too unless the author says not (owner, 2026-11-01).
+    if kind == ControlKind::Field && !spec.get(ty).choices.is_empty() {
+        control.allow_other = true;
+    }
     if kind == ControlKind::Group {
         control.children = generated_children(spec, ty, path);
     }

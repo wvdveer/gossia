@@ -106,7 +106,8 @@ fn a_dropdown_shows_the_text_of_an_item_and_stores_its_code() {
 
     harness.get_by_label(CITY).click();
     harness.run();
-    harness.get_by_label("Amsterdam").click();
+    // An item shows its code and its text.
+    harness.get_by_label("AMS \u{2014} Amsterdam").click();
     harness.run();
     settle(&mut harness);
     assert_eq!(
@@ -120,7 +121,7 @@ fn a_dropdown_shows_the_text_of_an_item_and_stores_its_code() {
             .accesskit_node()
             .value()
             .as_deref(),
-        Some("Amsterdam")
+        Some("AMS \u{2014} Amsterdam")
     );
 
     // Undo is an ordinary edit of the tab.
@@ -246,9 +247,9 @@ fn a_list_that_reads_another_field_follows_it_and_an_enumeration_is_the_rule() {
     // "lost" is not a value of the enumeration: the dropdown leaves it out.
     harness.get_by_label("Orders.customer.status").click();
     harness.run();
-    assert!(harness.query_by_label("Sent").is_some());
-    assert!(harness.query_by_label("Lost").is_none());
-    harness.get_by_label("Sent").click();
+    assert!(harness.query_by_label("shipped \u{2014} Sent").is_some());
+    assert!(harness.query_by_label("lost \u{2014} Lost").is_none());
+    harness.get_by_label("shipped \u{2014} Sent").click();
     harness.run();
     settle(&mut harness);
     assert_eq!(
@@ -342,7 +343,11 @@ fn the_property_page_sets_the_choices_and_counts_what_an_enumeration_leaves_out(
     harness.run();
     harness.get_by_label("Field customer.status").click();
     harness.run();
-    assert!(harness.query_by_label("Allow other values").is_none());
+    assert!(
+        harness
+            .query_by_label("Allow other values (write-in codes)")
+            .is_none()
+    );
     let role = egui::accesskit::Role::TextInput;
     harness.get_by_role_and_label(role, "Choices").click();
     harness.run();
@@ -362,7 +367,9 @@ fn the_property_page_sets_the_choices_and_counts_what_an_enumeration_leaves_out(
             .query_by_label("2 items are not values of the enumeration and are left out")
             .is_some()
     );
-    harness.get_by_label("Allow other values").click();
+    harness
+        .get_by_label("Allow other values (write-in codes)")
+        .click();
     harness.run();
     assert!(
         harness

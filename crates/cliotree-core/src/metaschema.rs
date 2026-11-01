@@ -231,6 +231,10 @@ pub fn copybook_source() -> String {
         .iter()
         .map(|p| format!("\"{}\"", p.code()))
         .collect();
+    let floats: Vec<String> = crate::copybook::FloatFormat::ALL
+        .iter()
+        .map(|f| format!("\"{}\"", f.code()))
+        .collect();
     format!(
         r##"{{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -238,6 +242,7 @@ pub fn copybook_source() -> String {
   "title": "COBOL copybook",
   "properties": {{
     "codePage": {{"type": "string", "enum": [{pages}]}},
+    "floatFormat": {{"type": "string", "enum": [{floats}]}},
     "items": {{"type": "array", "items": {{"$ref": "#/$defs/Item"}}}}
   }},
   "required": ["codePage", "items"],
@@ -250,19 +255,40 @@ pub fn copybook_source() -> String {
         "redefines": {{"type": "string"}},
         "picture": {{"type": "string"}},
         "usage": {{"type": "string", "enum": [{usages}]}},
+        "sync": {{"type": "boolean"}},
         "sign": {{"type": "string", "enum": [{signs}]}},
         "occursFrom": {{"type": "integer", "minimum": 0}},
         "occurs": {{"type": "integer", "minimum": 1}},
         "dependingOn": {{"type": "string"}},
         "value": {{"type": "string"}},
         "other": {{"type": "string"}},
-        "items": {{"type": "array", "items": {{"$ref": "#/$defs/Item"}}}}
+        "conditions": {{"type": "array", "items": {{"$ref": "#/$defs/Condition"}}}},
+        "items": {{"type": "array", "items": {{"$ref": "#/$defs/Item"}}}},
+        "renames": {{"type": "array", "items": {{"$ref": "#/$defs/Renames"}}}}
       }},
       "required": ["level", "name"]
+    }},
+    "Condition": {{
+      "type": "object",
+      "properties": {{
+        "name": {{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$"}},
+        "values": {{"type": "string"}}
+      }},
+      "required": ["name", "values"]
+    }},
+    "Renames": {{
+      "type": "object",
+      "properties": {{
+        "name": {{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$"}},
+        "from": {{"type": "string"}},
+        "thru": {{"type": "string"}}
+      }},
+      "required": ["name", "from"]
     }}
   }}
 }}"##,
         pages = pages.join(", "),
+        floats = floats.join(", "),
         usages = usages.join(", "),
         signs = signs.join(", "),
     )

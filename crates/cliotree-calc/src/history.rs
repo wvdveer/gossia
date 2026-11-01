@@ -85,6 +85,20 @@ pub(crate) enum Op {
         before: usize,
         after: usize,
     },
+    /// A tab of COBOL records is written as a variable-length record, or
+    /// as a fixed-length one again.
+    Variable {
+        sheet: String,
+        before: bool,
+        after: bool,
+    },
+    /// A tab of COBOL records holds another 01 record of its copybook. Its
+    /// data changes by an [`Op::Replace`] of its own.
+    Record {
+        sheet: String,
+        before: Option<String>,
+        after: Option<String>,
+    },
     /// A column formula (one formula for a field of every item of an array)
     /// is set, changed or removed. The formulas of the items are operations of
     /// their own.
@@ -160,6 +174,8 @@ impl Op {
             Op::AutoUpdate { .. }
             | Op::Format { .. }
             | Op::Redefine { .. }
+            | Op::Variable { .. }
+            | Op::Record { .. }
             | Op::Bind { .. }
             | Op::Column { .. }
             | Op::Settings { .. }

@@ -601,6 +601,22 @@ fn has_text(text: &Option<String>) -> bool {
     text.as_deref().is_some_and(|t| !t.trim().is_empty())
 }
 
+/// What a dropdown shows for an item: its code and its text (`AMS — Amsterdam`),
+/// or the text alone when it is the code (owner, 2026-11-01). Trailing
+/// spaces of a code, as COBOL text is padded, are not shown; a code of only
+/// spaces is shown as `(spaces)`.
+fn choice_label(item: &Choice) -> String {
+    if item.text == item.code {
+        return item.text.clone();
+    }
+    let code = item.code.trim_end();
+    if code.is_empty() && !item.code.is_empty() {
+        format!("(spaces) \u{2014} {}", item.text)
+    } else {
+        format!("{code} \u{2014} {}", item.text)
+    }
+}
+
 /// The item whose code is the value stored.
 fn position_of(items: &[Choice], current: &str) -> Option<usize> {
     if current.is_empty() {
@@ -2339,12 +2355,29 @@ impl Painter<'_> {
         let kind = &self.spec.get(ty).kind;
         let name = app.name_of(path);
         let key = self.key(path);
-        let look = self
+        let mut look = self
             .look
             .as_ref()
             .filter(|(p, _)| p == path)
             .map(|(_, look)| look.clone())
             .unwrap_or_default();
+        // Without a list of its own, a field whose type names values (the
+        // condition names of a COBOL item) offers those. Whether it takes
+        // other codes is the control's *Allow other values*, which the
+        // generated form turns on for it (owner, 2026-11-01).
+        let named = &self.spec.get(ty).choices;
+        if look.choices.is_none() && !named.is_empty() {
+            look.choices = Some(ChoiceList {
+                items: Ok(named
+                    .iter()
+                    .map(|(value, name)| Choice {
+                        code: crate::rows::display(value),
+                        text: name.clone(),
+                    })
+                    .collect()),
+                pending: false,
+            });
+        }
         let read_only = read_only || look.read_only;
         let as_text = matches!(look.editor, Some(Editor::Text | Editor::Multiline));
         // A list of choices, unless the field is to be text, or the list
@@ -2641,9 +2674,14 @@ impl Painter<'_> {
             app.comment_marks(ui, r.rect, path);
             if self.layout.is_none() && calc.format_has_comments(&app.sheet) {
                 let mut commands = Vec::new();
-                r.context_menu(|ui| {
-                    app.comment_menu_items(ui, path, r.rect.right_top(), &mut commands, false);
-                });
+                // A menu of its own id: egui's default is the one a dropdown's
+                // list uses, and a click, which closes the menu, would close
+                // the list as soon as it opens.
+                egui::Popup::context_menu(r)
+                    .id(r.id.with("comment_menu"))
+                    .show(|ui| {
+                        app.comment_menu_items(ui, path, r.rect.right_top(), &mut commands, false);
+                    });
                 self.actions
                     .extend(commands.into_iter().map(FormAction::Table));
             }
@@ -2715,12 +2753,23 @@ impl Painter<'_> {
     fn dropdown(&mut self, ui: &mut egui::Ui, f: &ChoiceField) -> (egui::Response, bool) {
         let selected = position_of(f.items, f.current);
         let listed = selected.is_some() || f.current.is_empty();
+        // With *allow other values*, Other... turns the field into a text
+        // box for one code, until it loses the focus.
+        let write_in =
+            ui.make_persistent_id(("form_write_in", &self.app.sheet, f.path.to_string()));
+        if f.allow_other
+            && !f.read_only
+            && ui.data(|d| d.get_temp::<bool>(write_in)).unwrap_or(false)
+        {
+            return (self.write_in(ui, f, write_in), listed);
+        }
         let shown = match selected {
-            Some(i) => f.items[i].text.clone(),
+            Some(i) => choice_label(&f.items[i]),
             None if f.current.is_empty() => String::new(),
             None => format!("{} (not in the list)", f.current),
         };
         let mut picked = None;
+        let mut other = false;
         let r = ui
             .add_enabled_ui(!f.read_only, |ui| {
                 let combo = egui::ComboBox::from_id_salt((
@@ -2744,23 +2793,67 @@ impl Painter<'_> {
                         }
                         for (i, item) in f.items.iter().enumerate() {
                             if ui
-                                .selectable_label(selected == Some(i), &item.text)
+                                .selectable_label(selected == Some(i), choice_label(item))
                                 .clicked()
                             {
                                 picked = Some(item.code.clone());
                             }
+                        }
+                        if f.allow_other
+                            && ui
+                                .selectable_label(!listed, "Other...")
+                                .on_hover_text("Type a code that is not in the list")
+                                .clicked()
+                        {
+                            other = true;
                         }
                     })
                     .response
             })
             .inner;
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, !f.read_only, f.name));
+        if other {
+            ui.data_mut(|d| d.insert_temp(write_in, true));
+            ui.ctx().request_repaint();
+        }
         if let Some(code) = picked
             && !same_code(&code, f.current)
         {
             self.actions.push(FormAction::Commit(f.path.clone(), code));
         }
         (r, listed)
+    }
+
+    /// The text box a dropdown becomes after Other...: it starts on the code
+    /// stored, and leaving it enters what was typed (read as the field's
+    /// type, as typing in a cell is), unless Escape gives it up.
+    fn write_in(&mut self, ui: &mut egui::Ui, f: &ChoiceField, flag: egui::Id) -> egui::Response {
+        let text_id = flag.with("text");
+        let started = ui.data(|d| d.get_temp::<String>(text_id));
+        let mut text = started.clone().unwrap_or_else(|| f.current.to_owned());
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(text_id)
+                .desired_width(f.width.unwrap_or(f32::INFINITY))
+                .hint_text("type a code"),
+        );
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, f.name));
+        if started.is_none() {
+            r.request_focus();
+        }
+        ui.data_mut(|d| d.insert_temp(text_id, text.clone()));
+        let escape = ui.input(|i| i.key_pressed(Key::Escape));
+        if r.lost_focus() || (started.is_some() && !r.has_focus()) {
+            ui.data_mut(|d| {
+                d.remove::<bool>(flag);
+                d.remove::<String>(text_id);
+            });
+            if !escape && !same_code(&text, f.current) {
+                self.actions
+                    .push(FormAction::Commit(f.path.clone(), text.trim().to_owned()));
+            }
+        }
+        r
     }
 
     /// A typeahead of the choices of a field: a text box that shows the text

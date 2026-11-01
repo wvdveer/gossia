@@ -48,6 +48,9 @@ pub(crate) struct Sheet {
     /// For a tab of COBOL records, the 01 record of its copybook it holds;
     /// None is the first.
     record: Option<String>,
+    /// For a tab of COBOL records, whether its file is a variable-length
+    /// record after a record descriptor word (`RECFM=VB`).
+    variable: bool,
 }
 
 /// What a tab is to the schema machinery.
@@ -363,6 +366,7 @@ impl Calc {
                 format,
                 redefines: Vec::new(),
                 record: None,
+                variable: false,
             },
         );
         self.changed(&name, &Path::root());
@@ -1123,6 +1127,21 @@ impl Calc {
             } => {
                 self.store_redefine(sheet, *set, if forward { *after } else { *before })?;
             }
+            Op::Variable {
+                sheet,
+                before,
+                after,
+            } => {
+                self.store_variable(sheet, if forward { *after } else { *before })?;
+            }
+            Op::Record {
+                sheet,
+                before,
+                after,
+            } => {
+                let target = if forward { after } else { before };
+                self.store_record(sheet, target.clone())?;
+            }
             Op::Settings { before, after } => {
                 let target = if forward { after } else { before };
                 self.store_settings((**target).clone());
@@ -1409,6 +1428,13 @@ impl Calc {
                             spec: Arc::clone(&s.spec),
                             data: s.data.clone(),
                             formulas: Arc::clone(&s.formulas),
+                            info: Arc::new(crate::node_bytes::TabInfo {
+                                format: Some(s.format),
+                                xml: s.xml.clone(),
+                                redefines: s.redefines.clone(),
+                                variable: s.variable,
+                                columns: s.columns.clone(),
+                            }),
                         },
                     )
                 })

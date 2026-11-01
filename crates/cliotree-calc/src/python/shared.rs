@@ -63,6 +63,9 @@ pub(super) struct Shared {
     /// by request (op and payload), errors included: the same read in two
     /// formulas, or twice in one, reaches the source once per pass.
     pub source_reads: RefCell<std::collections::HashMap<String, Result<serde_json::Value, String>>>,
+    /// The single value the running formula read last, and where it is, for
+    /// `RAW` of it.
+    pub last_value: RefCell<Option<(rustpython::vm::PyObjectRef, Rc<str>, cliotree_core::Path)>>,
 }
 
 impl fmt::Debug for Shared {
@@ -88,6 +91,7 @@ impl Shared {
             watchdog: RefCell::new(None),
             side_effects: Cell::new(false),
             source_reads: RefCell::new(std::collections::HashMap::new()),
+            last_value: RefCell::new(None),
         })
     }
 
@@ -95,11 +99,13 @@ impl Shared {
     pub fn begin(&self, ctx: Rc<dyn Context>) {
         self.epoch.set(self.epoch.get() + 1);
         *self.ctx.borrow_mut() = Some(ctx);
+        *self.last_value.borrow_mut() = None;
     }
 
     /// Ends it. Proxies that are used afterwards find no context.
     pub fn end(&self) {
         *self.ctx.borrow_mut() = None;
+        *self.last_value.borrow_mut() = None;
     }
 
     pub fn epoch(&self) -> u64 {

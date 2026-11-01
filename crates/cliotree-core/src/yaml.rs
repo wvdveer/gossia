@@ -4,7 +4,8 @@
 //! between the events and given to the nodes around them. Values are read by
 //! the YAML 1.2 core schema: only `true` and `false` are booleans, and only
 //! `null`, `~` or nothing is null. Anchors and aliases are copied out, merge
-//! keys (`<<`) are applied, and tags outside the core schema are refused.
+//! keys (`<<`) are applied, and tags outside the core schema are dropped
+//! with a warning. An empty line before an entry is kept on its node.
 //! Writing is ClioTree's own: block style, two spaces of indentation.
 
 use std::collections::HashMap;
@@ -35,10 +36,20 @@ static INFINITE: LazyLock<Regex> =
 /// Reads YAML text of one document. A file of several documents is read as
 /// a list of them; [`document_count`] tells the two apart.
 pub fn parse(text: &str) -> Result<Parsed, ParseError> {
-    let (mut documents, warnings) = read(text)?;
+    let (mut documents, mut warnings) = read(text)?;
     let node = match documents.len() {
         0 => Node::new(Value::Null),
-        1 => documents.remove(0),
+        1 => {
+            // The paths of one document are from its root.
+            for w in &mut warnings {
+                if let Some((crate::path::Segment::Index(0), rest)) =
+                    w.path.segments().split_first()
+                {
+                    w.path = Path::from(rest.to_vec());
+                }
+            }
+            documents.remove(0)
+        }
         _ => Node::new(Value::Array(documents)),
     };
     Ok(Parsed { node, warnings })
@@ -94,6 +105,7 @@ fn read(text: &str) -> Result<(Vec<Node>, Vec<Warning>), ParseError> {
     }
     let comments = find_comments(text, &events);
     let mut builder = Builder {
+        empty: text.split('\n').map(|l| l.trim().is_empty()).collect(),
         events,
         at: 0,
         comments,
@@ -180,6 +192,8 @@ fn size(node: &Node) -> usize {
 }
 
 struct Builder<'t> {
+    /// For each line of the text, from line 1 at 0, whether it is empty.
+    empty: Vec<bool>,
     events: Vec<(Event<'t>, Span)>,
     at: usize,
     comments: Vec<Comment>,
@@ -225,6 +239,17 @@ impl Builder<'_> {
             .position(|c| c.index >= position)
             .map_or(self.comments.len(), |n| self.next + n);
         self.next..end
+    }
+
+    /// Whether an empty line is right above the current event, or above the
+    /// comment lines right above it: an entry set apart from the one before.
+    fn apart(&self) -> bool {
+        let range = self.waiting();
+        let first = match self.comments[range].iter().find(|c| !c.trailing) {
+            Some(c) => c.line,
+            None => self.span().map_or(0, |s| s.start.line()),
+        };
+        first >= 2 && self.empty.get(first - 2).copied().unwrap_or(false)
     }
 
     /// All the comments before the current event, given out.
@@ -319,8 +344,9 @@ impl Builder<'_> {
     }
 
     /// The tag's core-schema name, or None if it has none. Any other tag
-    /// refuses the file.
-    fn tag(&self, tag: Option<&Tag>) -> Result<Option<String>, ParseError> {
+    /// (`!Ref`) is dropped, with a warning, and the value read as it would
+    /// be without it (owner, 2026-11-01).
+    fn tag(&mut self, tag: Option<&Tag>, path: &Path) -> Result<Option<String>, ParseError> {
         let Some(tag) = tag else {
             return Ok(None);
         };
@@ -336,9 +362,14 @@ impl Builder<'_> {
         } else {
             format!("{}{}", tag.handle, tag.suffix)
         };
-        Err(self.error(format!(
-            "the tag {name} is not one ClioTree reads: only plain YAML values are read, without custom tags"
-        )))
+        let line = self.span().map_or(0, |s| s.start.line());
+        self.warnings.push(Warning {
+            path: path.clone(),
+            message: format!(
+                "the tag {name} on line {line} was dropped: the value is read without it, and written back without it"
+            ),
+        });
+        Ok(None)
     }
 
     fn node(&mut self, path: &Path, depth: usize) -> Result<Node, ParseError> {
@@ -352,7 +383,7 @@ impl Builder<'_> {
             .ok_or_else(|| self.error("the text ends too soon"))?;
         match event {
             Event::Scalar(text, style, anchor, tag) => {
-                let tag = self.tag(tag.as_deref())?;
+                let tag = self.tag(tag.as_deref(), path)?;
                 let value = self.scalar(&text, style, tag.as_deref(), path)?;
                 self.at += 1;
                 let node = Node::new(value);
@@ -376,7 +407,10 @@ impl Builder<'_> {
                 Ok(node)
             }
             Event::SequenceStart(anchor, tag) => {
-                if !matches!(self.tag(tag.as_deref())?.as_deref(), None | Some("seq")) {
+                if !matches!(
+                    self.tag(tag.as_deref(), path)?.as_deref(),
+                    None | Some("seq")
+                ) {
                     return Err(self.error("this tag does not go with a list"));
                 }
                 self.at += 1;
@@ -385,7 +419,10 @@ impl Builder<'_> {
                 Ok(node)
             }
             Event::MappingStart(anchor, tag) => {
-                if !matches!(self.tag(tag.as_deref())?.as_deref(), None | Some("map")) {
+                if !matches!(
+                    self.tag(tag.as_deref(), path)?.as_deref(),
+                    None | Some("map")
+                ) {
                     return Err(self.error("this tag does not go with a table"));
                 }
                 self.at += 1;
@@ -406,9 +443,11 @@ impl Builder<'_> {
     fn sequence(&mut self, path: &Path, depth: usize, column: usize) -> Result<Node, ParseError> {
         let mut items = Vec::new();
         while !matches!(self.event(), Event::SequenceEnd) {
+            let apart = !items.is_empty() && self.apart();
             let before = self.above();
             let mut item = self.node(&path.index(items.len()), depth + 1)?;
             item.set_comment(joined(before, item.comment().map(str::to_owned)));
+            item.set_blank_before(apart);
             self.trailing(&mut item);
             items.push(item);
         }
@@ -428,11 +467,13 @@ impl Builder<'_> {
         let mut fields = indexmap::IndexMap::new();
         let mut merges = Vec::new();
         while !matches!(self.event(), Event::MappingEnd) {
+            let apart = !(fields.is_empty() && merges.is_empty()) && self.apart();
             let before = self.above();
-            let (key, merge) = match self.event() {
-                Event::Scalar(text, style, _, tag) => {
-                    let tag = self.tag(tag.as_deref())?;
-                    let merge = text == "<<" && *style == ScalarStyle::Plain && tag.is_none();
+            let event = self.events.get(self.at).map(|(e, _)| e.clone());
+            let (key, merge) = match event {
+                Some(Event::Scalar(text, style, _, tag)) => {
+                    let tag = self.tag(tag.as_deref(), &path.key(text.to_string()))?;
+                    let merge = text == "<<" && style == ScalarStyle::Plain && tag.is_none();
                     (text.to_string(), merge)
                 }
                 _ => {
@@ -450,6 +491,7 @@ impl Builder<'_> {
             let mut value = self.node(&path.key(key.clone()), depth + 1)?;
             let comment = joined(before, after_key.comment().map(str::to_owned));
             value.set_comment(joined(comment, value.comment().map(str::to_owned)));
+            value.set_blank_before(apart);
             self.trailing(&mut value);
             if merge {
                 merges.push(value);
@@ -703,7 +745,10 @@ fn block(out: &mut String, node: &Node, path: &Path, indent: usize) -> Result<()
     comment(out, node.comment_at(CommentPlace::Start), indent);
     match node.value() {
         Value::Object(fields) => {
-            for (key, value) in fields.iter().filter(|(_, v)| !skipped(v)) {
+            for (n, (key, value)) in fields.iter().filter(|(_, v)| !skipped(v)).enumerate() {
+                if n > 0 && value.blank_before() {
+                    out.push('\n');
+                }
                 comment(out, own_comment(value).as_deref(), indent);
                 push_indent(out, indent);
                 out.push_str(&key_text(key));
@@ -712,7 +757,15 @@ fn block(out: &mut String, node: &Node, path: &Path, indent: usize) -> Result<()
             }
         }
         Value::Array(items) => {
-            for (i, item) in items.iter().enumerate().filter(|(_, i)| !skipped(i)) {
+            for (n, (i, item)) in items
+                .iter()
+                .enumerate()
+                .filter(|(_, i)| !skipped(i))
+                .enumerate()
+            {
+                if n > 0 && item.blank_before() {
+                    out.push('\n');
+                }
                 comment(out, own_comment(item).as_deref(), indent);
                 let path = path.index(i);
                 if is_block(item) {

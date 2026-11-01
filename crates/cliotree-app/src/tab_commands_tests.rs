@@ -732,26 +732,58 @@ fn a_json5_file_becomes_a_json5_tab_with_its_comments() {
 
 /// *Format* on a tab's menu asks before it takes comments off.
 #[test]
-fn changing_a_tab_to_a_format_without_comments_asks_first() {
+fn a_json_tab_keeps_its_comments_in_the_workbook() {
+    use cliotree_calc::Meta;
     use cliotree_core::dataformat::DataFormat;
     let mut app = sample();
     let plan = app
-        .plan_import("editor.jsonc", b"{\n  // big\n  \"size\": 12\n}")
+        .plan_import(
+            "editor.jsonc",
+            b"{
+  // big
+  \"size\": 12
+}",
+        )
         .unwrap();
     app.import(&plan).unwrap();
-    app.begin_set_format("editor", DataFormat::Json5).unwrap();
-    assert_eq!(app.calc().format("editor"), Some(DataFormat::Json5));
-    assert!(
-        app.tab_dialogs.format.is_none(),
-        "nothing to lose, no question"
-    );
+    // JSON has no comments, so the workbook keeps them (owner, 2026-11-01):
+    // nothing is lost and nothing is asked.
     app.begin_set_format("editor", DataFormat::Json).unwrap();
-    let question = app.tab_dialogs.format.clone().unwrap();
-    assert_eq!(question.lost, 1);
-    assert_eq!(app.calc().format("editor"), Some(DataFormat::Json5));
-    app.set_format("editor", DataFormat::Json).unwrap();
-    assert_eq!(app.calc().comment("editor", &p("size")), None);
-    assert_eq!(app.calc().undo_label(), Some("Write editor as JSON"));
+    assert!(app.tab_dialogs.format.is_none());
+    assert_eq!(app.calc().format("editor"), Some(DataFormat::Json));
+    assert_eq!(app.calc().comment("editor", &p("size")), Some("big"));
+    assert!(app.calc().format_has_comments("editor"));
+    app.session
+        .calc_mut()
+        .set_comment("editor", &p("size"), Some("bigger"))
+        .unwrap();
+    // The file is strict JSON; the comment is in the overlay.
+    let package = app.calc().to_package(&Meta::default()).unwrap();
+    let data = String::from_utf8(package.get("sheets/editor/data.json").unwrap().to_vec()).unwrap();
+    assert!(!data.contains("bigger"), "{data}");
+    let overlay =
+        String::from_utf8(package.get("sheets/editor/overlay.json").unwrap().to_vec()).unwrap();
+    assert!(overlay.contains("bigger"), "{overlay}");
+    let back = cliotree_calc::Calc::from_package(
+        std::sync::Arc::new(cliotree_calc::python::PythonSyntax),
+        &package,
+    )
+    .unwrap()
+    .calc;
+    assert_eq!(back.comment("editor", &p("size")), Some("bigger"));
+    // Export leaves them out, and says so.
+    assert_eq!(app.calc().comments_left_out("editor", DataFormat::Json), 1);
+    assert_eq!(app.calc().comments_left_out("editor", DataFormat::Json5), 0);
+    assert!(
+        !app.calc()
+            .export_text(
+                "editor",
+                cliotree_calc::ExportFormat::Data(DataFormat::Json),
+                true
+            )
+            .unwrap()
+            .contains("bigger")
+    );
 }
 
 /// TOML is a tab format of its own, with its comments and dates.

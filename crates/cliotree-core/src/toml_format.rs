@@ -1,9 +1,10 @@
 //! Reading and writing TOML (DESIGN.md, "Other file formats", "TOML"). The
 //! text is parsed with `toml_edit`, which keeps the comments around each key
-//! and value; they become the comments of the nodes. Writing is ClioTree's
-//! own, so that the layout is always the same: the plain values of a table
-//! first, then a `[table]` for each object in it and `[[array]]` for each
-//! array of objects.
+//! and value; they become the comments of the nodes, and an empty line
+//! before a key is kept on its node. Writing is ClioTree's own, so that the
+//! layout is always the same: the plain values of a table first, then a
+//! `[table]` for each object in it and `[[array]]` for each array of
+//! objects.
 
 use chrono::{FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use toml_edit::{DocumentMut, Item, RawString, Table, Value as Toml};
@@ -54,6 +55,17 @@ fn comments(raw: Option<&RawString>) -> Option<String> {
     }
 }
 
+/// Whether white space before a key holds an empty line.
+fn has_empty_line(raw: Option<&RawString>) -> bool {
+    let Some(text) = raw.and_then(RawString::as_str) else {
+        return false;
+    };
+    // The last piece is the indentation of the key's own line.
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    lines.pop();
+    lines.iter().any(|l| l.trim().is_empty())
+}
+
 /// The comments of white space split at its first line break: those on the
 /// line it starts on, and those after.
 fn split_line(raw: Option<&RawString>) -> (Option<String>, Option<String>) {
@@ -93,6 +105,10 @@ fn table(t: &Table, path: &Path, warnings: &mut Vec<Warning>) -> Result<Node, Pa
                 let after = comments(v.decor().suffix());
                 let comment = joined(joined(above, node.comment().map(str::to_owned)), after);
                 node.set_comment(comment);
+                let first = fields.is_empty();
+                node.set_blank_before(
+                    !first && has_empty_line(t.key(key).and_then(|k| k.leaf_decor().prefix())),
+                );
                 node
             }
             Item::Table(sub) => {
@@ -287,7 +303,14 @@ fn write_table(
     let Value::Object(fields) = node.value() else {
         unreachable!("a table is an object");
     };
-    for (key, field) in fields.iter().filter(|(_, f)| !skipped(f) && !is_section(f)) {
+    for (n, (key, field)) in fields
+        .iter()
+        .filter(|(_, f)| !skipped(f) && !is_section(f))
+        .enumerate()
+    {
+        if n > 0 && field.blank_before() {
+            out.push('\n');
+        }
         comment(out, field.comment(), "");
         out.push_str(&bare_or_quoted(key));
         out.push_str(" = ");

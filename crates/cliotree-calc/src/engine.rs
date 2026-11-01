@@ -80,6 +80,14 @@ pub enum Read {
     NoSheet,
 }
 
+/// What a formula on a node gave: a value, or bytes, which are read as the
+/// node (DESIGN.md, "Raw memory"). Only a formula on a node can give bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Answer {
+    Value(Value),
+    Bytes(Vec<u8>),
+}
+
 /// How much of a node a read depends on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Depth {
@@ -116,6 +124,16 @@ pub trait Context {
     fn absent_ok(&self, sheet: &str, path: &Path) -> bool;
     /// The names of the tabs, for engines that make them available by name.
     fn sheets(&self) -> Vec<String>;
+    /// The bytes of the node at `path` in the tab called `sheet`, as the tab
+    /// holds them (`RAW`): the read is recorded as a deep one.
+    fn raw(&self, sheet: &str, path: &Path) -> Result<Vec<u8>, ErrorValue> {
+        let _ = (sheet, path);
+        Err(ErrorValue {
+            kind: ErrorKind::Name,
+            message: "RAW cannot be used here".to_owned(),
+            origin: None,
+        })
+    }
     /// Whether `this` is the value of the node when it holds a single value,
     /// rather than the node: for the expressions of form controls and table
     /// cells, which compare it (`this > 0`). A formula keeps the node, since
@@ -246,6 +264,11 @@ pub trait Engine {
     /// data (a formula such as `=Orders.total` whose source has failed) is
     /// returned as `Ok(Value::Error(..))`.
     fn eval(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Value, Failure>;
+
+    /// Runs a formula on a node, which may give bytes as well as a value.
+    fn eval_answer(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Answer, Failure> {
+        self.eval(formula, ctx).map(Answer::Value)
+    }
 
     /// Runs an expression of the Immediate window against what `ctx` reads,
     /// within `limit`, and gives its result as text. Reads are not recorded.

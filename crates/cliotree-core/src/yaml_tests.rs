@@ -118,16 +118,67 @@ fn anchors_and_merge_keys_are_copied_out() {
 }
 
 #[test]
-fn core_tags_are_read_and_others_refused() {
+fn core_tags_are_read_and_others_dropped() {
     let node = read("a: !!str 12\nb: !!float 3\nc: ! 7\n");
     assert_eq!(at(&node, "a").value(), &Value::Str("12".into()));
     assert_eq!(at(&node, "b").value(), &Value::Float(3.0));
     assert_eq!(at(&node, "c").value(), &Value::Str("7".into()));
-    let error = parse("a: 1\nb: !thing x\n").unwrap_err();
-    assert_eq!(error.line, 2);
-    assert!(error.message.contains("!thing"), "{}", error.message);
-    assert!(parse("a: !!binary aGk=\n").is_err());
+    // Any other tag is dropped with a warning, and the value read without
+    // it (owner, 2026-11-01).
+    let parsed = parse(
+        "a: 1\nb: !thing x\nc: !Ref 12\nd: !GetAtt [Web, Arn]\ne: !Sub\n  x: 1\nf: !!binary aGk=\n",
+    )
+    .unwrap();
+    let node = &parsed.node;
+    assert_eq!(at(node, "b").value(), &Value::Str("x".into()));
+    assert_eq!(at(node, "c").value(), &Value::Int(12));
+    assert_eq!(at(node, "d[1]").value(), &Value::Str("Arn".into()));
+    assert_eq!(at(node, "e.x").value(), &Value::Int(1));
+    assert_eq!(at(node, "f").value(), &Value::Str("aGk=".into()));
+    let messages: Vec<String> = parsed
+        .warnings
+        .iter()
+        .map(|w| format!("{}: {}", w.path, w.message))
+        .collect();
+    assert_eq!(messages.len(), 5, "{messages:?}");
+    assert!(
+        messages[0].starts_with("b: the tag !thing on line 2"),
+        "{messages:?}"
+    );
+    assert!(messages[4].contains("!!binary"), "{messages:?}");
+    assert!(!to_string(node).unwrap().contains('!'));
     assert!(parse("a: .inf\n").is_err());
+}
+
+#[test]
+fn empty_lines_between_entries_are_kept() {
+    let text = "\
+a: 1
+
+# about b
+b: 2
+c:
+  - x
+
+  - z
+d:
+
+  e: 3
+  f: 4
+";
+    let node = read(text);
+    assert!(!at(&node, "a").blank_before());
+    assert!(at(&node, "b").blank_before());
+    assert!(!at(&node, "c").blank_before());
+    assert!(at(&node, "c[1]").blank_before());
+    // Not before the first entry of a table or list.
+    assert!(!at(&node, "d.e").blank_before());
+    let written = to_string(&node).unwrap();
+    assert_eq!(
+        written,
+        "a: 1\n\n# about b\nb: 2\nc:\n  - x\n\n  - z\nd:\n  e: 3\n  f: 4\n"
+    );
+    assert_eq!(read(&written), node);
 }
 
 #[test]

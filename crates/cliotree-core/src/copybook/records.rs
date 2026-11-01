@@ -1,6 +1,7 @@
-//! `.blk` files: one record with no record descriptor word, laid out by a
-//! copybook (DESIGN.md, "COBOL copybooks"). Text is EBCDIC in the
-//! copybook's code page; numbers are zoned, packed or binary.
+//! `.blk` files: one record laid out by a copybook (DESIGN.md, "COBOL
+//! copybooks"), fixed length, or variable (VB) after a record descriptor
+//! word. Text is EBCDIC in the copybook's code page; numbers are zoned,
+//! packed, binary or floating point.
 //!
 //! Bytes that are not a valid number are read as an error value whose
 //! message ends with the bytes (`X'4040'`), and such a value is written back
@@ -8,9 +9,10 @@
 
 use indexmap::IndexMap;
 
+use super::FloatFormat;
 use super::lower::{Counter, Element, Layout, NumUsage, Numeric, SignPlace, Slot};
 use crate::json::{Parsed, Warning, WriteError};
-use crate::path::Path;
+use crate::path::{Path, Segment};
 use crate::value::{ErrorKind, ErrorValue, Node, Value};
 
 /// The `.blk` file is not records of the layout.
@@ -29,10 +31,14 @@ impl std::error::Error for ReadError {}
 
 /// Reads a `.blk` file as its one record. `choices` says, for each group of
 /// layouts over the same bytes ([`Layout::redefines`]), which one is read;
-/// one not given is the first. A file that is not exactly one record long
-/// is refused.
+/// one not given is the first. The file is the record's bytes, or a
+/// variable-length record ([`has_rdw`]); any other is refused.
 pub fn read(bytes: &[u8], layout: &Layout, choices: &[usize]) -> Result<Parsed, ReadError> {
-    if bytes.len() != layout.length {
+    let padded;
+    let bytes = if has_rdw(bytes, layout) {
+        padded = variable_record(&bytes[4..], layout)?;
+        &padded[..]
+    } else if bytes.len() != layout.length {
         return Err(ReadError {
             message: format!(
                 "the file has {} bytes, and a record of {} has {}",
@@ -41,7 +47,9 @@ pub fn read(bytes: &[u8], layout: &Layout, choices: &[usize]) -> Result<Parsed, 
                 layout.length
             ),
         });
-    }
+    } else {
+        bytes
+    };
     let mut reader = Reader {
         layout,
         choices,
@@ -55,6 +63,99 @@ pub fn read(bytes: &[u8], layout: &Layout, choices: &[usize]) -> Result<Parsed, 
     })
 }
 
+/// Whether a file is one variable-length record (`RECFM=VB`): a record
+/// descriptor word, whose first two bytes are the file's length and whose
+/// other two are zero, and the record, which is no longer than the layout.
+/// A file of exactly the layout's length is a fixed-length record, unless
+/// its record also ends exactly where its items do: then the word cannot be
+/// chance.
+pub fn has_rdw(bytes: &[u8], layout: &Layout) -> bool {
+    let word = bytes.len() >= 4
+        && bytes.len() <= layout.length + 4
+        && usize::from(u16::from_be_bytes([bytes[0], bytes[1]])) == bytes.len()
+        && bytes[2] == 0
+        && bytes[3] == 0;
+    if !word {
+        return false;
+    }
+    if bytes.len() != layout.length {
+        return true;
+    }
+    let mut padded = bytes[4..].to_vec();
+    padded.resize(layout.length, 0);
+    used_length(&padded, layout) == bytes.len() - 4
+}
+
+/// The bytes of a variable-length record after its descriptor word, made
+/// the layout's length: a record shorter than the layout ends inside its
+/// last table (`OCCURS DEPENDING ON`), which holds fewer items than it has
+/// room for, and the room after them is low-values.
+fn variable_record(record: &[u8], layout: &Layout) -> Result<Vec<u8>, ReadError> {
+    let mut padded = record.to_vec();
+    padded.resize(layout.length, 0);
+    let used = used_length(&padded, layout);
+    if record.len() != used && record.len() != layout.length {
+        return Err(ReadError {
+            message: format!(
+                "the record descriptor word says the record has {} bytes, and a record of {} \
+                 with the items its tables say they hold has {used}",
+                record.len(),
+                layout.record
+            ),
+        });
+    }
+    Ok(padded)
+}
+
+/// The bytes a record takes as a variable-length record: up to the end of
+/// its last item, a table (`OCCURS DEPENDING ON`) taking only the items its
+/// counter says it holds.
+pub fn used_length(record: &[u8], layout: &Layout) -> usize {
+    fn end(slots: &[Slot], base: usize, record: &[u8]) -> usize {
+        slots
+            .iter()
+            .map(|slot| {
+                let start = base + slot.offset;
+                match (&slot.occurs, &slot.element) {
+                    (Some(o), _) => match &o.counter {
+                        Some(counter) => {
+                            let field = &record[counter.offset..counter.offset + counter.size];
+                            let count = match decode(field, &counter.numeric) {
+                                Some(Value::Int(n)) => usize::try_from(n).unwrap_or(0),
+                                _ => 0,
+                            };
+                            start + count.clamp(o.min, o.max) * slot.size
+                        }
+                        None => start + slot.total(),
+                    },
+                    (None, Element::Group(children)) => end(children, start, record).max(start),
+                    (None, _) => start + slot.size,
+                }
+            })
+            .max()
+            .unwrap_or(base)
+    }
+    end(&layout.slots, 0, record).min(layout.length)
+}
+
+/// Writes the record of a tab as a variable-length `.blk` file: a record
+/// descriptor word, then the record up to the end of its last item.
+pub fn write_variable(node: &Node, layout: &Layout) -> Result<Vec<u8>, WriteError> {
+    let record = write(node, layout)?;
+    Ok(with_rdw(&record, layout))
+}
+
+/// A record's bytes as a variable-length record.
+pub fn with_rdw(record: &[u8], layout: &Layout) -> Vec<u8> {
+    let used = used_length(record, layout).min(record.len());
+    let length = u16::try_from(used + 4).unwrap_or(u16::MAX);
+    let mut out = Vec::with_capacity(used + 4);
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out.extend_from_slice(&record[..used]);
+    out
+}
+
 /// A record whose top item has `OCCURS` is its table: the one field of the
 /// object read.
 fn unwrap_table(node: Node, layout: &Layout) -> Node {
@@ -65,6 +166,58 @@ fn unwrap_table(node: Node, layout: &Layout) -> Node {
             .unwrap_or_else(|| Node::new(Value::Array(Vec::new()))),
         _ => node,
     }
+}
+
+/// Where the node at `path` of a record's data is in its bytes: the first byte
+/// and how many. The root is the whole record; a table not indexed is all of
+/// its occurrences, whatever its counter says. None if the layout has no such
+/// node.
+pub fn place(layout: &Layout, path: &Path) -> Option<(usize, usize)> {
+    let mut segments: Vec<Segment> = path.segments().to_vec();
+    if segments.is_empty() {
+        return Some((0, layout.length));
+    }
+    if let Some(key) = &layout.table {
+        segments.insert(0, Segment::Key(key.clone()));
+    }
+    place_in(&layout.slots, 0, &segments)
+}
+
+fn place_in(slots: &[Slot], base: usize, segments: &[Segment]) -> Option<(usize, usize)> {
+    let (Segment::Key(wanted), rest) = segments.split_first()? else {
+        return None;
+    };
+    for slot in slots {
+        let start = base + slot.offset;
+        let Some(key) = &slot.key else {
+            // A FILLER group's items are fields of the object it is in.
+            if let Element::Group(children) = &slot.element
+                && let Some(found) = place_in(children, start, segments)
+            {
+                return Some(found);
+            }
+            continue;
+        };
+        if key != wanted {
+            continue;
+        }
+        let (start, rest) = match (&slot.occurs, rest.split_first()) {
+            (None, _) => (start, rest),
+            (Some(_), None) => return Some((start, slot.total())),
+            (Some(occurs), Some((Segment::Index(i), rest))) if *i < occurs.max => {
+                (start + i * slot.size, rest)
+            }
+            (Some(_), Some(_)) => return None,
+        };
+        if rest.is_empty() {
+            return Some((start, slot.size));
+        }
+        return match &slot.element {
+            Element::Group(children) => place_in(children, start, rest),
+            _ => None,
+        };
+    }
+    None
 }
 
 /// Reads one record's bytes as a record object.
@@ -147,6 +300,10 @@ impl Reader<'_> {
             }
             Element::Text => Node::new(Value::Str(self.layout.code_page.decode(field))),
             Element::Number(n) => Node::new(match decode(field, n) {
+                Some(value) => value,
+                None => bad_bytes(&slot.name, field),
+            }),
+            Element::Float => Node::new(match decode_float(field, self.layout.float) {
                 Some(value) => value,
                 None => bad_bytes(&slot.name, field),
             }),
@@ -239,6 +396,96 @@ pub fn decode(bytes: &[u8], n: &Numeric) -> Option<Value> {
     } else {
         Some(Value::Float(value as f64 / 10_f64.powi(n.scale as i32)))
     }
+}
+
+/// A floating point number from its 4 or 8 bytes, or None if they are not
+/// a finite number. A `COMP-1` is given with the fewest digits that are
+/// still those bytes (`0.1`, not `0.100000001`).
+pub fn decode_float(bytes: &[u8], format: FloatFormat) -> Option<Value> {
+    let exact = match (format, bytes.len()) {
+        (FloatFormat::Ieee, 4) => f64::from(f32::from_be_bytes(bytes.try_into().ok()?)),
+        (FloatFormat::Ieee, 8) => f64::from_be_bytes(bytes.try_into().ok()?),
+        (FloatFormat::Hex, 4 | 8) => {
+            let negative = bytes[0] & 0x80 != 0;
+            let exponent = i32::from(bytes[0] & 0x7F) - 64;
+            let mut mantissa: u64 = 0;
+            for b in &bytes[1..] {
+                mantissa = (mantissa << 8) | u64::from(*b);
+            }
+            let bits = 8 * (bytes.len() as i32 - 1);
+            let value = mantissa as f64 * 2_f64.powi(-bits) * 16_f64.powi(exponent);
+            if negative { -value } else { value }
+        }
+        _ => return None,
+    };
+    if !exact.is_finite() {
+        return None;
+    }
+    if bytes.len() == 4 {
+        for digits in 1..=9 {
+            let shorter: f64 = format!("{exact:.prec$e}", prec = digits - 1).parse().ok()?;
+            let mut again = [0; 4];
+            if encode_float(shorter, format, &mut again).is_ok() && again == bytes {
+                return Some(Value::Float(shorter));
+            }
+        }
+    }
+    Some(Value::Float(exact))
+}
+
+/// Writes a floating point number into its 4 or 8 bytes.
+pub fn encode_float(value: f64, format: FloatFormat, field: &mut [u8]) -> Result<(), String> {
+    if !value.is_finite() {
+        return Err("it is not a finite number".into());
+    }
+    match (format, field.len()) {
+        (FloatFormat::Ieee, 4) => {
+            let single = value as f32;
+            if !single.is_finite() {
+                return Err(format!("{value} is too large for a COMP-1"));
+            }
+            field.copy_from_slice(&single.to_be_bytes());
+        }
+        (FloatFormat::Ieee, 8) => field.copy_from_slice(&value.to_be_bytes()),
+        (FloatFormat::Hex, 4 | 8) => {
+            field.fill(0);
+            if value == 0.0 {
+                return Ok(());
+            }
+            let bits = 8 * (field.len() as i32 - 1);
+            let magnitude = value.abs();
+            // magnitude = fraction * 16^exponent, fraction from 1/16 to 1.
+            let mut exponent = (magnitude.log2() / 4.0).floor() as i32 + 1;
+            let mut fraction = magnitude / 16_f64.powi(exponent);
+            while fraction >= 1.0 {
+                exponent += 1;
+                fraction /= 16.0;
+            }
+            while fraction < 1.0 / 16.0 {
+                exponent -= 1;
+                fraction *= 16.0;
+            }
+            let mut mantissa = (fraction * 2_f64.powi(bits)).round() as u64;
+            if mantissa >> bits != 0 {
+                mantissa >>= 4;
+                exponent += 1;
+            }
+            if exponent + 64 > 127 {
+                return Err(format!("{value} is too large for its floating point bytes"));
+            }
+            if exponent + 64 < 0 {
+                // Too small to hold: zero.
+                return Ok(());
+            }
+            field[0] =
+                u8::try_from(exponent + 64).unwrap_or(0) | if value < 0.0 { 0x80 } else { 0 };
+            for (i, b) in field[1..].iter_mut().rev().enumerate() {
+                *b = ((mantissa >> (8 * i)) & 0xFF) as u8;
+            }
+        }
+        _ => return Err("a floating point item has 4 or 8 bytes".into()),
+    }
+    Ok(())
 }
 
 /// A sign nibble: true for minus, None if it is not a sign.
@@ -363,7 +610,7 @@ impl Writer<'_> {
                 let keys = &self.layout.redefines[set].keys;
                 let shown = keys
                     .iter()
-                    .position(|k| k.as_ref().is_some_and(|k| fields.contains_key(k)))
+                    .position(|k| k.iter().any(|k| fields.contains_key(k)))
                     .unwrap_or(0);
                 if shown != member {
                     continue;
@@ -503,6 +750,15 @@ impl Writer<'_> {
                     Some(_) => return Err(refuse("it is a number".into())),
                 };
                 encode(scaled, n, field).map_err(refuse)?;
+            }
+            Element::Float => {
+                let x = match value {
+                    None | Some(Value::Null) => 0.0,
+                    Some(Value::Int(v)) => *v as f64,
+                    Some(Value::Float(x)) => *x,
+                    Some(_) => return Err(refuse("it is a number".into())),
+                };
+                encode_float(x, self.layout.float, field).map_err(refuse)?;
             }
         }
         Ok(())
