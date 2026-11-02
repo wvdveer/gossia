@@ -393,7 +393,7 @@ impl ClioApp {
                     scroll_to,
                     layout,
                     look: None,
-                    font: (None, None),
+                    font: Font::default(),
                     column,
                     column_targets: Vec::new(),
                     at: Vec::new(),
@@ -726,7 +726,7 @@ struct Painter<'a> {
     /// What the control being drawn says about how to draw its node.
     look: Option<(Path, Look)>,
     /// The font of the group being drawn, which its controls inherit.
-    font: (Option<Typeface>, Option<u32>),
+    font: Font,
     /// In layout mode: the column selected in the table of the selected
     /// control.
     column: Option<String>,
@@ -1110,7 +1110,16 @@ impl Painter<'_> {
 
     fn control_gated(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
         if self.layout.is_some() {
-            self.control_in_style(ui, c, slot);
+            // Only the fixed colours, which run nothing.
+            let gate =
+                Gate::default().with_fixed(c.text_colour.as_deref(), c.fill_colour.as_deref());
+            if gate == Gate::default() {
+                self.control_in_style(ui, c, slot);
+            } else {
+                self.styled(ui, &gate, false, |this, ui| {
+                    this.control_in_style(ui, c, slot)
+                });
+            }
             return;
         }
         let gate = crate::form_exprs::gate(
@@ -1119,7 +1128,8 @@ impl Painter<'_> {
             self.form,
             &slot.at,
             &self.rows,
-        );
+        )
+        .with_fixed(c.text_colour.as_deref(), c.fill_colour.as_deref());
         if gate == Gate::default() {
             self.control_in_style(ui, c, slot);
             return;
@@ -1213,18 +1223,34 @@ impl Painter<'_> {
     /// A control, in its font: its own, or else the one of the group it is
     /// in, for the typeface and the size separately.
     fn control_in_style(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
-        if c.font.is_none() && c.font_size.is_none() {
+        if c.font.is_none() && c.font_size.is_none() && c.bold.is_none() && c.italic.is_none() {
             self.control_in_font(ui, c, slot);
             return;
         }
         let outer = self.font;
-        self.font = (c.font.or(outer.0), c.font_size.or(outer.1));
-        let (typeface, size) = self.font;
+        self.font = Font {
+            typeface: c.font.or(outer.typeface),
+            size: c.font_size.or(outer.size),
+            bold: c.bold.unwrap_or(outer.bold),
+            italic: c.italic.unwrap_or(outer.italic),
+        };
+        let font = self.font;
         ui.scope(|ui| {
-            crate::style::use_font(ui.style_mut(), typeface, size);
+            font.apply(ui.style_mut());
             self.control_in_font(ui, c, slot);
         });
         self.font = outer;
+    }
+
+    /// Text in the font of the control being drawn: slanted when it is
+    /// italic (bold comes with the font itself).
+    fn text(&self, text: impl Into<RichText>) -> RichText {
+        let text = text.into();
+        if self.font.italic {
+            text.italics()
+        } else {
+            text
+        }
     }
 
     fn control_in_font(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
@@ -1659,7 +1685,7 @@ impl Painter<'_> {
             (true, true, rect.right_bottom(), "Size handle"),
         ];
         for (sets_width, sets_height, centre, name) in handles {
-            if sets_height && c.kind == ControlKind::Separator {
+            if sets_height && c.kind == ControlKind::Separator && !c.vertical {
                 continue;
             }
             let area = egui::Rect::from_center_size(centre, egui::vec2(8.0, 8.0));
@@ -1978,7 +2004,13 @@ impl Painter<'_> {
             ui.horizontal(|ui| {
                 let help = ty.and_then(|ty| self.help(path, ty));
                 let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
-                label_cell(ui, label.as_deref().unwrap_or(""), false, help, width);
+                label_cell(
+                    ui,
+                    self.text(label.as_deref().unwrap_or("")),
+                    false,
+                    help,
+                    width,
+                );
                 let can = self.app.can_edit(path);
                 if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
@@ -1986,7 +2018,8 @@ impl Painter<'_> {
             });
             return;
         }
-        let framed = label.is_some() || path.is_some() || layout;
+        let bordered = c.border_width.is_some_and(|w| w > 0) || c.border_colour.is_some();
+        let framed = label.is_some() || path.is_some() || layout || bordered;
         let draw = |this: &mut Self, ui: &mut egui::Ui| {
             if let Some(problem) = &problem {
                 this.placeholder(ui, c, problem);
@@ -2055,6 +2088,16 @@ impl Painter<'_> {
             return;
         }
         let mut frame = egui::Frame::group(ui.style());
+        if let Some(colour) = c
+            .border_colour
+            .as_deref()
+            .and_then(crate::form_exprs::fixed)
+        {
+            frame.stroke.color = colour;
+        }
+        if let Some(width) = c.border_width {
+            frame.stroke.width = width as f32;
+        }
         if let Some(padding) = c.padding {
             frame = frame.inner_margin(padding as f32);
         }
@@ -2071,7 +2114,8 @@ impl Painter<'_> {
             let title = label.clone().unwrap_or_default();
             if layout {
                 let header = ui.add(
-                    egui::Label::new(RichText::new(&title).strong()).sense(Sense::click_and_drag()),
+                    egui::Label::new(self.text(RichText::new(&title).strong()))
+                        .sense(Sense::click_and_drag()),
                 );
                 let name = control_name(c);
                 // In a Free or Grid group, dragging the title moves the group.
@@ -2143,7 +2187,13 @@ impl Painter<'_> {
         match c.kind {
             ControlKind::Label if c.is_template() => self.template_label(ui, c),
             ControlKind::Label => {
-                ui.label(c.text.clone().unwrap_or_default());
+                ui.label(self.text(c.text.clone().unwrap_or_default()));
+            }
+            ControlKind::Separator if c.vertical => {
+                let height = c.height.map_or(ROW_HEIGHT, |h| h as f32);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, height), Sense::hover());
+                let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                ui.painter().vline(rect.center().x, rect.y_range(), stroke);
             }
             ControlKind::Separator => {
                 ui.separator();
@@ -2313,7 +2363,7 @@ impl Painter<'_> {
             // Absent: an empty control, and the object is made on request.
             ui.horizontal(|ui| {
                 let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
-                label_cell(ui, label, required, self.help(path, ty), width);
+                label_cell(ui, self.text(label), required, self.help(path, ty), width);
                 let can = self.app.can_edit(path);
                 if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
@@ -2367,12 +2417,18 @@ impl Painter<'_> {
             _ => 0.0,
         };
         if position == LabelPosition::Top {
-            label_cell(ui, label, required, help.as_deref(), ui.available_width());
+            label_cell(
+                ui,
+                self.text(label),
+                required,
+                help.as_deref(),
+                ui.available_width(),
+            );
         }
         let problem = ui
             .horizontal(|ui| {
                 if position == LabelPosition::Left {
-                    label_cell(ui, label, required, help.as_deref(), width);
+                    label_cell(ui, self.text(label), required, help.as_deref(), width);
                 }
                 self.editor(ui, path, ty, required, false)
             })
@@ -2616,6 +2672,12 @@ impl Painter<'_> {
                     }
                 } else {
                     egui::TextEdit::singleline(&mut text).password(masked)
+                };
+                let mut layouter = italic_layouter;
+                let edit = if self.font.italic {
+                    edit.layouter(&mut layouter)
+                } else {
+                    edit
                 };
                 // Numbers line up on the right, unless the column says.
                 let align = match look.align {
@@ -3177,16 +3239,16 @@ impl Painter<'_> {
                 .iter()
                 .any(|(_, c)| c.as_ref().is_some_and(|c| !c.fields.is_empty()));
         let inherited = self.font;
-        let fonts: Vec<Option<ColumnFont>> = columns
+        let fonts: Vec<Option<Font>> = columns
             .iter()
             .map(|(d, _)| column_font(d, inherited))
             .collect();
         let mut row_height = crate::style::row_height(ui);
-        for (typeface, size) in fonts.iter().flatten() {
-            row_height = row_height.max(crate::style::row_height_in(ui, *typeface, *size));
+        for font in fonts.iter().flatten() {
+            row_height = row_height.max(crate::style::row_height_in(ui, font.typeface, font.size));
         }
         let header_height = match header_font {
-            Some((typeface, size)) => crate::style::row_height_in(ui, typeface, size),
+            Some(font) => crate::style::row_height_in(ui, font.typeface, font.size),
             None => crate::style::row_height(ui),
         };
         let header_height = (header_height - 6.0).max(22.0);
@@ -3277,6 +3339,11 @@ impl Painter<'_> {
                     let index = rows[row.index()];
                     for (((design, column), font), head) in columns.iter().zip(&fonts).zip(&heads) {
                         row.col(|ui| {
+                            // The cell in the font of its column, italic included.
+                            let outer = self.font;
+                            if let Some(own) = font {
+                                self.font = *own;
+                            }
                             in_font(ui, *font, |ui| {
                                 aligned(ui, design.align, |ui| match column {
                                     None if !design.is_row_number() => {
@@ -3332,6 +3399,10 @@ impl Painter<'_> {
                                             ),
                                             None => Gate::default(),
                                         };
+                                        let gate = gate.with_fixed(
+                                            design.text_colour.as_deref(),
+                                            design.fill_colour.as_deref(),
+                                        );
                                         if gate == Gate::default() {
                                             self.editor(
                                                 ui,
@@ -3355,6 +3426,7 @@ impl Painter<'_> {
                                     }
                                 });
                             });
+                            self.font = outer;
                         });
                     }
                     // A right click on the row opens its menu.
@@ -3585,13 +3657,13 @@ impl Painter<'_> {
             self.own_expression(ExprKind::Template),
         ) {
             Shown::Untrusted => {
-                ui.label(cliotree_core::form::template::with_marks(&text, UNTRUSTED))
+                ui.label(self.text(cliotree_core::form::template::with_marks(&text, UNTRUSTED)))
                     .on_hover_text(
                         "The text runs Python, so this workbook has to be trusted first.",
                     );
             }
             Shown::Value(value, pending) => {
-                let r = ui.label(value_text(&value));
+                let r = ui.label(self.text(value_text(&value)));
                 if pending {
                     r.on_hover_text("Waiting to run again.");
                 }
@@ -3630,11 +3702,17 @@ impl Painter<'_> {
         );
         let help = c.help.clone().filter(|h| !h.trim().is_empty());
         if position == LabelPosition::Top {
-            label_cell(ui, &label, false, help.as_deref(), ui.available_width());
+            label_cell(
+                ui,
+                self.text(label.as_str()),
+                false,
+                help.as_deref(),
+                ui.available_width(),
+            );
         }
         ui.horizontal(|ui| {
             if position == LabelPosition::Left {
-                label_cell(ui, &label, false, help.as_deref(), width);
+                label_cell(ui, self.text(label.as_str()), false, help.as_deref(), width);
             }
             let box_width = if self.sized {
                 ui.available_width()
@@ -3709,10 +3787,14 @@ impl Painter<'_> {
             });
         }
         let shown_text = text.clone();
+        let mut layouter = italic_layouter;
         let mut edit = egui::TextEdit::singleline(&mut text)
             .id(b.id.with("box"))
             .interactive(writer.is_some())
             .desired_width(b.width);
+        if self.font.italic {
+            edit = edit.layouter(&mut layouter);
+        }
         if let Some(colour) = colour {
             edit = edit.text_color(colour);
         }
@@ -3899,6 +3981,10 @@ impl Painter<'_> {
                                     &rows,
                                     &design.name,
                                     Some(index),
+                                )
+                                .with_fixed(
+                                    design.text_colour.as_deref(),
+                                    design.fill_colour.as_deref(),
                                 );
                                 // A column with a write procedure is a box
                                 // that can be typed into.
@@ -4034,6 +4120,7 @@ impl Painter<'_> {
             }
             None => Gate::default(),
         };
+        let gate = gate.with_fixed(design.text_colour.as_deref(), design.fill_colour.as_deref());
         let title = design.label.clone().unwrap_or_else(|| design.name.clone());
         let label = format!("{title} [{index}]");
         let id = ui.make_persistent_id((
@@ -4286,7 +4373,7 @@ fn count_text(n: usize) -> String {
 
 /// The label of a field: fixed width so that the editors line up, a mark for
 /// a required field, and the help text of the schema on hover.
-fn label_cell(ui: &mut egui::Ui, label: &str, required: bool, help: Option<&str>, width: f32) {
+fn label_cell(ui: &mut egui::Ui, label: RichText, required: bool, help: Option<&str>, width: f32) {
     if width <= 0.0 {
         return;
     }
@@ -4309,30 +4396,63 @@ fn label_cell(ui: &mut egui::Ui, label: &str, required: bool, help: Option<&str>
     }
 }
 
-/// A typeface and a size, each inherited when None.
-type ColumnFont = (Option<Typeface>, Option<u32>);
+/// The font text is drawn in: a typeface and a size (each the interface's
+/// when None), bold and italic. Controls inherit it from their group.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Font {
+    typeface: Option<Typeface>,
+    size: Option<u32>,
+    bold: bool,
+    italic: bool,
+}
+
+impl Font {
+    /// Makes what is drawn with `style` use the font. Italic is not in the
+    /// style: the text that is drawn applies it (see [`Painter::text`]).
+    fn apply(&self, style: &mut egui::Style) {
+        crate::style::use_font_in(style, self.typeface, self.size, self.bold);
+    }
+}
 
 /// The font of a column that has one of its own, over the one it inherits.
-fn column_font(design: &ColumnDesign, inherited: ColumnFont) -> Option<ColumnFont> {
-    (design.font.is_some() || design.font_size.is_some()).then(|| {
-        (
-            design.font.or(inherited.0),
-            design.font_size.or(inherited.1),
-        )
+fn column_font(design: &ColumnDesign, inherited: Font) -> Option<Font> {
+    let own = design.font.is_some()
+        || design.font_size.is_some()
+        || design.bold.is_some()
+        || design.italic.is_some();
+    own.then(|| Font {
+        typeface: design.font.or(inherited.typeface),
+        size: design.font_size.or(inherited.size),
+        bold: design.bold.unwrap_or(inherited.bold),
+        italic: design.italic.unwrap_or(inherited.italic),
     })
 }
 
+/// Lays out the text of a text box slanted, for a field in an italic font.
+fn italic_layouter(
+    ui: &egui::Ui,
+    text: &dyn egui::TextBuffer,
+    wrap: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let colour = ui
+        .visuals()
+        .override_text_color
+        .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
+    let mut job = egui::text::LayoutJob::simple(text.as_str().to_owned(), font, colour, wrap);
+    for section in &mut job.sections {
+        section.format.italics = true;
+    }
+    ui.fonts_mut(|f| f.layout_job(job))
+}
+
 /// Draws in a font, if one is given.
-fn in_font<R>(
-    ui: &mut egui::Ui,
-    font: Option<ColumnFont>,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
+fn in_font<R>(ui: &mut egui::Ui, font: Option<Font>, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     match font {
         None => add(ui),
-        Some((typeface, size)) => {
+        Some(font) => {
             ui.scope(|ui| {
-                crate::style::use_font(ui.style_mut(), typeface, size);
+                font.apply(ui.style_mut());
                 add(ui)
             })
             .inner
@@ -4370,7 +4490,7 @@ struct FormTable<'a> {
     /// selected in layout mode, and out of it their expressions hide a
     /// column or colour a cell.
     at: Option<Address>,
-    header_font: Option<ColumnFont>,
+    header_font: Option<Font>,
 }
 
 /// What of a table on a form is shown, by the filters and the hiding of the
@@ -4536,12 +4656,12 @@ pub(crate) fn control_name(control: &Control) -> String {
 
 /// A font that a control sets for a part of itself, over the one it inherits;
 /// None if it sets neither the typeface nor the size.
-fn own_font(
-    typeface: Option<Typeface>,
-    size: Option<u32>,
-    inherited: ColumnFont,
-) -> Option<ColumnFont> {
-    (typeface.is_some() || size.is_some()).then(|| (typeface.or(inherited.0), size.or(inherited.1)))
+fn own_font(typeface: Option<Typeface>, size: Option<u32>, inherited: Font) -> Option<Font> {
+    (typeface.is_some() || size.is_some()).then(|| Font {
+        typeface: typeface.or(inherited.typeface),
+        size: size.or(inherited.size),
+        ..inherited
+    })
 }
 
 /// A size dragged to `points`, snapped to the grid unless `snap` is off, and

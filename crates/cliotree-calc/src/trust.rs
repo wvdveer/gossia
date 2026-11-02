@@ -273,8 +273,14 @@ impl Calc {
                     ("value", &control.value),
                     ("items", &control.items),
                 ];
+                // A fixed colour runs nothing.
+                let runs = |what: &str, t: &str| {
+                    !t.trim().is_empty()
+                        && !(what.ends_with("colour")
+                            && cliotree_core::form::fixed_colour(t).is_some())
+                };
                 for (what, text) in own {
-                    if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+                    if let Some(text) = text.as_deref().filter(|t| runs(what, t)) {
                         items.insert(format!("{place} {what}"), digest_of(text));
                     }
                 }
@@ -306,7 +312,7 @@ impl Calc {
                         ("write procedure", &column.write_procedure),
                     ];
                     for (what, text) in exprs {
-                        if let Some(text) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+                        if let Some(text) = text.as_deref().filter(|t| runs(what, t)) {
                             items.insert(
                                 format!("{place} column {} {what}", column.name),
                                 digest_of(text),

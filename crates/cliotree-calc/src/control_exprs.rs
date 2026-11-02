@@ -23,7 +23,7 @@
 //! known only once the expression has run, so the expressions inside follow
 //! its result.
 
-use cliotree_core::form::{ColumnDesign, Control, ControlKind, template};
+use cliotree_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template};
 use cliotree_core::{Kind, Node, Path, Value};
 use indexmap::IndexMap;
 
@@ -65,8 +65,14 @@ impl ExprKind {
         let plain = match self {
             ExprKind::Visible => control.visible_when.as_deref(),
             ExprKind::Enabled => control.enabled_when.as_deref(),
-            ExprKind::TextColour => control.text_colour.as_deref(),
-            ExprKind::FillColour => control.fill_colour.as_deref(),
+            ExprKind::TextColour => control
+                .text_colour
+                .as_deref()
+                .filter(|t| fixed_colour(t).is_none()),
+            ExprKind::FillColour => control
+                .fill_colour
+                .as_deref()
+                .filter(|t| fixed_colour(t).is_none()),
             ExprKind::Choices => control.choices.as_deref(),
             ExprKind::Value => control
                 .shows_value()
@@ -99,8 +105,14 @@ impl ExprKind {
         match self {
             ExprKind::Visible => column.visible_when.as_deref(),
             ExprKind::Enabled => column.enabled_when.as_deref(),
-            ExprKind::TextColour => column.text_colour.as_deref(),
-            ExprKind::FillColour => column.fill_colour.as_deref(),
+            ExprKind::TextColour => column
+                .text_colour
+                .as_deref()
+                .filter(|t| fixed_colour(t).is_none()),
+            ExprKind::FillColour => column
+                .fill_colour
+                .as_deref()
+                .filter(|t| fixed_colour(t).is_none()),
             ExprKind::Choices => column.choices.as_deref(),
             ExprKind::Value => column.value.as_deref(),
             ExprKind::Template | ExprKind::Items => None,

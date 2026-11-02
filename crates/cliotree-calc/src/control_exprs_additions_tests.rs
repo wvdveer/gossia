@@ -253,3 +253,40 @@ fn the_new_expressions_are_in_the_trust_digest() {
     repeater.item_name = Some("n".into());
     assert_ne!(book(vec![repeater]).calc.fingerprint(), with_items);
 }
+
+/// A fixed colour (`#rrggbb`) runs no Python: it is not an expression of the
+/// control and not in the trust digest; one given by an expression is both.
+#[test]
+fn a_fixed_colour_runs_nothing_and_is_not_in_the_trust_digest() {
+    let plain = book(Vec::new()).calc.fingerprint();
+    let mut label = Control::new(ControlKind::Label);
+    label.text = Some("Hello".into());
+    let bare = book(vec![label.clone()]).calc.fingerprint();
+    assert_eq!(bare, plain);
+    label.text_colour = Some("#ff0000".into());
+    label.fill_colour = Some(" #00FF00 ".into());
+    let mut column = ColumnDesign::named("no");
+    column.fill_colour = Some("#123456".into());
+    let mut table = Control::bound(ControlKind::Repeater, &p("orders"));
+    table.mode = Some(RepeaterMode::Table);
+    table.table_columns = vec![column];
+    let b = book(vec![label.clone(), table.clone()]);
+    assert_eq!(b.at(&[0], &[], ExprKind::TextColour), None);
+    assert_eq!(b.cell(&[1], "no", 0, ExprKind::FillColour), None);
+    let fixed = b.calc.fingerprint();
+    assert_eq!(
+        fixed,
+        book(vec![label.clone(), {
+            let mut t = table.clone();
+            t.table_columns.clear();
+            t
+        }])
+        .calc
+        .fingerprint()
+    );
+    // An expression giving the same colour runs, and is in the digest.
+    label.text_colour = Some("'#ff0000'".into());
+    let b = book(vec![label, table]);
+    assert_eq!(b.at(&[0], &[], ExprKind::TextColour), ok(s("#ff0000")));
+    assert_ne!(b.calc.fingerprint(), fixed);
+}

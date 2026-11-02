@@ -1344,6 +1344,9 @@ impl ClioApp {
                         &mut edited.thousands,
                         &mut edited.decimals,
                         &mut edited.date_format,
+                        &mut edited.percent,
+                        &mut edited.prefix,
+                        &mut edited.suffix,
                         "field",
                     )
                 {
@@ -1391,6 +1394,9 @@ impl ClioApp {
                         });
                         edited.columns = (columns > 1).then_some(columns);
                     });
+                }
+                if border_properties(ui, &mut edited) {
+                    merge = Some(key("border"));
                 }
             }
             ControlKind::Repeater => {
@@ -1474,7 +1480,10 @@ impl ClioApp {
                     ui.weak("A function of a module, called as name(form, ctx).");
                 }
             }
-            ControlKind::Separator => {}
+            ControlKind::Separator => {
+                ui.checkbox(&mut edited.vertical, "Vertical")
+                    .on_hover_text("A vertical line, as tall as its row or cell");
+            }
         }
         let parent = at.split_last().and_then(|(_, parent)| design.get(parent));
         let in_free = parent.is_some_and(Control::is_free);
@@ -1495,6 +1504,7 @@ impl ClioApp {
         }
         if kind != ControlKind::Separator {
             font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
+            emphasis_properties(ui, &mut edited.bold, &mut edited.italic, "control");
         }
         let coloured = kind != ControlKind::Separator;
         let fields = [
@@ -1507,13 +1517,7 @@ impl ClioApp {
             if !shown {
                 continue;
             }
-            if expr_text(
-                ui,
-                expr_label(expr),
-                value,
-                expr_hint(expr),
-                draft_id(at, None, expr),
-            ) {
+            if expression_box(ui, expr, value, draft_id(at, None, expr)) {
                 merge = Some(key(expr_property(expr)));
             }
             self.expression_error(ui, at, None, expr);
@@ -1544,8 +1548,9 @@ impl ClioApp {
             }
         }
         ui.weak(
-            "Python expressions, run where the control is bound. A colour is a name, \
-             \"#rrggbb\" or (r, g, b); None is the usual colour. Choices is a list of \
+            "Python expressions, run where the control is bound. A colour is Fixed (picked; \
+             no Python, so it shows in an untrusted workbook too) or an expression giving a \
+             name, \"#rrggbb\" or (r, g, b); None is the usual colour. Choices is a list of \
              values, (code, text) pairs or {\"value\": .., \"label\": ..} dicts.",
         );
 
@@ -1819,6 +1824,9 @@ impl ClioApp {
                 &mut edited.thousands,
                 &mut edited.decimals,
                 &mut edited.date_format,
+                &mut edited.percent,
+                &mut edited.prefix,
+                &mut edited.suffix,
                 "column",
             )
         {
@@ -1831,6 +1839,7 @@ impl ClioApp {
             "Cell ",
             "cells",
         );
+        emphasis_properties(ui, &mut edited.bold, &mut edited.italic, "cells");
         // A column that shows an expression: in a table over an expression
         // every column, in a table bound to an array one that is not a field
         // of the items.
@@ -1850,13 +1859,7 @@ impl ClioApp {
                 (ExprKind::FillColour, &mut edited.fill_colour),
             ];
             for (expr, value) in fields {
-                if expr_text(
-                    ui,
-                    expr_label(expr),
-                    value,
-                    expr_hint(expr),
-                    draft_id(at, Some(&column.name), expr),
-                ) {
+                if expression_box(ui, expr, value, draft_id(at, Some(&column.name), expr)) {
                     merge = Some(key(expr_property(expr)));
                 }
                 self.expression_error(ui, at, Some(&column.name), expr);
@@ -1884,13 +1887,7 @@ impl ClioApp {
                 (ExprKind::FillColour, &mut edited.fill_colour),
             ];
             for (expr, value) in fields {
-                if expr_text(
-                    ui,
-                    expr_label(expr),
-                    value,
-                    expr_hint(expr),
-                    draft_id(at, Some(&column.name), expr),
-                ) {
+                if expression_box(ui, expr, value, draft_id(at, Some(&column.name), expr)) {
                     merge = Some(key(expr_property(expr)));
                 }
                 self.expression_error(ui, at, Some(&column.name), expr);
@@ -2315,6 +2312,83 @@ fn font_properties(
     });
 }
 
+/// Bold and italic, each inherited, on or off. `what` names them for a
+/// screen reader: "Bold of the control".
+fn emphasis_properties(
+    ui: &mut egui::Ui,
+    bold: &mut Option<bool>,
+    italic: &mut Option<bool>,
+    what: &str,
+) {
+    ui.horizontal(|ui| {
+        for (label, value) in [("Bold", bold), ("Italic", italic)] {
+            ui.label(label);
+            let mut chosen = *value;
+            let text = |v: Option<bool>| match v {
+                None => "Inherited",
+                Some(true) => "Yes",
+                Some(false) => "No",
+            };
+            let response = egui::ComboBox::from_id_salt(("property_emphasis", label, what))
+                .width(84.0)
+                .selected_text(text(chosen))
+                .show_ui(ui, |ui| {
+                    for v in [None, Some(true), Some(false)] {
+                        ui.selectable_value(&mut chosen, v, text(v));
+                    }
+                })
+                .response;
+            let name = format!("{label} of the {what}");
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+            *value = chosen;
+        }
+    });
+}
+
+/// A group's border: its width in points (automatic is the usual look, 0
+/// none) and its fixed colour. Returns whether either changed.
+fn border_properties(ui: &mut egui::Ui, edited: &mut Control) -> bool {
+    let before = (edited.border_width, edited.border_colour.clone());
+    ui.horizontal(|ui| {
+        ui.label("Border");
+        let mut width = edited.border_width;
+        let response = egui::ComboBox::from_id_salt("property_border_width")
+            .width(84.0)
+            .selected_text(width.map_or_else(|| "Automatic".to_owned(), |w| format!("{w} pt")))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut width, None, "Automatic");
+                for w in 0..=8 {
+                    ui.selectable_value(&mut width, Some(w), format!("{w} pt"));
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Border width of the group")
+        });
+        edited.border_width = width;
+        let mut own = edited.border_colour.is_some();
+        let response = ui.checkbox(&mut own, "Colour");
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::Role::CheckBox,
+                true,
+                own,
+                "Border colour of the group",
+            )
+        });
+        if own != edited.border_colour.is_some() {
+            edited.border_colour = own.then(|| "#808080".to_owned());
+        }
+        if let Some(colour) = &mut edited.border_colour {
+            let mut rgb = cliotree_core::form::fixed_colour(colour).unwrap_or([128, 128, 128]);
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                *colour = hex_colour(rgb);
+            }
+        }
+    });
+    before != (edited.border_width, edited.border_colour.clone())
+}
+
 /// Where the text of a column's title or cells sits: automatic, left, centre
 /// or right. `what` names it for a screen reader: "Alignment of the title".
 fn alignment_choice(ui: &mut egui::Ui, align: &mut Option<Alignment>, label: &str, what: &str) {
@@ -2379,19 +2453,39 @@ fn row_numbering(ui: &mut egui::Ui, edited: &mut ColumnDesign) {
     ui.weak(format!("The rows are numbered {}, ...", first.join(", ")));
 }
 
-/// The format of a number (a thousands separator, decimal places) or of a
+/// The format of a number (percent, a prefix and suffix, a thousands
+/// separator, decimal places) or of a
 /// date (a pattern), for a field or column of that type; nothing for another
 /// type. Returns whether the pattern was typed into.
+#[allow(clippy::too_many_arguments)]
 fn format_properties(
     ui: &mut egui::Ui,
     kind: &Kind,
     thousands: &mut bool,
     decimals: &mut Option<u32>,
     date_format: &mut Option<String>,
+    percent: &mut bool,
+    prefix: &mut Option<String>,
+    suffix: &mut Option<String>,
     what: &str,
 ) -> bool {
     use cliotree_core::format::{DATE_PRESETS, MAX_DECIMALS, date, is_date, is_number};
     if is_number(kind) {
+        let response = ui.checkbox(percent, "Percent");
+        let name = format!("Percent of the {what}");
+        let on = *percent;
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
+        response.on_hover_text("The value times 100, with %: 0.25 is shown as 25%");
+        let typed = option_text(ui, "Prefix", prefix, "such as € ", false)
+            | option_text(ui, "Suffix", suffix, "such as  kg", false);
+        if typed {
+            // As the schema allows.
+            for text in [&mut *prefix, &mut *suffix].into_iter().flatten() {
+                if text.chars().count() > 20 {
+                    *text = text.chars().take(20).collect();
+                }
+            }
+        }
         let response = ui.checkbox(thousands, "Thousands separator");
         let name = format!("Thousands separator of the {what}");
         let on = *thousands;
@@ -2413,7 +2507,7 @@ fn format_properties(
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
             *decimals = chosen;
         });
-        false
+        typed
     } else if is_date(kind) {
         let sample = chrono::NaiveDate::from_ymd_opt(2026, 3, 7).expect("a valid date");
         ui.horizontal(|ui| {
@@ -2471,36 +2565,124 @@ fn expr_text(
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(label);
-        let kept: Option<String> = ui.data(|d| d.get_temp(draft));
-        let mut text = kept
-            .clone()
-            .unwrap_or_else(|| value.clone().unwrap_or_default());
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut text)
-                .id(draft.with("box"))
-                .hint_text(hint)
-                .desired_width(f32::INFINITY),
-        );
-        let name = label.to_owned();
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, &name));
-        if response.lost_focus() {
+        changed = expr_box(ui, label, value, hint, draft);
+    });
+    changed
+}
+
+/// The box of [`expr_text`], without its label; `name` is what a screen
+/// reader calls it.
+fn expr_box(
+    ui: &mut egui::Ui,
+    name: &str,
+    value: &mut Option<String>,
+    hint: &str,
+    draft: egui::Id,
+) -> bool {
+    let kept: Option<String> = ui.data(|d| d.get_temp(draft));
+    let mut text = kept
+        .clone()
+        .unwrap_or_else(|| value.clone().unwrap_or_default());
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .id(draft.with("box"))
+            .hint_text(hint)
+            .desired_width(f32::INFINITY),
+    );
+    let name = name.to_owned();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, &name));
+    if response.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(draft));
+        let typed = (!text.trim().is_empty()).then_some(text);
+        if typed != *value {
+            *value = typed;
+            return true;
+        }
+    } else if response.has_focus() {
+        if response.changed() || kept.is_some() {
+            ui.data_mut(|d| d.insert_temp(draft, text));
+        }
+    } else if kept.is_some() {
+        // Typed into, then left in a way the box did not see (another
+        // control was selected): what was typed is dropped.
+        ui.data_mut(|d| d.remove::<String>(draft));
+    }
+    false
+}
+
+/// The box of an expression of a control or column: a colour, or another.
+fn expression_box(
+    ui: &mut egui::Ui,
+    kind: ExprKind,
+    value: &mut Option<String>,
+    draft: egui::Id,
+) -> bool {
+    match kind {
+        ExprKind::TextColour | ExprKind::FillColour => colour_text(ui, kind, value, draft),
+        _ => expr_text(ui, expr_label(kind), value, expr_hint(kind), draft),
+    }
+}
+
+/// A colour on the property page: an expression (empty for the usual look),
+/// or a fixed colour, picked, which runs no Python and so is shown in an
+/// untrusted workbook too. Returns whether it changed.
+fn colour_text(
+    ui: &mut egui::Ui,
+    kind: ExprKind,
+    value: &mut Option<String>,
+    draft: egui::Id,
+) -> bool {
+    let label = expr_label(kind);
+    let first = if kind == ExprKind::TextColour {
+        [0x00, 0x00, 0x00]
+    } else {
+        [0xff, 0xf2, 0xcc]
+    };
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let was_fixed = value
+            .as_deref()
+            .and_then(cliotree_core::form::fixed_colour)
+            .is_some();
+        let mut fixed = was_fixed;
+        let response = egui::ComboBox::from_id_salt(draft.with("kind"))
+            .width(96.0)
+            .selected_text(if fixed { "Fixed" } else { "Expression" })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut fixed, false, "Expression");
+                ui.selectable_value(&mut fixed, true, "Fixed");
+            })
+            .response;
+        let name = format!("Kind of {}", label.to_lowercase());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+        if fixed != was_fixed {
+            *value = fixed.then(|| hex_colour(first));
             ui.data_mut(|d| d.remove::<String>(draft));
-            let typed = (!text.trim().is_empty()).then_some(text);
-            if typed != *value {
-                *value = typed;
+            changed = true;
+        }
+        if fixed {
+            let mut rgb = value
+                .as_deref()
+                .and_then(cliotree_core::form::fixed_colour)
+                .unwrap_or(first);
+            let response = ui.color_edit_button_srgb(&mut rgb);
+            let name = label.to_owned();
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+            if response.changed() {
+                *value = Some(hex_colour(rgb));
                 changed = true;
             }
-        } else if response.has_focus() {
-            if response.changed() || kept.is_some() {
-                ui.data_mut(|d| d.insert_temp(draft, text));
-            }
-        } else if kept.is_some() {
-            // Typed into, then left in a way the box did not see (another
-            // control was selected): what was typed is dropped.
-            ui.data_mut(|d| d.remove::<String>(draft));
+            ui.weak(value.as_deref().unwrap_or_default());
+        } else {
+            changed |= expr_box(ui, label, value, expr_hint(kind), draft);
         }
     });
     changed
+}
+
+fn hex_colour([r, g, b]: [u8; 3]) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 /// Whether a name can be an item or list name: a Python identifier.
@@ -2677,7 +2859,7 @@ fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32)
             "Width in points",
         );
     }
-    if kind != ControlKind::Separator {
+    if kind != ControlKind::Separator || edited.vertical {
         optional_number(
             ui,
             "Height",

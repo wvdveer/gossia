@@ -628,12 +628,25 @@ pub struct ColumnDesign {
     /// ISO 8601, `yyyy-mm-dd`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_format: Option<String>,
+    /// For a number: shown times 100, with `%`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub percent: bool,
+    /// For a number: text before and after it, such as `€ ` or ` kg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
     /// The font of the cells. Absent: the font of the table. The titles of
     /// the columns are in the table's `header_font`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font: Option<FontFamily>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
+    /// Bold and italic text. Absent: as the table's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
     /// Python expressions, without the `=`. *Visible when* runs once for the
     /// table, at the array, and hides the whole column; the others run for
     /// each row, at the cell (`this` is the cell, `parent` the item).
@@ -731,8 +744,13 @@ impl ColumnDesign {
             thousands: false,
             decimals: None,
             date_format: None,
+            percent: false,
+            prefix: None,
+            suffix: None,
             font: None,
             font_size: None,
+            bold: None,
+            italic: None,
             visible_when: None,
             enabled_when: None,
             text_colour: None,
@@ -763,6 +781,9 @@ impl ColumnDesign {
             thousands: self.thousands,
             decimals: self.decimals,
             date_format: self.date_format.clone(),
+            percent: self.percent,
+            prefix: self.prefix.clone(),
+            suffix: self.suffix.clone(),
         }
     }
 }
@@ -775,6 +796,11 @@ pub struct Format {
     pub thousands: bool,
     pub decimals: Option<u32>,
     pub date_format: Option<String>,
+    /// A number times 100, with `%` after it.
+    pub percent: bool,
+    /// Text before and after a number.
+    pub prefix: Option<String>,
+    pub suffix: Option<String>,
 }
 
 impl Format {
@@ -784,12 +810,43 @@ impl Format {
 
     /// What a value looks like in this format, or None if it does not apply.
     pub fn apply(&self, value: &crate::Value) -> Option<String> {
-        crate::format::formatted(
-            value,
-            self.thousands,
-            self.decimals,
-            self.date_format.as_deref(),
-        )
+        use crate::Value;
+        let number = matches!(value, Value::Int(_) | Value::Float(_));
+        let decorated = self.percent || self.prefix.is_some() || self.suffix.is_some();
+        if !(number && decorated) {
+            return crate::format::formatted(
+                value,
+                self.thousands,
+                self.decimals,
+                self.date_format.as_deref(),
+            );
+        }
+        let shown = match value {
+            Value::Float(x) if !x.is_finite() => return None,
+            Value::Int(n) if self.percent => match n.checked_mul(100) {
+                Some(n) => Value::Int(n),
+                None => Value::Float(*n as f64 * 100.0),
+            },
+            // Rounded, so that 0.07 is 7%, not 7.000000000000001%; and a whole
+            // percentage, with no decimal places set, is 25%, not 25.0%.
+            Value::Float(x) if self.percent => {
+                let x = (x * 100.0 * 1e9).round() / 1e9;
+                if self.decimals.is_none() && x.fract() == 0.0 && x.abs() < 1e15 {
+                    Value::Int(x as i64)
+                } else {
+                    Value::Float(x)
+                }
+            }
+            other => other.clone(),
+        };
+        let body = crate::format::number(&shown, self.thousands, self.decimals)
+            .unwrap_or_else(|| crate::format::plain_number(&shown));
+        Some(format!(
+            "{}{body}{}{}",
+            self.prefix.as_deref().unwrap_or_default(),
+            if self.percent { "%" } else { "" },
+            self.suffix.as_deref().unwrap_or_default()
+        ))
     }
 }
 
@@ -871,6 +928,14 @@ pub struct Control {
     /// ISO 8601, `yyyy-mm-dd`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_format: Option<String>,
+    /// For a number: shown times 100, with `%`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub percent: bool,
+    /// For a number: text before and after it, such as `€ ` or ` kg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
     /// For a button: the procedure it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub procedure: Option<String>,
@@ -884,9 +949,10 @@ pub struct Control {
     pub visible_when: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_when: Option<String>,
-    /// Python expressions giving the colour of the control's text and of its
-    /// background: a name, `#rrggbb` or an `(r, g, b)` tuple, or `None` for
-    /// the usual look.
+    /// The colour of the control's text and of its background: a fixed
+    /// colour, `#rrggbb` (see [`fixed_colour`]), which runs no Python, or a
+    /// Python expression giving a name, `"#rrggbb"` or an `(r, g, b)` tuple,
+    /// or `None` for the usual look.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_colour: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -907,6 +973,12 @@ pub struct Control {
     /// The size of the control's text, in points. Absent: as for `font`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
+    /// Bold and italic text. Absent: as for `font`; `false` undoes the
+    /// group's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
     /// For a repeater: the font of its title. Absent: the control's font.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_font: Option<FontFamily>,
@@ -949,6 +1021,15 @@ pub struct Control {
     pub spacing: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub padding: Option<u32>,
+    /// For a group: the width of its border in points, 0 to 8 (0: none),
+    /// and its colour, a fixed colour `#rrggbb`. Absent: the usual look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_colour: Option<String>,
+    /// For a separator: a vertical line instead of a horizontal one.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub vertical: bool,
     /// For a group: how it arranges its controls. Absent: flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<GroupLayout>,
@@ -1069,6 +1150,9 @@ impl Control {
             thousands: false,
             decimals: None,
             date_format: None,
+            percent: false,
+            prefix: None,
+            suffix: None,
             procedure: None,
             write_procedure: None,
             visible_when: None,
@@ -1079,6 +1163,8 @@ impl Control {
             allow_other: false,
             font: None,
             font_size: None,
+            bold: None,
+            italic: None,
             title_font: None,
             title_font_size: None,
             header_font: None,
@@ -1093,6 +1179,9 @@ impl Control {
             new_row: false,
             spacing: None,
             padding: None,
+            border_width: None,
+            border_colour: None,
+            vertical: false,
             layout: None,
             base_width: None,
             base_height: None,
@@ -1153,6 +1242,9 @@ impl Control {
             thousands: self.thousands,
             decimals: self.decimals,
             date_format: self.date_format.clone(),
+            percent: self.percent,
+            prefix: self.prefix.clone(),
+            suffix: self.suffix.clone(),
         }
     }
 
@@ -1250,6 +1342,18 @@ impl Default for FormDesign {
 
 // ----------------------------------------------------------- the schema
 
+/// The colour a fixed colour property gives: `#rrggbb`, or None if the text
+/// is something else (an expression). `#` begins a comment in Python, so no
+/// expression is ever a fixed colour.
+pub fn fixed_colour(text: &str) -> Option<[u8; 3]> {
+    let hex = text.trim().strip_prefix('#')?;
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
 /// The text of the schema of design documents (`builtin:form`).
 pub fn form_schema_source() -> &'static str {
     r##"{
@@ -1289,6 +1393,9 @@ pub fn form_schema_source() -> &'static str {
         "thousands": {"type": "boolean"},
         "decimals": {"type": "integer", "minimum": 0, "maximum": 10},
         "date_format": {"type": "string", "minLength": 1},
+        "percent": {"type": "boolean"},
+        "prefix": {"type": "string", "maxLength": 20},
+        "suffix": {"type": "string", "maxLength": 20},
         "procedure": {"type": "string"},
         "write_procedure": {"type": "string"},
         "visible_when": {"type": "string"},
@@ -1299,6 +1406,8 @@ pub fn form_schema_source() -> &'static str {
         "allow_other": {"type": "boolean"},
         "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "bold": {"type": "boolean"},
+        "italic": {"type": "boolean"},
         "title_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "title_font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "header_font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
@@ -1313,6 +1422,9 @@ pub fn form_schema_source() -> &'static str {
         "new_row": {"type": "boolean"},
         "spacing": {"type": "integer", "minimum": 0, "maximum": 48},
         "padding": {"type": "integer", "minimum": 0, "maximum": 48},
+        "border_width": {"type": "integer", "minimum": 0, "maximum": 8},
+        "border_colour": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+        "vertical": {"type": "boolean"},
         "layout": {"type": "string", "enum": ["flow", "free", "grid"]},
         "grid_columns": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},
         "grid_rows": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},
@@ -1345,8 +1457,13 @@ pub fn form_schema_source() -> &'static str {
         "thousands": {"type": "boolean"},
         "decimals": {"type": "integer", "minimum": 0, "maximum": 10},
         "date_format": {"type": "string", "minLength": 1},
+        "percent": {"type": "boolean"},
+        "prefix": {"type": "string", "maxLength": 20},
+        "suffix": {"type": "string", "maxLength": 20},
         "font": {"type": "string", "enum": ["sans", "serif", "monospace", "condensed", "script", "handwriting"]},
         "font_size": {"type": "integer", "minimum": 6, "maximum": 72},
+        "bold": {"type": "boolean"},
+        "italic": {"type": "boolean"},
         "visible_when": {"type": "string"},
         "enabled_when": {"type": "string"},
         "text_colour": {"type": "string"},
@@ -1930,6 +2047,87 @@ mod tests {
             }"##,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn percent_prefix_and_suffix_dress_a_number() {
+        use crate::Value;
+        let f = |percent, prefix: Option<&str>, suffix: Option<&str>, decimals| Format {
+            percent,
+            prefix: prefix.map(str::to_owned),
+            suffix: suffix.map(str::to_owned),
+            decimals,
+            ..Format::default()
+        };
+        assert_eq!(
+            f(true, None, None, None).apply(&Value::Float(0.07)),
+            Some("7%".into())
+        );
+        assert_eq!(
+            f(true, None, None, Some(1)).apply(&Value::Float(0.125)),
+            Some("12.5%".into())
+        );
+        assert_eq!(
+            f(true, None, None, None).apply(&Value::Int(2)),
+            Some("200%".into())
+        );
+        let euros = Format {
+            thousands: true,
+            ..f(false, Some("€ "), None, Some(2))
+        };
+        assert_eq!(
+            euros.apply(&Value::Float(1234.5)),
+            Some("€ 1,234.50".into())
+        );
+        assert_eq!(
+            f(false, None, Some(" kg"), None).apply(&Value::Int(3)),
+            Some("3 kg".into())
+        );
+        // Only numbers are dressed.
+        assert_eq!(
+            f(true, Some("€"), None, None).apply(&Value::Str("x".into())),
+            None
+        );
+        assert_eq!(
+            f(true, None, None, None).apply(&Value::Float(f64::NAN)),
+            None
+        );
+        // A design without them is stored as before.
+        let mut field = Control::new(ControlKind::Field);
+        field.suffix = Some(" kg".into());
+        let design = FormDesign {
+            controls: vec![field],
+            ..FormDesign::default()
+        };
+        let text = design.to_json();
+        assert!(
+            text.contains("\"suffix\": \" kg\"") && !text.contains("percent"),
+            "{text}"
+        );
+        assert_eq!(FormDesign::from_json(&text).unwrap(), design);
+    }
+
+    #[test]
+    fn a_fixed_colour_is_hash_and_six_hex_digits() {
+        assert_eq!(fixed_colour("#1a2B3c"), Some([0x1a, 0x2b, 0x3c]));
+        assert_eq!(fixed_colour(" #ffffff "), Some([255, 255, 255]));
+        for not in [
+            "'#ffffff'",
+            "#fff",
+            "#gggggg",
+            "red",
+            "(1, 2, 3)",
+            "#ffffff00",
+        ] {
+            assert_eq!(fixed_colour(not), None, "{not}");
+        }
+        let mut group = Control::new(ControlKind::Group);
+        group.border_width = Some(9);
+        let design = FormDesign {
+            controls: vec![group],
+            ..FormDesign::default()
+        };
+        assert!(FormDesign::from_json(&design.to_json()).is_err());
     }
 
     /// Designed items nest: a path is read from the item of each repeater

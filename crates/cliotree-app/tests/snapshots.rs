@@ -186,6 +186,66 @@ fn a_form_with_expressions_on_its_controls() {
     check(&mut harness, "form_expressions", &mut results);
 }
 
+/// The look of 0.2.0 on the Default form of Orders: fixed colours, bold and
+/// italic, a group with a border and fill, a vertical separator, and percent,
+/// prefix and suffix.
+#[test]
+fn a_form_with_its_look() {
+    use cliotree_core::form::{Control, ControlKind};
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    {
+        let app = harness.state_mut();
+        let mut design = app.design_of("Default");
+        let value = |label: &str, value: &str| {
+            let mut field = Control::new(ControlKind::Field);
+            field.label = Some(label.into());
+            field.value = Some(value.into());
+            field
+        };
+        let mut group = Control::new(ControlKind::Group);
+        group.label = Some("Totals".into());
+        group.columns = Some(3);
+        group.border_width = Some(2);
+        group.border_colour = Some("#336699".into());
+        group.fill_colour = Some("#eef4ff".into());
+        let mut share = value("Share", "0.125");
+        share.percent = true;
+        share.decimals = Some(1);
+        share.bold = Some(true);
+        let mut price = value("Price", "1234.5");
+        price.prefix = Some("€ ".into());
+        price.thousands = true;
+        price.decimals = Some(2);
+        price.text_colour = Some("#990000".into());
+        let mut weight = value("Weight", "3");
+        weight.suffix = Some(" kg".into());
+        weight.italic = Some(true);
+        let mut note = Control::new(ControlKind::Label);
+        note.text = Some("Bold and italic, in serif".into());
+        note.font = Some(cliotree_core::form::FontFamily::Serif);
+        note.bold = Some(true);
+        note.italic = Some(true);
+        let mut line = Control::new(ControlKind::Separator);
+        line.vertical = true;
+        let mut after = Control::new(ControlKind::Label);
+        after.text = Some("after a vertical line".into());
+        after.fill_colour = Some("#fff2cc".into());
+        group.children = vec![share, price, weight, note, line, after];
+        design.controls.insert(0, group);
+        app.session
+            .calc_mut()
+            .forms_mut()
+            .set("Orders", "Default", design);
+    }
+    show_as(&mut harness, "Default");
+    settle(&mut harness);
+    check(&mut harness, "form_look", &mut results);
+}
+
 #[test]
 fn a_table_with_expressions_on_its_columns() {
     if !enabled() {

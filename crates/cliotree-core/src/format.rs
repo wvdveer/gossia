@@ -65,6 +65,15 @@ pub fn number(value: &Value, thousands: bool, decimals: Option<u32>) -> Option<S
     Some(if thousands { grouped(&text) } else { text })
 }
 
+/// A number as the grid shows it, with no format: `3`, `2.0`, `0.21`.
+pub fn plain_number(value: &Value) -> String {
+    match value {
+        Value::Int(n) => n.to_string(),
+        Value::Float(x) => python_float(*x),
+        _ => String::new(),
+    }
+}
+
 /// A float as Python writes it, as the grid shows it: `2.0`, `0.21`, `1e-07`.
 fn python_float(x: f64) -> String {
     if x == x.trunc() && x.abs() < 1e16 {

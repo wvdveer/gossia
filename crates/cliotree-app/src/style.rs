@@ -40,6 +40,9 @@ pub const CONTROL_RADIUS: u8 = 4;
 pub const PANEL_RADIUS: u8 = 6;
 /// The weight of [`medium`] text.
 const MEDIUM_WEIGHT: f32 = 560.0;
+/// The weight of bold text in forms, as reports lay it out
+/// (`cliotree_layout::fonts`).
+const BOLD_WEIGHT: f32 = 700.0;
 
 // ------------------------------------------------------------ colours
 
@@ -234,6 +237,25 @@ pub fn family(typeface: Typeface) -> FontFamily {
     }
 }
 
+/// The egui family of a typeface in bold: the same font file at the bold
+/// weight, as a family of its own (egui has no weight in a font id).
+pub fn bold_family(typeface: Typeface) -> FontFamily {
+    FontFamily::Name(format!("{}-bold", typeface.key()).into())
+}
+
+/// The bundled font of each typeface, and the name it is registered under.
+fn typeface_font(typeface: Typeface) -> (&'static [u8], &'static str) {
+    use cliotree_layout::fonts::{CAVEAT, DANCING_SCRIPT, GEIST_MONO, INTER, OSWALD, SOURCE_SERIF};
+    match typeface {
+        Typeface::Sans => (INTER, "Inter"),
+        Typeface::Serif => (SOURCE_SERIF, "Source Serif 4"),
+        Typeface::Monospace => (GEIST_MONO, "Geist Mono"),
+        Typeface::Condensed => (OSWALD, "Oswald"),
+        Typeface::Script => (DANCING_SCRIPT, "Dancing Script"),
+        Typeface::Handwriting => (CAVEAT, "Caveat"),
+    }
+}
+
 /// The name of a typeface in a menu: what it is, and the font it is.
 pub fn typeface_label(typeface: Typeface) -> String {
     let font = match typeface {
@@ -310,9 +332,26 @@ fn text_styles(body: FontFamily, scale: f32) -> std::collections::BTreeMap<TextS
 /// other typeface it takes that one too. None keeps the interface font, or
 /// its size. Type badges follow through [`badge_label`].
 pub fn use_font(style: &mut Style, typeface: Option<Typeface>, size: Option<u32>) {
-    let body = typeface.map_or(FontFamily::Proportional, family);
+    use_font_in(style, typeface, size, false);
+}
+
+/// As [`use_font`], in bold when `bold` is set: every text style, headings
+/// and code included, takes the bold weight of its typeface.
+pub fn use_font_in(style: &mut Style, typeface: Option<Typeface>, size: Option<u32>, bold: bool) {
     let scale = size.map_or(1.0, |s| s as f32 / BODY_SIZE);
-    style.text_styles = text_styles(body, scale);
+    if !bold {
+        let body = typeface.map_or(FontFamily::Proportional, family);
+        style.text_styles = text_styles(body, scale);
+        return;
+    }
+    let typeface = typeface.unwrap_or(Typeface::Sans);
+    let mut styles = text_styles(bold_family(typeface), scale);
+    if typeface == Typeface::Sans
+        && let Some(code) = styles.get_mut(&TextStyle::Monospace)
+    {
+        code.family = bold_family(Typeface::Monospace);
+    }
+    style.text_styles = styles;
 }
 
 /// The height of a row of a grid for the body text of this `Ui`: the standard
@@ -468,6 +507,10 @@ pub fn fonts() -> FontDefinitions {
     add("Dancing Script", weighted(DANCING_SCRIPT, 400.0));
     add("Caveat", weighted(CAVEAT, 400.0));
     add(ICONS, font(include_bytes!("../assets/Phosphor.ttf")));
+    for typeface in Typeface::ALL {
+        let (bytes, name) = typeface_font(typeface);
+        add(&format!("{name} Bold"), weighted(bytes, BOLD_WEIGHT));
+    }
 
     // egui's last resorts (its icons and emoji), from its own families, then
     // the Phosphor icons, which are in the private use area.
@@ -506,6 +549,16 @@ pub fn fonts() -> FontDefinitions {
     ];
     for (name, list) in families {
         fonts.families.insert(name, list);
+    }
+    for typeface in Typeface::ALL {
+        let (_, name) = typeface_font(typeface);
+        let bold = format!("{name} Bold");
+        let mut list = vec![bold];
+        if typeface == Typeface::Monospace {
+            list.push("Hack".to_owned());
+        }
+        let list: Vec<&str> = list.iter().map(String::as_str).collect();
+        fonts.families.insert(bold_family(typeface), family(&list));
     }
     fonts
 }
@@ -852,7 +905,57 @@ mod tests {
                 fonts.families.contains_key(&family(typeface)),
                 "{typeface:?}"
             );
+            // Bold is the same file at the bold weight, first in its family.
+            let bold = &fonts.families[&bold_family(typeface)];
+            assert!(bold[0].ends_with(" Bold"), "{typeface:?}: {bold:?}");
         }
+    }
+
+    #[test]
+    fn bold_text_measures_as_reports_measure_it() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let layout = cliotree_layout::Fonts::shared();
+        ctx.fonts_mut(|f| {
+            for typeface in Typeface::ALL {
+                let text = "Quarterly revenue: 1,234.50";
+                let mut width = |family| {
+                    f.layout_no_wrap(text.to_owned(), FontId::new(14.0, family), Color32::WHITE)
+                        .size()
+                        .x
+                };
+                let bold = width(bold_family(typeface));
+                // Wider, except in a monospaced font, whose letters keep
+                // their width at every weight.
+                let regular = width(family(typeface));
+                if typeface == Typeface::Monospace {
+                    assert!((bold - regular).abs() < 0.01, "{typeface:?}");
+                } else {
+                    assert!(bold > regular, "{typeface:?}");
+                }
+                let ours = layout.width(
+                    text,
+                    &cliotree_layout::TextStyle::new(typeface, 14.0).bold(),
+                );
+                // Within the tolerance of the regular weight (see above).
+                assert!(
+                    (ours - bold).abs() <= 0.25,
+                    "{typeface:?}: {ours} and {bold}"
+                );
+            }
+        });
+        let mut style = Style::default();
+        use_font_in(&mut style, None, None, true);
+        assert_eq!(
+            TextStyle::Monospace.resolve(&style).family,
+            bold_family(Typeface::Monospace)
+        );
+        assert_eq!(
+            TextStyle::Body.resolve(&style).family,
+            bold_family(Typeface::Sans)
+        );
     }
 
     #[test]

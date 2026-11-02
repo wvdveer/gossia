@@ -22,6 +22,25 @@ pub struct Gate {
     pub pending: bool,
 }
 
+impl Gate {
+    /// With the fixed colours of a design (`#rrggbb`), which run nothing, so
+    /// they are shown in an untrusted workbook and while designing too.
+    pub fn with_fixed(mut self, text: Option<&str>, fill: Option<&str>) -> Gate {
+        if let Some(colour) = text.and_then(fixed) {
+            self.text = Some(colour);
+        }
+        if let Some(colour) = fill.and_then(fixed) {
+            self.fill = Some(colour);
+        }
+        self
+    }
+}
+
+/// The colour of a fixed colour property, or None for an expression.
+pub fn fixed(text: &str) -> Option<Color32> {
+    cliotree_core::form::fixed_colour(text).map(|[r, g, b]| Color32::from_rgb(r, g, b))
+}
+
 /// What the expressions of the control at `at` of a form come to; in the
 /// design of the items of repeaters, for the item `rows` names of each.
 pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize], rows: &[usize]) -> Gate {
