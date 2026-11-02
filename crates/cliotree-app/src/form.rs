@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use cliotree_calc::{ExprKind, ExprState, entry};
+use cliotree_calc::{ExprKind, ExprState, REPORT_FORM, entry};
 use cliotree_core::form::{
     Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
     DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, TrackSize, flow_rows,
@@ -161,8 +161,13 @@ impl ClioApp {
         views
     }
 
-    /// The form the tab shows: the one chosen, or Default if it is gone.
+    /// The form the tab shows: the one chosen, or Default if it is gone. On
+    /// a report tab it is [`REPORT_FORM`], under which the report's layout
+    /// is edited and its expressions run.
     pub fn form_name(&self) -> String {
+        if self.in_report() {
+            return REPORT_FORM.to_owned();
+        }
         match self.current_view() {
             View::Form(name)
                 if name == DEFAULT_FORM || self.calc().forms().get(&self.sheet, name).is_some() =>
@@ -669,6 +674,11 @@ fn same_code(code: &str, current: &str) -> bool {
 }
 
 /// The text of a value as a field shows it.
+/// Whether a value is a number, which lines up on the right.
+fn is_number(value: &Value) -> bool {
+    matches!(value, Value::Int(_) | Value::Float(_))
+}
+
 fn value_text(value: &Value) -> String {
     match value {
         Value::Array(_) | Value::Object(_) | Value::Error(_) => String::new(),
@@ -3806,13 +3816,16 @@ impl Painter<'_> {
         if let Some(colour) = colour {
             edit = edit.text_color(colour);
         }
-        if let Some(align) = b.align {
-            edit = edit.align(match align {
-                Alignment::Left => egui::Align2::LEFT_CENTER,
-                Alignment::Center => egui::Align2::CENTER_CENTER,
-                Alignment::Right => egui::Align2::RIGHT_CENTER,
-            });
-        }
+        // Numbers line up on the right, as in a field bound to a number,
+        // unless the control says otherwise.
+        let number = matches!(b.shown, Shown::Value(v, _) if is_number(v));
+        edit = edit.align(match b.align {
+            Some(Alignment::Left) => egui::Align2::LEFT_CENTER,
+            Some(Alignment::Center) => egui::Align2::CENTER_CENTER,
+            Some(Alignment::Right) => egui::Align2::RIGHT_CENTER,
+            None if number => egui::Align2::RIGHT_CENTER,
+            None => egui::Align2::LEFT_CENTER,
+        });
         let r = ui.add(edit);
         if let Some(procedure) = writer {
             if r.gained_focus() {
@@ -4041,6 +4054,7 @@ impl Painter<'_> {
                                     }
                                     continue;
                                 }
+                                let mut number = false;
                                 let text = if has_text(&design.value) {
                                     let state = calc.column_expression_at(
                                         &app.sheet,
@@ -4053,16 +4067,20 @@ impl Painter<'_> {
                                     );
                                     match shown_result(trusted, state) {
                                         Shown::Untrusted => UNTRUSTED.to_owned(),
-                                        Shown::Value(v, _) => design
-                                            .format()
-                                            .apply(&v)
-                                            .unwrap_or_else(|| value_text(&v)),
+                                        Shown::Value(v, _) => {
+                                            number = is_number(&v);
+                                            design
+                                                .format()
+                                                .apply(&v)
+                                                .unwrap_or_else(|| value_text(&v))
+                                        }
                                         Shown::Waiting => String::new(),
                                         Shown::Error(_) => "#ERROR!".to_owned(),
                                     }
                                 } else {
                                     cliotree_calc::cell_of(item, &design.name)
                                         .map(|v| {
+                                            number = is_number(&v);
                                             design
                                                 .format()
                                                 .apply(&v)
@@ -4070,7 +4088,8 @@ impl Painter<'_> {
                                         })
                                         .unwrap_or_default()
                                 };
-                                aligned(ui, design.align, |ui| {
+                                let align = design.align.or(number.then_some(Alignment::Right));
+                                aligned(ui, align, |ui| {
                                     if gate == Gate::default() {
                                         ui.label(text);
                                     } else if !gate.hidden {

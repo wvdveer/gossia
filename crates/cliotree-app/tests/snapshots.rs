@@ -499,4 +499,11 @@ fn a_drawn_report() {
         settle(&mut harness);
     }
     check(&mut harness, "report_drawn", &mut results);
+    // Edit report: the form designer on the report, the field selected.
+    harness.state_mut().set_layout(true);
+    harness.state_mut().select_control(Some(vec![1, 0]));
+    for _ in 0..2 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_layout", &mut results);
 }

@@ -13,8 +13,9 @@
 
 use cliotree_core::Value;
 use cliotree_core::form::{
-    self, Address, Alignment, ColumnDesign, Control, ControlKind, DEFAULT_LABEL_WIDTH,
-    FontFamily as Typeface, Format, LabelPosition, template,
+    self, Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
+    DEFAULT_LABEL_WIDTH, FontFamily as Typeface, Format, GroupLayout, LabelPosition, POSITIONS,
+    template,
 };
 use cliotree_core::report::ReportDesign;
 
@@ -157,6 +158,12 @@ pub struct Laid {
     pub paints: Vec<Paint>,
     pub hovers: Vec<Hover>,
     pub areas: Vec<Area>,
+    /// The inside of each Free group, and of the canvas (the empty
+    /// address), where the designer places what is dropped or moved.
+    pub insides: Vec<Area>,
+    /// The boxes of the controls whose content was cut because it is taller
+    /// than the box (DESIGN.md, Reports, "Fixed boxes").
+    pub cuts: Vec<Rect>,
 }
 
 impl Laid {
@@ -210,6 +217,12 @@ impl Laid {
             rect: a.rect.moved(dx, dy),
             ..a
         }));
+        self.insides.extend(other.insides.into_iter().map(|a| Area {
+            rect: a.rect.moved(dx, dy),
+            ..a
+        }));
+        self.cuts
+            .extend(other.cuts.into_iter().map(|r| r.moved(dx, dy)));
     }
 
     /// All the text, line by line in the order it is painted: for tests, and
@@ -281,21 +294,82 @@ pub const UNTRUSTED: &str = "#UNTRUSTED!";
 /// the other, as a form's top level is (a Flow group of one column).
 pub fn single_page(design: &ReportDesign, width: f32, source: &dyn Source) -> Laid {
     let fonts = Fonts::shared();
-    let mut placer = Placer { fonts, source };
-    let style = Style {
-        typeface: Typeface::Sans,
-        size: BODY_SIZE,
-        bold: false,
-        italic: false,
-        label_width: DEFAULT_LABEL_WIDTH as f32,
-        text: None,
+    let mut placer = Placer {
+        fonts,
+        source,
+        limit: None,
     };
+    let style = Style::body();
     let width = width.max(MIN_COLUMN);
     let mut top = Control::new(ControlKind::Group);
     top.children = design.layout.controls.clone();
     let mut laid = placer.flow(&top, &[], &[], width, &style);
     laid.width = width;
     laid
+}
+
+/// Lays out a single page report on its canvas (DESIGN.md, Reports, "Single
+/// page"): as wide as the paper less the margins, each control at the top
+/// level at its place and in its box, as in a Free group. The canvas is as
+/// tall as its lowest control, or its own height if that is more.
+pub fn canvas(design: &ReportDesign, source: &dyn Source) -> Laid {
+    let fonts = Fonts::shared();
+    let mut placer = Placer {
+        fonts,
+        source,
+        limit: None,
+    };
+    let width = design.page.content_width().max(MIN_COLUMN);
+    let mut top = Control::new(ControlKind::Group);
+    top.layout = Some(GroupLayout::Free);
+    top.children = design.layout.controls.clone();
+    let mut laid = placer.free(&top, &[], &[], width, &Style::body());
+    laid.width = width;
+    laid.height = laid.height.max(design.height.map_or(0.0, |h| h as f32));
+    laid.insides.insert(
+        0,
+        Area {
+            rect: Rect::new(0.0, 0.0, width, laid.height),
+            at: Vec::new(),
+            rows: Vec::new(),
+        },
+    );
+    laid
+}
+
+/// A design made before the canvas (its top level a Flow list) turned into
+/// a canvas: each control at the top level placed where the Flow layout put
+/// it at the canvas width, with the width it had, and with the height it had
+/// when `heights` (the results are final), else an automatic height. A
+/// control that is not visible goes under the one before it.
+pub fn to_canvas(design: &ReportDesign, source: &dyn Source, heights: bool) -> ReportDesign {
+    let width = design.page.content_width().max(MIN_COLUMN);
+    let laid = single_page(design, width, source);
+    let mut out = design.clone();
+    out.canvas = true;
+    let points = |v: f32, range: &std::ops::RangeInclusive<u32>| {
+        (v.ceil().max(0.0) as u32).clamp(*range.start(), *range.end())
+    };
+    let mut next_y = 0.0f32;
+    for (i, c) in out.layout.controls.iter_mut().enumerate() {
+        let rect = laid
+            .areas
+            .iter()
+            .find(|a| a.at == [i])
+            .map(|a| a.rect)
+            .unwrap_or(Rect::new(0.0, next_y, width, 0.0));
+        c.x = Some(points(rect.x.floor(), &POSITIONS));
+        c.y = Some(points(rect.y.floor(), &POSITIONS));
+        c.width = Some(points(rect.w, &CONTROL_WIDTHS));
+        if heights && rect.h > 0.0 {
+            c.height = Some(points(rect.h, &CONTROL_HEIGHTS));
+        }
+        c.fill = false;
+        c.anchor_x = None;
+        c.anchor_y = None;
+        next_y = rect.bottom() + SPACING;
+    }
+    out
 }
 
 /// What controls take from the group they are in.
@@ -311,6 +385,18 @@ struct Style {
 }
 
 impl Style {
+    /// The style of the top level.
+    fn body() -> Style {
+        Style {
+            typeface: Typeface::Sans,
+            size: BODY_SIZE,
+            bold: false,
+            italic: false,
+            label_width: DEFAULT_LABEL_WIDTH as f32,
+            text: None,
+        }
+    }
+
     fn of(&self, c: &Control) -> Style {
         Style {
             typeface: c.font.unwrap_or(self.typeface),
@@ -339,6 +425,9 @@ impl Style {
 struct Placer<'a> {
     fonts: &'a Fonts,
     source: &'a dyn Source,
+    /// The height of the box of the repeater about to be laid out, when it
+    /// has one, so that its table shows the rows that fit.
+    limit: Option<f32>,
 }
 
 /// A colour of the design (`#rrggbb`) or of an expression.
@@ -512,13 +601,21 @@ impl Placer<'_> {
             ControlKind::Field => self.field(c, at, rows, width, &style),
             ControlKind::Separator => self.separator(c, width),
             ControlKind::Group => self.group(c, at, rows, width, &style, fill),
-            ControlKind::Repeater => self.repeater(c, at, rows, width, &style),
+            ControlKind::Repeater => {
+                self.limit = c.height.map(|h| h as f32);
+                self.repeater(c, at, rows, width, &style)
+            }
             // A report has no buttons (see `ReportDesign::problems`).
             ControlKind::Button => Laid::default(),
         };
         laid.width = width;
         if let Some(h) = c.height {
-            laid.height = h as f32;
+            let h = h as f32;
+            // A fixed box: what does not fit is cut, and says so.
+            if laid.height > h + 0.5 {
+                self.cut(&mut laid, h, width);
+            }
+            laid.height = h;
         }
         let rect = Rect::new(0.0, 0.0, width, laid.height);
         if let Some(ink) = fill_here {
@@ -753,6 +850,16 @@ impl Placer<'_> {
         let title = std::mem::take(&mut laid);
         laid.append(title, pad, pad);
         laid.append(body, pad, pad + title_h);
+        if c.is_free() {
+            laid.insides.insert(
+                0,
+                Area {
+                    rect: Rect::new(pad, pad + title_h, inner_w, body_h),
+                    at: at.to_vec(),
+                    rows: rows.to_vec(),
+                },
+            );
+        }
         laid.height = body_h + title_h + 2.0 * pad;
         let rect = Rect::new(0.0, 0.0, width, laid.height);
         if let Some(ink) = fill {
@@ -909,6 +1016,7 @@ impl Placer<'_> {
         width: f32,
         style: &Style,
     ) -> Laid {
+        let limit = self.limit.take();
         let mut laid = Laid::default();
         let title_h = self.title(&mut laid, c, width, style);
         let got = self.source.control(at, rows, Prop::Items);
@@ -979,7 +1087,8 @@ impl Placer<'_> {
                 }
             }
             Ok(items) => {
-                let table = self.table(c, at, rows, &items, width, style);
+                let room = limit.map(|l| l - y);
+                let table = self.table(c, at, rows, &items, width, style, room);
                 let h = table.height;
                 laid.append(table, 0.0, y);
                 y += h;
@@ -994,6 +1103,9 @@ impl Placer<'_> {
 
     /// A table of the items, with a title row: the columns of its design,
     /// or with none the fields of its first item.
+    /// With `room`, the rows that fit in it are shown and the last line says
+    /// how many more there are.
+    #[allow(clippy::too_many_arguments)]
     fn table(
         &mut self,
         c: &Control,
@@ -1002,6 +1114,7 @@ impl Placer<'_> {
         items: &[Value],
         width: f32,
         style: &Style,
+        room: Option<f32>,
     ) -> Laid {
         let mut laid = Laid::default();
         let source = self.source;
@@ -1150,6 +1263,7 @@ impl Placer<'_> {
             width: RULE,
             ink: Ink::Rule,
         });
+        let mut laid_rows: Vec<(Laid, f32)> = Vec::with_capacity(cells.len());
         for line in &cells {
             let mut row_laid = Laid::default();
             let mut row_h: f32 = 0.0;
@@ -1186,6 +1300,28 @@ impl Placer<'_> {
                     });
                 }
             }
+            laid_rows.push((row_laid, row_h));
+        }
+        // In a box: the rows that fit, with room for the line that says how
+        // many more there are.
+        let more_h = self.fonts.layout("", &ts, None).metrics.row_height + 2.0 * CELL_Y;
+        let mut shown = laid_rows.len();
+        if let Some(room) = room {
+            let total: f32 = y + laid_rows.iter().map(|(_, h)| h).sum::<f32>();
+            if total > room + 0.5 {
+                let mut bottom = y;
+                shown = 0;
+                for (_, h) in &laid_rows {
+                    if bottom + h + more_h > room + 0.5 {
+                        break;
+                    }
+                    bottom += h;
+                    shown += 1;
+                }
+            }
+        }
+        let hidden = laid_rows.len() - shown;
+        for (row_laid, row_h) in laid_rows.into_iter().take(shown) {
             laid.append(row_laid, 0.0, y);
             y += row_h;
             laid.paints.push(Paint::Line {
@@ -1195,8 +1331,145 @@ impl Placer<'_> {
                 ink: Ink::Rule,
             });
         }
+        if hidden > 0 {
+            let text = if hidden == 1 {
+                "and 1 more row".to_owned()
+            } else {
+                format!("and {hidden} more rows")
+            };
+            self.text(
+                &mut laid,
+                &text,
+                ts,
+                Ink::Weak,
+                (CELL_X, y + CELL_Y, (width - 2.0 * CELL_X).max(1.0)),
+                Alignment::Left,
+            );
+            y += more_h;
+        }
         laid.height = y;
         laid
+    }
+
+    /// Cuts what was laid out to a box `height` tall: what is below it goes,
+    /// boxes and lines are shortened, and the last line of text that stays
+    /// ends with an ellipsis when text was cut.
+    fn cut(&self, laid: &mut Laid, height: f32, width: f32) {
+        let limit = height + 0.5;
+        let mut text_cut = false;
+        let mut kept: Vec<Paint> = Vec::with_capacity(laid.paints.len());
+        let clip = |r: Rect| -> Option<Rect> {
+            (r.y < height).then(|| Rect {
+                h: r.h.min(height - r.y),
+                ..r
+            })
+        };
+        for paint in laid.paints.drain(..) {
+            match paint {
+                Paint::Text { y, style, .. } => {
+                    let row = self.fonts.layout("", &style, None).metrics.row_height;
+                    if y + row <= limit {
+                        kept.push(paint);
+                    } else {
+                        text_cut = true;
+                    }
+                }
+                Paint::Fill { rect, ink } => {
+                    if let Some(rect) = clip(rect) {
+                        kept.push(Paint::Fill { rect, ink });
+                    }
+                }
+                Paint::Border { rect, width, ink } => {
+                    if let Some(rect) = clip(rect) {
+                        kept.push(Paint::Border { rect, width, ink });
+                    }
+                }
+                Paint::Line {
+                    from,
+                    to,
+                    width,
+                    ink,
+                } => {
+                    if from.1 <= limit && to.1 <= limit {
+                        kept.push(Paint::Line {
+                            from,
+                            to,
+                            width,
+                            ink,
+                        });
+                    } else if from.0 == to.0 && from.1.min(to.1) < height {
+                        // A vertical line is shortened.
+                        kept.push(Paint::Line {
+                            from: (from.0, from.1.min(height)),
+                            to: (to.0, to.1.min(height)),
+                            width,
+                            ink,
+                        });
+                    }
+                }
+                Paint::Pending { y, .. } => {
+                    if y < height {
+                        kept.push(paint);
+                    }
+                }
+            }
+        }
+        if text_cut {
+            let last = kept
+                .iter_mut()
+                .filter_map(|p| match p {
+                    Paint::Text {
+                        x, y, text, style, ..
+                    } => Some((*x, *y, text, *style)),
+                    _ => None,
+                })
+                .max_by(|a, b| {
+                    (a.1, a.0)
+                        .partial_cmp(&(b.1, b.0))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            if let Some((x, _, text, style)) = last {
+                let mut shortened = text.clone();
+                loop {
+                    let candidate = format!("{}\u{2026}", shortened.trim_end());
+                    if shortened.is_empty() || x + self.fonts.width(&candidate, &style) <= width {
+                        *text = candidate;
+                        break;
+                    }
+                    shortened.pop();
+                }
+            }
+        }
+        laid.paints = kept;
+        laid.hovers.retain_mut(|h| match clip(h.rect) {
+            Some(r) => {
+                h.rect = r;
+                true
+            }
+            None => false,
+        });
+        laid.areas.retain_mut(|a| match clip(a.rect) {
+            Some(r) => {
+                a.rect = r;
+                true
+            }
+            None => false,
+        });
+        laid.insides.retain_mut(|a| match clip(a.rect) {
+            Some(r) => {
+                a.rect = r;
+                true
+            }
+            None => false,
+        });
+        laid.cuts.retain(|r| r.y < height);
+        let rect = Rect::new(0.0, 0.0, width, height);
+        laid.cuts.push(rect);
+        laid.hovers.push(Hover {
+            rect,
+            text: "Cut: what it shows is taller than its box. Make it taller to show all of it."
+                .to_owned(),
+        });
     }
 }
 

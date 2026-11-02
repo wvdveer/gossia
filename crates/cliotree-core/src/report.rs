@@ -143,9 +143,18 @@ pub struct ReportDesign {
     pub kind: ReportKind,
     #[serde(default)]
     pub page: PageSetup,
-    /// The controls, as a form's: a Flow group at the top, as a form's top
-    /// level is.
+    /// The controls, as a form's. On a canvas each control at the top level
+    /// has its place and size, as in a Free group; a design made before the
+    /// canvas lists them as a Flow group does, and is turned into a canvas
+    /// when it is first shown.
     pub layout: FormDesign,
+    /// Whether the top level is a canvas (DESIGN.md, Reports, "Single page").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub canvas: bool,
+    /// The height of the canvas in points, when it is dragged taller than its
+    /// lowest control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 }
 
 impl ReportDesign {
@@ -156,6 +165,8 @@ impl ReportDesign {
             kind,
             page: PageSetup::default(),
             layout: FormDesign::default(),
+            canvas: false,
+            height: None,
         }
     }
 
@@ -282,7 +293,9 @@ const REPORT_DEFS: &str = r##"{
       "version": {"type": "integer", "minimum": 1},
       "kind": {"type": "string", "enum": ["single_page", "multipage"]},
       "page": {"$ref": "#/$defs/PageSetup"},
-      "layout": {"$ref": "#/$defs/Form"}
+      "layout": {"$ref": "#/$defs/Form"},
+      "canvas": {"type": "boolean"},
+      "height": {"type": "integer", "minimum": 0, "maximum": 20000}
     },
     "required": ["version", "kind", "layout"]
   },

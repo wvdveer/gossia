@@ -113,8 +113,13 @@ impl ClioApp {
                 ui.close();
             }
             ui.separator();
+            let mut on = tab == self.sheet && self.layout_active();
+            if ui.checkbox(&mut on, "Edit report").clicked() {
+                self.switch_to(tab);
+                self.set_layout(on);
+                ui.close();
+            }
             for (label, why) in [
-                ("Edit report", "Editing a report comes with the report view"),
                 ("Export as PDF...", "PDF export is not built yet"),
                 (
                     "Copy batch command",

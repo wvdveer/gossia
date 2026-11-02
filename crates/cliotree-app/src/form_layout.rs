@@ -8,7 +8,7 @@
 //! workbook's undo history, like module edits and tab operations; layout mode
 //! has its own undo and redo, which last while it is on.
 
-use cliotree_calc::{ExprKind, entry};
+use cliotree_calc::{ExprKind, REPORT_FORM, entry};
 use cliotree_core::form::{
     self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
     Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
@@ -184,8 +184,8 @@ impl ClioApp {
     /// The design of a form of the current tab: the one that is stored, or the
     /// one generated from the schema.
     pub fn design_of(&self, form: &str) -> FormDesign {
-        if let Some(stored) = self.calc().forms().get(&self.sheet, form) {
-            return stored.clone();
+        if let Some(stored) = self.stored_design(form) {
+            return stored;
         }
         self.calc()
             .spec(&self.sheet)
@@ -195,11 +195,28 @@ impl ClioApp {
 
     /// Whether the form has been customised (stored), as opposed to generated.
     pub fn is_customised(&self, form: &str) -> bool {
-        self.calc().forms().get(&self.sheet, form).is_some()
+        self.stored_design(form).is_some()
+    }
+
+    /// The design stored for a form of the current tab; on a report tab,
+    /// [`REPORT_FORM`] is the report's layout, which is always stored.
+    pub(crate) fn stored_design(&self, form: &str) -> Option<FormDesign> {
+        if form == REPORT_FORM {
+            return self.calc().report(&self.sheet).map(|r| r.layout.clone());
+        }
+        self.calc().forms().get(&self.sheet, form).cloned()
     }
 
     fn put_design(&mut self, form: &str, design: Option<FormDesign>) {
         let sheet = self.sheet.clone();
+        if form == REPORT_FORM {
+            if let Some(mut report) = self.calc().report(&sheet).cloned() {
+                report.layout = design.unwrap_or_default();
+                // The report is there: it was just read.
+                let _ = self.session.calc_mut().set_report(&sheet, report);
+            }
+            return;
+        }
         let forms = self.session.calc_mut().forms_mut();
         match design {
             Some(design) => forms.set(&sheet, form, design),
@@ -225,7 +242,7 @@ impl ClioApp {
         change: impl FnOnce(&mut FormDesign) -> Option<Option<Address>>,
     ) -> bool {
         let form = self.form_name();
-        let before = self.calc().forms().get(&self.sheet, &form).cloned();
+        let before = self.stored_design(&form);
         let mut design = before.clone().unwrap_or_else(|| self.design_of(&form));
         let Some(selection) = change(&mut design) else {
             return false;
@@ -267,14 +284,15 @@ impl ClioApp {
             .map(|l| l.selected.clone())
     }
 
-    /// Whether the form being shown is in layout mode.
+    /// Whether the form being shown, or the report, is in layout mode.
     pub fn layout_active(&self) -> bool {
-        self.in_form() && self.layout_selection(&self.form_name()).is_some()
+        (self.in_form() || self.in_report()) && self.layout_selection(&self.form_name()).is_some()
     }
 
-    /// Turns layout mode on or off for the form being shown.
+    /// Turns layout mode on or off for the form being shown, or the report
+    /// (*Edit report*).
     pub fn set_layout(&mut self, on: bool) {
-        if on && self.in_form() {
+        if on && (self.in_form() || self.in_report()) {
             let form = self.form_name();
             self.form.layout = Some(LayoutState::new(&self.sheet, &form));
         } else {
@@ -386,7 +404,7 @@ impl ClioApp {
         layout.column = None;
         layout.merge = None;
         let form = layout.form.clone();
-        let current = self.calc().forms().get(&self.sheet, &form).cloned();
+        let current = self.stored_design(&form);
         if let Some(layout) = self.form.layout.as_mut() {
             if undo {
                 layout.redo.push(current);
@@ -1016,25 +1034,37 @@ impl ClioApp {
     /// The strip above a form: the switch to layout mode, and in layout mode
     /// the palette, undo and redo, and discarding the design.
     pub(crate) fn form_bar(&mut self, ui: &mut egui::Ui, form: &str) {
+        let report = form == REPORT_FORM;
         ui.horizontal_wrapped(|ui| {
             let mut on = self.layout_active();
-            if ui.checkbox(&mut on, "Edit form").changed() {
+            let switch = if report { "Edit report" } else { "Edit form" };
+            if ui.checkbox(&mut on, switch).changed() {
                 self.set_layout(on);
+            }
+            if report {
+                self.report_tools(ui);
             }
             if !on {
                 return;
             }
             ui.separator();
             // A click adds where the selection says; dragging one onto the
-            // form puts it where it is dropped.
+            // form puts it where it is dropped. A report has no buttons.
             for kind in ControlKind::ALL {
+                if report && kind == ControlKind::Button {
+                    continue;
+                }
                 let label = format!("Add {}", kind.label().to_lowercase());
                 let button = ui
                     .add(egui::Button::new(label).sense(egui::Sense::click_and_drag()))
                     .on_hover_text("Click to add, or drag onto the form");
                 button.dnd_set_drag_payload((DragItem::New(kind), kind.label().to_owned()));
                 if button.clicked() {
-                    self.add_control(new_control(kind));
+                    if report {
+                        self.add_to_canvas(kind);
+                    } else {
+                        self.add_control(new_control(kind));
+                    }
                 }
             }
             ui.separator();
@@ -1049,6 +1079,9 @@ impl ClioApp {
                 .clicked()
             {
                 self.layout_redo();
+            }
+            if report {
+                return;
             }
             ui.separator();
             if form == DEFAULT_FORM {
@@ -1116,6 +1149,9 @@ impl ClioApp {
     ) {
         let mut edited = control.clone();
         let spec = self.calc().spec(&self.sheet).cloned();
+        // A report shows values and edits nothing (DESIGN.md, The report
+        // designer): no paths, editors, choices or procedures.
+        let report = self.in_report();
         ui.strong(control_name(control));
         let key = |property: &str| format!("{at:?}:{property}");
         let mut merge = None;
@@ -1147,10 +1183,11 @@ impl ClioApp {
         // remembered until the value is typed.
         let source_id = egui::Id::unique(("field_source", at.clone()));
         let mut by_value = kind == ControlKind::Field
-            && (edited.value.is_some()
+            && (report
+                || edited.value.is_some()
                 || (edited.path.is_none()
                     && ui.data(|d| d.get_temp::<bool>(source_id)).unwrap_or(false)));
-        if kind == ControlKind::Field {
+        if kind == ControlKind::Field && !report {
             let before = by_value;
             ui.horizontal(|ui| {
                 ui.label("Source");
@@ -1230,7 +1267,7 @@ impl ClioApp {
                 merge = Some(key("label"));
             }
         }
-        if bound && option_text(ui, "Help", &mut edited.help, "", true) {
+        if bound && !report && option_text(ui, "Help", &mut edited.help, "", true) {
             merge = Some(key("help"));
         }
         match kind {
@@ -1246,19 +1283,23 @@ impl ClioApp {
                     merge = Some(key(expr_property(expr)));
                 }
                 self.expression_error(ui, at, None, expr);
-                let names = self.calc().procedure_names();
-                procedure_choice(
-                    ui,
-                    "Write procedure",
-                    "Write procedure of the field",
-                    &mut edited.write_procedure,
-                    &names,
-                );
-                ui.weak(
-                    "The field shows what the value comes to. Without a write procedure it is \
+                if report {
+                    ui.weak("The field shows what the value comes to.");
+                } else {
+                    let names = self.calc().procedure_names();
+                    procedure_choice(
+                        ui,
+                        "Write procedure",
+                        "Write procedure of the field",
+                        &mut edited.write_procedure,
+                        &names,
+                    );
+                    ui.weak(
+                        "The field shows what the value comes to. Without a write procedure it is \
                      read-only; with one, what is typed is passed to it, as text, as \
                      name(form, ctx, value).",
-                );
+                    );
+                }
             }
             ControlKind::Repeater => {
                 let expr = ExprKind::Items;
@@ -1310,6 +1351,33 @@ impl ClioApp {
             _ => {}
         }
         match kind {
+            ControlKind::Field if report => {
+                // No schema says what the value is: a date shows the date
+                // formats, anything else the number formats.
+                let shown = self
+                    .calc()
+                    .report_expression(&self.sheet, at, &[], ExprKind::Value)
+                    .and_then(|s| s.result)
+                    .and_then(Result::ok);
+                let kind = match shown {
+                    Some(Value::Date(_)) => Kind::Date,
+                    Some(Value::DateTime(_)) => Kind::DateTime,
+                    _ => Kind::Number(Default::default()),
+                };
+                if format_properties(
+                    ui,
+                    &kind,
+                    &mut edited.thousands,
+                    &mut edited.decimals,
+                    &mut edited.date_format,
+                    &mut edited.percent,
+                    &mut edited.prefix,
+                    &mut edited.suffix,
+                    "field",
+                ) {
+                    merge = Some(key("date_format"));
+                }
+            }
             ControlKind::Field => {
                 ui.horizontal(|ui| {
                     ui.label("Editor");
@@ -1485,7 +1553,17 @@ impl ClioApp {
                     .on_hover_text("A vertical line, as tall as its row or cell");
             }
         }
-        let parent = at.split_last().and_then(|(_, parent)| design.get(parent));
+        // On a report's canvas, the top level is placed as in a Free group.
+        let canvas = report.then(|| {
+            let mut group = Control::new(ControlKind::Group);
+            group.layout = Some(GroupLayout::Free);
+            group
+        });
+        let parent = match at.split_last() {
+            Some((_, [])) if report => canvas.as_ref(),
+            Some((_, parent)) => design.get(parent),
+            None => None,
+        };
         let in_free = parent.is_some_and(Control::is_free);
         let in_grid = parent.is_some_and(Control::is_grid);
         let parent_columns = parent
@@ -1509,7 +1587,7 @@ impl ClioApp {
         let coloured = kind != ControlKind::Separator;
         let fields = [
             (ExprKind::Visible, &mut edited.visible_when, true),
-            (ExprKind::Enabled, &mut edited.enabled_when, true),
+            (ExprKind::Enabled, &mut edited.enabled_when, !report),
             (ExprKind::TextColour, &mut edited.text_colour, coloured),
             (ExprKind::FillColour, &mut edited.fill_colour, coloured),
         ];
@@ -1522,7 +1600,7 @@ impl ClioApp {
             }
             self.expression_error(ui, at, None, expr);
         }
-        if kind == ControlKind::Field {
+        if kind == ControlKind::Field && !report {
             let expr = ExprKind::Choices;
             if expr_text(
                 ui,
@@ -1554,7 +1632,7 @@ impl ClioApp {
              values, (code, text) pairs or {\"value\": .., \"label\": ..} dicts.",
         );
 
-        if kind == ControlKind::Field {
+        if kind == ControlKind::Field && !report {
             self.formula_editor(ui, design, at, &edited);
         }
 
@@ -2391,6 +2469,26 @@ fn border_properties(ui: &mut egui::Ui, edited: &mut Control) -> bool {
 
 /// Where the text of a column's title or cells sits: automatic, left, centre
 /// or right. `what` names it for a screen reader: "Alignment of the title".
+/// The alignment of a control in its row or cell: left unless it says.
+fn control_alignment(ui: &mut egui::Ui, edited: &mut Control) {
+    ui.horizontal(|ui| {
+        ui.label("Alignment");
+        let mut align = edited.align.unwrap_or(Alignment::Left);
+        let response = egui::ComboBox::from_id_salt("property_control_align")
+            .selected_text(align.label())
+            .show_ui(ui, |ui| {
+                for a in Alignment::ALL {
+                    ui.selectable_value(&mut align, a, a.label());
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Alignment in its cell")
+        });
+        edited.align = (align != Alignment::Left).then_some(align);
+    });
+}
+
 fn alignment_choice(ui: &mut egui::Ui, align: &mut Option<Alignment>, label: &str, what: &str) {
     ui.horizontal(|ui| {
         ui.label(label);
@@ -2869,22 +2967,13 @@ fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32)
             "Height in points",
         );
     }
-    ui.horizontal(|ui| {
-        ui.label("Alignment");
-        let mut align = edited.align.unwrap_or(Alignment::Left);
-        let response = egui::ComboBox::from_id_salt("property_control_align")
-            .selected_text(align.label())
-            .show_ui(ui, |ui| {
-                for a in Alignment::ALL {
-                    ui.selectable_value(&mut align, a, a.label());
-                }
-            })
-            .response;
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Alignment in its cell")
-        });
-        edited.align = (align != Alignment::Left).then_some(align);
-    });
+    // A field's value is aligned automatically, numbers on the right, until
+    // it is given an alignment; other controls are on the left.
+    if kind == ControlKind::Field {
+        alignment_choice(ui, &mut edited.align, "Alignment", "the field");
+    } else {
+        control_alignment(ui, edited);
+    }
     if kind == ControlKind::Field {
         ui.horizontal(|ui| {
             ui.label("Label");

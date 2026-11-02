@@ -8,7 +8,7 @@ use cliotree_core::form::{
 use cliotree_core::report::{ReportDesign, ReportKind};
 use cliotree_core::{Node, Value};
 
-use crate::report::{Got, Laid, Paint, Prop, Source, UNTRUSTED, single_page};
+use crate::report::{Got, Laid, Paint, Prop, Source, UNTRUSTED, canvas, single_page, to_canvas};
 
 /// Values by control, items and expression; columns by control, column, row
 /// and expression. What is not there is no expression.
@@ -407,4 +407,110 @@ fn a_label_can_be_centred() {
     let laid = single_page(&report(vec![c]), 400.0, &Fake::default());
     let (x, _) = place(&laid, "Middle");
     assert!(x > 150.0 && x < 200.0, "{x}");
+}
+
+// ------------------------------------------------------------ the canvas
+
+/// A control placed on the canvas at `x`, `y`, `w` wide and `h` tall.
+fn at(mut c: Control, x: u32, y: u32, w: u32, h: Option<u32>) -> Control {
+    c.x = Some(x);
+    c.y = Some(y);
+    c.width = Some(w);
+    c.height = h;
+    c
+}
+
+fn on_canvas(controls: Vec<Control>) -> ReportDesign {
+    let mut design = report(controls);
+    design.canvas = true;
+    design
+}
+
+#[test]
+fn the_canvas_is_as_wide_as_the_paper_and_controls_are_at_their_places() {
+    let design = on_canvas(vec![
+        at(label("Left"), 0, 0, 100, Some(20)),
+        at(label("Far"), 300, 200, 100, Some(20)),
+    ]);
+    let laid = canvas(&design, &Fake::default());
+    // A4 less half an inch each side.
+    assert!((laid.width - (595.28 - 72.0)).abs() < 0.01);
+    assert_eq!(place(&laid, "Far"), (300.0, 200.0));
+    assert_eq!(laid.height, 220.0);
+    let area = laid.areas.iter().find(|a| a.at == [1]).unwrap();
+    assert_eq!((area.rect.w, area.rect.h), (100.0, 20.0));
+    assert_eq!(laid.insides[0].at, Vec::<usize>::new());
+}
+
+#[test]
+fn the_canvas_can_be_taller_than_its_lowest_control() {
+    let mut design = on_canvas(vec![at(label("Only"), 0, 0, 100, Some(20))]);
+    design.height = Some(500);
+    assert_eq!(canvas(&design, &Fake::default()).height, 500.0);
+}
+
+#[test]
+fn controls_below_a_box_that_is_too_small_do_not_move() {
+    let long = "a long text that wraps over many lines in a narrow box ".repeat(4);
+    let design = on_canvas(vec![
+        at(label(&long), 0, 0, 80, Some(30)),
+        at(label("Below"), 0, 40, 100, Some(20)),
+    ]);
+    let laid = canvas(&design, &Fake::default());
+    assert_eq!(place(&laid, "Below"), (0.0, 40.0));
+    // What is cut ends with an ellipsis, and the box says it was cut.
+    let texts = laid.texts();
+    let last_of_long = texts[texts.len() - 2];
+    assert!(last_of_long.ends_with('\u{2026}'), "{texts:?}");
+    assert_eq!(laid.cuts.len(), 1);
+    assert!(laid.hovers.iter().any(|h| h.text.starts_with("Cut")));
+    // Nothing of it is drawn below its box.
+    assert!(laid.paints.iter().all(|p| match p {
+        Paint::Text { y, text, .. } if text != "Below" => *y < 30.0,
+        _ => true,
+    }));
+}
+
+#[test]
+fn a_table_in_a_box_shows_the_rows_that_fit_and_how_many_more() {
+    let mut table = Control::new(ControlKind::Repeater);
+    table.items = Some("items".into());
+    let items: Vec<Value> = (0..30).map(|i| record(&[("n", Value::Int(i))])).collect();
+    let design = on_canvas(vec![at(table, 0, 0, 200, Some(100))]);
+    let laid = canvas(
+        &design,
+        &Fake::default().value(&[0], &[], Prop::Items, list(items)),
+    );
+    let texts = laid.texts();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.starts_with("and ") && t.ends_with(" more rows")),
+        "{texts:?}"
+    );
+    let shown = texts.iter().filter(|t| t.parse::<i64>().is_ok()).count();
+    assert!(shown > 0 && shown < 30);
+    assert!(texts.contains(&format!("and {} more rows", 30 - shown).as_str()));
+}
+
+#[test]
+fn a_flow_design_becomes_a_canvas_with_its_controls_where_they_were() {
+    let design = report(vec![label("First"), field("Total")]);
+    let source = Fake::default().value(&[1], &[], Prop::Value, Value::Int(7));
+    let before = single_page(&design, 523.28, &source);
+    let turned = to_canvas(&design, &source, true);
+    assert!(turned.canvas);
+    let second = &turned.layout.controls[1];
+    let area = before.areas.iter().find(|a| a.at == [1]).unwrap();
+    assert_eq!(second.y, Some(area.rect.y.floor() as u32));
+    assert!(second.height.unwrap() as f32 >= area.rect.h);
+    // Drawn on the canvas, it shows the same.
+    let after = canvas(&turned, &source);
+    assert_eq!(after.texts(), before.texts());
+    assert!(after.cuts.is_empty());
+    // Without final results, heights are left automatic.
+    assert_eq!(
+        to_canvas(&design, &source, false).layout.controls[1].height,
+        None
+    );
 }
