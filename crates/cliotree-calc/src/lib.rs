@@ -29,8 +29,9 @@ mod trie;
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, Disconnect,
     DisconnectPlan, EditError, Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind,
-    FieldPlaces, Fingerprint, Mentions, ModuleProblem, ModuleStatus, RedefineGroup, SchemaFormat,
-    Setting, TabKind, TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem,
+    FieldPlaces, Fingerprint, Mentions, ModuleProblem, ModuleStatus, REPORT_FORM, RedefineGroup,
+    SchemaFormat, Setting, TabKind, TrustStore, Unit, WorkbookSettings, cell_of,
+    comment_text_problem,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -114,6 +115,10 @@ mod tabs_tests;
 #[cfg(test)]
 #[path = "reports_tests.rs"]
 mod reports_tests;
+
+#[cfg(test)]
+#[path = "report_exprs_tests.rs"]
+mod report_exprs_tests;
 
 #[cfg(test)]
 #[path = "formats_tests.rs"]

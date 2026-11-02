@@ -153,6 +153,8 @@ pub struct ClioApp {
     pub comment_edit: Option<crate::comments::CommentEdit>,
     /// *Tools > Data sources...*, while it is open.
     pub sources_panel: Option<crate::sources_ui::SourcesPanel>,
+    /// The report shown, as it was last laid out.
+    pub report: crate::report_view::ReportView,
 }
 
 impl ClioApp {
@@ -242,6 +244,7 @@ impl ClioApp {
             code: crate::code::CodeEditor::default(),
             comment_edit: None,
             sources_panel: None,
+            report: Default::default(),
         }
     }
 

@@ -157,120 +157,15 @@ pub fn readable_on(fill: Color32) -> Color32 {
     }
 }
 
-/// Python's truth of a value: false for `None`, `False`, zero, and an empty
-/// string, list or record.
+/// Python's truth of a value (see [`cliotree_core::form::truthy`]).
 pub fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Int(i) => *i != 0,
-        Value::Float(f) => *f != 0.0,
-        Value::Str(s) => !s.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(fields) => !fields.is_empty(),
-        Value::Date(_) | Value::DateTime(_) => true,
-        Value::Error(_) => false,
-    }
+    cliotree_core::form::truthy(value)
 }
 
-/// The colours that can be named, as CSS names them.
-const NAMES: &[(&str, [u8; 3])] = &[
-    ("black", [0, 0, 0]),
-    ("white", [255, 255, 255]),
-    ("red", [255, 0, 0]),
-    ("green", [0, 128, 0]),
-    ("blue", [0, 0, 255]),
-    ("yellow", [255, 255, 0]),
-    ("orange", [255, 165, 0]),
-    ("purple", [128, 0, 128]),
-    ("pink", [255, 192, 203]),
-    ("brown", [165, 42, 42]),
-    ("grey", [128, 128, 128]),
-    ("gray", [128, 128, 128]),
-    ("silver", [192, 192, 192]),
-    ("cyan", [0, 255, 255]),
-    ("aqua", [0, 255, 255]),
-    ("magenta", [255, 0, 255]),
-    ("fuchsia", [255, 0, 255]),
-    ("lime", [0, 255, 0]),
-    ("maroon", [128, 0, 0]),
-    ("navy", [0, 0, 128]),
-    ("olive", [128, 128, 0]),
-    ("teal", [0, 128, 128]),
-    ("gold", [255, 215, 0]),
-    ("lightgreen", [144, 238, 144]),
-    ("lightblue", [173, 216, 230]),
-    ("lightyellow", [255, 255, 224]),
-    ("lightgrey", [211, 211, 211]),
-    ("lightgray", [211, 211, 211]),
-    ("darkred", [139, 0, 0]),
-    ("darkgreen", [0, 100, 0]),
-    ("darkblue", [0, 0, 139]),
-];
-
-/// The colour a value names: a name, `#rgb`, `#rrggbb` or `#rrggbbaa`, or a
-/// list of three or four numbers from 0 to 255. `None` and the empty string
-/// are the usual colour.
+/// The colour a value names (see [`cliotree_core::form::colour_of`]).
 pub fn colour(value: &Value) -> Result<Option<Color32>, String> {
-    match value {
-        Value::Null => Ok(None),
-        Value::Str(s) if s.trim().is_empty() => Ok(None),
-        Value::Str(s) => named(s.trim()).map(Some),
-        Value::Array(items) if items.len() == 3 || items.len() == 4 => {
-            let mut parts = [255u8; 4];
-            for (slot, item) in parts.iter_mut().zip(items) {
-                *slot = match item.value() {
-                    Value::Int(i) if (0..=255).contains(i) => *i as u8,
-                    _ => return Err(not_a_colour(value)),
-                };
-            }
-            let [r, g, b, a] = parts;
-            Ok(Some(Color32::from_rgba_unmultiplied(r, g, b, a)))
-        }
-        _ => Err(not_a_colour(value)),
-    }
-}
-
-fn not_a_colour(value: &Value) -> String {
-    format!(
-        "a {} is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)",
-        value.kind_name()
-    )
-}
-
-fn named(text: &str) -> Result<Color32, String> {
-    let bad = || {
-        format!("\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)")
-    };
-    if let Some(hex) = text.strip_prefix('#') {
-        let digits: Option<Vec<u8>> = hex
-            .chars()
-            .map(|c| c.to_digit(16).map(|d| d as u8))
-            .collect();
-        let digits = digits.ok_or_else(bad)?;
-        let pair = |i: usize| digits[i] * 16 + digits[i + 1];
-        return match digits.len() {
-            3 => Ok(Color32::from_rgb(
-                digits[0] * 17,
-                digits[1] * 17,
-                digits[2] * 17,
-            )),
-            6 => Ok(Color32::from_rgb(pair(0), pair(2), pair(4))),
-            8 => Ok(Color32::from_rgba_unmultiplied(
-                pair(0),
-                pair(2),
-                pair(4),
-                pair(6),
-            )),
-            _ => Err(bad()),
-        };
-    }
-    let lower = text.to_ascii_lowercase();
-    NAMES
-        .iter()
-        .find(|(name, _)| *name == lower)
-        .map(|(_, [r, g, b])| Color32::from_rgb(*r, *g, *b))
-        .ok_or_else(bad)
+    cliotree_core::form::colour_of(value)
+        .map(|c| c.map(|[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a)))
 }
 
 #[cfg(test)]

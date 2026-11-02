@@ -1305,7 +1305,7 @@ fn a_report_is_made_from_new_tab_and_duplicated_and_deleted_from_its_menu() {
     settle(&mut harness);
     assert_eq!(harness.state().sheet, "Report");
     assert!(harness.state().calc().is_report("Report"));
-    harness.get_by_label("A single page report, with no controls yet.");
+    harness.get_by_label("This report has no controls yet.");
     // A report has no formula bar.
     assert!(!has(&harness, "Formula bar"));
 

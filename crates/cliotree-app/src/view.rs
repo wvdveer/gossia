@@ -100,6 +100,9 @@ impl ClioApp {
         crate::style::prepare(ui.ctx());
         self.apply_appearance(ui.ctx());
         self.apply_settings();
+        // The report shown runs its expressions; no other does.
+        let report = self.in_report().then(|| self.sheet.clone());
+        self.session.calc_mut().show_report(report.as_deref());
         self.session.tick();
         self.collect_procedures();
         self.follow_tabs();

@@ -3,15 +3,12 @@
 //! one. A report holds no data, so the data tree, the formula bar and the
 //! other views of a data tab are not shown for it.
 //!
-//! Drawing a report from its design comes with single page reports (step
-//! 12d). Until then the page says what the report is, and its design can be
-//! read and edited in the code editor, under *Reports*.
+//! The report itself is drawn by `report_view.rs`.
 
 use cliotree_core::Path;
 use cliotree_core::report::{self, ReportDesign, ReportKind};
 
 use crate::app::ClioApp;
-use crate::view::{error_color, named};
 
 /// The arrays a new report can start from: each data tab's arrays, as
 /// `(tab, path, how a formula names it)`.
@@ -143,52 +140,5 @@ impl ClioApp {
                 ui.close();
             }
         });
-    }
-
-    /// The page of a report tab: what the report is, until reports are drawn.
-    pub(crate) fn report_view(&mut self, ui: &mut egui::Ui) {
-        let name = self.sheet.clone();
-        let Some(design) = self.calc().report(&name).cloned() else {
-            return;
-        };
-        ui.add_space(12.0);
-        ui.heading(&name);
-        let what = match design.kind {
-            ReportKind::SinglePage => "A single page report".to_owned(),
-            ReportKind::Multipage => {
-                let page = design.page;
-                let turned = match page.orientation {
-                    report::Orientation::Portrait => "portrait",
-                    report::Orientation::Landscape => "landscape",
-                };
-                format!("A multipage report, on {} {turned}", page.paper.label())
-            }
-        };
-        let controls = design.layout.walk().len();
-        let count = match controls {
-            0 => "with no controls yet".to_owned(),
-            1 => "with 1 control".to_owned(),
-            n => format!("with {n} controls"),
-        };
-        ui.label(format!("{what}, {count}."));
-        for (at, why) in design.problems() {
-            let place: Vec<String> = at.iter().map(usize::to_string).collect();
-            ui.colored_label(
-                error_color(ui),
-                format!("Control {}: {why}", place.join(".")),
-            );
-        }
-        ui.add_space(8.0);
-        ui.weak(
-            "Drawing reports is not built yet. The design can be read and edited in the code \
-             editor, under Reports.",
-        );
-        ui.add_space(4.0);
-        let open = ui.button("Open the design in the code editor");
-        named(&open, "Open report design");
-        if open.clicked() {
-            self.open_code_editor();
-            self.open_report_design(&name);
-        }
     }
 }

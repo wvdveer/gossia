@@ -83,7 +83,7 @@ mod xsd_fields;
 #[path = "control_exprs.rs"]
 mod control_exprs;
 pub(crate) use control_exprs::{Bindings, ExprJob, ExprOutcome};
-pub use control_exprs::{ExprKey, ExprKind, ExprState, cell_of};
+pub use control_exprs::{ExprKey, ExprKind, ExprState, REPORT_FORM, cell_of};
 
 #[path = "package.rs"]
 mod package;

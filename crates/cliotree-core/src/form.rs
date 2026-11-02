@@ -1354,6 +1354,115 @@ pub fn fixed_colour(text: &str) -> Option<[u8; 3]> {
     Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
+// ------------------------------------------- truth and colours of values
+
+/// Python's truth of a value: false for `None`, `False`, zero, and an empty
+/// string, list or record.
+pub fn truthy(value: &crate::Value) -> bool {
+    match value {
+        crate::Value::Null => false,
+        crate::Value::Bool(b) => *b,
+        crate::Value::Int(i) => *i != 0,
+        crate::Value::Float(f) => *f != 0.0,
+        crate::Value::Str(s) => !s.is_empty(),
+        crate::Value::Array(items) => !items.is_empty(),
+        crate::Value::Object(fields) => !fields.is_empty(),
+        crate::Value::Date(_) | crate::Value::DateTime(_) => true,
+        crate::Value::Error(_) => false,
+    }
+}
+
+/// The colours that can be named, as CSS names them.
+const NAMES: &[(&str, [u8; 3])] = &[
+    ("black", [0, 0, 0]),
+    ("white", [255, 255, 255]),
+    ("red", [255, 0, 0]),
+    ("green", [0, 128, 0]),
+    ("blue", [0, 0, 255]),
+    ("yellow", [255, 255, 0]),
+    ("orange", [255, 165, 0]),
+    ("purple", [128, 0, 128]),
+    ("pink", [255, 192, 203]),
+    ("brown", [165, 42, 42]),
+    ("grey", [128, 128, 128]),
+    ("gray", [128, 128, 128]),
+    ("silver", [192, 192, 192]),
+    ("cyan", [0, 255, 255]),
+    ("aqua", [0, 255, 255]),
+    ("magenta", [255, 0, 255]),
+    ("fuchsia", [255, 0, 255]),
+    ("lime", [0, 255, 0]),
+    ("maroon", [128, 0, 0]),
+    ("navy", [0, 0, 128]),
+    ("olive", [128, 128, 0]),
+    ("teal", [0, 128, 128]),
+    ("gold", [255, 215, 0]),
+    ("lightgreen", [144, 238, 144]),
+    ("lightblue", [173, 216, 230]),
+    ("lightyellow", [255, 255, 224]),
+    ("lightgrey", [211, 211, 211]),
+    ("lightgray", [211, 211, 211]),
+    ("darkred", [139, 0, 0]),
+    ("darkgreen", [0, 100, 0]),
+    ("darkblue", [0, 0, 139]),
+];
+
+/// The colour a value names: a name, `#rgb`, `#rrggbb` or `#rrggbbaa`, or a
+/// list of three or four numbers from 0 to 255. `None` and the empty string
+/// are the usual colour.
+pub fn colour_of(value: &crate::Value) -> Result<Option<[u8; 4]>, String> {
+    match value {
+        crate::Value::Null => Ok(None),
+        crate::Value::Str(s) if s.trim().is_empty() => Ok(None),
+        crate::Value::Str(s) => named_colour(s.trim()).map(Some),
+        crate::Value::Array(items) if items.len() == 3 || items.len() == 4 => {
+            let mut parts = [255u8; 4];
+            for (slot, item) in parts.iter_mut().zip(items) {
+                *slot = match item.value() {
+                    crate::Value::Int(i) if (0..=255).contains(i) => *i as u8,
+                    _ => return Err(not_a_colour(value)),
+                };
+            }
+            let [r, g, b, a] = parts;
+            Ok(Some([r, g, b, a]))
+        }
+        _ => Err(not_a_colour(value)),
+    }
+}
+
+fn not_a_colour(value: &crate::Value) -> String {
+    format!(
+        "a {} is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)",
+        value.kind_name()
+    )
+}
+
+fn named_colour(text: &str) -> Result<[u8; 4], String> {
+    let bad = || {
+        format!("\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)")
+    };
+    if let Some(hex) = text.strip_prefix('#') {
+        let digits: Option<Vec<u8>> = hex
+            .chars()
+            .map(|c| c.to_digit(16).map(|d| d as u8))
+            .collect();
+        let digits = digits.ok_or_else(bad)?;
+        let pair = |i: usize| digits[i] * 16 + digits[i + 1];
+        return match digits.len() {
+            3 => Ok([digits[0] * 17, digits[1] * 17, digits[2] * 17, 255]),
+            6 => Ok([pair(0), pair(2), pair(4), 255]),
+            8 => Ok([pair(0), pair(2), pair(4), pair(6)]),
+            _ => Err(bad()),
+        };
+    }
+    let lower = text.to_ascii_lowercase();
+    NAMES
+        .iter()
+        .find(|(name, _)| *name == lower)
+        .map(|(_, [r, g, b])| [*r, *g, *b, 255])
+        .ok_or_else(bad)
+}
+
 /// The text of the schema of design documents (`builtin:form`).
 pub fn form_schema_source() -> &'static str {
     r##"{

@@ -92,7 +92,7 @@ fn the_page_turns_with_its_orientation() {
 }
 
 #[test]
-fn flat_items_start_as_a_table_of_expressions() {
+fn flat_items_start_as_a_table_of_their_fields() {
     let spec = orders_spec();
     let design = starting_design(
         ReportKind::SinglePage,
@@ -106,18 +106,15 @@ fn flat_items_start_as_a_table_of_expressions() {
     assert_eq!(repeater.item_name.as_deref(), Some("order"));
     assert_eq!(repeater.mode, Some(RepeaterMode::Table));
     assert_eq!(repeater.path, None);
-    let columns: Vec<(&str, &str)> = repeater
+    // The columns show the fields of their names: no expressions.
+    let columns: Vec<(&str, Option<&str>)> = repeater
         .table_columns
         .iter()
-        .map(|c| (c.name.as_str(), c.value.as_deref().unwrap()))
+        .map(|c| (c.name.as_str(), c.value.as_deref()))
         .collect();
     assert_eq!(
         columns,
-        [
-            ("sku", "order.sku"),
-            ("qty", "order.qty"),
-            ("price.amount", "order.price.amount")
-        ]
+        [("sku", None), ("qty", None), ("price.amount", None)]
     );
     assert!(design.problems().is_empty(), "{:?}", design.problems());
 }
@@ -135,7 +132,8 @@ fn scalar_items_are_a_table_of_one_column() {
     let repeater = &design.layout.controls[0];
     assert_eq!(repeater.item_name.as_deref(), Some("tag"));
     assert_eq!(repeater.table_columns.len(), 1);
-    assert_eq!(repeater.table_columns[0].value.as_deref(), Some("tag"));
+    assert_eq!(repeater.table_columns[0].name, "value");
+    assert_eq!(repeater.table_columns[0].value, None);
 }
 
 #[test]
@@ -159,15 +157,17 @@ fn items_that_hold_arrays_start_as_designed_items() {
         .collect();
     assert_eq!(
         values,
+        // None of the fields is required, so each may be absent.
         [
-            Some("order.no"),
-            Some(r#"order["first-name"]"#),
-            Some("order.lines")
+            Some(r#"order.get("no")"#),
+            Some(r#"order.get("first-name")"#),
+            Some(r#"order.get("lines", [])"#)
         ]
     );
     let lines = &repeater.children[2];
     assert_eq!(lines.item_name.as_deref(), Some("line"));
-    assert_eq!(lines.table_columns[0].value.as_deref(), Some("line.sku"));
+    assert_eq!(lines.table_columns[0].name, "sku");
+    assert_eq!(lines.table_columns[0].value, None);
     assert!(design.problems().is_empty(), "{:?}", design.problems());
 }
 

@@ -444,3 +444,59 @@ fn a_report_tab() {
     settle(&mut harness);
     check(&mut harness, "report_tab", &mut results);
 }
+
+/// A single page report drawn from its design: a title, a group of two
+/// columns with fields, and a table of the items of Orders.
+#[test]
+fn a_drawn_report() {
+    use cliotree_core::form::{Control, ControlKind};
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    {
+        let app = harness.state_mut();
+        app.create_report_tab(
+            "Sales",
+            Default::default(),
+            Some(&("Orders".to_owned(), "items".parse().unwrap())),
+        )
+        .unwrap();
+        let mut design = app.calc().report("Sales").unwrap().clone();
+        let mut title = Control::new(ControlKind::Label);
+        title.text = Some("Order for {Orders.customer.name}".into());
+        title.template = true;
+        title.font_size = Some(20);
+        title.bold = Some(true);
+        let field = |label: &str, value: &str| {
+            let mut f = Control::new(ControlKind::Field);
+            f.label = Some(label.into());
+            f.value = Some(value.into());
+            f.label_width = Some(90);
+            f
+        };
+        let mut totals = Control::new(ControlKind::Group);
+        totals.label = Some("Totals".into());
+        totals.columns = Some(2);
+        totals.border_width = Some(1);
+        totals.fill_colour = Some("#eef4ff".into());
+        let mut total = field("Total", "Orders.total");
+        total.prefix = Some("€ ".into());
+        total.decimals = Some(2);
+        total.bold = Some(true);
+        totals.children = vec![
+            field("Subtotal", "Orders.subtotal"),
+            field("Tax", "Orders.tax"),
+            field("City", "Orders.customer.city"),
+            total,
+        ];
+        design.layout.controls.insert(0, totals);
+        design.layout.controls.insert(0, title);
+        app.session.calc_mut().set_report("Sales", design).unwrap();
+    }
+    for _ in 0..3 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_drawn", &mut results);
+}

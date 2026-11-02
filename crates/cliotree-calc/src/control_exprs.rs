@@ -22,6 +22,12 @@
 //! has them (as `order` and `rows`), and run for each item. The items are
 //! known only once the expression has run, so the expressions inside follow
 //! its result.
+//!
+//! Reports (DESIGN.md, "Reports") have the same expressions on the same
+//! controls, keyed by the report's name and [`REPORT_FORM`]. They have no node:
+//! they run at the root of a tab that does not exist, with `this`, `parent`
+//! and `root` bound to `None` outside the items of a repeater. A report's
+//! expressions run only while it is shown ([`Calc::show_report`]).
 
 use cliotree_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template};
 use cliotree_core::{Kind, Node, Path, Value};
@@ -181,6 +187,10 @@ struct ControlExpr {
 /// The form name of the keys of probes, which no form can have.
 const PROBE_FORM: &str = "\u{1}probe";
 
+/// The form name of the keys of a report's expressions, which no form can
+/// have; their tab is the report's name.
+pub const REPORT_FORM: &str = "\u{1}report";
+
 /// An expression to run, as a snapshot carries it.
 #[derive(Debug, Clone)]
 pub(crate) struct ExprJob {
@@ -216,6 +226,8 @@ pub(crate) struct ControlExprs {
     /// whether it runs as a formula. They run with the next pass and are
     /// read back by the command.
     probes: IndexMap<ExprKey, (ControlExpr, bool)>,
+    /// The report being shown, whose expressions run.
+    pub shown_report: Option<String>,
 }
 
 impl ControlExprs {
@@ -425,12 +437,31 @@ impl Calc {
         self.exprs.resync = false;
         let mut wanted: Vec<Wanted> = Vec::new();
         let mut has_rows = false;
-        for (tab, form, design) in self.forms.iter() {
+        // The forms, then the report being shown, whose expressions have no
+        // node: `this`, `parent` and `root` are None.
+        let mut designs: Vec<(&str, &str, &cliotree_core::form::FormDesign, Instance)> = self
+            .forms
+            .iter()
+            .map(|(tab, form, design)| (tab, form, design, Instance::default()))
+            .collect();
+        if let Some(name) = &self.exprs.shown_report
+            && let Some(report) = self.reports.get(name)
+        {
+            let top = Instance {
+                bindings: ["this", "parent", "root"]
+                    .into_iter()
+                    .map(|n| (n.to_owned(), Value::Null))
+                    .collect(),
+                ..Instance::default()
+            };
+            designs.push((name.as_str(), REPORT_FORM, &report.layout, top));
+        }
+        for (tab, form, design, top) in designs {
             let mut stack: Vec<(Vec<usize>, &Control, Vec<Instance>)> = design
                 .controls
                 .iter()
                 .enumerate()
-                .map(|(i, c)| (vec![i], c, vec![Instance::default()]))
+                .map(|(i, c)| (vec![i], c, vec![top.clone()]))
                 .collect();
             while let Some((at, control, instances)) = stack.pop() {
                 let key = |kind, column: Option<&str>, rows: Vec<usize>| ExprKey {
@@ -466,7 +497,7 @@ impl Calc {
                             bindings: inst.bindings.clone(),
                         });
                     }
-                    let top = inst.rows.is_empty() && inst.base.is_none();
+                    let at_top = inst.rows.is_empty() && inst.base.is_none();
                     match control.kind {
                         ControlKind::Repeater if control.lists_items() => {
                             let Some(Ok(text)) = ExprKind::Items.text(control) else {
@@ -523,7 +554,7 @@ impl Calc {
                         }
                         // The columns of a table bound to an array. (Not of
                         // a table in an item.)
-                        ControlKind::Repeater if top => {
+                        ControlKind::Repeater if at_top => {
                             if let Some(array) = &own_path {
                                 has_rows |=
                                     self.path_columns(control, &key, tab, array, &mut wanted);
@@ -888,6 +919,48 @@ impl Calc {
                 _ => None,
             })
             .min_by(|a, b| a.0.cmp(&b.0))
+    }
+
+    /// Shows a report, so that its expressions run, or none. The report
+    /// shown before stops running; its results are dropped.
+    pub fn show_report(&mut self, name: Option<&str>) {
+        let name = name
+            .filter(|n| self.reports.contains_key(*n))
+            .map(str::to_owned);
+        if self.exprs.shown_report != name {
+            self.exprs.shown_report = name;
+            self.exprs.resync = true;
+        }
+    }
+
+    /// The report whose expressions run.
+    pub fn shown_report(&self) -> Option<&str> {
+        self.exprs.shown_report.as_deref()
+    }
+
+    /// What an expression of a control of a report came to, inside the
+    /// designed items of the repeaters around it (`rows`, outermost first).
+    pub fn report_expression(
+        &self,
+        report: &str,
+        at: &[usize],
+        rows: &[usize],
+        kind: ExprKind,
+    ) -> Option<ExprState> {
+        self.control_expression_at(report, REPORT_FORM, at, rows, kind)
+    }
+
+    /// What an expression of a column of a table of a report came to.
+    pub fn report_column_expression(
+        &self,
+        report: &str,
+        at: &[usize],
+        outer: &[usize],
+        column: &str,
+        row: Option<usize>,
+        kind: ExprKind,
+    ) -> Option<ExprState> {
+        self.column_expression_at(report, REPORT_FORM, at, outer, column, row, kind)
     }
 
     fn expression_state(&self, key: &ExprKey) -> Option<ExprState> {

@@ -398,6 +398,8 @@ fn repeater_over(
     match flat_columns(spec, ty) {
         Some(columns) => {
             repeater.mode = Some(RepeaterMode::Table);
+            // A column with no expression shows the item's field of its name
+            // (blank when it is absent), or the item for `value`.
             repeater.table_columns = columns
                 .into_iter()
                 .map(|fields| {
@@ -406,9 +408,7 @@ fn repeater_over(
                     } else {
                         fields.join(".")
                     };
-                    let mut column = ColumnDesign::named(&name);
-                    column.value = Some(chain_from(&item, &fields));
-                    column
+                    ColumnDesign::named(&name)
                 })
                 .collect();
         }
@@ -446,7 +446,9 @@ fn to_expressions(
         })
         .collect();
     match control.kind {
-        ControlKind::Field => control.value = Some(chain_from(item, &fields)),
+        ControlKind::Field => {
+            control.value = Some(read_chain(spec, item_ty, item, &fields, None));
+        }
         ControlKind::Repeater => {
             let ty = resolve_from(spec, item_ty, &fields).and_then(|t| match &spec.get(t).kind {
                 Kind::Array { items, .. } => Some(*items),
@@ -460,7 +462,7 @@ fn to_expressions(
                 return repeater_over(
                     spec,
                     inner_ty,
-                    chain_from(item, &fields),
+                    read_chain(spec, item_ty, item, &fields, Some("[]")),
                     inner,
                     label,
                     outer,
@@ -474,6 +476,39 @@ fn to_expressions(
         .map(|c| to_expressions(spec, item_ty, c, item, outer))
         .collect();
     control
+}
+
+/// The expression that reads `fields` from `item`, of type `ty`: a field
+/// that may be absent is read with `.get("name")`, so that it gives `None`
+/// (or `default`, for the last one) rather than an error.
+fn read_chain(
+    spec: &TypeSpec,
+    ty: TypeId,
+    item: &str,
+    fields: &[String],
+    default: Option<&str>,
+) -> String {
+    let mut out = item.to_owned();
+    let mut here = Some(ty);
+    for (i, name) in fields.iter().enumerate() {
+        let field = here.and_then(|t| match &spec.get(t).kind {
+            Kind::Object { fields } => fields.iter().find(|f| &f.name == name),
+            _ => None,
+        });
+        let quoted = serde_json::Value::from(name.as_str()).to_string();
+        match field {
+            Some(f) if !f.required => {
+                let last = i + 1 == fields.len();
+                match default.filter(|_| last) {
+                    Some(d) => out.push_str(&format!(".get({quoted}, {d})")),
+                    None => out.push_str(&format!(".get({quoted})")),
+                }
+            }
+            _ => out = chain_from(&out, std::slice::from_ref(name)),
+        }
+        here = field.map(|f| f.ty);
+    }
+    out
 }
 
 /// The type of the field reached from type `ty` by `fields`.

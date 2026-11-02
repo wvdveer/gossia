@@ -41,6 +41,7 @@ pub mod replace_inside;
 pub mod report_tab;
 #[cfg(test)]
 mod report_tab_tests;
+pub mod report_view;
 pub mod rows;
 pub mod sample;
 pub mod schema;
