@@ -217,6 +217,7 @@ impl ClioApp {
         self.sources_window(ui.ctx());
         self.comment_window(ui.ctx());
         self.replace_inside_window(ui.ctx());
+        self.disconnect_window(ui.ctx());
         self.drop_hint(ui.ctx());
         self.code_window(ui.ctx());
     }
@@ -533,6 +534,17 @@ impl ClioApp {
                 if ui.button("Data sources...").clicked() {
                     self.open_sources();
                     ui.close();
+                }
+                if ui
+                    .button("Disconnect from Data Sources...")
+                    .on_hover_text(
+                        "Replace every read of a data source in the formulas and forms by what \
+                         it gives now, so the workbook can go to someone without the sources",
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.begin_disconnect();
                 }
                 ui.separator();
                 if ui.button("Options...").clicked() {

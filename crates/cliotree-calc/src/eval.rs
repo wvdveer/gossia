@@ -156,6 +156,7 @@ impl Snapshot {
         Rc::new(EvalContext {
             loc,
             this_by_value: false,
+            bindings: Vec::new(),
             data: self
                 .sheets
                 .iter()
@@ -621,6 +622,7 @@ impl Run<'_> {
         Rc::new(EvalContext {
             loc: loc.clone(),
             this_by_value,
+            bindings: Vec::new(),
             data: self
                 .sheets
                 .iter()
@@ -648,7 +650,10 @@ impl Run<'_> {
     /// Runs an expression of a control against the values as they are once
     /// the formulas have run, and records what it read.
     fn expression(&self, job: &ExprJob) -> ExprOutcome {
-        let ctx = self.context(&job.loc, true);
+        let mut ctx = self.context(&job.loc, !job.formula);
+        if let Some(c) = Rc::get_mut(&mut ctx) {
+            c.bindings = job.bindings.clone();
+        }
         let result = self.engine.eval(&job.text, ctx.clone());
         let reads = ctx.reads.take();
         drop(ctx);
@@ -742,6 +747,9 @@ struct EvalContext {
     names: HashMap<String, Rc<str>>,
     reads: RefCell<Vec<(Rc<str>, Path, Depth)>>,
     this_by_value: bool,
+    /// Names given to an expression of a control besides `this`, `parent` and
+    /// `root` (the items of the repeaters around it).
+    bindings: crate::calc::Bindings,
 }
 
 impl EvalContext {
@@ -761,6 +769,10 @@ impl Context for EvalContext {
 
     fn this_by_value(&self) -> bool {
         self.this_by_value
+    }
+
+    fn bindings(&self) -> &[(String, cliotree_core::Value)] {
+        &self.bindings
     }
 
     fn path(&self) -> &Path {

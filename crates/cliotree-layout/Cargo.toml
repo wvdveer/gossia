@@ -1,0 +1,21 @@
+[package]
+name = "cliotree-layout"
+description = "Measures and lays out reports for the screen and the PDF, with the bundled fonts. No egui."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cliotree-core.workspace = true
+# Fonts are read with skrifa and text is shaped with harfrust, at the versions
+# egui 0.37 uses, so that a report measures text as egui would draw it.
+skrifa = { version = "0.44.0", default-features = false, features = ["std"] }
+harfrust = "0.12.0"
+# Ubuntu Light and Hack, egui's own fonts, which follow the bundled ones for
+# characters they lack, as they do on screen. Only the font bytes; no egui.
+epaint_default_fonts = { version = "0.37.0", default-features = false }

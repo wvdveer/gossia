@@ -27,10 +27,10 @@ pub mod sqlite;
 mod trie;
 
 pub use calc::{
-    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, EditError,
-    Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind, FieldPlaces, Fingerprint,
-    Mentions, ModuleProblem, ModuleStatus, RedefineGroup, SchemaFormat, Setting, TrustStore, Unit,
-    WorkbookSettings, comment_text_problem,
+    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, Disconnect,
+    DisconnectPlan, EditError, Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind,
+    FieldPlaces, Fingerprint, Mentions, ModuleProblem, ModuleStatus, RedefineGroup, SchemaFormat,
+    Setting, TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -39,7 +39,7 @@ pub use calc::{
 pub use check::Computed;
 pub use engine::{
     Answer, Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleInfo,
-    ModuleReport, ModuleSpec, Read, Syntax, SyntaxError, Write, WriteOp,
+    ModuleReport, ModuleSpec, Read, SourceRead, SourceScan, Syntax, SyntaxError, Write, WriteOp,
 };
 pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
@@ -90,6 +90,10 @@ mod xsd_fields_tests;
 #[cfg(test)]
 #[path = "control_exprs_tests.rs"]
 mod control_exprs_tests;
+
+#[cfg(test)]
+#[path = "control_exprs_additions_tests.rs"]
+mod control_exprs_additions_tests;
 
 #[cfg(test)]
 #[path = "columns_tests.rs"]

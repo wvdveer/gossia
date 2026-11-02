@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use cliotree_calc::entry;
+use cliotree_calc::{ExprKind, ExprState, entry};
 use cliotree_core::form::{
     Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
     DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, TrackSize, flow_rows,
@@ -113,8 +113,12 @@ pub(crate) enum FormAction {
     Step(Path, usize),
     AddEntry(Path, String),
     DeleteEntry(Path, String),
-    /// A click on a button: its label, and the procedure it runs.
-    Button(String, String),
+    /// A click on a button: its label, the procedure it runs, and inside
+    /// the items of repeaters, the item of each (`ctx.index`).
+    Button(String, String, Vec<usize>),
+    /// Text typed into a field that shows an expression: the label of the
+    /// field, its write procedure, the text, and the items it is in.
+    Write(String, String, String, Vec<usize>),
     /// A command on a control, in layout mode.
     Control(ControlAction),
     /// A command of the tabular view on a table of the form: a filter, hiding
@@ -213,6 +217,22 @@ impl ClioApp {
     /// date, and its outcome is shown by [`ClioApp::collect_procedures`].
     /// Returns why it did not start.
     pub fn click_button(&mut self, procedure: &str, label: &str) -> Result<(), String> {
+        self.start_procedure(procedure, label, None, Vec::new())
+    }
+
+    /// Passes the text typed into a field that shows an expression to its
+    /// write procedure, `name(form, ctx, value)`, as a click runs a button's.
+    pub fn write_field(&mut self, procedure: &str, label: &str, text: &str) -> Result<(), String> {
+        self.start_procedure(procedure, label, Some(text.to_owned()), Vec::new())
+    }
+
+    fn start_procedure(
+        &mut self,
+        procedure: &str,
+        label: &str,
+        value: Option<String>,
+        rows: Vec<usize>,
+    ) -> Result<(), String> {
         if let Some(call) = self.session.running_procedure() {
             let message = format!("{} is still running", call.button);
             self.notice = Some(message.clone());
@@ -226,6 +246,8 @@ impl ClioApp {
             sheet: self.sheet.clone(),
             form: self.form_name(),
             button: label.to_owned(),
+            value,
+            rows,
             time_limit: None,
         };
         match self.session.run_procedure(call) {
@@ -387,6 +409,7 @@ impl ClioApp {
                     nav: Vec::new(),
                     seen: Vec::new(),
                     item: None,
+                    rows: Vec::new(),
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -475,8 +498,11 @@ impl ClioApp {
                     self.set_node(&path, value);
                 }
             }
-            FormAction::Button(label, procedure) => {
-                let _ = self.click_button(&procedure, &label);
+            FormAction::Button(label, procedure, rows) => {
+                let _ = self.start_procedure(&procedure, &label, None, rows);
+            }
+            FormAction::Write(label, procedure, text, rows) => {
+                let _ = self.start_procedure(&procedure, &label, Some(text), rows);
             }
             FormAction::Select(path) if self.picking() => self.finish_pick(&path),
             FormAction::Select(path) => self.selection = Some(path),
@@ -737,9 +763,14 @@ struct Painter<'a> {
     /// The nodes whose controls were drawn, for finding the nearest one
     /// above a node that has none.
     seen: Vec<Path>,
-    /// In the design of a stacked repeater's items: the item drawn, and its
-    /// index. The paths of the controls there are relative to it.
-    item: Option<(Path, usize)>,
+    /// In the design of the items of a stacked repeater bound to an array:
+    /// the item drawn. The paths of the controls there are relative to it.
+    /// None in the items of a repeater over an expression, where the paths
+    /// start again from the top of the tab.
+    item: Option<Path>,
+    /// In the design of the items of repeaters: the item drawn of each,
+    /// outermost first, for the results of the expressions there.
+    rows: Vec<usize>,
 }
 
 /// The Grid group a control is drawn in: where its rows and columns are.
@@ -1082,9 +1113,13 @@ impl Painter<'_> {
             self.control_in_style(ui, c, slot);
             return;
         }
-        let item = self.item.as_ref().map(|(_, i)| *i);
-        let gate =
-            crate::form_exprs::gate(self.app.calc(), &self.app.sheet, self.form, &slot.at, item);
+        let gate = crate::form_exprs::gate(
+            self.app.calc(),
+            &self.app.sheet,
+            self.form,
+            &slot.at,
+            &self.rows,
+        );
         if gate == Gate::default() {
             self.control_in_style(ui, c, slot);
             return;
@@ -1910,7 +1945,9 @@ impl Painter<'_> {
     ) {
         let layout = self.layout.is_some();
         let problem = self.problem_of(c);
-        let path = self.path_of(c).filter(|_| problem.is_none());
+        let path = self
+            .path_of(c)
+            .filter(|_| problem.is_none() && !c.lists_items());
         // A stacked repeater in layout mode: its controls are the design of
         // its items, drawn for the item its stepper is at.
         let item = match (&path, c.kind) {
@@ -1961,8 +1998,14 @@ impl Painter<'_> {
             this.sized = false;
             this.label_width = c.label_width.or(this.label_width);
             let outer_item = this.item.clone();
-            if item.is_some() {
-                this.item = item.clone();
+            let outer_rows = this.rows.len();
+            if c.lists_items() {
+                // The design of the items of an expression, for its first.
+                this.item = None;
+                this.rows.push(0);
+            } else if let Some((path, at)) = &item {
+                this.item = Some(path.clone());
+                this.rows.push(*at);
             }
             ui.scope(|ui| {
                 if let Some(gap) = c.spacing {
@@ -2004,6 +2047,7 @@ impl Painter<'_> {
                 }
             });
             this.item = outer_item;
+            this.rows.truncate(outer_rows);
             (this.sized, this.label_width) = outer;
         };
         if !framed {
@@ -2097,6 +2141,7 @@ impl Painter<'_> {
     /// A control that is not a group.
     fn leaf(&mut self, ui: &mut egui::Ui, c: &Control) {
         match c.kind {
+            ControlKind::Label if c.is_template() => self.template_label(ui, c),
             ControlKind::Label => {
                 ui.label(c.text.clone().unwrap_or_default());
             }
@@ -2145,13 +2190,18 @@ impl Painter<'_> {
                     if response.on_hover_text(hint).clicked()
                         && let Some(procedure) = &c.procedure
                     {
-                        self.actions
-                            .push(FormAction::Button(label.clone(), procedure.clone()));
+                        self.actions.push(FormAction::Button(
+                            label.clone(),
+                            procedure.clone(),
+                            self.rows.clone(),
+                        ));
                     }
                 } else {
                     response.on_disabled_hover_text(hint);
                 }
             }
+            ControlKind::Field if c.shows_value() => self.value_field(ui, c),
+            ControlKind::Repeater if c.lists_items() => self.items_repeater(ui, c),
             ControlKind::Field | ControlKind::Repeater => self.bound(ui, c),
             ControlKind::Group => {}
         }
@@ -2190,8 +2240,14 @@ impl Painter<'_> {
                 choices: has_text(&c.choices)
                     .then(|| {
                         let app = self.app;
-                        let item = self.item.as_ref().map(|(_, i)| *i);
-                        choice_list(app.calc(), &app.sheet, self.form, &self.at, None, item)
+                        choice_list(
+                            app.calc(),
+                            &app.sheet,
+                            self.form,
+                            &self.at,
+                            None,
+                            &self.rows,
+                        )
                     })
                     .flatten(),
                 allow_other: c.allow_other,
@@ -3082,7 +3138,7 @@ impl Painter<'_> {
         let mut heads = Vec::new();
         for (design, column) in columns {
             let head = match (&gated, column) {
-                (Some(at), Some(_)) => crate::form_exprs::column_gate(
+                (Some(at), _) if !design.is_row_number() => crate::form_exprs::column_gate(
                     self.app.calc(),
                     &self.app.sheet,
                     self.form,
@@ -3152,8 +3208,8 @@ impl Painter<'_> {
         for (design, column) in columns {
             let shape = match (design.width, column) {
                 (Some(width), _) => TableColumn::initial(width as f32).at_least(24.0).clip(true),
-                (None, None) => TableColumn::auto().at_least(32.0),
-                (None, Some(_)) => TableColumn::initial(140.0).at_least(60.0).clip(true),
+                (None, None) if design.is_row_number() => TableColumn::auto().at_least(32.0),
+                (None, _) => TableColumn::initial(140.0).at_least(60.0).clip(true),
             };
             table = table.column(shape.resizable(true));
         }
@@ -3223,6 +3279,9 @@ impl Painter<'_> {
                         row.col(|ui| {
                             in_font(ui, *font, |ui| {
                                 aligned(ui, design.align, |ui| match column {
+                                    None if !design.is_row_number() => {
+                                        self.computed_cell(ui, at.as_deref(), design, index, head);
+                                    }
                                     None => {
                                         let label = ui.add(
                                             egui::Label::new(
@@ -3246,7 +3305,7 @@ impl Painter<'_> {
                                                     self.form,
                                                     at,
                                                     Some((&design.name, index)),
-                                                    None,
+                                                    &[],
                                                 )
                                             });
                                         let look = Look {
@@ -3492,12 +3551,520 @@ impl Painter<'_> {
         match control.filter(|c| self.designs_items(c)) {
             Some(c) => {
                 let address = self.at.clone();
-                let outer = self.item.replace((item, at));
+                let outer = self.item.replace(item);
+                self.rows.push(at);
                 self.controls(ui, &c.children, &address);
+                self.rows.pop();
                 self.item = outer;
                 self.at = address;
             }
             None => self.node(ui, &item, item_ty, &format!("Item {}", at + 1), true),
+        }
+    }
+
+    // ------------------------------------------------- shown by expressions
+
+    /// What an expression of the control being drawn came to, for the items
+    /// it is in.
+    fn own_expression(&self, kind: ExprKind) -> Option<cliotree_calc::ExprState> {
+        self.app.calc().control_expression_at(
+            &self.app.sheet,
+            self.form,
+            &self.at,
+            &self.rows,
+            kind,
+        )
+    }
+
+    /// A label whose text is a template: filled in, or in a workbook that is
+    /// not trusted, its fixed text with a mark for each expression.
+    fn template_label(&mut self, ui: &mut egui::Ui, c: &Control) {
+        let text = c.text.clone().unwrap_or_default();
+        match shown_result(
+            self.app.calc().is_trusted(),
+            self.own_expression(ExprKind::Template),
+        ) {
+            Shown::Untrusted => {
+                ui.label(cliotree_core::form::template::with_marks(&text, UNTRUSTED))
+                    .on_hover_text(
+                        "The text runs Python, so this workbook has to be trusted first.",
+                    );
+            }
+            Shown::Value(value, pending) => {
+                let r = ui.label(value_text(&value));
+                if pending {
+                    r.on_hover_text("Waiting to run again.");
+                }
+            }
+            Shown::Waiting => {
+                ui.label(
+                    RichText::new(cliotree_core::form::template::with_marks(&text, "…")).weak(),
+                );
+            }
+            Shown::Error(error) => {
+                ui.label(RichText::new("#ERROR!").color(error_color(ui)).strong())
+                    .on_hover_text(format!("Text: {error}"));
+            }
+        }
+    }
+
+    /// A field that shows what an expression comes to: its label, and the
+    /// value in its format. It is read-only, unless it has a write procedure:
+    /// then what is typed is passed to the procedure when the field loses the
+    /// focus (Enter, Tab or a click elsewhere), and the value is worked out
+    /// again from what the procedure wrote.
+    fn value_field(&mut self, ui: &mut egui::Ui, c: &Control) {
+        if let Some(problem) = self.problem_of(c) {
+            self.placeholder(ui, c, &problem);
+            return;
+        }
+        let label = c.label.clone().unwrap_or_default();
+        let width = c
+            .label_width
+            .or(self.label_width)
+            .map_or(LABEL_WIDTH, |w| w as f32);
+        let position = c.label_position.unwrap_or(LabelPosition::Left);
+        let shown = shown_result(
+            self.app.calc().is_trusted(),
+            self.own_expression(ExprKind::Value),
+        );
+        let help = c.help.clone().filter(|h| !h.trim().is_empty());
+        if position == LabelPosition::Top {
+            label_cell(ui, &label, false, help.as_deref(), ui.available_width());
+        }
+        ui.horizontal(|ui| {
+            if position == LabelPosition::Left {
+                label_cell(ui, &label, false, help.as_deref(), width);
+            }
+            let box_width = if self.sized {
+                ui.available_width()
+            } else {
+                ui.available_width().min(360.0)
+            };
+            let id =
+                ui.make_persistent_id(("value_field_draft", self.at.clone(), self.rows.clone()));
+            let rows = self.rows.clone();
+            self.value_box(
+                ui,
+                ValueBox {
+                    shown: &shown,
+                    format: c.format(),
+                    align: c.align,
+                    label: &label,
+                    write: c.write_procedure.as_deref(),
+                    id,
+                    width: box_width,
+                    rows,
+                },
+            );
+        });
+    }
+
+    /// The box of a value an expression gives, in a field or a cell of a
+    /// table: read-only, or with a write procedure, a text box whose text is
+    /// passed to the procedure when it loses the focus with a change.
+    fn value_box(&mut self, ui: &mut egui::Ui, b: ValueBox<'_>) {
+        let trusted = self.app.calc().is_trusted();
+        let running = self.app.session.running_procedure().is_some();
+        let writer = b
+            .write
+            .filter(|_| trusted && !running && self.layout.is_none());
+        let raw = match b.shown {
+            Shown::Value(value, _) => value_text(value),
+            _ => String::new(),
+        };
+        let draft: Option<String> = ui.data(|d| d.get_temp(b.id));
+        let (mut text, colour, mut why) = match b.shown {
+            Shown::Untrusted => (
+                UNTRUSTED.to_owned(),
+                Some(error_color(ui)),
+                Some("The value runs Python, so this workbook has to be trusted first.".to_owned()),
+            ),
+            Shown::Value(value, pending) => (
+                b.format.apply(value).unwrap_or_else(|| value_text(value)),
+                None,
+                pending.then(|| "Waiting to run again.".to_owned()),
+            ),
+            Shown::Waiting => (String::new(), None, None),
+            Shown::Error(error) => (
+                "#ERROR!".to_owned(),
+                Some(error_color(ui)),
+                Some(format!("Value: {error}")),
+            ),
+        };
+        if writer.is_some()
+            && let Some(draft) = &draft
+        {
+            // While it is typed into: the value as it is, not formatted.
+            text = draft.clone();
+        }
+        if b.write.is_some() && writer.is_none() && self.layout.is_none() {
+            why.get_or_insert_with(|| {
+                if trusted {
+                    "A procedure is running; wait for it to finish.".to_owned()
+                } else {
+                    "Its write procedure runs Python, so this workbook has to be trusted first."
+                        .to_owned()
+                }
+            });
+        }
+        let shown_text = text.clone();
+        let mut edit = egui::TextEdit::singleline(&mut text)
+            .id(b.id.with("box"))
+            .interactive(writer.is_some())
+            .desired_width(b.width);
+        if let Some(colour) = colour {
+            edit = edit.text_color(colour);
+        }
+        if let Some(align) = b.align {
+            edit = edit.align(match align {
+                Alignment::Left => egui::Align2::LEFT_CENTER,
+                Alignment::Center => egui::Align2::CENTER_CENTER,
+                Alignment::Right => egui::Align2::RIGHT_CENTER,
+            });
+        }
+        let r = ui.add(edit);
+        if let Some(procedure) = writer {
+            if r.gained_focus() {
+                ui.data_mut(|d| d.insert_temp(b.id, raw.clone()));
+            } else if r.has_focus() {
+                ui.data_mut(|d| d.insert_temp(b.id, text.clone()));
+            } else if r.lost_focus() {
+                ui.data_mut(|d| d.remove::<String>(b.id));
+                if text != raw {
+                    self.actions.push(FormAction::Write(
+                        b.label.to_owned(),
+                        procedure.to_owned(),
+                        text.clone(),
+                        b.rows,
+                    ));
+                }
+            } else if draft.is_some() {
+                ui.data_mut(|d| d.remove::<String>(b.id));
+            }
+            self.nav.push(crate::form_nav::NavStop {
+                id: r.id,
+                rect: r.rect,
+                text: true,
+                vertical: true,
+            });
+        }
+        let editable = writer.is_some();
+        r.widget_info(|| {
+            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, editable, b.label);
+            info.current_text_value = Some(shown_text.clone());
+            info
+        });
+        if let Some(why) = why {
+            r.on_hover_text(why);
+        }
+    }
+
+    /// A repeater whose items an expression gives, read-only: a table of
+    /// their fields, or one item at a time in the design of its items.
+    fn items_repeater(&mut self, ui: &mut egui::Ui, c: &Control) {
+        let shown = shown_result(
+            self.app.calc().is_trusted(),
+            self.own_expression(ExprKind::Items),
+        );
+        let (items, problem): (Vec<Value>, Option<String>) = match shown {
+            Shown::Untrusted => (
+                Vec::new(),
+                Some("Items runs Python, so this workbook has to be trusted first.".to_owned()),
+            ),
+            Shown::Value(Value::Array(items), _) => {
+                (items.iter().map(|n| n.value().clone()).collect(), None)
+            }
+            Shown::Value(Value::Null, _) | Shown::Waiting => (Vec::new(), None),
+            Shown::Value(other, _) => (
+                Vec::new(),
+                Some(format!("Items gave {}, not a list.", display(&other))),
+            ),
+            Shown::Error(error) => (Vec::new(), Some(format!("Items: {error}"))),
+        };
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                if let Some(label) = c.label.as_deref().filter(|l| !l.is_empty()) {
+                    let title_font = own_font(c.title_font, c.title_font_size, self.font);
+                    in_font(ui, title_font, |ui| ui.strong(label));
+                }
+                ui.label(RichText::new(count_text(items.len())).weak());
+            });
+            if let Some(problem) = problem {
+                ui.label(RichText::new(problem).small().color(error_color(ui)));
+            }
+            if c.is_stacked() {
+                self.items_stacked(ui, c, &items);
+            } else if !items.is_empty() {
+                self.items_table(ui, c, &items);
+            }
+        });
+    }
+
+    /// The items of an expression one at a time, each in the design of the
+    /// items, with a stepper. Where it is kept is the window's own.
+    fn items_stacked(&mut self, ui: &mut egui::Ui, c: &Control, items: &[Value]) {
+        if items.is_empty() {
+            return;
+        }
+        let id = ui.make_persistent_id(("form_items_step", self.at.clone(), self.rows.clone()));
+        let len = items.len();
+        let at = ui
+            .data(|d| d.get_temp::<usize>(id))
+            .unwrap_or(0)
+            .min(len - 1);
+        ui.horizontal(|ui| {
+            let mut step = at;
+            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", "Previous item").clicked() {
+                step = at - 1;
+            }
+            ui.label(format!("{} of {len}", at + 1));
+            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", "Next item").clicked() {
+                step = at + 1;
+            }
+            if step != at {
+                ui.data_mut(|d| d.insert_temp(id, step));
+            }
+        });
+        if c.children.is_empty() {
+            ui.label(RichText::new(display(&items[at])).weak());
+            return;
+        }
+        let address = self.at.clone();
+        let outer = self.item.take();
+        self.rows.push(at);
+        self.controls(ui, &c.children, &address);
+        self.rows.pop();
+        self.item = outer;
+        self.at = address;
+    }
+
+    /// The items of an expression as a table: the columns of the design, or
+    /// with none, the fields of the first item. A column with an expression
+    /// shows what it comes to for each row.
+    fn items_table(&mut self, ui: &mut egui::Ui, c: &Control, items: &[Value]) {
+        let app = self.app;
+        let calc = app.calc();
+        let trusted = calc.is_trusted();
+        let at = self.at.clone();
+        let rows = self.rows.clone();
+        let columns: Vec<ColumnDesign> = {
+            c.arrange_columns(&listed_names(c, items))
+                .into_iter()
+                .filter(|d| !d.hidden)
+                .filter(|d| {
+                    let visible = calc.column_expression_at(
+                        &app.sheet,
+                        self.form,
+                        &at,
+                        &rows,
+                        &d.name,
+                        None,
+                        ExprKind::Visible,
+                    );
+                    match visible.and_then(|s| s.result) {
+                        Some(Ok(v)) if trusted => crate::form_exprs::truthy(&v),
+                        _ => true,
+                    }
+                })
+                .collect()
+        };
+        let header_font = own_font(c.header_font, c.header_font_size, self.font);
+        egui::ScrollArea::horizontal()
+            .id_salt(("form_items_table", at.clone(), rows.clone()))
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                egui::Grid::new(("form_items_grid", at.clone(), rows.clone()))
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for design in &columns {
+                            let title = design.label.clone().unwrap_or_else(|| design.name.clone());
+                            aligned(ui, design.title_align, |ui| {
+                                in_font(ui, header_font, |ui| ui.strong(title));
+                            });
+                        }
+                        ui.end_row();
+                        for (index, item) in items.iter().enumerate() {
+                            for design in &columns {
+                                if design.is_row_number() {
+                                    ui.label(RichText::new(design.row_label(index)).weak());
+                                    continue;
+                                }
+                                let gate = crate::form_exprs::column_gate_at(
+                                    calc,
+                                    &app.sheet,
+                                    self.form,
+                                    &at,
+                                    &rows,
+                                    &design.name,
+                                    Some(index),
+                                );
+                                // A column with a write procedure is a box
+                                // that can be typed into.
+                                if has_text(&design.value) && design.write_procedure.is_some() {
+                                    let state = calc.column_expression_at(
+                                        &app.sheet,
+                                        self.form,
+                                        &at,
+                                        &rows,
+                                        &design.name,
+                                        Some(index),
+                                        ExprKind::Value,
+                                    );
+                                    let shown = shown_result(trusted, state);
+                                    let title =
+                                        design.label.clone().unwrap_or_else(|| design.name.clone());
+                                    let label = format!("{title} [{index}]");
+                                    let id = ui.make_persistent_id((
+                                        "listed_value_cell",
+                                        at.clone(),
+                                        rows.clone(),
+                                        &design.name,
+                                        index,
+                                    ));
+                                    let mut cell_rows = rows.clone();
+                                    cell_rows.push(index);
+                                    let draw = |this: &mut Self, ui: &mut egui::Ui| {
+                                        this.value_box(
+                                            ui,
+                                            ValueBox {
+                                                shown: &shown,
+                                                format: design.format(),
+                                                align: design.align,
+                                                label: &label,
+                                                write: design.write_procedure.as_deref(),
+                                                id,
+                                                width: 140.0,
+                                                rows: cell_rows.clone(),
+                                            },
+                                        );
+                                    };
+                                    if gate == Gate::default() {
+                                        draw(self, ui);
+                                    } else if !gate.hidden {
+                                        self.styled(ui, &gate, true, draw);
+                                    }
+                                    continue;
+                                }
+                                let text = if has_text(&design.value) {
+                                    let state = calc.column_expression_at(
+                                        &app.sheet,
+                                        self.form,
+                                        &at,
+                                        &rows,
+                                        &design.name,
+                                        Some(index),
+                                        ExprKind::Value,
+                                    );
+                                    match shown_result(trusted, state) {
+                                        Shown::Untrusted => UNTRUSTED.to_owned(),
+                                        Shown::Value(v, _) => design
+                                            .format()
+                                            .apply(&v)
+                                            .unwrap_or_else(|| value_text(&v)),
+                                        Shown::Waiting => String::new(),
+                                        Shown::Error(_) => "#ERROR!".to_owned(),
+                                    }
+                                } else {
+                                    cliotree_calc::cell_of(item, &design.name)
+                                        .map(|v| {
+                                            design
+                                                .format()
+                                                .apply(&v)
+                                                .unwrap_or_else(|| value_text(&v))
+                                        })
+                                        .unwrap_or_default()
+                                };
+                                aligned(ui, design.align, |ui| {
+                                    if gate == Gate::default() {
+                                        ui.label(text);
+                                    } else if !gate.hidden {
+                                        self.styled(ui, &gate, true, |_, ui| {
+                                            ui.label(text);
+                                        });
+                                    }
+                                });
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+    }
+
+    /// A cell of a column that shows an expression, in a table bound to an
+    /// array: what it comes to for the row, written through the column's
+    /// write procedure when it has one.
+    fn computed_cell(
+        &mut self,
+        ui: &mut egui::Ui,
+        at: Option<&[usize]>,
+        design: &ColumnDesign,
+        index: usize,
+        head: &Gate,
+    ) {
+        let calc = self.app.calc();
+        let state = at.and_then(|at| {
+            calc.column_expression_at(
+                &self.app.sheet,
+                self.form,
+                at,
+                &self.rows,
+                &design.name,
+                Some(index),
+                ExprKind::Value,
+            )
+        });
+        let shown = shown_result(calc.is_trusted(), state);
+        let gate = match at.filter(|_| self.layout.is_none()) {
+            Some(at) => {
+                let mut gate = crate::form_exprs::column_gate_at(
+                    calc,
+                    &self.app.sheet,
+                    self.form,
+                    at,
+                    &self.rows,
+                    &design.name,
+                    Some(index),
+                );
+                gate.disabled |= head.disabled;
+                gate.pending |= head.pending;
+                gate.why.extend(head.why.iter().cloned());
+                gate
+            }
+            None => Gate::default(),
+        };
+        let title = design.label.clone().unwrap_or_else(|| design.name.clone());
+        let label = format!("{title} [{index}]");
+        let id = ui.make_persistent_id((
+            "value_cell",
+            at.map(<[usize]>::to_vec),
+            self.rows.clone(),
+            &design.name,
+            index,
+        ));
+        let mut rows = self.rows.clone();
+        rows.push(index);
+        let draw = |this: &mut Self, ui: &mut egui::Ui| {
+            let width = ui.available_width();
+            this.value_box(
+                ui,
+                ValueBox {
+                    shown: &shown,
+                    format: design.format(),
+                    align: design.align,
+                    label: &label,
+                    write: design.write_procedure.as_deref(),
+                    id,
+                    width,
+                    rows: rows.clone(),
+                },
+            );
+        };
+        if gate == Gate::default() {
+            draw(self, ui);
+        } else if !gate.hidden {
+            self.styled(ui, &gate, true, draw);
         }
     }
 
@@ -3513,9 +4080,9 @@ impl Painter<'_> {
     }
 
     /// Whether a control is a stacked repeater drawn by the design of its
-    /// items. One inside the items of another shows its items as generated.
+    /// items. Designed items nest.
     fn designs_items(&self, c: &Control) -> bool {
-        c.is_stacked() && !c.children.is_empty() && self.item.is_none()
+        c.is_stacked() && !c.children.is_empty()
     }
 
     /// The node a control shows: its path, or in the design of a stacked
@@ -3524,7 +4091,7 @@ impl Painter<'_> {
     fn path_of(&self, c: &Control) -> Option<Path> {
         match &self.item {
             None => c.bound_path(),
-            Some((item, _)) => match c.bound_path() {
+            Some(item) => match c.bound_path() {
                 Some(rest) => Some(item.join(&rest)),
                 None => Some(item.clone()),
             },
@@ -3536,7 +4103,7 @@ impl Painter<'_> {
     fn problem_of(&self, c: &Control) -> Option<String> {
         match &self.item {
             None => design_problem(self.spec, c),
-            Some((item, _)) => cliotree_core::form::control_problem_at(self.spec, c, item),
+            Some(item) => cliotree_core::form::control_problem_at(self.spec, c, item),
         }
     }
 
@@ -3609,6 +4176,66 @@ impl Painter<'_> {
 /// How a cell of a column is drawn: its row's expressions, with what the
 /// column's *visible when* said when it could not hide the column (an error,
 /// or not run yet).
+/// The columns a table over an expression can show: the fields of its first
+/// item (`value` for items that are not records), and the columns of its
+/// design that show an expression.
+pub(crate) fn listed_names(c: &Control, items: &[Value]) -> Vec<String> {
+    let mut names: Vec<String> = match items.first() {
+        Some(Value::Object(fields)) => fields.keys().cloned().collect(),
+        Some(_) => vec!["value".to_owned()],
+        None => Vec::new(),
+    };
+    for column in &c.table_columns {
+        if !column.is_row_number() && !names.contains(&column.name) {
+            names.push(column.name.clone());
+        }
+    }
+    names
+}
+
+/// The settings of the box of a value an expression gives.
+struct ValueBox<'a> {
+    shown: &'a Shown,
+    format: Format,
+    align: Option<Alignment>,
+    /// What the box is called, and the `ctx.button` of its write procedure.
+    label: &'a str,
+    write: Option<&'a str>,
+    /// Where what is typed is kept until the box loses the focus.
+    id: egui::Id,
+    width: f32,
+    /// The items it is in, for `ctx.index`.
+    rows: Vec<usize>,
+}
+
+/// What a workbook that is not trusted shows for an expression.
+const UNTRUSTED: &str = "#UNTRUSTED!";
+
+/// What an expression that a control shows comes to.
+enum Shown {
+    /// It does not run: the workbook is not trusted.
+    Untrusted,
+    /// Its value, and whether it is waiting to run again.
+    Value(Value, bool),
+    /// It has not run yet.
+    Waiting,
+    Error(String),
+}
+
+fn shown_result(trusted: bool, state: Option<ExprState>) -> Shown {
+    if !trusted {
+        return Shown::Untrusted;
+    }
+    let Some(state) = state else {
+        return Shown::Waiting;
+    };
+    match state.result {
+        Some(Ok(value)) => Shown::Value(value, state.pending),
+        Some(Err(error)) => Shown::Error(error),
+        None => Shown::Waiting,
+    }
+}
+
 fn cell_gate(
     calc: &cliotree_calc::Calc,
     tab: &str,
@@ -3841,7 +4468,12 @@ fn arranged(
     control: Option<&Control>,
     columns: Vec<Column>,
 ) -> Vec<(ColumnDesign, Option<Column>)> {
-    let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let mut names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    for design in control.map_or(&[][..], |c| &c.table_columns[..]) {
+        if has_text(&design.value) && !names.contains(&design.name) {
+            names.push(design.name.clone());
+        }
+    }
     let designs = match control {
         Some(control) => control.arrange_columns(&names),
         None => Control::new(ControlKind::Repeater).arrange_columns(&names),

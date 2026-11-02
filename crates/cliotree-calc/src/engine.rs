@@ -141,6 +141,13 @@ pub trait Context {
     fn this_by_value(&self) -> bool {
         false
     }
+    /// Names an expression of a control is given besides `this`, `parent`
+    /// and `root`, with their values: the item and the list of each repeater
+    /// around it whose items an expression gave, by the names the repeater
+    /// gives them, and `this` for such an item, in place of a node.
+    fn bindings(&self) -> &[(String, Value)] {
+        &[]
+    }
 }
 
 /// What the source of a module says about itself, found without running it.
@@ -193,6 +200,31 @@ pub trait Syntax: Send + Sync {
     fn standard_modules(&self) -> Option<&'static [&'static str]> {
         None
     }
+
+    /// The reads of a data source written out in an expression, for
+    /// Disconnect from Data Sources (DESIGN.md, "Data sources"). Nothing is
+    /// found if the language cannot tell.
+    fn source_reads(&self, _text: &str) -> SourceScan {
+        SourceScan::default()
+    }
+}
+
+/// The reads of data sources in an expression, and the uses of a source that
+/// are not reads that can be replaced by what they give.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SourceScan {
+    pub reads: Vec<SourceRead>,
+    /// Each a use that stays, said in a few words.
+    pub others: Vec<String>,
+}
+
+/// A read such as `source('shop').query(...)`: the byte ranges of the text
+/// that could be replaced by a literal, shortest first. The first is the read
+/// call itself; each next one adds an attribute, a call or a subscript on the
+/// one before (`.json()`, `[0]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRead {
+    pub chains: Vec<std::ops::Range<usize>>,
 }
 
 /// An expression typed in the Immediate window of the code editor (DESIGN.md,
@@ -249,6 +281,13 @@ pub struct Call {
     /// `ctx.button`).
     pub form: String,
     pub button: String,
+    /// For the write procedure of a field: the text typed into it, passed as
+    /// the third argument, `name(form, ctx, value)`. `button` is then the
+    /// label of the field.
+    pub value: Option<String>,
+    /// For a control inside the items of repeaters: the item of each,
+    /// outermost first. `ctx.index` is the last, the item the control is in.
+    pub rows: Vec<usize>,
     /// The longest the procedure may run, if it is limited.
     pub time_limit: Option<std::time::Duration>,
 }

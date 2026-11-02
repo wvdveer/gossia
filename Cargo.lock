@@ -962,6 +962,7 @@ dependencies = [
  "chrono",
  "cliotree-calc",
  "cliotree-core",
+ "cliotree-layout",
  "cliotree-std",
  "eframe",
  "egui",
@@ -1020,6 +1021,16 @@ dependencies = [
  "serde_json",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "cliotree-layout"
+version = "0.2.0"
+dependencies = [
+ "cliotree-core",
+ "epaint_default_fonts",
+ "harfrust",
+ "skrifa",
 ]
 
 [[package]]

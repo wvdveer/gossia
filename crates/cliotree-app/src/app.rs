@@ -104,6 +104,9 @@ pub struct ClioApp {
     /// A formula waiting for the answer to whether it may erase what is
     /// inside its node.
     pub replace_inside: Option<crate::replace_inside::ReplaceInside>,
+    /// What Tools > Disconnect from Data Sources would change, waiting for
+    /// the answer.
+    pub disconnect: Option<cliotree_calc::Disconnect>,
     /// The tabular view of arrays: which arrays, and the view state of each.
     pub tables: Tables,
     /// A field command waiting for a name or a confirmation.
@@ -215,6 +218,7 @@ impl ClioApp {
             show_toolbar: true,
             show_inspector: false,
             replace_inside: None,
+            disconnect: None,
             tables: Tables::default(),
             schema_dialog: None,
             scroll_to: None,

@@ -22,6 +22,9 @@ pub(super) struct Classes {
     pub timedelta: PyObjectRef,
     /// What a data source raises; a formula shows it as `#SOURCE!`.
     pub source_error: PyObjectRef,
+    /// An item an expression gave, as the expressions inside its repeater
+    /// see it: a dict whose fields can also be read as attributes.
+    pub record: PyObjectRef,
 }
 
 /// A workbook module as the importer serves it.

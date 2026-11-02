@@ -11,9 +11,9 @@ use ruff_python_ast::visitor::{Visitor, walk_expr};
 use ruff_python_ast::{Expr, ExprAttribute, ExprName, Stmt};
 use ruff_python_parser::{parse_expression, parse_module};
 use ruff_source_file::LineIndex;
-use ruff_text_size::{Ranged, TextSize};
+use ruff_text_size::{Ranged, TextRange, TextSize};
 
-use crate::engine::{ModuleInfo, Syntax, SyntaxError};
+use crate::engine::{ModuleInfo, SourceRead, SourceScan, Syntax, SyntaxError};
 
 /// The syntax check for Python formulas.
 #[derive(Debug, Default, Clone, Copy)]
@@ -49,6 +49,10 @@ impl Syntax for PythonSyntax {
 
     fn standard_modules(&self) -> Option<&'static [&'static str]> {
         Some(super::MODULES)
+    }
+
+    fn source_reads(&self, text: &str) -> SourceScan {
+        source_reads(text)
     }
 }
 
@@ -98,6 +102,124 @@ impl PythonSyntax {
             }
         }
         Ok(info)
+    }
+}
+
+/// The methods of a data source that read, and so can be replaced by what they
+/// give. The others write.
+const READS: &[&str] = &[
+    "query",
+    "get",
+    "transactions",
+    "balance",
+    "accounts",
+    "prices",
+    "errors",
+    "options",
+];
+
+/// The reads of data sources in an expression (see [`Syntax::source_reads`]).
+fn source_reads(text: &str) -> SourceScan {
+    let trimmed = text.trim_start();
+    let lead = text.len() - trimmed.len();
+    let Ok(parsed) = parse_expression(trimmed.trim_end()) else {
+        return SourceScan::default();
+    };
+    let mut chains = ChainScan::default();
+    chains.visit_expr(&parsed.syntax().body);
+    let at = |r: TextRange| usize::from(r.start()) + lead..usize::from(r.end()) + lead;
+    let mut scan = SourceScan::default();
+    for (_, mut ranges) in chains.reads {
+        ranges.sort_by_key(|r| r.len());
+        ranges.dedup();
+        scan.reads.push(SourceRead {
+            chains: ranges.into_iter().map(at).collect(),
+        });
+    }
+    for call in chains.sources {
+        if chains.used.contains(&call) {
+            continue;
+        }
+        let place = &text[at(call)];
+        scan.others
+            .push(match chains.others.iter().find(|(c, _)| *c == call) {
+                Some((_, method)) => {
+                    format!("{place}.{method}: only reads are replaced, and this is not one")
+                }
+                None => format!("{place} is not a read of a source whose name is written out"),
+            });
+    }
+    scan
+}
+
+/// Finds the postfix chains (attributes, calls, subscripts) that start with a
+/// read of a source.
+#[derive(Default)]
+struct ChainScan {
+    /// Each read call, with the ranges of the chains that start with it.
+    reads: Vec<(TextRange, Vec<TextRange>)>,
+    /// Every call of `source`.
+    sources: Vec<TextRange>,
+    /// The calls of `source` that a read is made on.
+    used: Vec<TextRange>,
+    /// The calls of `source` with the name written out that something other
+    /// than a read is called on, with its name.
+    others: Vec<(TextRange, String)>,
+}
+
+impl<'a> Visitor<'a> for ChainScan {
+    fn visit_expr(&mut self, expr: &'a Expr) {
+        let mut chain = vec![expr];
+        let mut current = expr;
+        loop {
+            current = match current {
+                Expr::Attribute(a) => &a.value,
+                Expr::Call(c) => &c.func,
+                Expr::Subscript(s) => &s.value,
+                _ => break,
+            };
+            chain.push(current);
+        }
+        chain.reverse();
+        if let [
+            Expr::Name(name),
+            Expr::Call(open),
+            Expr::Attribute(method),
+            Expr::Call(read),
+            ..,
+        ] = chain.as_slice()
+            && name.id.as_str() == "source"
+            && open.arguments.keywords.is_empty()
+            && matches!(&open.arguments.args[..], [Expr::StringLiteral(_)])
+            && READS.contains(&method.attr.as_str())
+        {
+            let key = read.range();
+            match self.reads.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, ranges)) => ranges.push(expr.range()),
+                None => self.reads.push((key, vec![expr.range()])),
+            }
+            if !self.used.contains(&open.range()) {
+                self.used.push(open.range());
+            }
+        } else if let [
+            Expr::Name(name),
+            Expr::Call(open),
+            Expr::Attribute(method),
+            ..,
+        ] = chain.as_slice()
+            && name.id.as_str() == "source"
+            && matches!(&open.arguments.args[..], [Expr::StringLiteral(_)])
+            && !READS.contains(&method.attr.as_str())
+        {
+            self.others
+                .push((open.range(), method.attr.as_str().to_owned()));
+        }
+        if let Expr::Call(call) = expr
+            && matches!(&*call.func, Expr::Name(n) if n.id.as_str() == "source")
+        {
+            self.sources.push(call.range());
+        }
+        walk_expr(self, expr);
     }
 }
 

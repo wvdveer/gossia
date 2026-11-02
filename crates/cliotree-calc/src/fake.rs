@@ -351,6 +351,28 @@ fn eval(expr: &Expr, ctx: &dyn Context) -> Result<Value, Failure> {
 /// Reading an errored node gives its error. Reading below one gives the same
 /// error, as the design says navigation does.
 fn read(ctx: &dyn Context, sheet: &str, path: &Path) -> Result<Value, Failure> {
+    // A name the expression is given (an item of a repeater) comes first.
+    if let Some((_, value)) = ctx.bindings().iter().find(|(name, _)| name == sheet) {
+        let mut at = value.clone();
+        for segment in path.segments() {
+            let next = match (&at, segment) {
+                (Value::Object(fields), Segment::Key(key)) => {
+                    fields.get(key).map(|n| n.value().clone())
+                }
+                (Value::Array(items), Segment::Index(i)) => {
+                    items.get(*i).map(|n| n.value().clone())
+                }
+                _ => None,
+            };
+            at = next.ok_or_else(|| {
+                Failure::new(
+                    ErrorKind::Ref,
+                    format!("there is nothing at {}", name_of(sheet, path)),
+                )
+            })?;
+        }
+        return Ok(at);
+    }
     match ctx.read(sheet, path, Depth::Deep) {
         Read::Node(node) => Ok(node.value().clone()),
         Read::NoSheet => Err(Failure::new(

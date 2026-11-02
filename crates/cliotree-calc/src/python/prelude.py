@@ -69,12 +69,15 @@ class PropagatedError(Exception):
 
 
 class ProcedureContext:
-    """The `ctx` of a button procedure: which form and which button were used,
-    and the tabs of the workbook by name, which it may read and write."""
+    """The `ctx` of a procedure: which form and which button (or, for a write
+    procedure, which field) were used, the index of the item of the repeater
+    the control is in (None outside one; the innermost, when they nest), and
+    the tabs of the workbook by name, which it may read and write."""
 
-    def __init__(self, form, button, tabs):
+    def __init__(self, form, button, tabs, index=None):
         self.form = form
         self.button = button
+        self.index = index
         self._tabs = tabs
 
     def tab(self, name):
@@ -586,3 +589,87 @@ class _Sources:
 
 
 sources = _Sources()
+
+
+class Record(dict):
+    """An item of a repeater whose items an expression gave, as the
+    expressions of the controls inside it see it: its fields can be read as
+    `order['qty']` and as `order.qty`."""
+
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+# Disconnect from Data Sources writes what a source gave as a literal in the
+# formula. Dates, times and decimals have no literal of their own in Python,
+# so the literal calls these.
+
+def _date(text):
+    import datetime
+    return datetime.date.fromisoformat(text)
+
+
+def _datetime(text):
+    import datetime
+    return datetime.datetime.fromisoformat(text)
+
+
+def _decimal(text):
+    import decimal
+    return decimal.Decimal(text)
+
+
+def _record(fields):
+    return Record(fields)
+
+
+def _as_literal(value):
+    """`value` as Python text that gives it back: None, booleans, numbers,
+    text, bytes, dates, times, decimals, and lists, tuples, dicts and records
+    of those. Anything else (an HTTP response, an error) has none."""
+    import datetime
+    import decimal
+
+    def lit(v):
+        if v is None or v is True or v is False:
+            return repr(v)
+        if isinstance(v, ErrorValue):
+            raise TypeError('it gave an error value')
+        if isinstance(v, Node):
+            return lit(PLAIN(v))
+        if isinstance(v, int):
+            return repr(v)
+        if isinstance(v, float):
+            if v != v:
+                return "float('nan')"
+            if v == float('inf'):
+                return "float('inf')"
+            if v == float('-inf'):
+                return "float('-inf')"
+            return repr(v)
+        if isinstance(v, (str, bytes)):
+            return repr(v)
+        if isinstance(v, datetime.datetime):
+            return '_datetime(%r)' % v.isoformat()
+        if isinstance(v, datetime.date):
+            return '_date(%r)' % v.isoformat()
+        if isinstance(v, decimal.Decimal):
+            return '_decimal(%r)' % str(v)
+        if isinstance(v, Record):
+            return '_record(' + lit(dict(v)) + ')'
+        if isinstance(v, dict):
+            return '{' + ', '.join(lit(k) + ': ' + lit(x) for k, x in v.items()) + '}'
+        if isinstance(v, list):
+            return '[' + ', '.join(lit(x) for x in v) + ']'
+        if isinstance(v, tuple):
+            if len(v) == 1:
+                return '(' + lit(v[0]) + ',)'
+            return '(' + ', '.join(lit(x) for x in v) + ')'
+        raise TypeError('a %s has no literal' % type(v).__name__)
+
+    return lit(value)

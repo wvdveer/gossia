@@ -82,8 +82,8 @@ mod xsd_fields;
 
 #[path = "control_exprs.rs"]
 mod control_exprs;
-pub(crate) use control_exprs::{ExprJob, ExprOutcome};
-pub use control_exprs::{ExprKey, ExprKind, ExprState};
+pub(crate) use control_exprs::{Bindings, ExprJob, ExprOutcome};
+pub use control_exprs::{ExprKey, ExprKind, ExprState, cell_of};
 
 #[path = "package.rs"]
 mod package;
@@ -127,6 +127,10 @@ pub use copybooks::RedefineGroup;
 mod tabs;
 pub use tabs::Mentions;
 pub(crate) use tabs::SavedTab;
+
+#[path = "disconnect.rs"]
+mod disconnect;
+pub use disconnect::{Disconnect, DisconnectPlan};
 
 #[path = "trust.rs"]
 mod trust;
@@ -1543,6 +1547,8 @@ impl Calc {
             run += evaluation.outcomes.len();
             let ran_exprs = !evaluation.exprs.is_empty();
             let applied = self.apply(evaluation);
+            // Items an expression gave may ask for expressions inside them.
+            self.sync_expressions();
             if applied.applied.is_empty() && self.pending_modules() == 0 && !ran_exprs {
                 break;
             }

@@ -2,7 +2,8 @@
 
 All are variable fonts with a weight axis (`wght`), under the SIL Open Font
 License 1.1; each licence, with its copyright line, is in the `*-OFL.txt` file
-next to the font. They are built into the program (see `src/style.rs`).
+next to the font. They are built into the program: the window is drawn with them
+(`cliotree-app`, `src/style.rs`) and reports are laid out with them (`src/fonts.rs`).
 
 Source: the Google Fonts repository, https://github.com/google/fonts, commit
 `e7db6ca603fd4862010383ff17ffd6cc4ffac1c0`, folder `ofl/`. The files were

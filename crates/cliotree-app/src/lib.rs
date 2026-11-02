@@ -15,6 +15,7 @@ pub mod comments;
 pub mod control;
 #[cfg(feature = "test-control")]
 pub mod control_server;
+pub mod disconnect_ui;
 pub mod edit;
 #[cfg(test)]
 mod edit_tests;

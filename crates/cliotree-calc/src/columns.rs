@@ -239,7 +239,7 @@ impl Calc {
     }
 
     /// Where the rule's formulas are now: the field of each item that has one.
-    fn column_places(&self, sheet: &str, rule: &ColumnFormula) -> Vec<Path> {
+    pub(super) fn column_places(&self, sheet: &str, rule: &ColumnFormula) -> Vec<Path> {
         let Some(s) = self.sheets.get(sheet) else {
             return Vec::new();
         };
@@ -252,7 +252,7 @@ impl Calc {
 
     /// Puts the rule in the tab (`text`) or takes it out (`None`), returning
     /// the operation that does it.
-    fn store_column(
+    pub(super) fn store_column(
         &mut self,
         sheet: &str,
         array: &Path,

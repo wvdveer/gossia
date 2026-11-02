@@ -287,3 +287,81 @@ fn a_formula_follows_a_beancount_journal_as_its_file_changes() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// *Tools > Disconnect from Data Sources* asks, then replaces each read by
+/// what it gives now; F9 no longer reads the source, and undo takes it back.
+#[test]
+fn disconnect_replaces_a_read_by_what_it_gives_after_asking() {
+    let mut harness = window();
+    let mut def = SourceDef::new("Api", SourceKind::Http);
+    def.url = Some(counting_server());
+    harness.state().user.sources.save(def, None, false).unwrap();
+    let path: cliotree_core::Path = "customer.name".parse().unwrap();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula("Orders", &path, "source('Api').get('n').text")
+        .unwrap();
+    settle(&mut harness);
+    let formula = |h: &Harness<'_, ClioApp>| h.state().calc().formula_text("Orders", &path);
+    click(&mut harness, "Tools");
+    click(&mut harness, "Disconnect from Data Sources...");
+    assert!(has(&harness, "Disconnect from data sources"));
+    assert!(
+        harness
+            .query_by_label_contains("1 read of a data source will be replaced")
+            .is_some()
+    );
+    // Cancel changes nothing.
+    click(&mut harness, "Cancel");
+    assert_eq!(
+        formula(&harness).as_deref(),
+        Some("source('Api').get('n').text")
+    );
+
+    click(&mut harness, "Tools");
+    click(&mut harness, "Disconnect from Data Sources...");
+    click(&mut harness, "Replace");
+    settle(&mut harness);
+    // The response has no literal, but its text does.
+    let text = formula(&harness).unwrap();
+    assert!(text.starts_with("'call "), "{text}");
+    assert!(!has(&harness, "Disconnect from data sources"));
+    harness.key_press(Key::F9);
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(formula(&harness), Some(text.clone()));
+    assert_eq!(
+        harness.state().calc().undo_label(),
+        Some("Disconnect from data sources")
+    );
+}
+
+/// With nothing that can be replaced the dialog says why and only closes.
+#[test]
+fn disconnect_lists_what_it_cannot_replace() {
+    let mut harness = window();
+    let path: cliotree_core::Path = "customer.name".parse().unwrap();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula(
+            "Orders",
+            &path,
+            "str(source(Orders.customer.city).get('x'))",
+        )
+        .unwrap();
+    settle(&mut harness);
+    click(&mut harness, "Tools");
+    click(&mut harness, "Disconnect from Data Sources...");
+    assert!(has(&harness, "Nothing can be replaced."));
+    assert!(
+        harness
+            .query_by_label_contains("is not a read of a source whose name is written out")
+            .is_some()
+    );
+    click(&mut harness, "Close");
+    assert!(!has(&harness, "Disconnect from data sources"));
+}

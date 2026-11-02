@@ -77,7 +77,7 @@ fn form(path: &str, change: impl FnOnce(&mut Control)) -> (Harness<'static, Clio
 }
 
 fn list(harness: &Harness<'_, ClioApp>, at: &[usize]) -> ChoiceList {
-    choice_list(harness.state().calc(), "Orders", "Default", at, None, None)
+    choice_list(harness.state().calc(), "Orders", "Default", at, None, &[])
         .expect("the field has choices")
 }
 
@@ -325,7 +325,7 @@ fn the_choices_of_a_column_run_for_each_row() {
             "Default",
             &at,
             Some(("note", row)),
-            None,
+            &[],
         )
         .expect("the column has choices");
         texts(&list)
@@ -354,6 +354,8 @@ fn the_property_page_sets_the_choices_and_counts_what_an_enumeration_leaves_out(
     harness
         .get_by_role_and_label(role, "Choices")
         .type_text("['new', 'paid', 'lost', 'gone']");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
     harness.run();
     settle(&mut harness);
     harness.run();

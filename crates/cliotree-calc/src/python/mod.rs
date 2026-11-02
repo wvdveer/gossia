@@ -328,6 +328,13 @@ impl PythonEngine {
         let _ = locals.set_item("this", this, vm);
         let _ = locals.set_item("parent", parent, vm);
         let _ = locals.set_item("root", root, vm);
+        // The items of the repeaters around a control, by the names they are
+        // given (and `this`, for an item with no node).
+        for (name, value) in ctx.bindings() {
+            let value = convert::value_to_py(&self.shared, vm, value)
+                .map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
+            let _ = locals.set_item(name.as_str(), value, vm);
+        }
         let scope = Scope::new(
             Some(ArgMapping::from_dict_exact(locals)),
             self.globals.clone(),
@@ -439,13 +446,20 @@ impl PythonEngine {
                         vm.ctx.new_str(call.form.as_str()),
                         vm.ctx.new_str(call.button.as_str()),
                         tabs,
+                        match call.rows.last() {
+                            Some(&i) => vm.ctx.new_int(i).into(),
+                            None => vm.ctx.none(),
+                        },
                     ),
                     vm,
                 )
             })
             .map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
-        function
-            .call((form, context), vm)
+        let called = match &call.value {
+            Some(text) => function.call((form, context, vm.ctx.new_str(text.as_str())), vm),
+            None => function.call((form, context), vm),
+        };
+        called
             .map(|_| ())
             .map_err(|exc| convert::failure(&self.shared, vm, &exc))
     }
@@ -607,6 +621,7 @@ fn set_up(
         timezone: datetime.get_attr("timezone", vm)?,
         timedelta: datetime.get_attr("timedelta", vm)?,
         source_error: prelude.get_item("SourceError", vm)?,
+        record: prelude.get_item("Record", vm)?,
     });
 
     // The builtins a formula sees: all of them, less a few.
@@ -646,6 +661,11 @@ fn set_up(
         "source",
         "sources",
         "SourceError",
+        "_date",
+        "_datetime",
+        "_decimal",
+        "_record",
+        "_as_literal",
     ]
     .iter()
     .chain(cliotree_std::NAMES)
@@ -694,3 +714,7 @@ mod tests_xml;
 #[cfg(test)]
 #[path = "tests_sources.rs"]
 mod tests_sources;
+
+#[cfg(test)]
+#[path = "tests_disconnect.rs"]
+mod tests_disconnect;

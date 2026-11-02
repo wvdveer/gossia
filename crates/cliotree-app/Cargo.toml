@@ -19,6 +19,7 @@ path = "src/main.rs"
 cliotree-core.workspace = true
 cliotree-calc.workspace = true
 cliotree-std.workspace = true
+cliotree-layout.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"

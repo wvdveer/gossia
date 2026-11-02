@@ -15,7 +15,7 @@ use cliotree_core::form::{
     LabelPosition, MAX_TRACKS, POSITIONS, RepeaterMode, SPACINGS, TRACK_POINTS, TRACK_SHARES,
     TrackSize, flow_rows, free_place, grid_cells, rebase_free,
 };
-use cliotree_core::{Kind, Path};
+use cliotree_core::{Kind, Path, Value};
 
 use crate::app::ClioApp;
 use crate::form::{DEFAULT_FORM, View, control_name, last_name};
@@ -647,9 +647,39 @@ impl ClioApp {
     /// The names of the columns of the table of the repeater at `at`, in the
     /// order of the schema, if it is a table.
     fn column_names(&self, design: &FormDesign, at: &[usize]) -> Option<Vec<String>> {
+        let control = design.get(at)?;
+        if control.lists_items() {
+            // For the first item of each repeater around.
+            let around = (1..at.len())
+                .filter(|&n| {
+                    design
+                        .get(&at[..n])
+                        .is_some_and(|c| c.kind == ControlKind::Repeater)
+                })
+                .count();
+            let state = self.calc().control_expression_at(
+                &self.sheet,
+                &self.form_name(),
+                at,
+                &vec![0; around],
+                ExprKind::Items,
+            );
+            let items = match state.and_then(|s| s.result) {
+                Some(Ok(Value::Array(items))) => items.iter().map(|n| n.value().clone()).collect(),
+                _ => Vec::new(),
+            };
+            return Some(crate::form::listed_names(control, &items));
+        }
         let spec = self.calc().spec(&self.sheet)?;
         let columns = crate::form::columns_of(spec, design, at)?;
-        Some(columns.into_iter().map(|c| c.name).collect())
+        let mut names: Vec<String> = columns.into_iter().map(|c| c.name).collect();
+        // And the columns of the design that show an expression.
+        for column in &control.table_columns {
+            if column.value.is_some() && !names.contains(&column.name) {
+                names.push(column.name.clone());
+            }
+        }
+        Some(names)
     }
 
     /// Changes the columns of the table of the repeater at `at`, as the
@@ -1112,8 +1142,46 @@ impl ClioApp {
             ui.weak("In the design of the items: paths are read from the item.");
         }
 
+        // A field shows a node (its path) or an expression (its value), not
+        // both. Choosing one clears the other; the choice of a value is
+        // remembered until the value is typed.
+        let source_id = egui::Id::unique(("field_source", at.clone()));
+        let mut by_value = kind == ControlKind::Field
+            && (edited.value.is_some()
+                || (edited.path.is_none()
+                    && ui.data(|d| d.get_temp::<bool>(source_id)).unwrap_or(false)));
+        if kind == ControlKind::Field {
+            let before = by_value;
+            ui.horizontal(|ui| {
+                ui.label("Source");
+                let response = egui::ComboBox::from_id_salt("property_source")
+                    .selected_text(if by_value { "Value" } else { "Path" })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut by_value, false, "Path");
+                        ui.selectable_value(&mut by_value, true, "Value");
+                    })
+                    .response;
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Source of the field")
+                });
+            });
+            if by_value != before {
+                ui.data_mut(|d| d.insert_temp(source_id, by_value));
+                if by_value {
+                    edited.path = None;
+                } else {
+                    edited.value = None;
+                    edited.write_procedure = None;
+                }
+            }
+        }
+
         // What the control is bound to.
-        if bound && let Some(spec) = &spec {
+        if bound
+            && !by_value
+            && !edited.lists_items()
+            && let Some(spec) = &spec
+        {
             let options = match item_ty {
                 Some(ty) => design::bindable_from(spec, ty, kind),
                 None => design::bindable(spec, kind),
@@ -1164,6 +1232,82 @@ impl ClioApp {
         }
         if bound && option_text(ui, "Help", &mut edited.help, "", true) {
             merge = Some(key("help"));
+        }
+        match kind {
+            ControlKind::Field if by_value => {
+                let expr = ExprKind::Value;
+                if expr_text(
+                    ui,
+                    expr_label(expr),
+                    &mut edited.value,
+                    expr_hint(expr),
+                    draft_id(at, None, expr),
+                ) {
+                    merge = Some(key(expr_property(expr)));
+                }
+                self.expression_error(ui, at, None, expr);
+                let names = self.calc().procedure_names();
+                procedure_choice(
+                    ui,
+                    "Write procedure",
+                    "Write procedure of the field",
+                    &mut edited.write_procedure,
+                    &names,
+                );
+                ui.weak(
+                    "The field shows what the value comes to. Without a write procedure it is \
+                     read-only; with one, what is typed is passed to it, as text, as \
+                     name(form, ctx, value).",
+                );
+            }
+            ControlKind::Repeater => {
+                let expr = ExprKind::Items;
+                if expr_text(
+                    ui,
+                    expr_label(expr),
+                    &mut edited.items,
+                    expr_hint(expr),
+                    draft_id(at, None, expr),
+                ) {
+                    merge = Some(key(expr_property(expr)));
+                }
+                self.expression_error(ui, at, None, expr);
+                if edited.lists_items() {
+                    if option_text(ui, "Item name", &mut edited.item_name, "this", false) {
+                        merge = Some(key("item_name"));
+                    }
+                    if option_text(ui, "List name", &mut edited.list_name, "", false) {
+                        merge = Some(key("list_name"));
+                    }
+                    for name in [&edited.item_name, &edited.list_name].into_iter().flatten() {
+                        if !is_name(name.trim()) && !name.trim().is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!("{name:?} is not a name: use letters, digits and _, not starting with a digit."))
+                                    .small()
+                                    .color(error_color(ui)),
+                            );
+                        }
+                    }
+                    ui.weak(
+                        "The items are read-only. The controls inside see each item as this \
+                         and by its item name, and the whole list by its list name.",
+                    );
+                }
+                if !edited.is_stacked() && ui.button("Add a column with an expression").clicked() {
+                    add_listed_column(
+                        self.column_names(design, at).unwrap_or_default(),
+                        &mut edited,
+                    );
+                }
+            }
+            ControlKind::Label => {
+                ui.checkbox(&mut edited.template, "Text is a template")
+                    .on_hover_text("Each {expression} in the text is filled in, as in a Python f-string: {total:,.2f}. Write {{ and }} for the braces themselves.");
+                if edited.is_template() {
+                    self.expression_error(ui, at, None, ExprKind::Template);
+                }
+            }
+            _ => {}
         }
         match kind {
             ControlKind::Field => {
@@ -1297,13 +1441,30 @@ impl ClioApp {
                 );
             }
             ControlKind::Label => {
-                if option_text(ui, "Text", &mut edited.text, "", true) {
+                let typed = if edited.is_template() {
+                    expr_text(
+                        ui,
+                        "Text",
+                        &mut edited.text,
+                        "",
+                        draft_id(at, None, ExprKind::Template),
+                    )
+                } else {
+                    option_text(ui, "Text", &mut edited.text, "", true)
+                };
+                if typed {
                     merge = Some(key("text"));
                 }
             }
             ControlKind::Button => {
                 let names = self.calc().procedure_names();
-                procedure_choice(ui, &mut edited.procedure, &names);
+                procedure_choice(
+                    ui,
+                    "Procedure",
+                    "Procedure of the button",
+                    &mut edited.procedure,
+                    &names,
+                );
                 if names.is_empty() {
                     ui.weak(
                         "No module has a function yet. Write one, def name(form, ctx):, \
@@ -1346,19 +1507,25 @@ impl ClioApp {
             if !shown {
                 continue;
             }
-            if option_text(ui, expr_label(expr), value, expr_hint(expr), false) {
+            if expr_text(
+                ui,
+                expr_label(expr),
+                value,
+                expr_hint(expr),
+                draft_id(at, None, expr),
+            ) {
                 merge = Some(key(expr_property(expr)));
             }
             self.expression_error(ui, at, None, expr);
         }
         if kind == ControlKind::Field {
             let expr = ExprKind::Choices;
-            if option_text(
+            if expr_text(
                 ui,
                 expr_label(expr),
                 &mut edited.choices,
                 expr_hint(expr),
-                false,
+                draft_id(at, None, expr),
             ) {
                 merge = Some(key(expr_property(expr)));
             }
@@ -1664,7 +1831,52 @@ impl ClioApp {
             "Cell ",
             "cells",
         );
-        if !row_number {
+        // A column that shows an expression: in a table over an expression
+        // every column, in a table bound to an array one that is not a field
+        // of the items.
+        let computed = !row_number
+            && (control.lists_items() || {
+                let design = self.design_of(&self.form_name());
+                self.calc()
+                    .spec(&self.sheet)
+                    .and_then(|spec| crate::form::columns_of(spec, &design, at))
+                    .is_some_and(|columns| !columns.iter().any(|c| c.name == column.name))
+            });
+        if computed {
+            let fields = [
+                (ExprKind::Value, &mut edited.value),
+                (ExprKind::Visible, &mut edited.visible_when),
+                (ExprKind::TextColour, &mut edited.text_colour),
+                (ExprKind::FillColour, &mut edited.fill_colour),
+            ];
+            for (expr, value) in fields {
+                if expr_text(
+                    ui,
+                    expr_label(expr),
+                    value,
+                    expr_hint(expr),
+                    draft_id(at, Some(&column.name), expr),
+                ) {
+                    merge = Some(key(expr_property(expr)));
+                }
+                self.expression_error(ui, at, Some(&column.name), expr);
+            }
+            let names = self.calc().procedure_names();
+            procedure_choice(
+                ui,
+                "Write procedure",
+                "Write procedure of the column",
+                &mut edited.write_procedure,
+                &names,
+            );
+            ui.weak(
+                "Value runs for each row, with the item as this (and by the item name, in a \
+                 table over an expression); without one the cell is the field of the item of \
+                 this name. Without a write procedure the cells are read-only; with one, what \
+                 is typed into a cell is passed to it as name(form, ctx, value), with \
+                 ctx.index the row.",
+            );
+        } else if !row_number {
             let fields = [
                 (ExprKind::Visible, &mut edited.visible_when),
                 (ExprKind::Enabled, &mut edited.enabled_when),
@@ -1672,18 +1884,24 @@ impl ClioApp {
                 (ExprKind::FillColour, &mut edited.fill_colour),
             ];
             for (expr, value) in fields {
-                if option_text(ui, expr_label(expr), value, expr_hint(expr), false) {
+                if expr_text(
+                    ui,
+                    expr_label(expr),
+                    value,
+                    expr_hint(expr),
+                    draft_id(at, Some(&column.name), expr),
+                ) {
                     merge = Some(key(expr_property(expr)));
                 }
                 self.expression_error(ui, at, Some(&column.name), expr);
             }
             let expr = ExprKind::Choices;
-            if option_text(
+            if expr_text(
                 ui,
                 expr_label(expr),
                 &mut edited.choices,
                 expr_hint(expr),
-                false,
+                draft_id(at, Some(&column.name), expr),
             ) {
                 merge = Some(key(expr_property(expr)));
             }
@@ -1717,42 +1935,24 @@ impl ClioApp {
         column: Option<&str>,
         kind: ExprKind,
     ) {
+        if ui.data(|d| d.get_temp::<String>(draft_id(at, column, kind)).is_some()) {
+            return;
+        }
         let calc = self.calc();
         let form = self.form_name();
         let sheet = &self.sheet;
-        let failed = |state: Option<cliotree_calc::ExprState>| state?.result?.err();
-        let error = match column {
-            // In the design of a stacked repeater's items it runs for each
-            // item: the first that failed.
-            None => failed(calc.control_expression(sheet, &form, at, kind))
-                .map(|e| (None, e))
-                .or_else(|| {
-                    (0..)
-                        .map_while(|item| {
-                            calc.control_expression_in(sheet, &form, at, Some(item), kind)
-                                .map(|state| (item, state))
-                        })
-                        .find_map(|(item, state)| Some((Some(item), failed(Some(state))?)))
-                }),
-            Some(name) if kind == ExprKind::Visible => {
-                failed(calc.column_expression(sheet, &form, at, name, None, kind))
-                    .map(|e| (None, e))
-            }
-            Some(name) => (0..)
-                .map_while(|row| {
-                    calc.column_expression(sheet, &form, at, name, Some(row), kind)
-                        .map(|state| (row, state))
-                })
-                .find_map(|(row, state)| Some((Some(row), failed(Some(state))?))),
-        };
-        let Some((row, message)) = error else {
+        // In the design of the items of repeaters, and in the rows of a
+        // table, it runs for each: the first that failed.
+        let Some((rows, message)) = calc.first_expression_error(sheet, &form, at, column, kind)
+        else {
             return;
         };
         let first = message.lines().next().unwrap_or_default();
-        let text = match (row, column) {
-            (Some(row), Some(_)) => format!("Row [{row}]: {first}"),
-            (Some(item), None) => format!("Item [{item}]: {first}"),
-            (None, _) => first.to_owned(),
+        let place: String = rows.iter().map(|i| format!("[{i}]")).collect();
+        let text = match (rows.is_empty(), column.is_some() && kind.per_row()) {
+            (true, _) => first.to_owned(),
+            (false, true) => format!("Row {place}: {first}"),
+            (false, false) => format!("Item {place}: {first}"),
         };
         let color = error_color(ui);
         let response = ui.add(egui::Label::new(
@@ -2246,8 +2446,91 @@ fn format_properties(
     }
 }
 
-/// A labelled text field for an optional property: empty is absent. Returns
-/// whether it was typed into.
+/// Where the text of an expression box is kept while it is typed: the box of
+/// that expression of the control at `at`, or of its column `column`.
+fn draft_id(at: &[usize], column: Option<&str>, kind: ExprKind) -> egui::Id {
+    egui::Id::unique((
+        "expression_draft",
+        at.to_vec(),
+        column.map(str::to_owned),
+        kind,
+    ))
+}
+
+/// A box for an expression on the property page. What is typed is kept
+/// aside, and is neither stored nor run, until the box loses the focus (a
+/// click elsewhere, Tab, or Enter): a half-typed expression is no error.
+/// Returns whether the stored expression changed.
+fn expr_text(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut Option<String>,
+    hint: &str,
+    draft: egui::Id,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let kept: Option<String> = ui.data(|d| d.get_temp(draft));
+        let mut text = kept
+            .clone()
+            .unwrap_or_else(|| value.clone().unwrap_or_default());
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(draft.with("box"))
+                .hint_text(hint)
+                .desired_width(f32::INFINITY),
+        );
+        let name = label.to_owned();
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, &name));
+        if response.lost_focus() {
+            ui.data_mut(|d| d.remove::<String>(draft));
+            let typed = (!text.trim().is_empty()).then_some(text);
+            if typed != *value {
+                *value = typed;
+                changed = true;
+            }
+        } else if response.has_focus() {
+            if response.changed() || kept.is_some() {
+                ui.data_mut(|d| d.insert_temp(draft, text));
+            }
+        } else if kept.is_some() {
+            // Typed into, then left in a way the box did not see (another
+            // control was selected): what was typed is dropped.
+            ui.data_mut(|d| d.remove::<String>(draft));
+        }
+    });
+    changed
+}
+
+/// Whether a name can be an item or list name: a Python identifier.
+fn is_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Adds a column that shows an expression to a table over an expression,
+/// keeping the columns it shows.
+fn add_listed_column(names: Vec<String>, edited: &mut Control) {
+    let mut columns = edited.arrange_columns(&names);
+    let mut n = 1;
+    let name = loop {
+        let name = format!("column{n}");
+        if !columns.iter().any(|c| c.name == name) {
+            break name;
+        }
+        n += 1;
+    };
+    let mut column = ColumnDesign::named(&name);
+    column.value = Some("this".to_owned());
+    columns.push(column);
+    edited.table_columns = columns;
+    edited.show = None;
+}
+
 /// The name of an expression's field on the property page.
 fn expr_label(kind: ExprKind) -> &'static str {
     match kind {
@@ -2256,6 +2539,9 @@ fn expr_label(kind: ExprKind) -> &'static str {
         ExprKind::TextColour => "Text colour",
         ExprKind::FillColour => "Fill colour",
         ExprKind::Choices => "Choices",
+        ExprKind::Value => "Value",
+        ExprKind::Template => "Text",
+        ExprKind::Items => "Items",
     }
 }
 
@@ -2264,6 +2550,9 @@ fn expr_hint(kind: ExprKind) -> &'static str {
         ExprKind::Visible | ExprKind::Enabled => "expression",
         ExprKind::TextColour | ExprKind::FillColour => "expression giving a colour",
         ExprKind::Choices => "expression giving a list",
+        ExprKind::Value => "expression",
+        ExprKind::Template => "text with {expressions}",
+        ExprKind::Items => "expression giving a list",
     }
 }
 
@@ -2276,13 +2565,22 @@ fn expr_property(kind: ExprKind) -> &'static str {
         ExprKind::TextColour => "text_colour",
         ExprKind::FillColour => "fill_colour",
         ExprKind::Choices => "choices",
+        ExprKind::Value => "value",
+        ExprKind::Template => "text",
+        ExprKind::Items => "items",
     }
 }
 
 /// The procedure of a button, chosen from the functions of the modules. A
 /// name that no module has any more stays chosen, marked, until another is
 /// chosen, so that fixing the module brings the button back.
-fn procedure_choice(ui: &mut egui::Ui, procedure: &mut Option<String>, names: &[String]) {
+fn procedure_choice(
+    ui: &mut egui::Ui,
+    label: &str,
+    name: &str,
+    procedure: &mut Option<String>,
+    names: &[String],
+) {
     let missing = procedure
         .as_ref()
         .filter(|name| {
@@ -2297,8 +2595,8 @@ fn procedure_choice(ui: &mut egui::Ui, procedure: &mut Option<String>, names: &[
         (None, _) => "(none)".to_owned(),
     };
     ui.horizontal(|ui| {
-        ui.label("Procedure");
-        let response = egui::ComboBox::from_id_salt("property_procedure")
+        ui.label(label);
+        let response = egui::ComboBox::from_id_salt(("property_procedure", label))
             .selected_text(shown)
             .width(200.0)
             .show_ui(ui, |ui| {
@@ -2315,12 +2613,12 @@ fn procedure_choice(ui: &mut egui::Ui, procedure: &mut Option<String>, names: &[
                 }
             })
             .response;
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Procedure of the button")
-        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
     });
 }
 
+/// A labelled text field for an optional property: empty is absent. Returns
+/// whether it was typed into.
 fn option_text(
     ui: &mut egui::Ui,
     label: &str,

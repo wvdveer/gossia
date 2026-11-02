@@ -90,6 +90,8 @@ fn call(procedure: &str) -> Call {
         sheet: "S".to_owned(),
         form: "Default".to_owned(),
         button: "Go".to_owned(),
+        value: None,
+        rows: Vec::new(),
         time_limit: None,
     }
 }
@@ -362,4 +364,50 @@ fn an_edit_to_another_node_does_not_refuse_the_writes() {
         calc.data("S").unwrap().get(&p("name")).unwrap().value(),
         &Value::Str("changed".into())
     );
+}
+
+/// The write procedure of a field that shows an expression gets the text
+/// typed into it as a third argument, and writes as a button's procedure does.
+#[test]
+fn a_write_procedure_gets_the_text_typed() {
+    let mut s = session(
+        "def set_count(form, ctx, value):\n    form.count = int(value)\n    form.name = ctx.button\n",
+    );
+    let mut c = call("set_count");
+    c.button = "Count".to_owned();
+    c.value = Some("42".to_owned());
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG), "the workbook did not settle");
+    let done = s.take_finished();
+    assert_eq!(done[0].outcome, Ok(()));
+    assert_eq!(get(&s, "S", "count"), Some(Value::Int(42)));
+    assert_eq!(get(&s, "S", "name"), Some(Value::Str("Count".into())));
+    // Text that the procedure refuses leaves the data as it was.
+    let mut c = call("set_count");
+    c.value = Some("many".to_owned());
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG));
+    let done = s.take_finished();
+    assert!(
+        done[0].outcome.as_ref().unwrap_err().contains("ValueError"),
+        "{:?}",
+        done[0].outcome
+    );
+    assert_eq!(get(&s, "S", "count"), Some(Value::Int(42)));
+}
+
+/// `ctx.index` is the item of the repeater the control is in, the innermost
+/// when they nest, and None outside one.
+#[test]
+fn ctx_index_is_the_item_the_control_is_in() {
+    let mut s = session("def where(form, ctx):\n    form.note = repr(ctx.index)\n");
+    let mut c = call("where");
+    c.rows = vec![0, 2];
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG));
+    assert_eq!(s.take_finished()[0].outcome, Ok(()));
+    assert_eq!(get(&s, "S", "note"), Some(Value::Str("2".into())));
+    let done = run(&mut s, "where");
+    assert_eq!(done.outcome, Ok(()));
+    assert_eq!(get(&s, "S", "note"), Some(Value::Str("None".into())));
 }

@@ -70,6 +70,36 @@ pub(super) fn node_to_plain(
     }
 }
 
+/// A value that is not in a tab (an item an expression gave) as Python: a
+/// list for an array, a [`Classes::record`] for an object, so that its
+/// fields read as attributes too, and plain values for the rest.
+pub(super) fn value_to_py(shared: &Rc<Shared>, vm: &VirtualMachine, value: &Value) -> PyResult {
+    Ok(match value {
+        Value::Null => vm.ctx.none(),
+        Value::Bool(b) => vm.ctx.new_bool(*b).into(),
+        Value::Int(i) => vm.ctx.new_int(*i).into(),
+        Value::Float(x) => vm.ctx.new_float(*x).into(),
+        Value::Str(s) => vm.ctx.new_str(s.as_str()).into(),
+        Value::Date(d) => date_to_py(shared, vm, *d)?,
+        Value::DateTime(dt) => datetime_to_py(shared, vm, dt)?,
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(value_to_py(shared, vm, item.value())?);
+            }
+            vm.ctx.new_list(out).into()
+        }
+        Value::Object(fields) => {
+            let dict = vm.ctx.new_dict();
+            for (key, item) in fields {
+                dict.set_item(key.as_str(), value_to_py(shared, vm, item.value())?, vm)?;
+            }
+            shared.classes().record.call((dict,), vm)?
+        }
+        Value::Error(e) => error_to_py(shared, vm, "", e)?,
+    })
+}
+
 pub(super) fn error_to_py(
     shared: &Rc<Shared>,
     vm: &VirtualMachine,

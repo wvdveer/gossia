@@ -2,10 +2,11 @@
 //! light and dark themes, the sizes, and the fonts. Every colour the window
 //! draws with comes from a [`Palette`], so the two themes stay in step.
 //!
-//! The fonts are bundled (see `assets/fonts/FONTS.md`). Inter is the interface
-//! font and Geist Mono the font of formulas and paths; both are variable
-//! fonts, so one file gives every weight. The others (a serif, a condensed
-//! sans, a script and a handwriting font) are there for forms.
+//! The fonts are bundled in `cliotree-layout` (see its `assets/fonts/FONTS.md`),
+//! which lays out reports with the same files. Inter is the interface font and
+//! Geist Mono the font of formulas and paths; both are variable fonts, so one
+//! file gives every weight. The others (a serif, a condensed sans, a script and
+//! a handwriting font) are there for forms and reports.
 //!
 //! The fonts and the style are installed when the first frame is drawn and
 //! take effect on the next one; [`ready`] says whether they are in use.
@@ -454,33 +455,18 @@ fn checksum(body: &[u8]) -> u32 {
 /// egui's own fonts, with the bundled ones in front of them. What a font lacks
 /// is looked for in the fonts after it: egui's emoji fonts, then the icons.
 pub fn fonts() -> FontDefinitions {
-    const INTER: &[u8] = include_bytes!("../assets/fonts/Inter.ttf");
+    use cliotree_layout::fonts::{CAVEAT, DANCING_SCRIPT, GEIST_MONO, INTER, OSWALD, SOURCE_SERIF};
     let mut fonts = FontDefinitions::default();
     let mut add = |name: &str, data: FontData| {
         fonts.font_data.insert(name.to_owned(), data.into());
     };
     add("Inter", weighted(INTER, 400.0));
     add("Inter Medium", weighted(INTER, MEDIUM_WEIGHT));
-    add(
-        "Geist Mono",
-        weighted(include_bytes!("../assets/fonts/GeistMono.ttf"), 400.0),
-    );
-    add(
-        "Source Serif 4",
-        weighted(include_bytes!("../assets/fonts/SourceSerif4.ttf"), 400.0),
-    );
-    add(
-        "Oswald",
-        weighted(include_bytes!("../assets/fonts/Oswald.ttf"), 400.0),
-    );
-    add(
-        "Dancing Script",
-        weighted(include_bytes!("../assets/fonts/DancingScript.ttf"), 400.0),
-    );
-    add(
-        "Caveat",
-        weighted(include_bytes!("../assets/fonts/Caveat.ttf"), 400.0),
-    );
+    add("Geist Mono", weighted(GEIST_MONO, 400.0));
+    add("Source Serif 4", weighted(SOURCE_SERIF, 400.0));
+    add("Oswald", weighted(OSWALD, 400.0));
+    add("Dancing Script", weighted(DANCING_SCRIPT, 400.0));
+    add("Caveat", weighted(CAVEAT, 400.0));
     add(ICONS, font(include_bytes!("../assets/Phosphor.ttf")));
 
     // egui's last resorts (its icons and emoji), from its own families, then
@@ -722,6 +708,51 @@ pub fn pending_marker(ui: &mut egui::Ui) -> Response {
 mod tests {
     use super::*;
 
+    /// Reports are measured by `cliotree-layout`, without egui, and drawn by
+    /// egui on screen, line by line; the two must agree on the width of a
+    /// line and the height of a row, in every typeface (DESIGN.md, The report
+    /// designer).
+    #[test]
+    fn reports_measure_text_as_egui_does() {
+        use cliotree_layout::{Fonts, TextStyle};
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let texts = [
+            "Hello, world",
+            "AVA WAVE Tô",
+            "Quarterly revenue by org unit: 1,234,567.89",
+            "Grüße aus Köln — λόγος",
+            "√2 ≈ 1.414",
+        ];
+        let layout = Fonts::shared();
+        ctx.fonts_mut(|f| {
+            for typeface in Typeface::ALL {
+                for size in [10.0, 14.0, 22.0] {
+                    let font = FontId::new(size, family(typeface));
+                    let style = TextStyle::new(typeface, size);
+                    assert_eq!(
+                        layout.metrics(&style).row_height,
+                        f.row_height(&font),
+                        "row height of {typeface:?} at {size}"
+                    );
+                    for text in texts {
+                        let ours = layout.width(text, &style);
+                        let egui = f
+                            .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+                            .size()
+                            .x;
+                        assert!(
+                            (ours - egui).abs() <= 0.25,
+                            "{typeface:?} at {size}: {text:?} is {ours} here and {egui} in egui"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     /// An icon is drawn from the icon font in every family, as the file
     /// dialog draws its icons in the text font. (Inter has glyphs of its own
     /// in the private use area, where the icons are.)
@@ -771,7 +802,7 @@ mod tests {
     #[test]
     fn taking_out_the_private_use_area_keeps_every_other_character() {
         use skrifa::MetadataProvider;
-        let original = include_bytes!("../assets/fonts/Inter.ttf");
+        let original = cliotree_layout::fonts::INTER;
         let cleaned = without_private_use(original);
         let map = |bytes: &[u8]| -> Vec<(u32, u32)> {
             skrifa::FontRef::new(bytes)

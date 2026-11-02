@@ -1,19 +1,30 @@
 //! The expressions on the controls of forms (DESIGN.md, "Forms", "Expressions
-//! on controls"): *visible when*, *enabled when*, the text and fill
-//! colours, and the *choices* of a dropdown or typeahead. They run as formulas do, on the evaluation thread, at the node the
-//! control is bound to (the root for a control that is not bound), and what
-//! they read is recorded so that an edit there runs them again. Their results
-//! are kept here, in memory: they are not data, and they are not saved.
+//! on controls"): *visible when*, *enabled when*, the text and fill colours,
+//! the *choices* of a dropdown or typeahead, and (from 0.2.0, "Additions in
+//! 0.2.0, shared with reports") the value a field shows, the template of a
+//! label and the items of a repeater. They run as formulas do, on the
+//! evaluation thread, at the node the control is bound to (the root for a
+//! control that is not bound), and what they read is recorded so that an
+//! edit there runs them again. Their results are kept here, in memory: they
+//! are not data, and they are not saved.
 //!
 //! The columns of a repeater's table have them too. A column's *visible
 //! when* runs once, at the array; the others run for each row, at the cell,
 //! so their list follows the number of items. So do the controls in the
 //! design of a stacked repeater's items: each of their expressions runs for
 //! each item, at the control's node in that item (at the item, for a control
-//! that is not bound).
+//! that is not bound). Designed items nest: a control inside the items of a
+//! repeater inside the items of another runs for each pair of items, and so on.
+//!
+//! A repeater's items can come from an expression instead of an array of the
+//! tab. The controls inside it then have no node: their expressions are given
+//! the item as `this`, and under the repeater's item name and list name if it
+//! has them (as `order` and `rows`), and run for each item. The items are
+//! known only once the expression has run, so the expressions inside follow
+//! its result.
 
-use cliotree_core::form::{ColumnDesign, Control, ControlKind, RepeaterMode};
-use cliotree_core::{Kind, Path, Value};
+use cliotree_core::form::{ColumnDesign, Control, ControlKind, template};
+use cliotree_core::{Kind, Node, Path, Value};
 use indexmap::IndexMap;
 
 use super::*;
@@ -28,27 +39,60 @@ pub enum ExprKind {
     FillColour,
     /// The acceptable values of a field (DESIGN.md, "Forms", "Choices").
     Choices,
+    /// What a field, or the cells of a column, show instead of a node.
+    Value,
+    /// The text of a label that is a template.
+    Template,
+    /// The items of a repeater that come from an expression.
+    Items,
 }
 
 impl ExprKind {
-    pub const ALL: [ExprKind; 5] = [
+    pub const ALL: [ExprKind; 8] = [
         ExprKind::Visible,
         ExprKind::Enabled,
         ExprKind::TextColour,
         ExprKind::FillColour,
         ExprKind::Choices,
+        ExprKind::Value,
+        ExprKind::Template,
+        ExprKind::Items,
     ];
 
-    fn text(self, control: &Control) -> Option<&str> {
-        match self {
+    /// The expression of this kind on a control: its Python text, or why
+    /// there is none that can run (a template that cannot be read).
+    fn text(self, control: &Control) -> Option<Result<String, String>> {
+        let plain = match self {
             ExprKind::Visible => control.visible_when.as_deref(),
             ExprKind::Enabled => control.enabled_when.as_deref(),
             ExprKind::TextColour => control.text_colour.as_deref(),
             ExprKind::FillColour => control.fill_colour.as_deref(),
             ExprKind::Choices => control.choices.as_deref(),
-        }
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
+            ExprKind::Value => control
+                .shows_value()
+                .then_some(control.value.as_deref())
+                .flatten(),
+            ExprKind::Items => control
+                .lists_items()
+                .then_some(control.items.as_deref())
+                .flatten(),
+            ExprKind::Template => {
+                if !control.is_template() {
+                    return None;
+                }
+                let text = control.text.as_deref().unwrap_or_default();
+                // A template with no expression in it is fixed text.
+                return match template::parts(text) {
+                    Ok(parts) if parts.iter().all(|p| matches!(p, template::Part::Text(_))) => None,
+                    Ok(_) => Some(template::expression_of(text)),
+                    Err(e) => Some(Err(e)),
+                };
+            }
+        };
+        plain
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(|t| Ok(t.to_owned()))
     }
 
     fn column_text(self, column: &ColumnDesign) -> Option<&str> {
@@ -58,14 +102,25 @@ impl ExprKind {
             ExprKind::TextColour => column.text_colour.as_deref(),
             ExprKind::FillColour => column.fill_colour.as_deref(),
             ExprKind::Choices => column.choices.as_deref(),
+            ExprKind::Value => column.value.as_deref(),
+            ExprKind::Template | ExprKind::Items => None,
         }
         .map(str::trim)
         .filter(|t| !t.is_empty())
     }
 
     /// Whether, on a column, it runs for each row rather than once.
-    fn per_row(self) -> bool {
+    pub fn per_row(self) -> bool {
         self != ExprKind::Visible
+    }
+
+    /// Whether it means anything on a read-only table, whose items an
+    /// expression gave.
+    fn on_listed_column(self) -> bool {
+        matches!(
+            self,
+            ExprKind::Visible | ExprKind::TextColour | ExprKind::FillColour | ExprKind::Value
+        )
     }
 }
 
@@ -76,10 +131,12 @@ pub struct ExprKey {
     pub form: String,
     /// Where the control is in the design.
     pub at: Vec<usize>,
-    /// For a column of the control's table: its name, and for an expression
-    /// that runs for each row, the row.
+    /// For a column of the control's table: its name.
     pub column: Option<String>,
-    pub row: Option<usize>,
+    /// The item of each repeater around the control whose items are designed,
+    /// outermost first, and for an expression of a column that runs for each
+    /// row, the row last.
+    pub rows: Vec<usize>,
     pub kind: ExprKind,
 }
 
@@ -93,10 +150,15 @@ pub struct ExprState {
     pub pending: bool,
 }
 
+/// Names an expression is given besides `this`, `parent` and `root`, with
+/// their values.
+pub(crate) type Bindings = Vec<(String, Value)>;
+
 #[derive(Debug, Clone)]
 struct ControlExpr {
     text: String,
     loc: Loc,
+    bindings: Bindings,
     result: Option<Result<Value, String>>,
     deps: Vec<Dep>,
     stale: bool,
@@ -104,12 +166,19 @@ struct ControlExpr {
     syntax_error: bool,
 }
 
+/// The form name of the keys of probes, which no form can have.
+const PROBE_FORM: &str = "\u{1}probe";
+
 /// An expression to run, as a snapshot carries it.
 #[derive(Debug, Clone)]
 pub(crate) struct ExprJob {
     pub key: ExprKey,
     pub text: String,
     pub loc: Loc,
+    pub bindings: Bindings,
+    /// It runs as a formula on its node would (a probe of a formula, for
+    /// Disconnect from Data Sources), not as an expression of a control.
+    pub formula: bool,
 }
 
 /// What running one came to.
@@ -131,19 +200,93 @@ pub(crate) struct ControlExprs {
     /// Some column has an expression for each row, so a change to the data
     /// may change the list.
     pub has_rows: bool,
+    /// Expressions run once for Disconnect from Data Sources, each with
+    /// whether it runs as a formula. They run with the next pass and are
+    /// read back by the command.
+    probes: IndexMap<ExprKey, (ControlExpr, bool)>,
 }
 
 impl ControlExprs {
     pub fn stale_jobs(&self) -> Vec<ExprJob> {
+        let job = |key: &ExprKey, e: &ControlExpr, formula: bool| ExprJob {
+            key: key.clone(),
+            text: e.text.clone(),
+            loc: e.loc.clone(),
+            bindings: e.bindings.clone(),
+            formula,
+        };
         self.by_key
             .iter()
             .filter(|(_, e)| e.stale)
-            .map(|(key, e)| ExprJob {
-                key: key.clone(),
-                text: e.text.clone(),
-                loc: e.loc.clone(),
-            })
+            .map(|(key, e)| job(key, e, false))
+            .chain(
+                self.probes
+                    .iter()
+                    .filter(|(_, (e, _))| e.stale)
+                    .map(|(key, (e, formula))| job(key, e, *formula)),
+            )
             .collect()
+    }
+
+    /// Puts the probes of Disconnect from Data Sources in place of any there
+    /// were: each an expression, where it runs, the names it sees, and
+    /// whether it runs as a formula.
+    pub(crate) fn set_probes(&mut self, probes: Vec<(String, Loc, Bindings, bool)>) {
+        self.probes = probes
+            .into_iter()
+            .enumerate()
+            .map(|(i, (text, loc, bindings, formula))| {
+                let key = ExprKey {
+                    tab: String::new(),
+                    form: PROBE_FORM.to_owned(),
+                    at: vec![i],
+                    column: None,
+                    rows: Vec::new(),
+                    kind: ExprKind::Value,
+                };
+                let expr = ControlExpr {
+                    text,
+                    loc,
+                    bindings,
+                    result: None,
+                    deps: Vec::new(),
+                    stale: true,
+                    syntax_error: false,
+                };
+                (key, (expr, formula))
+            })
+            .collect();
+    }
+
+    /// What the probes came to, in their order, once every one has run.
+    pub(crate) fn probe_results(&self) -> Option<Vec<Result<Value, String>>> {
+        self.probes
+            .values()
+            .map(|(e, _)| e.result.clone().filter(|_| !e.stale))
+            .collect()
+    }
+
+    pub(crate) fn clear_probes(&mut self) {
+        self.probes.clear();
+    }
+
+    /// Every expression of a control (or of a column of its table), keyed
+    /// with no rows, with where each instance of it runs: its rows, its node
+    /// and its names, in the order of their items.
+    pub(crate) fn instance_groups(&self) -> IndexMap<ExprKey, Vec<(Vec<usize>, Loc, Bindings)>> {
+        let mut groups: IndexMap<ExprKey, Vec<(Vec<usize>, Loc, Bindings)>> = IndexMap::new();
+        for (key, e) in &self.by_key {
+            let mut general = key.clone();
+            let rows = std::mem::take(&mut general.rows);
+            groups
+                .entry(general)
+                .or_default()
+                .push((rows, e.loc.clone(), e.bindings.clone()));
+        }
+        for instances in groups.values_mut() {
+            instances.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+        groups
     }
 
     /// Marks out of date every expression that read something an edit at
@@ -186,131 +329,204 @@ impl ControlExprs {
     }
 }
 
+/// Where a control's expressions run: once at the top of a form, or once for
+/// each item of each repeater around it whose items are designed.
+#[derive(Debug, Clone, Default)]
+struct Instance {
+    /// The item of each repeater around, outermost first.
+    rows: Vec<usize>,
+    /// The node of the innermost item, when it is an item of an array of the
+    /// tab; the paths of the controls in it are relative to it.
+    base: Option<Path>,
+    /// The names the repeaters around give their items and lists, and `this`
+    /// for an item that an expression gave.
+    bindings: Bindings,
+}
+
+/// Makes the key of an expression of the control being synced: its kind,
+/// its column, and the items it is for.
+type KeyOf<'a> = dyn Fn(ExprKind, Option<&str>, Vec<usize>) -> ExprKey + 'a;
+
+/// An expression the designs ask for.
+struct Wanted {
+    key: ExprKey,
+    text: Result<String, String>,
+    loc: Loc,
+    bindings: Bindings,
+}
+
+/// The bindings of an instance with more names, a later one of the same name
+/// in place of an earlier one.
+fn bind(base: &Bindings, more: impl IntoIterator<Item = (String, Value)>) -> Bindings {
+    let mut out = base.clone();
+    for (name, value) in more {
+        out.retain(|(n, _)| *n != name);
+        out.push((name, value));
+    }
+    out
+}
+
+/// The names an item of a repeater whose items come from an expression is
+/// given: `this`, and the repeater's item and list names.
+fn item_names(control: &Control, item: &Value, list: &Value) -> Vec<(String, Value)> {
+    let mut names = vec![("this".to_owned(), item.clone())];
+    fn name(n: &Option<String>) -> Option<&str> {
+        n.as_deref().map(str::trim).filter(|n| !n.is_empty())
+    }
+    if let Some(n) = name(&control.item_name) {
+        names.push((n.to_owned(), item.clone()));
+    }
+    if let Some(n) = name(&control.list_name) {
+        names.push((n.to_owned(), list.clone()));
+    }
+    names
+}
+
+/// What a cell of a column of an item shows when it has no expression: the
+/// field of that name (dotted for a field of a field), or the item itself for
+/// the one column of items that are not objects.
+pub fn cell_of(item: &Value, column: &str) -> Option<Value> {
+    match item {
+        Value::Object(_) => {
+            let mut at = item.clone();
+            for part in column.split('.') {
+                let Value::Object(fields) = &at else {
+                    return None;
+                };
+                at = fields.get(part)?.value().clone();
+            }
+            Some(at)
+        }
+        _ if column == "value" => Some(item.clone()),
+        _ => None,
+    }
+}
+
 impl Calc {
     /// Makes the list of expressions match the stored designs. An expression
-    /// that is new, or whose text or node changed, is out of date; one that
-    /// does not parse has its syntax error as its result and does not run.
+    /// that is new, or whose text, node or names changed, is out of date; one
+    /// that does not parse has its syntax error as its result and does not run.
     pub fn sync_expressions(&mut self) {
         if !self.exprs.resync {
             return;
         }
         self.exprs.resync = false;
-        let mut wanted: Vec<(ExprKey, String, Loc)> = Vec::new();
+        let mut wanted: Vec<Wanted> = Vec::new();
         let mut has_rows = false;
         for (tab, form, design) in self.forms.iter() {
-            // Each control, with the array of the stacked repeater whose
-            // items it is designed in.
-            let mut stack: Vec<(Vec<usize>, &Control, Option<Path>)> = design
+            let mut stack: Vec<(Vec<usize>, &Control, Vec<Instance>)> = design
                 .controls
                 .iter()
                 .enumerate()
-                .map(|(i, c)| (vec![i], c, None))
+                .map(|(i, c)| (vec![i], c, vec![Instance::default()]))
                 .collect();
-            while let Some((at, control, scope)) = stack.pop() {
-                let key = |kind, column: Option<&str>, row| ExprKey {
+            while let Some((at, control, instances)) = stack.pop() {
+                let key = |kind, column: Option<&str>, rows: Vec<usize>| ExprKey {
                     tab: tab.to_owned(),
                     form: form.to_owned(),
                     at: at.clone(),
                     column: column.map(str::to_owned),
-                    row,
+                    rows,
                     kind,
                 };
-                let texts: Vec<(ExprKind, &str)> = ExprKind::ALL
+                let texts: Vec<(ExprKind, Result<String, String>)> = ExprKind::ALL
                     .into_iter()
                     .filter_map(|k| Some((k, k.text(control)?)))
                     .collect();
-                match &scope {
-                    None => {
-                        let path = control.bound_path().unwrap_or_default();
-                        for (kind, text) in &texts {
-                            wanted.push((
-                                key(*kind, None, None),
-                                (*text).to_owned(),
-                                Loc::new(tab, path.clone()),
-                            ));
-                        }
+                let own_path = (!control.shows_value() && !control.lists_items())
+                    .then(|| control.bound_path())
+                    .flatten();
+                let mut inner: Vec<Instance> = Vec::new();
+                for inst in &instances {
+                    let path = match (&own_path, &inst.base) {
+                        (Some(rest), Some(base)) => base.join(rest),
+                        (Some(rest), None) => rest.clone(),
+                        (None, Some(base)) => base.clone(),
+                        (None, None) => Path::root(),
+                    };
+                    let loc = Loc::new(tab, path.clone());
+                    has_rows |= !inst.rows.is_empty();
+                    for (kind, text) in &texts {
+                        wanted.push(Wanted {
+                            key: key(*kind, None, inst.rows.clone()),
+                            text: text.clone(),
+                            loc: loc.clone(),
+                            bindings: inst.bindings.clone(),
+                        });
                     }
-                    // In the items of a stacked repeater: for each item.
-                    Some(array) if !texts.is_empty() => {
-                        has_rows = true;
-                        let len = self
-                            .data(tab)
-                            .and_then(|d| d.get(array))
-                            .and_then(|n| n.value().as_array())
-                            .map_or(0, <[_]>::len);
-                        for row in 0..len {
-                            let item = array.index(row);
-                            let path = match control.bound_path() {
-                                Some(rest) => item.join(&rest),
-                                None => item,
+                    let top = inst.rows.is_empty() && inst.base.is_none();
+                    match control.kind {
+                        ControlKind::Repeater if control.lists_items() => {
+                            let Some(Ok(text)) = ExprKind::Items.text(control) else {
+                                continue;
                             };
-                            for (kind, text) in &texts {
-                                wanted.push((
-                                    key(*kind, None, Some(row)),
-                                    (*text).to_owned(),
-                                    Loc::new(tab, path.clone()),
-                                ));
+                            let items_key = key(ExprKind::Items, None, inst.rows.clone());
+                            let Some(list) = self.listed(&items_key, &text, &loc, &inst.bindings)
+                            else {
+                                continue;
+                            };
+                            let Value::Array(items) = &list else {
+                                continue;
+                            };
+                            if control.is_stacked() {
+                                for (i, item) in items.iter().enumerate() {
+                                    let mut rows = inst.rows.clone();
+                                    rows.push(i);
+                                    inner.push(Instance {
+                                        rows,
+                                        base: None,
+                                        bindings: bind(
+                                            &inst.bindings,
+                                            item_names(control, item.value(), &list),
+                                        ),
+                                    });
+                                }
+                            } else {
+                                self.listed_columns(
+                                    control,
+                                    &key,
+                                    inst,
+                                    &loc,
+                                    items,
+                                    &list,
+                                    &mut wanted,
+                                );
                             }
                         }
-                    }
-                    Some(_) => {}
-                }
-                // The columns of its table. (Not of a table in an item.)
-                if scope.is_none()
-                    && control.kind == ControlKind::Repeater
-                    && control.mode != Some(RepeaterMode::Stacked)
-                    && let Some(array) = control.bound_path()
-                {
-                    for column in &control.table_columns {
-                        if column.hidden || column.is_row_number() {
-                            continue;
-                        }
-                        let name = Some(column.name.as_str());
-                        if let Some(text) = ExprKind::Visible.column_text(column) {
-                            wanted.push((
-                                key(ExprKind::Visible, name, None),
-                                text.to_owned(),
-                                Loc::new(tab, array.clone()),
-                            ));
-                        }
-                        let each: Vec<(ExprKind, &str)> = ExprKind::ALL
-                            .into_iter()
-                            .filter(|k| k.per_row())
-                            .filter_map(|k| Some((k, k.column_text(column)?)))
-                            .collect();
-                        if each.is_empty() {
-                            continue;
-                        }
-                        has_rows = true;
-                        let Some(cells) = self.column_cells(tab, &array, &column.name) else {
-                            continue;
-                        };
-                        for (row, cell) in cells.into_iter().enumerate() {
-                            for (kind, text) in &each {
-                                wanted.push((
-                                    key(*kind, name, Some(row)),
-                                    (*text).to_owned(),
-                                    Loc::new(tab, cell.clone()),
-                                ));
+                        ControlKind::Repeater if control.is_stacked() => {
+                            let Some(array) = own_path.as_ref().map(|_| path.clone()) else {
+                                continue;
+                            };
+                            let len = self.array_len(tab, &array);
+                            has_rows = true;
+                            for i in 0..len {
+                                let mut rows = inst.rows.clone();
+                                rows.push(i);
+                                inner.push(Instance {
+                                    rows,
+                                    base: Some(array.index(i)),
+                                    bindings: inst.bindings.clone(),
+                                });
                             }
                         }
+                        // The columns of a table bound to an array. (Not of
+                        // a table in an item.)
+                        ControlKind::Repeater if top => {
+                            if let Some(array) = &own_path {
+                                has_rows |=
+                                    self.path_columns(control, &key, tab, array, &mut wanted);
+                            }
+                        }
+                        ControlKind::Repeater => {}
+                        _ => inner.push(inst.clone()),
                     }
                 }
                 // The controls in it: a group's are where the group is; a
-                // stacked repeater's are the design of its items. Those of a
-                // table, and of a repeater in an item, are not used.
-                let inner = match (&scope, control.kind) {
-                    (Some(_), ControlKind::Repeater) => continue,
-                    (Some(_), _) => scope.clone(),
-                    (None, ControlKind::Repeater) if control.is_stacked() => {
-                        match control.bound_path() {
-                            Some(array) => Some(array),
-                            None => continue,
-                        }
-                    }
-                    (None, ControlKind::Repeater) => continue,
-                    (None, _) => None,
-                };
+                // stacked repeater's are the design of its items, for each
+                // item. Those of a table are not used.
+                if inner.is_empty() {
+                    continue;
+                }
                 for (i, child) in control.children.iter().enumerate() {
                     let mut child_at = at.clone();
                     child_at.push(i);
@@ -319,31 +535,199 @@ impl Calc {
             }
         }
         let mut old = std::mem::take(&mut self.exprs.by_key);
-        for (key, text, loc) in wanted {
+        for w in wanted {
+            let text_now = match &w.text {
+                Ok(t) => t.clone(),
+                Err(e) => e.clone(),
+            };
             let kept = old
-                .swap_remove(&key)
-                .filter(|e| e.text == text && e.loc == loc);
-            let expr = kept.unwrap_or_else(|| match self.syntax.check(&text) {
-                Ok(()) => ControlExpr {
-                    text,
-                    loc,
-                    result: None,
-                    deps: Vec::new(),
-                    stale: true,
-                    syntax_error: false,
-                },
-                Err(e) => ControlExpr {
-                    text,
-                    loc,
-                    result: Some(Err(format!("syntax error: {e}"))),
-                    deps: Vec::new(),
-                    stale: false,
-                    syntax_error: true,
-                },
+                .swap_remove(&w.key)
+                .filter(|e| e.text == text_now && e.loc == w.loc && e.bindings == w.bindings);
+            let expr = kept.unwrap_or_else(|| {
+                let checked = match &w.text {
+                    Ok(text) => self
+                        .syntax
+                        .check(text)
+                        .map_err(|e| format!("syntax error: {e}")),
+                    Err(problem) => Err(format!("the template cannot be read: {problem}")),
+                };
+                match checked {
+                    Ok(()) => ControlExpr {
+                        text: text_now,
+                        loc: w.loc,
+                        bindings: w.bindings,
+                        result: None,
+                        deps: Vec::new(),
+                        stale: true,
+                        syntax_error: false,
+                    },
+                    Err(message) => ControlExpr {
+                        text: text_now,
+                        loc: w.loc,
+                        bindings: w.bindings,
+                        result: Some(Err(message)),
+                        deps: Vec::new(),
+                        stale: false,
+                        syntax_error: true,
+                    },
+                }
             });
-            self.exprs.by_key.insert(key, expr);
+            self.exprs.by_key.insert(w.key, expr);
         }
         self.exprs.has_rows = has_rows;
+    }
+
+    /// The list a repeater's items expression came to, if it has run with
+    /// this text, at this node and with these names.
+    fn listed(&self, key: &ExprKey, text: &str, loc: &Loc, bindings: &Bindings) -> Option<Value> {
+        let e = self.exprs.by_key.get(key)?;
+        if e.text != text || &e.loc != loc || &e.bindings != bindings {
+            return None;
+        }
+        match &e.result {
+            Some(Ok(list @ Value::Array(_))) => Some(list.clone()),
+            _ => None,
+        }
+    }
+
+    fn array_len(&self, tab: &str, array: &Path) -> usize {
+        self.data(tab)
+            .and_then(|d| d.get(array))
+            .and_then(|n| n.value().as_array())
+            .map_or(0, <[_]>::len)
+    }
+
+    /// The expressions of the columns of a table bound to an array: *visible
+    /// when* once at the array, the others for each row at the cell (at the
+    /// item, for a column that shows an expression). Returns whether any runs
+    /// for each row.
+    fn path_columns(
+        &self,
+        control: &Control,
+        key: &KeyOf,
+        tab: &str,
+        array: &Path,
+        wanted: &mut Vec<Wanted>,
+    ) -> bool {
+        let mut each_row = false;
+        for column in &control.table_columns {
+            if column.hidden || column.is_row_number() {
+                continue;
+            }
+            let name = Some(column.name.as_str());
+            if let Some(text) = ExprKind::Visible.column_text(column) {
+                wanted.push(Wanted {
+                    key: key(ExprKind::Visible, name, Vec::new()),
+                    text: Ok(text.to_owned()),
+                    loc: Loc::new(tab, array.clone()),
+                    bindings: Vec::new(),
+                });
+            }
+            let each: Vec<(ExprKind, &str)> = ExprKind::ALL
+                .into_iter()
+                .filter(|k| k.per_row())
+                .filter_map(|k| Some((k, k.column_text(column)?)))
+                .collect();
+            if each.is_empty() {
+                continue;
+            }
+            let cells = self.column_cells(tab, array, &column.name);
+            // A column that is not a field of the items runs nothing, unless
+            // it shows an expression.
+            if cells.is_none() && column.value.is_none() {
+                continue;
+            }
+            each_row = true;
+            let len = self.array_len(tab, array);
+            for row in 0..len {
+                let cell = cells
+                    .as_ref()
+                    .and_then(|c| c.get(row).cloned())
+                    .unwrap_or_else(|| array.index(row));
+                for (kind, text) in &each {
+                    // A column that shows an expression runs at the item.
+                    let at = if column.value.is_some() {
+                        array.index(row)
+                    } else {
+                        cell.clone()
+                    };
+                    wanted.push(Wanted {
+                        key: key(*kind, name, vec![row]),
+                        text: Ok((*text).to_owned()),
+                        loc: Loc::new(tab, at),
+                        bindings: Vec::new(),
+                    });
+                }
+            }
+        }
+        each_row
+    }
+
+    /// The expressions of the columns of a table whose items an expression
+    /// gave: *visible when* once, the others for each row, given the item
+    /// under the repeater's names and the cell as `this`.
+    #[allow(clippy::too_many_arguments)]
+    fn listed_columns(
+        &self,
+        control: &Control,
+        key: &KeyOf,
+        inst: &Instance,
+        loc: &Loc,
+        items: &[Node],
+        list: &Value,
+        wanted: &mut Vec<Wanted>,
+    ) {
+        for column in &control.table_columns {
+            if column.hidden || column.is_row_number() {
+                continue;
+            }
+            let name = Some(column.name.as_str());
+            if let Some(text) = ExprKind::Visible.column_text(column) {
+                let mut names = Vec::new();
+                if let Some(n) = control
+                    .list_name
+                    .as_deref()
+                    .filter(|n| !n.trim().is_empty())
+                {
+                    names.push((n.trim().to_owned(), list.clone()));
+                }
+                wanted.push(Wanted {
+                    key: key(ExprKind::Visible, name, inst.rows.clone()),
+                    text: Ok(text.to_owned()),
+                    loc: loc.clone(),
+                    bindings: bind(&inst.bindings, names),
+                });
+            }
+            let each: Vec<(ExprKind, &str)> = ExprKind::ALL
+                .into_iter()
+                .filter(|k| k.per_row() && k.on_listed_column())
+                .filter_map(|k| Some((k, k.column_text(column)?)))
+                .collect();
+            if each.is_empty() {
+                continue;
+            }
+            for (row, item) in items.iter().enumerate() {
+                let item = item.value();
+                let mut names = item_names(control, item, list);
+                // In a cell, `this` is the cell when the item has one.
+                if column.value.is_none()
+                    && let Some(cell) = cell_of(item, &column.name)
+                {
+                    names[0].1 = cell;
+                }
+                let bindings = bind(&inst.bindings, names);
+                let mut rows = inst.rows.clone();
+                rows.push(row);
+                for (kind, text) in &each {
+                    wanted.push(Wanted {
+                        key: key(*kind, name, rows.clone()),
+                        text: Ok((*text).to_owned()),
+                        loc: loc.clone(),
+                        bindings: bindings.clone(),
+                    });
+                }
+            }
+        }
     }
 
     /// The cells of a column of the table of the array at `array`, one for
@@ -364,11 +748,7 @@ impl Calc {
         };
         let cell = |i: usize| fields.iter().fold(array.index(i), |p, f| p.key(*f));
         spec.resolve(&cell(0))?;
-        let len = self
-            .data(tab)?
-            .get(array)
-            .and_then(|n| n.value().as_array())
-            .map_or(0, |items| items.len());
+        let len = self.array_len(tab, array);
         Some((0..len).map(cell).collect())
     }
 
@@ -379,6 +759,7 @@ impl Calc {
             return 0;
         }
         self.exprs.by_key.values().filter(|e| e.stale).count()
+            + self.exprs.probes.values().filter(|(e, _)| e.stale).count()
     }
 
     /// What an expression of a control came to. None if the control has no
@@ -391,7 +772,7 @@ impl Calc {
         at: &[usize],
         kind: ExprKind,
     ) -> Option<ExprState> {
-        self.control_expression_in(tab, form, at, None, kind)
+        self.control_expression_at(tab, form, at, &[], kind)
     }
 
     /// As [`Calc::control_expression`], for a control in the design of a
@@ -404,12 +785,26 @@ impl Calc {
         item: Option<usize>,
         kind: ExprKind,
     ) -> Option<ExprState> {
+        let rows: Vec<usize> = item.into_iter().collect();
+        self.control_expression_at(tab, form, at, &rows, kind)
+    }
+
+    /// As [`Calc::control_expression`], for a control inside the designed
+    /// items of repeaters: `rows` is the item of each, outermost first.
+    pub fn control_expression_at(
+        &self,
+        tab: &str,
+        form: &str,
+        at: &[usize],
+        rows: &[usize],
+        kind: ExprKind,
+    ) -> Option<ExprState> {
         self.expression_state(&ExprKey {
             tab: tab.to_owned(),
             form: form.to_owned(),
             at: at.to_vec(),
             column: None,
-            row: item,
+            rows: rows.to_vec(),
             kind,
         })
     }
@@ -425,14 +820,62 @@ impl Calc {
         row: Option<usize>,
         kind: ExprKind,
     ) -> Option<ExprState> {
+        self.column_expression_at(tab, form, at, &[], column, row, kind)
+    }
+
+    /// As [`Calc::column_expression`], for a table inside the designed items
+    /// of repeaters, `outer` being the item of each.
+    #[allow(clippy::too_many_arguments)]
+    pub fn column_expression_at(
+        &self,
+        tab: &str,
+        form: &str,
+        at: &[usize],
+        outer: &[usize],
+        column: &str,
+        row: Option<usize>,
+        kind: ExprKind,
+    ) -> Option<ExprState> {
+        let mut rows = outer.to_vec();
+        if kind.per_row() {
+            rows.extend(row);
+        }
         self.expression_state(&ExprKey {
             tab: tab.to_owned(),
             form: form.to_owned(),
             at: at.to_vec(),
             column: Some(column.to_owned()),
-            row: if kind.per_row() { row } else { None },
+            rows,
             kind,
         })
+    }
+
+    /// The first failure of an expression of the control at `at` (or of its
+    /// column `column`) in any of the items it runs for: the item of each
+    /// repeater around (and the row, for a column), and the message.
+    pub fn first_expression_error(
+        &self,
+        tab: &str,
+        form: &str,
+        at: &[usize],
+        column: Option<&str>,
+        kind: ExprKind,
+    ) -> Option<(Vec<usize>, String)> {
+        self.exprs
+            .by_key
+            .iter()
+            .filter(|(k, _)| {
+                k.tab == tab
+                    && k.form == form
+                    && k.at == at
+                    && k.column.as_deref() == column
+                    && k.kind == kind
+            })
+            .filter_map(|(k, e)| match &e.result {
+                Some(Err(message)) => Some((k.rows.clone(), message.clone())),
+                _ => None,
+            })
+            .min_by(|a, b| a.0.cmp(&b.0))
     }
 
     fn expression_state(&self, key: &ExprKey) -> Option<ExprState> {
@@ -469,11 +912,24 @@ impl Calc {
                         .iter()
                         .any(|d| d.sheet == dep.loc.sheet && overlaps(&d.path, &dep.loc.path))
             });
+            if let Some((e, _)) = self.exprs.probes.get_mut(&outcome.key) {
+                // A probe runs once; an edit since does not matter to it.
+                if e.text == outcome.text {
+                    e.result = Some(outcome.result);
+                    e.stale = false;
+                    any = true;
+                }
+                continue;
+            }
             let Some(e) = self.exprs.by_key.get_mut(&outcome.key) else {
                 continue;
             };
             if overtaken || e.text != outcome.text {
                 continue;
+            }
+            // The items of a repeater decide which expressions run inside it.
+            if outcome.key.kind == ExprKind::Items && e.result.as_ref() != Some(&outcome.result) {
+                self.exprs.resync = true;
             }
             e.result = Some(outcome.result);
             e.deps = outcome.deps;

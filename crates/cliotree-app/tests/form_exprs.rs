@@ -68,7 +68,7 @@ fn form(buttons: Vec<Control>) -> (Harness<'static, ClioApp>, usize) {
 }
 
 fn the_gate(harness: &Harness<'_, ClioApp>, at: usize) -> Gate {
-    gate(harness.state().calc(), "Orders", "Default", &[at], None)
+    gate(harness.state().calc(), "Orders", "Default", &[at], &[])
 }
 
 fn disabled(harness: &Harness<'_, ClioApp>, label: &str) -> bool {
@@ -271,7 +271,11 @@ fn type_expression(harness: &mut Harness<'_, ClioApp>, field: &str, text: &str) 
     let role = egui::accesskit::Role::TextInput;
     harness.get_by_role_and_label(role, field).click();
     harness.run();
+    // Over what is there; Enter stores it.
+    harness.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
     harness.get_by_role_and_label(role, field).type_text(text);
+    harness.run();
+    harness.key_press(egui::Key::Enter);
     harness.run();
     settle(harness);
     harness.run();
@@ -299,7 +303,6 @@ fn the_property_page_shows_why_an_expression_failed() {
     // Only the first line; the traceback is on hover.
     assert!(!error_shown(&harness, "Traceback"));
 
-    harness.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
     type_expression(&mut harness, "Text colour", "'red'");
     assert!(!error_shown(&harness, "NameError"));
 }

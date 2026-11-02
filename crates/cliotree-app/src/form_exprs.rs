@@ -23,10 +23,10 @@ pub struct Gate {
 }
 
 /// What the expressions of the control at `at` of a form come to; in the
-/// design of a stacked repeater's items, for item `item`.
-pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize], item: Option<usize>) -> Gate {
+/// design of the items of repeaters, for the item `rows` names of each.
+pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize], rows: &[usize]) -> Gate {
     gate_of(calc.is_trusted(), |kind| {
-        calc.control_expression_in(tab, form, at, item, kind)
+        calc.control_expression_at(tab, form, at, rows, kind)
     })
 }
 
@@ -41,19 +41,37 @@ pub fn column_gate(
     column: &str,
     row: Option<usize>,
 ) -> Gate {
+    column_gate_at(calc, tab, form, at, &[], column, row)
+}
+
+/// As [`column_gate`], for a table inside the items of repeaters, `outer`
+/// being the item of each.
+pub fn column_gate_at(
+    calc: &Calc,
+    tab: &str,
+    form: &str,
+    at: &[usize],
+    outer: &[usize],
+    column: &str,
+    row: Option<usize>,
+) -> Gate {
     gate_of(calc.is_trusted(), |kind| {
         if (kind == ExprKind::Visible) != row.is_none() {
             return None;
         }
-        calc.column_expression(tab, form, at, column, row, kind)
+        calc.column_expression_at(tab, form, at, outer, column, row, kind)
     })
 }
 
 fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> Gate {
     let mut gate = Gate::default();
     for kind in ExprKind::ALL {
-        // The choices are the field's editor, not how it is drawn.
-        if kind == ExprKind::Choices {
+        // The choices are the field's editor, and a value, a template and
+        // items are what it shows, not how it is drawn.
+        if matches!(
+            kind,
+            ExprKind::Choices | ExprKind::Value | ExprKind::Template | ExprKind::Items
+        ) {
             continue;
         }
         let Some(state) = state_of(kind) else {
@@ -66,6 +84,9 @@ fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> G
             ExprKind::TextColour => "Text colour",
             ExprKind::FillColour => "Fill colour",
             ExprKind::Choices => "Choices",
+            ExprKind::Value => "Value",
+            ExprKind::Template => "Text",
+            ExprKind::Items => "Items",
         };
         if !trusted {
             // Nothing runs: shown, and disabled if it has an *enabled when*.
@@ -99,7 +120,7 @@ fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> G
                     Ok(c) => gate.fill = c,
                     Err(error) => gate.why.push(format!("{what}: {error}")),
                 },
-                ExprKind::Choices => {}
+                ExprKind::Choices | ExprKind::Value | ExprKind::Template | ExprKind::Items => {}
             },
         }
     }
@@ -304,12 +325,12 @@ pub fn choice_list(
     form: &str,
     at: &[usize],
     column: Option<(&str, usize)>,
-    item: Option<usize>,
+    rows: &[usize],
 ) -> Option<ChoiceList> {
     let state = match column {
-        None => calc.control_expression_in(tab, form, at, item, ExprKind::Choices),
+        None => calc.control_expression_at(tab, form, at, rows, ExprKind::Choices),
         Some((name, row)) => {
-            calc.column_expression(tab, form, at, name, Some(row), ExprKind::Choices)
+            calc.column_expression_at(tab, form, at, rows, name, Some(row), ExprKind::Choices)
         }
     }?;
     Some(list_of(calc.is_trusted(), state))

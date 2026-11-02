@@ -651,6 +651,16 @@ pub struct ColumnDesign {
     pub choices: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub allow_other: bool,
+    /// A Python expression whose result the cells show, instead of a field
+    /// of the item; runs for each row. A column with one need not be a field
+    /// of the items. Read-only, unless it has a write procedure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// For a column that shows an expression: the procedure that takes what
+    /// is typed into a cell, `name(form, ctx, value)`, with `ctx.index` the
+    /// row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_procedure: Option<String>,
     /// For the row numbers: how they are written. Absent: `[0]`, `[1]`, ...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numbering: Option<Numbering>,
@@ -729,6 +739,8 @@ impl ColumnDesign {
             fill_colour: None,
             choices: None,
             allow_other: false,
+            value: None,
+            write_procedure: None,
             numbering: None,
             start: None,
         }
@@ -804,6 +816,25 @@ pub struct Control {
     /// The text of a label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// For a label: its text is a template, in which each `{expression}` is
+    /// filled in as in a Python f-string (see [`crate::form::template`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub template: bool,
+    /// For a field: a Python expression whose result it shows, instead of the
+    /// value of a node. A field has a path or a value, not both; with a value
+    /// it is read-only unless it has a write procedure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// For a repeater: a Python expression whose list gives its items,
+    /// instead of an array of the tab. Such a repeater is read-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<String>,
+    /// For a repeater: the name the expressions of the controls in it give
+    /// the item, and the name they give the whole list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editor: Option<Editor>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -843,6 +874,11 @@ pub struct Control {
     /// For a button: the procedure it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub procedure: Option<String>,
+    /// For a field that shows an expression: the procedure that takes what
+    /// is typed into it, `name(form, ctx, value)`. Without one the field is
+    /// read-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_procedure: Option<String>,
     /// Python expressions, without the `=`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_when: Option<String>,
@@ -987,6 +1023,13 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// Whether an optional text has something in it besides spaces.
+fn has_text(text: &Option<String>) -> bool {
+    text.as_deref().is_some_and(|t| !t.trim().is_empty())
+}
+
+pub mod template;
+
 impl Control {
     /// Whether it is a repeater that shows one item at a time. Its items can
     /// be designed: the controls in it are drawn for the item shown.
@@ -1011,6 +1054,11 @@ impl Control {
             label: None,
             help: None,
             text: None,
+            template: false,
+            value: None,
+            items: None,
+            item_name: None,
+            list_name: None,
             editor: None,
             read_only: false,
             masked: false,
@@ -1022,6 +1070,7 @@ impl Control {
             decimals: None,
             date_format: None,
             procedure: None,
+            write_procedure: None,
             visible_when: None,
             enabled_when: None,
             text_colour: None,
@@ -1072,12 +1121,30 @@ impl Control {
         self.path.as_deref().and_then(|p| p.parse().ok())
     }
 
-    /// Whether the kind binds to a node.
+    /// Whether the kind binds to a node. A field that shows an expression and
+    /// a repeater whose items come from one do not.
     pub fn binds(&self) -> bool {
         matches!(
             self.kind,
             ControlKind::Field | ControlKind::Group | ControlKind::Repeater
         ) && self.path.is_some()
+            && !self.shows_value()
+            && !self.lists_items()
+    }
+
+    /// Whether it is a field that shows an expression's result.
+    pub fn shows_value(&self) -> bool {
+        self.kind == ControlKind::Field && has_text(&self.value)
+    }
+
+    /// Whether it is a repeater whose items come from an expression.
+    pub fn lists_items(&self) -> bool {
+        self.kind == ControlKind::Repeater && has_text(&self.items)
+    }
+
+    /// Whether it is a label whose text is a template.
+    pub fn is_template(&self) -> bool {
+        self.kind == ControlKind::Label && self.template
     }
 
     /// How the field shows a number or a date.
@@ -1207,6 +1274,11 @@ pub fn form_schema_source() -> &'static str {
         "label": {"type": "string"},
         "help": {"type": "string"},
         "text": {"type": "string"},
+        "template": {"type": "boolean"},
+        "value": {"type": "string"},
+        "items": {"type": "string"},
+        "item_name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "list_name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
         "editor": {"type": "string", "enum": ["auto", "text", "multiline", "dropdown", "typeahead"]},
         "read_only": {"type": "boolean"},
         "masked": {"type": "boolean"},
@@ -1218,6 +1290,7 @@ pub fn form_schema_source() -> &'static str {
         "decimals": {"type": "integer", "minimum": 0, "maximum": 10},
         "date_format": {"type": "string", "minLength": 1},
         "procedure": {"type": "string"},
+        "write_procedure": {"type": "string"},
         "visible_when": {"type": "string"},
         "enabled_when": {"type": "string"},
         "text_colour": {"type": "string"},
@@ -1280,6 +1353,8 @@ pub fn form_schema_source() -> &'static str {
         "fill_colour": {"type": "string"},
         "choices": {"type": "string"},
         "allow_other": {"type": "boolean"},
+        "value": {"type": "string"},
+        "write_procedure": {"type": "string"},
         "numbering": {"type": "string", "enum": ["index", "decimal", "lower-alpha", "upper-alpha", "lower-roman", "upper-roman"]},
         "start": {"type": "integer"}
       },
@@ -1493,13 +1568,33 @@ impl FormDesign {
     /// property page's copy that it is editing. None for an unbound control
     /// outside an item, and when the paths cannot be read.
     pub fn path_in_item(&self, address: &[usize], control: &Control, item: usize) -> Option<Path> {
-        let Some(scope) = self.item_scope(address) else {
-            return control.bound_path();
-        };
-        let base = self.get(&scope)?.bound_path()?.index(item);
-        match control.bound_path() {
-            Some(rest) => Some(base.join(&rest)),
-            None => Some(base),
+        // Each repeater around, outermost first: item `item` of the nearest,
+        // the first item of the others. Inside the items of an expression
+        // the paths start again from the top of the tab.
+        let scopes: Vec<usize> = (1..address.len())
+            .filter(|&n| {
+                self.get(&address[..n])
+                    .is_some_and(|c| c.kind == ControlKind::Repeater)
+            })
+            .collect();
+        let mut base: Option<Path> = None;
+        for (k, &n) in scopes.iter().enumerate() {
+            let repeater = self.get(&address[..n])?;
+            if repeater.lists_items() {
+                base = None;
+                continue;
+            }
+            let path = repeater.bound_path()?;
+            let array = match &base {
+                Some(b) => b.join(&path),
+                None => path,
+            };
+            base = Some(array.index(if k + 1 == scopes.len() { item } else { 0 }));
+        }
+        match (base, control.bound_path()) {
+            (Some(base), Some(rest)) => Some(base.join(&rest)),
+            (Some(base), None) => Some(base),
+            (None, path) => path,
         }
     }
 
@@ -1726,11 +1821,27 @@ pub fn control_problem(spec: &TypeSpec, control: &Control) -> Option<String> {
 /// As [`control_problem`], for a control whose path is relative to the node
 /// at `base` (an item of a repeater).
 pub fn control_problem_at(spec: &TypeSpec, control: &Control, base: &Path) -> Option<String> {
+    // A field has a path or a value; with a value, and a repeater over an
+    // expression, there is no path to check.
+    if control.shows_value() && control.path.is_some() {
+        return Some("a field has a path or a value, not both".to_owned());
+    }
+    if control.write_procedure.is_some() && !control.shows_value() {
+        return Some("a write procedure needs a value".to_owned());
+    }
+    if control.shows_value() || control.lists_items() {
+        return None;
+    }
     let Some(text) = control.path.as_deref() else {
         return match control.kind {
             ControlKind::Field | ControlKind::Repeater => Some(format!(
-                "a {} needs a path",
-                control.kind.label().to_lowercase()
+                "a {} needs a path{}",
+                control.kind.label().to_lowercase(),
+                if control.kind == ControlKind::Field {
+                    " or a value"
+                } else {
+                    ""
+                }
             )),
             _ => None,
         };
@@ -1819,6 +1930,58 @@ mod tests {
             }"##,
         )
         .unwrap()
+    }
+
+    /// Designed items nest: a path is read from the item of each repeater
+    /// around, and starts again from the top inside the items of an
+    /// expression, where a field that shows one has no path to check.
+    #[test]
+    fn item_paths_chain_through_the_repeaters_around() {
+        let sku = Control::bound(ControlKind::Field, &"sku".parse().unwrap());
+        let mut lines = Control::bound(ControlKind::Repeater, &"lines".parse().unwrap());
+        lines.mode = Some(RepeaterMode::Stacked);
+        lines.children = vec![sku.clone()];
+        let mut orders = Control::bound(ControlKind::Repeater, &"orders".parse().unwrap());
+        orders.mode = Some(RepeaterMode::Stacked);
+        orders.children = vec![lines];
+        let mut listed = Control::new(ControlKind::Repeater);
+        listed.items = Some("[1, 2]".into());
+        let mut total = Control::new(ControlKind::Field);
+        total.value = Some("this * 2".into());
+        listed.children = vec![sku.clone(), total.clone()];
+        let design = FormDesign {
+            controls: vec![orders, listed],
+            ..FormDesign::default()
+        };
+        assert_eq!(
+            design.path_in_item(&[0, 0, 0], &sku, 3),
+            Some("orders[0].lines[3].sku".parse().unwrap())
+        );
+        assert_eq!(
+            design.path_in_item(&[1, 0], &sku, 1),
+            Some("sku".parse().unwrap())
+        );
+        assert_eq!(design.path_in_item(&[1, 1], &total, 1), None);
+        assert_eq!(control_problem(&spec(), &total), None);
+        // A path or a value, not both; a write procedure only with a value.
+        let mut both = total.clone();
+        both.path = Some("name".into());
+        assert_eq!(
+            control_problem(&spec(), &both).as_deref(),
+            Some("a field has a path or a value, not both")
+        );
+        let mut writer = Control::new(ControlKind::Field);
+        writer.write_procedure = Some("set".into());
+        assert_eq!(
+            control_problem(&spec(), &writer).as_deref(),
+            Some("a write procedure needs a value")
+        );
+        writer.value = Some("1".into());
+        assert_eq!(control_problem(&spec(), &writer), None);
+        assert_eq!(
+            control_problem(&spec(), &Control::new(ControlKind::Field)).as_deref(),
+            Some("a field needs a path or a value")
+        );
     }
 
     #[test]
