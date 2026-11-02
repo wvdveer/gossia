@@ -1,6 +1,7 @@
 //! The code editor (DESIGN.md, "Python modules"): a second window, opened with
 //! *Tools > Code editor* or Alt+F11, as Excel opens its Visual Basic editor. The
-//! project explorer lists the workbook's modules and its customised forms; each
+//! project explorer lists the workbook's modules, its customised forms and its
+//! reports; each
 //! open item has a tab with line numbers, highlighting and automatic
 //! indentation; the procedure box jumps to a function. *Compile* and the `.py`
 //! files are in `code_check.rs`, the Immediate window in `immediate.rs`.
@@ -18,6 +19,11 @@
 //! a design that can be used; until then the form keeps its design and the
 //! status line says why. Forms are not in the workbook's history, so undo in a
 //! form's tab is the text box's own.
+//!
+//! **Reports.** The design of a report is shown and edited the same way, as
+//! the JSON it is stored as (DESIGN.md, "The report designer"). A text that
+//! is not a design a report can have (one that edits, for example) is not
+//! taken, and the status line says why.
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{Key, KeyboardShortcut, Modifiers, ViewportBuilder, ViewportClass, ViewportId};
@@ -28,6 +34,7 @@ use crate::tab_rename::select_all;
 use crate::view::{error_color, named};
 use cliotree_calc::ModuleStatus;
 use cliotree_core::form::FormDesign;
+use cliotree_core::report::ReportDesign;
 
 /// The title of the code editor's window.
 pub const TITLE: &str = "Code editor - ClioTree";
@@ -51,6 +58,8 @@ pub enum CodeItem {
         sheet: String,
         form: String,
     },
+    /// The design of a report tab, as its JSON text.
+    Report(String),
 }
 
 impl CodeItem {
@@ -59,14 +68,20 @@ impl CodeItem {
         match self {
             CodeItem::Module(name) => name.clone(),
             CodeItem::Form { sheet, form } => format!("{sheet}: {form}"),
+            CodeItem::Report(name) => name.clone(),
         }
     }
 
     pub fn module(&self) -> Option<&str> {
         match self {
             CodeItem::Module(name) => Some(name),
-            CodeItem::Form { .. } => None,
+            CodeItem::Form { .. } | CodeItem::Report(_) => None,
         }
+    }
+
+    /// A design, whose text is JSON and not in the workbook's history.
+    pub fn is_design(&self) -> bool {
+        !matches!(self, CodeItem::Module(_))
     }
 }
 
@@ -230,6 +245,16 @@ impl ClioApp {
         );
     }
 
+    /// Opens the design of a report in a tab, as its JSON text, or shows its
+    /// tab.
+    pub fn open_report_design(&mut self, name: &str) {
+        let Some(design) = self.calc().report(name) else {
+            return;
+        };
+        let text = design.to_json();
+        self.open_item(CodeItem::Report(name.to_owned()), text);
+    }
+
     fn open_item(&mut self, item: CodeItem, text: String) {
         if let Some(i) = self.code.tabs.iter().position(|t| t.item == item) {
             self.code.current = i;
@@ -322,8 +347,32 @@ impl ClioApp {
                         tab.problem = problem;
                     }
                 }
+                CodeItem::Report(name) => {
+                    let problem = self.put_report_text(&name, &text).err();
+                    if let Some(tab) = self.code.tabs.get_mut(i) {
+                        tab.problem = problem;
+                    }
+                }
             }
         }
+    }
+
+    /// Makes the text the design of a report, if it is a design a report can
+    /// have; otherwise says why.
+    pub fn put_report_text(&mut self, name: &str, text: &str) -> Result<(), String> {
+        let design = ReportDesign::from_json(text)?;
+        if let Some((at, why)) = design.problems().into_iter().next() {
+            return Err(format!("{}: {why}", control_place(&at)));
+        }
+        match self.calc().report(name) {
+            None => return Err(format!("the report {name} is gone")),
+            Some(own) if *own == design => return Ok(()),
+            Some(_) => {}
+        }
+        self.session
+            .calc_mut()
+            .set_report(name, design)
+            .map_err(|e| e.to_string())
     }
 
     /// Makes the text the design of a form, if it is a design that can be
@@ -363,6 +412,7 @@ impl ClioApp {
                 || match &t.item {
                     CodeItem::Module(m) => calc.module_source(m).is_some(),
                     CodeItem::Form { sheet, form } => calc.forms().get(sheet, form).is_some(),
+                    CodeItem::Report(name) => calc.report(name).is_some(),
                 }
         });
         for tab in &mut self.code.tabs {
@@ -383,6 +433,15 @@ impl ClioApp {
                         && tab.problem.is_none()
                         && let Some(design) = calc.forms().get(sheet, form)
                         && FormDesign::from_json(&tab.text).ok().as_ref() != Some(design)
+                    {
+                        tab.text = design.to_json();
+                    }
+                }
+                CodeItem::Report(name) => {
+                    if forms_changed
+                        && tab.problem.is_none()
+                        && let Some(design) = calc.report(name)
+                        && ReportDesign::from_json(&tab.text).ok().as_ref() != Some(design)
                     {
                         tab.text = design.to_json();
                     }
@@ -505,10 +564,7 @@ impl ClioApp {
         let immediate = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
         // A form's text is not in the workbook's history: its tab keeps the
         // text box's own undo, as does the Immediate window's line.
-        let own_undo = self
-            .code
-            .current_tab()
-            .is_some_and(|t| matches!(t.item, CodeItem::Form { .. }))
+        let own_undo = self.code.current_tab().is_some_and(|t| t.item.is_design())
             && ui.memory(|m| {
                 m.focused().is_some_and(|id| {
                     Some(id) == self.code.current_tab().map(|t| editor_id(&t.item))
@@ -700,6 +756,26 @@ impl ClioApp {
                     }
                 });
                 self.forms_branch(ui, shown.as_ref());
+                self.reports_branch(ui, shown.as_ref());
+            });
+    }
+
+    /// The *Reports* branch: the design of each report tab.
+    fn reports_branch(&mut self, ui: &mut egui::Ui, shown: Option<&CodeItem>) {
+        let names = self.calc().report_names();
+        egui::CollapsingHeader::new("Reports")
+            .default_open(true)
+            .show(ui, |ui| {
+                if names.is_empty() {
+                    ui.weak("No reports");
+                }
+                for name in &names {
+                    let item = CodeItem::Report(name.clone());
+                    let response = ui.selectable_label(shown == Some(&item), name.as_str());
+                    if response.clicked() || response.double_clicked() {
+                        self.open_report_design(name);
+                    }
+                }
             });
     }
 
@@ -885,7 +961,7 @@ impl ClioApp {
         };
         let (language, indent) = match tab.item {
             CodeItem::Module(_) => ("py", prefs.indent as usize),
-            CodeItem::Form { .. } => ("json", FORM_INDENT),
+            CodeItem::Form { .. } | CodeItem::Report(_) => ("json", FORM_INDENT),
         };
         let id = editor_id(&tab.item);
         let ctx = ui.ctx().clone();
@@ -1042,8 +1118,11 @@ impl ClioApp {
             };
             let module = match &tab.item {
                 CodeItem::Module(module) => module,
-                CodeItem::Form { sheet, form } => {
-                    let title = format!("Form {form} of {sheet}");
+                CodeItem::Form { .. } | CodeItem::Report(_) => {
+                    let title = match &tab.item {
+                        CodeItem::Form { sheet, form } => format!("Form {form} of {sheet}"),
+                        item => format!("Report {}", item.title()),
+                    };
                     if tab.typed_at.is_some() {
                         ui.label(format!("{title}: waiting for typing to pause..."));
                     } else if let Some(problem) = &tab.problem {
@@ -1209,4 +1288,10 @@ pub(crate) fn set_selection(ctx: &egui::Context, id: egui::Id, start: usize, end
         CCursor::new(end),
     )));
     egui::TextEdit::store_state(ctx, id, state);
+}
+
+/// `control 2.1`: where a control is in a design, for a message.
+fn control_place(at: &[usize]) -> String {
+    let place: Vec<String> = at.iter().map(usize::to_string).collect();
+    format!("control {}", place.join("."))
 }

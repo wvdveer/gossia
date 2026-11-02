@@ -71,13 +71,13 @@ impl ClioApp {
         }
         for name in self.session.calc_mut().take_removed() {
             // A tab deleted and put back by an undo starts afresh.
-            if self.calc().data(&name).is_none() {
+            if self.calc().tab_kind(&name).is_none() {
                 self.forget_tab_state(&name);
             }
         }
-        let names: Vec<String> = self.calc().sheet_names().map(str::to_owned).collect();
+        let names = self.calc().tab_names();
         for name in &names {
-            if !self.expanded.contains_key(name) {
+            if !self.calc().is_report(name) && !self.expanded.contains_key(name) {
                 self.expanded
                     .entry(name.clone())
                     .or_default()
@@ -93,7 +93,7 @@ impl ClioApp {
 
     /// Shows a tab, even when the current one no longer exists.
     pub(crate) fn show_tab(&mut self, name: &str) {
-        if self.calc().data(&self.sheet).is_none() {
+        if self.calc().tab_kind(&self.sheet).is_none() {
             self.editing = None;
             self.sheet = String::new();
         }
@@ -150,6 +150,12 @@ impl ClioApp {
         if let Some(editing) = &mut self.editing {
             moved(&mut editing.sheet);
         }
+        // A report's design open in the code editor follows its name.
+        for tab in &mut self.code.tabs {
+            if tab.item == crate::code::CodeItem::Report(from.to_owned()) {
+                tab.item = crate::code::CodeItem::Report(to.to_owned());
+            }
+        }
         rekey(&mut self.expanded, from, to);
         rekey(&mut self.hidden, from, to);
         rekey(&mut self.views, from, to);
@@ -192,7 +198,13 @@ impl ClioApp {
             return;
         };
         let problem = self.rename_problem(&dialog.from, &dialog.name);
-        let mentions = self.calc().mentions(&dialog.from);
+        // Nothing in the workbook names a report, so renaming one warns of
+        // nothing.
+        let mentions = if self.calc().is_report(&dialog.from) {
+            cliotree_calc::Mentions::default()
+        } else {
+            self.calc().mentions(&dialog.from)
+        };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
         egui::Window::new(format!("Rename tab {}", dialog.from))

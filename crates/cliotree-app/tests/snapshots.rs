@@ -426,3 +426,21 @@ fn comments_on_an_xml_tab() {
     let mut results = SnapshotResults::new();
     check(&mut harness, "comments", &mut results);
 }
+
+/// *New tab...* with Report chosen, and the page of a report tab, with the
+/// chart on its tab.
+#[test]
+fn a_report_tab() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness.state_mut().begin_new_report();
+    harness.run();
+    harness.run();
+    check(&mut harness, "new_report_dialog", &mut results);
+    click(&mut harness, "Create");
+    settle(&mut harness);
+    check(&mut harness, "report_tab", &mut results);
+}

@@ -30,7 +30,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         "hello" => Ok(json!({ "protocol": PROTOCOL, "app": "ClioTree" })),
         "tab" => {
             let name = text_arg(args, "name")?;
-            if !app.calc().sheet_names().any(|n| n == name) {
+            if app.calc().tab_kind(name).is_none() {
                 return Err(format!("there is no tab called {name}"));
             }
             app.switch_to(name);
@@ -48,6 +48,34 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         // A new tab, as *New tab...* makes it: with its own schema (a JSON
         // Schema, or with `xml` true an XSD), or with the schema of `schema`;
         // `format` is the data format of a JSON Schema tab ("yaml", "toml", ...).
+        // A new report, as *New report...* makes it: `kind` is "single_page"
+        // (the default) or "multipage", and `start_tab` with `start_path`
+        // ("items", "" for the root) the array it starts from.
+        "new_tab" if args.get("report").and_then(Json::as_bool) == Some(true) => {
+            let name = text_arg(args, "name")?;
+            let kind = match args.get("kind").and_then(Json::as_str) {
+                None | Some("single_page") => cliotree_core::report::ReportKind::SinglePage,
+                Some("multipage") => cliotree_core::report::ReportKind::Multipage,
+                Some(other) => return Err(format!("{other} is not a kind of report")),
+            };
+            let start = match args.get("start_tab").and_then(Json::as_str) {
+                Some(tab) => {
+                    let path = args.get("start_path").and_then(Json::as_str).unwrap_or("");
+                    let path: cliotree_core::Path =
+                        path.parse().map_err(|e| format!("start_path: {e:?}"))?;
+                    Some((tab.to_owned(), path))
+                }
+                None => None,
+            };
+            app.create_report_tab(name, kind, start.as_ref())?;
+            Ok(Json::Null)
+        }
+        // *Duplicate* on a report tab's menu; gives the copy's name.
+        "duplicate_tab" => {
+            let name = text_arg(args, "name")?;
+            let copy = app.duplicate_report_tab(name)?;
+            Ok(json!({ "name": copy }))
+        }
         "new_tab" => {
             let name = text_arg(args, "name")?;
             let xml = args.get("xml").and_then(Json::as_bool).unwrap_or(false);
@@ -373,7 +401,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>(),
-                "view": app.current_view().label(),
+                "view": if app.in_report() { "Report" } else { app.current_view().label() },
                 "selection": app.selection.as_ref().map(ToString::to_string),
             }))
         }
@@ -382,7 +410,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.open_path(std::path::Path::new(path))?;
             app.refresh_rows();
             Ok(json!({
-                "tabs": app.calc().sheet_names().collect::<Vec<_>>(),
+                "tabs": app.calc().tab_names(),
                 "trusted": app.calc().is_trusted(),
                 "notice": app.notice,
             }))
@@ -391,7 +419,7 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         "new_workbook" => {
             app.new_workbook();
             app.refresh_rows();
-            Ok(json!({ "tabs": app.calc().sheet_names().collect::<Vec<_>>() }))
+            Ok(json!({ "tabs": app.calc().tab_names() }))
         }
         "save" => {
             app.save()?;

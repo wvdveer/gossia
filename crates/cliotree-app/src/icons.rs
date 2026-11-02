@@ -42,6 +42,8 @@ pub const FILE_PLUS: &str = "\u{E236}";
 pub const FLOPPY: &str = "\u{E248}";
 pub const USB: &str = "\u{E956}";
 pub const CROSSHAIR: &str = "\u{E1D6}";
+/// A report tab, on the tab bar.
+pub const CHART_BAR: &str = "\u{E150}";
 
 /// Whether the icon font is in use in this frame. It is installed with the
 /// other fonts, by [`crate::style::prepare`], and is at the end of every text

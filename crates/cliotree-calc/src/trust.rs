@@ -254,73 +254,11 @@ impl Calc {
         // The forms: what a button runs, and the expressions of the controls
         // and of the columns of their tables, all of which run Python.
         for (tab, form, design) in self.forms.iter() {
-            for (at, control) in design.walk() {
-                let place = format!(
-                    "form {tab}/{form} control {}",
-                    at.iter()
-                        .map(usize::to_string)
-                        .collect::<Vec<_>>()
-                        .join(".")
-                );
-                let own = [
-                    ("procedure", &control.procedure),
-                    ("write procedure", &control.write_procedure),
-                    ("visible when", &control.visible_when),
-                    ("enabled when", &control.enabled_when),
-                    ("text colour", &control.text_colour),
-                    ("fill colour", &control.fill_colour),
-                    ("choices", &control.choices),
-                    ("value", &control.value),
-                    ("items", &control.items),
-                ];
-                // A fixed colour runs nothing.
-                let runs = |what: &str, t: &str| {
-                    !t.trim().is_empty()
-                        && !(what.ends_with("colour")
-                            && cliotree_core::form::fixed_colour(t).is_some())
-                };
-                for (what, text) in own {
-                    if let Some(text) = text.as_deref().filter(|t| runs(what, t)) {
-                        items.insert(format!("{place} {what}"), digest_of(text));
-                    }
-                }
-                // A template runs the expressions in it; fixed text does not.
-                if control.is_template()
-                    && let Some(text) = control.text.as_deref().filter(|t| t.contains('{'))
-                {
-                    items.insert(format!("{place} template"), digest_of(text));
-                }
-                // The names a repeater gives its items change what runs.
-                for (what, name) in [
-                    ("item name", &control.item_name),
-                    ("list name", &control.list_name),
-                ] {
-                    if control.lists_items()
-                        && let Some(name) = name.as_deref().filter(|n| !n.trim().is_empty())
-                    {
-                        items.insert(format!("{place} {what}"), digest_of(name));
-                    }
-                }
-                for column in &control.table_columns {
-                    let exprs = [
-                        ("visible when", &column.visible_when),
-                        ("enabled when", &column.enabled_when),
-                        ("text colour", &column.text_colour),
-                        ("fill colour", &column.fill_colour),
-                        ("choices", &column.choices),
-                        ("value", &column.value),
-                        ("write procedure", &column.write_procedure),
-                    ];
-                    for (what, text) in exprs {
-                        if let Some(text) = text.as_deref().filter(|t| runs(what, t)) {
-                            items.insert(
-                                format!("{place} column {} {what}", column.name),
-                                digest_of(text),
-                            );
-                        }
-                    }
-                }
-            }
+            design_items(&format!("form {tab}/{form}"), design, &mut items);
+        }
+        // The reports: the expressions of their controls, as a form's.
+        for (name, report) in &self.reports {
+            design_items(&format!("report {name}"), &report.layout, &mut items);
         }
         // The settings govern how the code runs. Default settings are no item,
         // so a workbook with no code still has no executable content.
@@ -328,5 +266,81 @@ impl Calc {
             items.insert("workbook settings".to_string(), digest_of(&text));
         }
         Fingerprint::from_items(items)
+    }
+}
+
+/// The items of the trust digest for the controls of a design: what a
+/// button runs, and the expressions of the controls and of the columns of
+/// their tables, all of which run Python. `prefix` names the design.
+fn design_items(
+    prefix: &str,
+    design: &cliotree_core::form::FormDesign,
+    items: &mut BTreeMap<String, String>,
+) {
+    for (at, control) in design.walk() {
+        let place = format!(
+            "{prefix} control {}",
+            at.iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(".")
+        );
+        let own = [
+            ("procedure", &control.procedure),
+            ("write procedure", &control.write_procedure),
+            ("visible when", &control.visible_when),
+            ("enabled when", &control.enabled_when),
+            ("text colour", &control.text_colour),
+            ("fill colour", &control.fill_colour),
+            ("choices", &control.choices),
+            ("value", &control.value),
+            ("items", &control.items),
+        ];
+        // A fixed colour runs nothing.
+        let runs = |what: &str, t: &str| {
+            !t.trim().is_empty()
+                && !(what.ends_with("colour") && cliotree_core::form::fixed_colour(t).is_some())
+        };
+        for (what, text) in own {
+            if let Some(text) = text.as_deref().filter(|t| runs(what, t)) {
+                items.insert(format!("{place} {what}"), digest_of(text));
+            }
+        }
+        // A template runs the expressions in it; fixed text does not.
+        if control.is_template()
+            && let Some(text) = control.text.as_deref().filter(|t| t.contains('{'))
+        {
+            items.insert(format!("{place} template"), digest_of(text));
+        }
+        // The names a repeater gives its items change what runs.
+        for (what, name) in [
+            ("item name", &control.item_name),
+            ("list name", &control.list_name),
+        ] {
+            if control.lists_items()
+                && let Some(name) = name.as_deref().filter(|n| !n.trim().is_empty())
+            {
+                items.insert(format!("{place} {what}"), digest_of(name));
+            }
+        }
+        for column in &control.table_columns {
+            let exprs = [
+                ("visible when", &column.visible_when),
+                ("enabled when", &column.enabled_when),
+                ("text colour", &column.text_colour),
+                ("fill colour", &column.fill_colour),
+                ("choices", &column.choices),
+                ("value", &column.value),
+                ("write procedure", &column.write_procedure),
+            ];
+            for (what, text) in exprs {
+                if let Some(text) = text.as_deref().filter(|t| runs(what, t)) {
+                    items.insert(
+                        format!("{place} column {} {what}", column.name),
+                        digest_of(text),
+                    );
+                }
+            }
+        }
     }
 }

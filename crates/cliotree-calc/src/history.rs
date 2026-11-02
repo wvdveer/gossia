@@ -119,6 +119,12 @@ pub(crate) enum Op {
     /// A tab is deleted, with everything it held, so that undoing it puts the
     /// same tab back in the same place.
     RemoveSheet(Box<crate::calc::SavedTab>),
+    /// A report tab comes into being, as it was then; the reverse of
+    /// [`Op::RemoveReport`].
+    AddReport(Box<crate::calc::SavedReport>),
+    /// A report tab is deleted, with its design, so that undoing it puts the
+    /// same report back in the same place.
+    RemoveReport(Box<crate::calc::SavedReport>),
     /// A tab is bound to another schema tab. `before_spec` is the type it had,
     /// for a tab that was bound to none.
     Bind {
@@ -181,6 +187,8 @@ impl Op {
             | Op::Settings { .. }
             | Op::RenameSheet { .. }
             | Op::MoveSheet { .. }
+            | Op::AddReport(_)
+            | Op::RemoveReport(_)
             | Op::RenameModule { .. } => 1,
             Op::ModuleSource { before, after, .. } => 1 + (before.len() + after.len()) / 64,
             Op::Comment { before, after, .. } => {

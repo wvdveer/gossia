@@ -68,6 +68,7 @@ impl Calc {
         if let Some(other) = self
             .sheets
             .keys()
+            .chain(self.reports.keys())
             .find(|s| Some(s.as_str()) != renaming && s.to_lowercase() == lower)
         {
             return Some(format!(
@@ -85,7 +86,7 @@ impl Calc {
     /// Gives a tab another name: one entry in the history. A name equal to the
     /// current one is no edit.
     pub fn rename_sheet(&mut self, from: &str, to: &str) -> Result<(), EditError> {
-        if !self.sheets.contains_key(from) {
+        if self.tab_kind(from).is_none() {
             return Err(EditError::NoSheet(from.to_owned()));
         }
         if from == to {
@@ -143,9 +144,14 @@ impl Calc {
     /// Renames without checking or recording, for an edit and for undoing and
     /// redoing one.
     pub(super) fn store_rename(&mut self, from: &str, to: &str) {
+        if self.reports.contains_key(from) {
+            self.store_rename_report(from, to);
+            return;
+        }
         let Some(at) = self.sheets.get_index_of(from) else {
             return;
         };
+        self.rename_in_order(from, to);
         let (_, sheet) = self
             .sheets
             .shift_remove_index(at)
@@ -296,11 +302,12 @@ impl Calc {
     /// the first; past the end is the last). One entry in the history;
     /// nothing is recalculated, since formulas name tabs, not places.
     pub fn move_sheet(&mut self, name: &str, to: usize) -> Result<(), EditError> {
-        let from = self
-            .sheets
-            .get_index_of(name)
+        let names = self.tab_names();
+        let from = names
+            .iter()
+            .position(|n| n == name)
             .ok_or_else(|| EditError::Path(format!("there is no tab called {name}")))?;
-        let to = to.min(self.sheets.len() - 1);
+        let to = to.min(names.len() - 1);
         if from == to {
             return Ok(());
         }
@@ -315,7 +322,12 @@ impl Calc {
 
     /// Moves a tab in the order, as an edit and its undo do.
     pub(super) fn put_sheet_move(&mut self, from: usize, to: usize) {
-        self.sheets.move_index(from, to);
+        let mut order = self.tab_names();
+        if from < order.len() {
+            let name = order.remove(from);
+            order.insert(to.min(order.len()), name);
+        }
+        self.sync_order(order);
         self.revision += 1;
     }
 
@@ -331,7 +343,8 @@ impl Calc {
     }
 
     fn saved_tab(&self, name: &str) -> Option<SavedTab> {
-        let (index, _, sheet) = self.sheets.get_full(name)?;
+        let sheet = self.sheets.get(name)?;
+        let index = self.tab_names().iter().position(|n| n == name)?;
         Some(SavedTab {
             index,
             name: name.to_owned(),
@@ -349,6 +362,10 @@ impl Calc {
 
     /// Why the tab cannot be deleted, or None.
     pub fn delete_problem(&self, name: &str) -> Option<String> {
+        // Nothing uses a report.
+        if self.reports.contains_key(name) {
+            return None;
+        }
         if !self.sheets.contains_key(name) {
             return Some(format!("there is no tab called {name}"));
         }
@@ -374,6 +391,9 @@ impl Calc {
     /// its data, formulas, forms and place. Formulas elsewhere that name it
     /// give `#NAME!` until it is back.
     pub fn delete_sheet(&mut self, name: &str) -> Result<(), EditError> {
+        if self.reports.contains_key(name) {
+            return self.delete_report(name);
+        }
         if !self.sheets.contains_key(name) {
             return Err(EditError::NoSheet(name.to_owned()));
         }
@@ -399,6 +419,7 @@ impl Calc {
     pub(super) fn store_remove_tab(&mut self, name: &str) -> Option<SavedTab> {
         let saved = self.saved_tab(name)?;
         self.sheets.shift_remove(name);
+        self.order.retain(|n| n != name);
         for (path, formula) in &saved.sheet.formulas.by_path {
             let loc = Loc::new(name, path.clone());
             self.forget_deps(&loc, &formula.deps);
@@ -422,9 +443,10 @@ impl Calc {
             forms,
         } = saved.clone();
         let formulas = Arc::clone(&sheet.formulas);
+        let mut order = self.tab_names();
         self.sheets.insert(name.clone(), sheet);
-        let last = self.sheets.len() - 1;
-        self.sheets.move_index(last, index.min(last));
+        order.insert(index.min(order.len()), name.clone());
+        self.sync_order(order);
         // Its formulas are calculated again: what they read may have changed.
         for (path, formula) in &formulas.by_path {
             let loc = Loc::new(name.as_str(), path.clone());

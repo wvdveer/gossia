@@ -182,10 +182,10 @@ impl ClioApp {
     pub(crate) fn build(mut session: Session, recalc: bool) -> ClioApp {
         let sheet = session
             .calc()
-            .sheet_names()
+            .tab_names()
+            .into_iter()
             .next()
-            .unwrap_or_default()
-            .to_owned();
+            .unwrap_or_default();
         if recalc {
             session.calc_mut().recalc_all();
         }

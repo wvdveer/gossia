@@ -128,6 +128,11 @@ mod tabs;
 pub use tabs::Mentions;
 pub(crate) use tabs::SavedTab;
 
+#[path = "reports.rs"]
+mod reports;
+pub(crate) use reports::SavedReport;
+pub use reports::TabKind;
+
 #[path = "disconnect.rs"]
 mod disconnect;
 pub use disconnect::{Disconnect, DisconnectPlan};
@@ -237,6 +242,11 @@ pub struct Cell<'a> {
 pub struct Calc {
     syntax: Arc<dyn Syntax>,
     sheets: indexmap::IndexMap<String, Sheet>,
+    /// The report tabs and their designs (DESIGN.md, "Reports").
+    reports: indexmap::IndexMap<String, cliotree_core::report::ReportDesign>,
+    /// The order of the tabs on the bar, data and report tabs together, as
+    /// last written down; see [`Calc::tab_names`].
+    order: Vec<String>,
     /// Which formulas read which paths, by tab name (also for tabs that do not
     /// exist, so that adding the tab runs the formulas that were looking for it).
     deep_readers: HashMap<String, PathTrie<Loc>>,
@@ -281,6 +291,8 @@ impl Calc {
         Calc {
             syntax,
             sheets: indexmap::IndexMap::new(),
+            reports: indexmap::IndexMap::new(),
+            order: Vec::new(),
             deep_readers: HashMap::new(),
             shallow_readers: HashMap::new(),
             dirty: IndexSet::new(),
@@ -1155,6 +1167,13 @@ impl Calc {
                     self.store_insert_tab(saved);
                 } else {
                     self.store_remove_tab(&saved.name);
+                }
+            }
+            Op::AddReport(saved) | Op::RemoveReport(saved) => {
+                if matches!(op, Op::AddReport(_)) == forward {
+                    self.store_insert_report(saved);
+                } else {
+                    self.store_remove_report(&saved.name);
                 }
             }
             Op::Bind {

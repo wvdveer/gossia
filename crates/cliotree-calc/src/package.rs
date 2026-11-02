@@ -24,7 +24,7 @@ use super::*;
 /// opens; a newer minor version opens with a warning; a newer major version is
 /// refused.
 pub const FORMAT_MAJOR: u32 = 1;
-pub const FORMAT_MINOR: u32 = 0;
+pub const FORMAT_MINOR: u32 = 1;
 
 /// The version of the rules of Names and reserved words that wrote the file,
 /// so that a later version can tell whether the names in it were checked
@@ -478,6 +478,36 @@ impl Calc {
             });
         }
 
+        // The reports: a directory each, with the design in it.
+        for (name, design) in &self.reports {
+            if !safe_part(name) {
+                return Err(unsavable(format!(
+                    "the report name {name:?} cannot be used as a file name"
+                )));
+            }
+            files.push((format!("reports/{name}/design.json"), lf(design.to_json())));
+            tabs.push(TabEntry {
+                name: name.clone(),
+                kind: "report".to_owned(),
+                schema: String::new(),
+                auto_update: false,
+                forms: Vec::new(),
+                format: None,
+                redefines: Vec::new(),
+                record: None,
+                recfm: None,
+            });
+        }
+        // The tabs in the order of the bar.
+        let order = self.tab_names();
+        tabs.sort_by_key(|t| order.iter().position(|n| *n == t.name));
+        // A workbook with reports needs a version that knows them.
+        let minor = if self.reports.is_empty() {
+            0
+        } else {
+            FORMAT_MINOR
+        };
+
         for (name, module) in &self.modules {
             if !safe_part(name) {
                 return Err(unsavable(format!(
@@ -498,7 +528,7 @@ impl Calc {
         }
 
         let manifest = Manifest {
-            format_version: version_text(FORMAT_MAJOR, FORMAT_MINOR),
+            format_version: version_text(FORMAT_MAJOR, minor),
             app_version: meta.app_version.clone(),
             workbook_id: meta.workbook_id.clone(),
             reserved_names_version: RESERVED_NAMES_VERSION,
@@ -640,7 +670,7 @@ impl Calc {
                     tab.name
                 )));
             }
-            if tab.kind != "data" {
+            if tab.kind != "data" && tab.kind != "report" {
                 warnings.push(format!(
                     "Tab {} is a {} tab, which this version cannot show; it is kept as it is.",
                     tab.name, tab.kind
@@ -718,6 +748,32 @@ impl Calc {
                 }
             }
         }
+
+        // The reports. One whose design cannot be read is left out, with a
+        // warning, and its file is kept as it is.
+        for tab in manifest.tabs.iter().filter(|t| t.kind == "report") {
+            let path = format!("reports/{}/design.json", tab.name);
+            let Some(text) = package.text(&path)? else {
+                warnings.push(format!(
+                    "The manifest lists the report {}, but the file has no {path}.",
+                    tab.name
+                ));
+                continue;
+            };
+            match cliotree_core::report::ReportDesign::from_json(text) {
+                Ok(design) => {
+                    used.insert(path);
+                    calc.reports.insert(tab.name.clone(), design);
+                }
+                Err(e) => warnings.push(format!("The report {} is not used: {e}", tab.name)),
+            }
+        }
+        calc.order = manifest
+            .tabs
+            .iter()
+            .filter(|t| calc.tab_kind(&t.name).is_some())
+            .map(|t| t.name.clone())
+            .collect();
 
         for name in &manifest.modules {
             if !safe_part(name) {

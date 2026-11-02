@@ -176,7 +176,9 @@ impl ClioApp {
         }
         if form {
             egui::CentralPanel::default().show(ui, |ui| {
-                if self.in_form() {
+                if self.in_report() {
+                    self.report_view(ui);
+                } else if self.in_form() {
                     self.form_view(ui);
                 } else {
                     let font = self.data_font;
@@ -407,8 +409,12 @@ impl ClioApp {
                     self.begin_import();
                     ui.close();
                 }
+                // A report is exported as a PDF, from its own menu.
                 if ui
-                    .add_enabled(self.editing.is_none(), egui::Button::new("Export..."))
+                    .add_enabled(
+                        self.editing.is_none() && !self.in_report(),
+                        egui::Button::new("Export..."),
+                    )
                     .clicked()
                 {
                     let tab = self.sheet.clone();
@@ -473,23 +479,26 @@ impl ClioApp {
                 self.tab_menu_items(ui, &sheet);
             });
             ui.menu_button("View", |ui| {
-                // How the current tab is shown.
-                ui.menu_button("Show as", |ui| {
-                    // The views every tab has, a line, then its forms.
-                    let mut forms_begun = false;
-                    for view in self.view_names() {
-                        if matches!(view, crate::form::View::Form(_)) && !forms_begun {
-                            forms_begun = true;
-                            ui.separator();
+                // How the current tab is shown. A report has one view.
+                let report = self.in_report();
+                ui.add_enabled_ui(!report, |ui| {
+                    ui.menu_button("Show as", |ui| {
+                        // The views every tab has, a line, then its forms.
+                        let mut forms_begun = false;
+                        for view in self.view_names() {
+                            if matches!(view, crate::form::View::Form(_)) && !forms_begun {
+                                forms_begun = true;
+                                ui.separator();
+                            }
+                            let chosen = self.current_view() == &view;
+                            if ui.radio(chosen, view.label()).clicked() {
+                                self.set_view(view);
+                                ui.close();
+                            }
                         }
-                        let chosen = self.current_view() == &view;
-                        if ui.radio(chosen, view.label()).clicked() {
-                            self.set_view(view);
-                            ui.close();
-                        }
-                    }
+                    });
+                    self.forms_menu(ui);
                 });
-                self.forms_menu(ui);
                 ui.menu_button("Font", |ui| self.font_menu(ui));
                 ui.separator();
                 if ui.checkbox(&mut self.show_toolbar, "Toolbar").clicked() {
@@ -504,7 +513,10 @@ impl ClioApp {
                 {
                     ui.close();
                 }
-                if ui.button("Collapse all").clicked() {
+                if ui
+                    .add_enabled(!report, egui::Button::new("Collapse all"))
+                    .clicked()
+                {
                     let root = Path::root();
                     if let Some(set) = self.expanded.get_mut(&self.sheet) {
                         set.clear();
@@ -1557,7 +1569,7 @@ impl ClioApp {
 
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let names: Vec<String> = self.calc().sheet_names().map(str::to_owned).collect();
+            let names = self.calc().tab_names();
             ui.spacing_mut().item_spacing.x = 2.0;
             // A tab dragged along the bar goes where it is let go: before the
             // first tab whose middle is right of the pointer.
@@ -1565,7 +1577,8 @@ impl ClioApp {
             let mut dragged = None;
             for (i, name) in names.iter().enumerate() {
                 let selected = *name == self.sheet;
-                let response = sheet_tab(ui, name, selected);
+                let report = self.calc().is_report(name);
+                let response = sheet_tab(ui, name, selected, report);
                 if response.clicked() {
                     self.switch_to(name);
                 }
@@ -1770,12 +1783,18 @@ pub(crate) fn column_title(ui: &mut egui::Ui, title: &str) -> egui::Response {
 
 /// A sheet's tab at the bottom of the window. The current sheet's tab has the
 /// panel's fill, as if the sheet above went on into it, and an accent line.
-fn sheet_tab(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
+/// A report's tab has a chart before its name.
+fn sheet_tab(ui: &mut egui::Ui, name: &str, selected: bool, report: bool) -> egui::Response {
     let palette = Palette::of_ui(ui);
-    let text = if selected {
-        crate::style::medium(name).color(palette.text)
+    let shown = if report {
+        format!("{} {name}", crate::icons::CHART_BAR)
     } else {
-        RichText::new(name).color(palette.text_weak)
+        name.to_owned()
+    };
+    let text = if selected {
+        crate::style::medium(shown).color(palette.text)
+    } else {
+        RichText::new(shown).color(palette.text_weak)
     };
     let galley = egui::WidgetText::from(text).into_galley(
         ui,

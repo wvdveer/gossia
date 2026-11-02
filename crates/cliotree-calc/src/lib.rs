@@ -30,7 +30,7 @@ pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, Disconnect,
     DisconnectPlan, EditError, Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind,
     FieldPlaces, Fingerprint, Mentions, ModuleProblem, ModuleStatus, RedefineGroup, SchemaFormat,
-    Setting, TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem,
+    Setting, TabKind, TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -110,6 +110,10 @@ mod settings_tests;
 #[cfg(test)]
 #[path = "tabs_tests.rs"]
 mod tabs_tests;
+
+#[cfg(test)]
+#[path = "reports_tests.rs"]
+mod reports_tests;
 
 #[cfg(test)]
 #[path = "formats_tests.rs"]

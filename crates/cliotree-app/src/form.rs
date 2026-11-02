@@ -134,8 +134,9 @@ impl ClioApp {
         self.views.get(&self.sheet).unwrap_or(&View::Tree)
     }
 
+    /// Whether the current tab shows its data tree. A report tab has none.
     pub fn in_tree(&self) -> bool {
-        self.current_view() == &View::Tree
+        self.current_view() == &View::Tree && !self.in_report()
     }
 
     pub fn in_form(&self) -> bool {
@@ -145,6 +146,10 @@ impl ClioApp {
     /// The names of the views of the current tab: the data tree and the raw
     /// text, which every Data Tab has, then its forms.
     pub fn view_names(&self) -> Vec<View> {
+        // A report has one view, the report.
+        if self.in_report() {
+            return Vec::new();
+        }
         let mut views = vec![View::Tree, View::Raw];
         views.extend(
             self.calc()
@@ -174,6 +179,9 @@ impl ClioApp {
     pub fn set_view(&mut self, view: View) -> bool {
         if self.current_view() == &view {
             return true;
+        }
+        if self.in_report() {
+            return false;
         }
         if !self.commit_editing() || !self.enter_drafts() {
             return false;

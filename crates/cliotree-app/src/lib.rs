@@ -38,6 +38,9 @@ pub mod pick;
 pub mod prefs;
 pub mod raw;
 pub mod replace_inside;
+pub mod report_tab;
+#[cfg(test)]
+mod report_tab_tests;
 pub mod rows;
 pub mod sample;
 pub mod schema;

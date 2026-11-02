@@ -1288,3 +1288,43 @@ fn a_click_anywhere_in_a_row_of_the_tree_selects_it() {
     assert_eq!(harness.state().selection, Some("customer".parse().unwrap()));
     harness.get_by_label("Orders.customer");
 }
+
+/// *New tab...* makes a report when Report is chosen; the report's tab has
+/// its own menu, which duplicates and deletes it.
+#[test]
+fn a_report_is_made_from_new_tab_and_duplicated_and_deleted_from_its_menu() {
+    let mut harness = window();
+    click(&mut harness, "New tab");
+    click(&mut harness, "Report");
+    // The name offered follows the kind, until one is typed.
+    assert_eq!(
+        harness.get_by_label("New tab name").value().as_deref(),
+        Some("Report")
+    );
+    click(&mut harness, "Create");
+    settle(&mut harness);
+    assert_eq!(harness.state().sheet, "Report");
+    assert!(harness.state().calc().is_report("Report"));
+    harness.get_by_label("A single page report, with no controls yet.");
+    // A report has no formula bar.
+    assert!(!has(&harness, "Formula bar"));
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Tab, "Report")
+        .click_secondary();
+    harness.run();
+    click(&mut harness, "Duplicate");
+    settle(&mut harness);
+    assert_eq!(harness.state().sheet, "Report_2");
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Tab, "Report_2")
+        .click_secondary();
+    harness.run();
+    click(&mut harness, "Delete tab...");
+    harness.get_by_label("Delete the report Report_2 with its design? Undo puts it back.");
+    click(&mut harness, "Delete");
+    settle(&mut harness);
+    assert!(!harness.state().calc().is_report("Report_2"));
+    assert_eq!(harness.state().sheet, "Report");
+}

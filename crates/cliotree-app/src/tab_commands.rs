@@ -5,9 +5,10 @@
 use cliotree_calc::{Mentions, SchemaFormat};
 use cliotree_core::copybook::{CodePage, FloatFormat};
 use cliotree_core::dataformat::DataFormat;
+use cliotree_core::report::ReportKind;
 use cliotree_core::validate::validate;
 use cliotree_core::xml::XmlDocument;
-use cliotree_core::{Node, json, metaschema, xml, xsd};
+use cliotree_core::{Node, Path, json, metaschema, xml, xsd};
 
 use crate::app::ClioApp;
 use crate::import::unique;
@@ -24,17 +25,33 @@ pub enum NewSchema {
     Existing(String),
 }
 
+/// What kind of tab *New tab...* makes (DESIGN.md, "Managing tabs").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewKind {
+    Data,
+    Report,
+}
+
 /// The dialog of *New tab...*.
 #[derive(Debug, Clone)]
 pub struct NewTab {
+    /// A data tab or a report.
+    pub kind: NewKind,
     pub name: String,
     pub schema_name: String,
     pub schema: NewSchema,
     /// The format the data tab is written in, for a JSON Schema: JSON,
     /// JSON5, YAML, TOML and the rest (DESIGN.md, "Other file formats").
     pub format: DataFormat,
+    /// For a report: single page or multipage.
+    pub report_kind: ReportKind,
+    /// For a report: the array of a tab it starts from, if any.
+    pub start: Option<(String, Path)>,
     pub error: Option<String>,
     focused: bool,
+    /// The name the dialog gave, which choosing the other kind replaces;
+    /// a name typed by the user stays.
+    given_name: String,
 }
 
 /// The dialog of *Delete tab...*.
@@ -155,7 +172,7 @@ pub fn blank_xsd(root: &str) -> String {
 }
 
 impl ClioApp {
-    fn can_change_tabs(&mut self) -> bool {
+    pub(crate) fn can_change_tabs(&mut self) -> bool {
         self.session.running_procedure().is_none() && self.commit_editing()
     }
 
@@ -172,13 +189,40 @@ impl ClioApp {
             taken(n) || n.eq_ignore_ascii_case(&name)
         });
         self.tab_dialogs.new = Some(NewTab {
+            kind: NewKind::Data,
+            given_name: name.clone(),
             name,
             schema_name,
             schema: NewSchema::Own(SchemaFormat::Json),
             format: DataFormat::Json,
+            report_kind: ReportKind::SinglePage,
+            start: None,
             error: None,
             focused: false,
         });
+    }
+
+    /// *New report...*: the dialog of *New tab...* with Report chosen.
+    pub fn begin_new_report(&mut self) {
+        self.begin_new_tab();
+        let name = self.report_name();
+        if let Some(dialog) = self.tab_dialogs.new.as_mut() {
+            dialog.kind = NewKind::Report;
+            dialog.name = name.clone();
+            dialog.given_name = name;
+        }
+    }
+
+    /// The name a new report is offered: `Report`, or the next number free.
+    fn report_name(&self) -> String {
+        let calc = self.calc();
+        unique("Report", |n| calc.tab_name_problem(n, None).is_some())
+    }
+
+    /// The name a new data tab is offered.
+    fn data_name(&self) -> String {
+        let calc = self.calc();
+        unique("Data", |n| calc.tab_name_problem(n, None).is_some())
     }
 
     /// Why the new tab cannot be made as the dialog stands, or None.
@@ -186,6 +230,9 @@ impl ClioApp {
         let name = dialog.name.trim();
         if let Some(why) = self.calc().tab_name_problem(name, None) {
             return Some(format!("The tab name: {why}."));
+        }
+        if dialog.kind == NewKind::Report {
+            return None;
         }
         match &dialog.schema {
             NewSchema::Own(_) => {
@@ -228,6 +275,9 @@ impl ClioApp {
         }
         if let Some(why) = self.new_tab_problem(dialog) {
             return Err(why);
+        }
+        if dialog.kind == NewKind::Report {
+            return self.create_report_tab(&dialog.name, dialog.report_kind, dialog.start.as_ref());
         }
         let name = dialog.name.trim();
         let json_data = match &dialog.schema {
@@ -335,12 +385,36 @@ impl ClioApp {
             .filter(|s| self.calc().is_schema_sheet(s))
             .map(str::to_owned)
             .collect();
+        let starts = if dialog.kind == NewKind::Report {
+            self.starting_points()
+        } else {
+            Vec::new()
+        };
+        let (data_name, report_name) = (self.data_name(), self.report_name());
         let (mut apply, mut cancel, mut open) = (false, false, true);
         egui::Window::new("New tab")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Make a");
+                    for (kind, text) in [(NewKind::Data, "Data tab"), (NewKind::Report, "Report")] {
+                        if ui.radio(dialog.kind == kind, text).clicked() && dialog.kind != kind {
+                            dialog.kind = kind;
+                            // The name offered for the other kind, unless one
+                            // was typed.
+                            if dialog.name == dialog.given_name {
+                                dialog.name = match kind {
+                                    NewKind::Data => data_name.clone(),
+                                    NewKind::Report => report_name.clone(),
+                                };
+                                dialog.given_name = dialog.name.clone();
+                            }
+                        }
+                    }
+                });
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label("Tab name");
                     let response = ui.text_edit_singleline(&mut dialog.name);
@@ -355,105 +429,114 @@ impl ClioApp {
                     }
                 });
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let own = matches!(dialog.schema, NewSchema::Own(_));
-                    if ui.radio(own, "Its own schema, called").clicked() && !own {
-                        dialog.schema = NewSchema::Own(SchemaFormat::Json);
-                    }
-                    let response = ui.add_enabled(
-                        own,
-                        egui::TextEdit::singleline(&mut dialog.schema_name).desired_width(160.0),
-                    );
-                    named(&response, "New schema tab name");
-                });
-                // The language of its own schema: an XSD makes an XML tab.
-                ui.horizontal(|ui| {
-                    let own = match dialog.schema {
-                        NewSchema::Own(format) => Some(format),
-                        NewSchema::Existing(_) => None,
-                    };
-                    ui.add_space(24.0);
-                    ui.add_enabled_ui(own.is_some(), |ui| {
-                        for (format, text) in [
-                            (SchemaFormat::Json, "JSON Schema (JSON data)"),
-                            (SchemaFormat::Xsd, "XSD (XML data)"),
-                            (SchemaFormat::Copybook, "COBOL copybook (records)"),
-                        ] {
-                            if ui.radio(own == Some(format), text).clicked() {
-                                dialog.schema = NewSchema::Own(format);
+                if dialog.kind == NewKind::Report {
+                    report_choices(ui, &mut dialog, &starts);
+                } else {
+                    ui.horizontal(|ui| {
+                        let own = matches!(dialog.schema, NewSchema::Own(_));
+                        if ui.radio(own, "Its own schema, called").clicked() && !own {
+                            dialog.schema = NewSchema::Own(SchemaFormat::Json);
+                        }
+                        let response = ui.add_enabled(
+                            own,
+                            egui::TextEdit::singleline(&mut dialog.schema_name)
+                                .desired_width(160.0),
+                        );
+                        named(&response, "New schema tab name");
+                    });
+                    // The language of its own schema: an XSD makes an XML tab.
+                    ui.horizontal(|ui| {
+                        let own = match dialog.schema {
+                            NewSchema::Own(format) => Some(format),
+                            NewSchema::Existing(_) => None,
+                        };
+                        ui.add_space(24.0);
+                        ui.add_enabled_ui(own.is_some(), |ui| {
+                            for (format, text) in [
+                                (SchemaFormat::Json, "JSON Schema (JSON data)"),
+                                (SchemaFormat::Xsd, "XSD (XML data)"),
+                                (SchemaFormat::Copybook, "COBOL copybook (records)"),
+                            ] {
+                                if ui.radio(own == Some(format), text).clicked() {
+                                    dialog.schema = NewSchema::Own(format);
+                                }
                             }
-                        }
+                        });
                     });
-                });
-                ui.add_enabled_ui(!schemas.is_empty(), |ui| {
-                    ui.horizontal(|ui| {
-                        let existing = matches!(dialog.schema, NewSchema::Existing(_));
-                        if ui.radio(existing, "The schema of").clicked()
-                            && let Some(first) = schemas.first()
-                        {
-                            dialog.schema = NewSchema::Existing(first.clone());
-                        }
-                        let current = match &dialog.schema {
-                            NewSchema::Existing(s) => s.clone(),
-                            NewSchema::Own(_) => String::new(),
-                        };
-                        egui::ComboBox::from_id_salt("new_tab_schema")
-                            .selected_text(current.clone())
-                            .show_ui(ui, |ui| {
-                                for schema in &schemas {
-                                    if ui.selectable_label(&current == schema, schema).clicked() {
-                                        dialog.schema = NewSchema::Existing(schema.clone());
+                    ui.add_enabled_ui(!schemas.is_empty(), |ui| {
+                        ui.horizontal(|ui| {
+                            let existing = matches!(dialog.schema, NewSchema::Existing(_));
+                            if ui.radio(existing, "The schema of").clicked()
+                                && let Some(first) = schemas.first()
+                            {
+                                dialog.schema = NewSchema::Existing(first.clone());
+                            }
+                            let current = match &dialog.schema {
+                                NewSchema::Existing(s) => s.clone(),
+                                NewSchema::Own(_) => String::new(),
+                            };
+                            egui::ComboBox::from_id_salt("new_tab_schema")
+                                .selected_text(current.clone())
+                                .show_ui(ui, |ui| {
+                                    for schema in &schemas {
+                                        if ui.selectable_label(&current == schema, schema).clicked()
+                                        {
+                                            dialog.schema = NewSchema::Existing(schema.clone());
+                                        }
                                     }
-                                }
-                            })
-                            .response
-                            .widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::Role::ComboBox,
-                                    true,
-                                    "Schema of the new tab",
-                                )
-                            });
+                                })
+                                .response
+                                .widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::Role::ComboBox,
+                                        true,
+                                        "Schema of the new tab",
+                                    )
+                                });
+                        });
                     });
-                });
-                // The format of JSON-shaped data: what the Raw view shows,
-                // and what the tab is saved and exported as.
-                let json_data = match &dialog.schema {
-                    NewSchema::Own(format) => *format == SchemaFormat::Json,
-                    NewSchema::Existing(schema) => {
-                        self.calc().schema_format(schema) == Some(SchemaFormat::Json)
-                    }
-                };
-                ui.add_enabled_ui(json_data, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Data format");
-                        let shown = if json_data {
-                            dialog.format.label()
-                        } else {
-                            "set by the schema"
-                        };
-                        egui::ComboBox::from_id_salt("new_tab_format")
-                            .selected_text(shown)
-                            .show_ui(ui, |ui| {
-                                for format in DataFormat::JSON_SHAPED {
-                                    if ui
-                                        .selectable_label(dialog.format == format, format.label())
-                                        .clicked()
-                                    {
-                                        dialog.format = format;
+                    // The format of JSON-shaped data: what the Raw view shows,
+                    // and what the tab is saved and exported as.
+                    let json_data = match &dialog.schema {
+                        NewSchema::Own(format) => *format == SchemaFormat::Json,
+                        NewSchema::Existing(schema) => {
+                            self.calc().schema_format(schema) == Some(SchemaFormat::Json)
+                        }
+                    };
+                    ui.add_enabled_ui(json_data, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Data format");
+                            let shown = if json_data {
+                                dialog.format.label()
+                            } else {
+                                "set by the schema"
+                            };
+                            egui::ComboBox::from_id_salt("new_tab_format")
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    for format in DataFormat::JSON_SHAPED {
+                                        if ui
+                                            .selectable_label(
+                                                dialog.format == format,
+                                                format.label(),
+                                            )
+                                            .clicked()
+                                        {
+                                            dialog.format = format;
+                                        }
                                     }
-                                }
-                            })
-                            .response
-                            .widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::Role::ComboBox,
-                                    true,
-                                    "Data format of the new tab",
-                                )
-                            });
+                                })
+                                .response
+                                .widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::Role::ComboBox,
+                                        true,
+                                        "Data format of the new tab",
+                                    )
+                                });
+                        });
                     });
-                });
+                }
                 if let Some(why) = problem.as_ref().or(dialog.error.as_ref()) {
                     ui.colored_label(error_color(ui), why);
                 }
@@ -505,7 +588,7 @@ impl ClioApp {
         if !self.can_change_tabs() {
             return Err(self.notice.clone().unwrap_or_default());
         }
-        let names: Vec<String> = self.calc().sheet_names().map(str::to_owned).collect();
+        let names = self.calc().tab_names();
         let at = names.iter().position(|n| n == name);
         self.session
             .calc_mut()
@@ -531,6 +614,7 @@ impl ClioApp {
             return;
         };
         let problem = self.calc().delete_problem(&dialog.name);
+        let report = self.calc().is_report(&dialog.name);
         let mentions = self.calc().mentions(&dialog.name);
         let (mut apply, mut cancel, mut open) = (false, false, true);
         egui::Window::new(format!("Delete tab {}", dialog.name))
@@ -541,6 +625,12 @@ impl ClioApp {
                 match &problem {
                     Some(why) => {
                         ui.colored_label(error_color(ui), format!("It cannot be deleted: {why}."));
+                    }
+                    None if report => {
+                        ui.label(format!(
+                            "Delete the report {} with its design? Undo puts it back.",
+                            dialog.name
+                        ));
                     }
                     None => {
                         ui.label(format!(
@@ -1039,10 +1129,18 @@ impl ClioApp {
     /// The items for tabs, in the Edit menu and a sheet tab's context menu.
     /// `tab` is the tab they act on.
     pub(crate) fn tab_menu_items(&mut self, ui: &mut egui::Ui, tab: &str) {
+        if self.calc().is_report(tab) {
+            self.report_menu_items(ui, tab);
+            return;
+        }
         let can_change = self.editing.is_none() && self.session.running_procedure().is_none();
         ui.add_enabled_ui(can_change, |ui| {
             if ui.button("New tab...").clicked() {
                 self.begin_new_tab();
+                ui.close();
+            }
+            if ui.button("New report...").clicked() {
+                self.begin_new_report();
                 ui.close();
             }
             if ui.button("Import...").clicked() {
@@ -1217,4 +1315,58 @@ fn blank_copybook(tab: &str) -> String {
     let name = name.trim_matches('-');
     let name = if name.is_empty() { "RECORD" } else { name };
     format!("       01  {name}-REC.\n           05  {name}-ID  PIC X(10).\n")
+}
+
+/// What *New tab...* asks for a report: its kind, and the array it starts
+/// from, if any.
+fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Path, String)]) {
+    ui.horizontal(|ui| {
+        ui.label("Kind");
+        for kind in ReportKind::ALL {
+            if ui.radio(dialog.report_kind == kind, kind.label()).clicked() {
+                dialog.report_kind = kind;
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("Start from");
+        let shown = dialog
+            .start
+            .as_ref()
+            .and_then(|(tab, path)| {
+                starts
+                    .iter()
+                    .find(|(t, p, _)| t == tab && p == path)
+                    .map(|(.., shown)| shown.clone())
+            })
+            .unwrap_or_else(|| "nothing (an empty report)".to_owned());
+        egui::ComboBox::from_id_salt("new_report_start")
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(dialog.start.is_none(), "nothing (an empty report)")
+                    .clicked()
+                {
+                    dialog.start = None;
+                }
+                for (tab, path, shown) in starts {
+                    let chosen = dialog
+                        .start
+                        .as_ref()
+                        .is_some_and(|(t, p)| t == tab && p == path);
+                    if ui.selectable_label(chosen, shown).clicked() {
+                        dialog.start = Some((tab.clone(), path.clone()));
+                    }
+                }
+            })
+            .response
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::Role::ComboBox,
+                    true,
+                    "Array the report starts from",
+                )
+            });
+    });
+    ui.weak("A report starts with a table or items of the array, which can be changed later.");
 }
