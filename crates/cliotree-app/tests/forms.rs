@@ -1202,3 +1202,53 @@ fn a_column_of_a_table_is_resized_by_dragging_its_edge() {
     harness.run();
     assert_eq!(width(&harness.state().design_of("Default")), None);
 }
+
+/// The width of the column sku of the table of items, as the property page
+/// sets it.
+fn sku_width(harness: &Harness<'_, ClioApp>) -> Option<u32> {
+    harness
+        .state()
+        .design_of("Default")
+        .get(&[1])
+        .unwrap()
+        .table_columns
+        .iter()
+        .find(|c| c.name == "sku")
+        .and_then(|c| c.width)
+}
+
+fn sku_selected() -> Harness<'static, ClioApp> {
+    let mut harness = form();
+    edit_form(&mut harness);
+    click(&mut harness, "Column sku of Repeater items");
+    harness
+}
+
+#[test]
+fn a_column_width_is_ticked_then_typed_on_the_property_page() {
+    let mut harness = sku_selected();
+    click(&mut harness, "Fixed width of the column");
+    assert_eq!(sku_width(&harness), Some(80));
+    harness.get_by_label("Width of the column").click();
+    harness.run();
+    harness.get_by_label("Width of the column").type_text("120");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    harness.run();
+    assert_eq!(sku_width(&harness), Some(120));
+}
+
+/// The box once started at 0 for automatic, and the first 24 points of a
+/// drag disappeared under the narrowest width.
+#[test]
+fn a_column_width_is_dragged_as_one_step_of_undo_layout() {
+    let mut harness = sku_selected();
+    click(&mut harness, "Fixed width of the column");
+    let from = harness.get_by_label("Width of the column").rect().center();
+    drag(&mut harness, from, from + egui::vec2(150.0, 0.0));
+    let width = sku_width(&harness).unwrap_or(0);
+    assert!(width > 80, "{width}");
+    click(&mut harness, "Undo layout");
+    assert_eq!(sku_width(&harness), Some(80));
+}

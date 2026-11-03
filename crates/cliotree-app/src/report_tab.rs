@@ -10,6 +10,9 @@ use cliotree_core::report::{self, ReportDesign, ReportKind};
 
 use crate::app::ClioApp;
 
+/// Why a report cannot start from an array yet.
+pub const START_LATER: &str = "Starting from an array makes a multipage report whose detail band      repeats for each item; it comes with multipage reports.";
+
 /// The arrays a new report can start from: each data tab's arrays, as
 /// `(tab, path, how a formula names it)`.
 pub type StartingPoints = Vec<(String, Path, String)>;
@@ -52,21 +55,13 @@ impl ClioApp {
             return Err(self.notice.clone().unwrap_or_default());
         }
         let name = name.trim();
-        let design = match start {
-            None => ReportDesign::new(kind),
-            Some((tab, path)) => {
-                let spec = self
-                    .calc()
-                    .spec(tab)
-                    .ok_or_else(|| format!("there is no tab called {tab}"))?;
-                report::starting_design(kind, spec, tab, path).ok_or_else(|| {
-                    format!(
-                        "{} is not an array",
-                        cliotree_calc::Loc::new(tab.as_str(), path.clone())
-                    )
-                })?
-            }
-        };
+        // Starting from an array makes a multipage report whose detail band
+        // reads each item (owner, 2026-11-03), which comes with multipage
+        // reports (12g).
+        if start.is_some() {
+            return Err(START_LATER.to_owned());
+        }
+        let design = ReportDesign::new(kind);
         self.session
             .calc_mut()
             .create_report(name, design)

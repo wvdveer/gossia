@@ -74,8 +74,10 @@ fn a_report_name_is_checked_as_any_tab_name() {
     assert!(app.new_tab_problem(&dialog).is_some());
 }
 
+/// Starting from an array makes a multipage report with a detail band,
+/// which comes with multipage reports: until then it is refused.
 #[test]
-fn a_report_can_start_from_an_array_of_a_tab() {
+fn starting_from_an_array_waits_for_multipage_reports() {
     let mut app = sample();
     let starts = app.starting_points();
     let shown: Vec<&str> = starts.iter().map(|(.., s)| s.as_str()).collect();
@@ -88,14 +90,9 @@ fn a_report_can_start_from_an_array_of_a_tab() {
     dialog.name = "Lines".to_owned();
     dialog.report_kind = ReportKind::Multipage;
     dialog.start = Some(("Orders".to_owned(), p("items")));
-    app.create_tab(&dialog).unwrap();
-
-    let design = app.calc().report("Lines").unwrap();
-    assert_eq!(design.kind, ReportKind::Multipage);
-    let repeater = &design.layout.controls[0];
-    assert_eq!(repeater.kind, ControlKind::Repeater);
-    assert_eq!(repeater.items.as_deref(), Some("Orders.items"));
-    assert!(design.problems().is_empty(), "{:?}", design.problems());
+    let why = app.create_tab(&dialog).unwrap_err();
+    assert!(why.contains("multipage"), "{why}");
+    assert!(app.calc().report("Lines").is_none());
 }
 
 #[test]
@@ -201,8 +198,7 @@ fn the_control_channel_makes_and_duplicates_reports() {
     control::run(
         &mut app,
         "new_tab",
-        &json!({"name": "Sales", "report": true, "kind": "multipage",
-                "start_tab": "Orders", "start_path": "items"}),
+        &json!({"name": "Sales", "report": true, "kind": "multipage"}),
     )
     .unwrap();
     assert_eq!(

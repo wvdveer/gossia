@@ -58,16 +58,10 @@ fn p(text: &str) -> Path {
 }
 
 #[test]
-fn a_report_from_an_array_shows_its_items_and_follows_the_data() {
+fn a_report_follows_the_data() {
     let mut harness = window();
-    new_report(
-        &mut harness,
-        json!({"name": "Lines", "report": true, "start_tab": "Orders", "start_path": "items"}),
-    );
-    let shown = texts(&harness);
-    for sku in ["A-100", "B-220", "C-310"] {
-        assert!(shown.iter().any(|t| t == sku), "{shown:?}");
-    }
+    report_with_field(&mut harness, "First", "Orders.items[0].sku");
+    assert_eq!(texts(&harness), ["First", "A-100"]);
     harness
         .state_mut()
         .session
@@ -75,9 +69,34 @@ fn a_report_from_an_array_shows_its_items_and_follows_the_data() {
         .set_value("Orders", &p("items[0].sku"), Value::Str("Z-999".into()))
         .unwrap();
     settle(&mut harness);
-    let shown = texts(&harness);
-    assert!(shown.iter().any(|t| t == "Z-999"), "{shown:?}");
-    assert!(!shown.iter().any(|t| t == "A-100"));
+    assert_eq!(texts(&harness), ["First", "Z-999"]);
+}
+
+#[test]
+fn the_palette_of_a_report_has_no_repeater_and_a_repeater_is_a_problem() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    assert!(harness.query_by_label("Add repeater").is_none());
+    let mut design = harness.state().calc().report("Summary").unwrap().clone();
+    design
+        .layout
+        .controls
+        .push(Control::new(ControlKind::Repeater));
+    let problems = design.problems();
+    assert!(problems[0].1.contains("detail band"), "{problems:?}");
+}
+
+#[test]
+fn a_report_does_not_start_from_an_array_yet() {
+    let mut harness = window();
+    let why = control::run(
+        harness.state_mut(),
+        "new_tab",
+        &json!({"name": "Lines", "report": true, "start_tab": "Orders", "start_path": "items"}),
+    )
+    .unwrap_err();
+    assert!(why.contains("multipage"), "{why}");
 }
 
 /// A report with one field showing `expression`, labelled `label`.

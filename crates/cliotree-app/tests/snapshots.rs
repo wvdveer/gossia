@@ -446,7 +446,7 @@ fn a_report_tab() {
 }
 
 /// A single page report drawn from its design: a title, a group of two
-/// columns with fields, and a table of the items of Orders.
+/// columns with fields, on the canvas.
 #[test]
 fn a_drawn_report() {
     use cliotree_core::form::{Control, ControlKind};
@@ -457,12 +457,8 @@ fn a_drawn_report() {
     let mut harness = window();
     {
         let app = harness.state_mut();
-        app.create_report_tab(
-            "Sales",
-            Default::default(),
-            Some(&("Orders".to_owned(), "items".parse().unwrap())),
-        )
-        .unwrap();
+        app.create_report_tab("Sales", Default::default(), None)
+            .unwrap();
         let mut design = app.calc().report("Sales").unwrap().clone();
         let mut title = Control::new(ControlKind::Label);
         title.text = Some("Order for {Orders.customer.name}".into());

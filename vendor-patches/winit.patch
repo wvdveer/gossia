@@ -1,0 +1,18 @@
+diff --git a/src/platform_impl/windows/window.rs b/src/platform_impl/windows/window.rs
+index 228c6f03..c972b3b1 100644
+--- a/src/platform_impl/windows/window.rs
++++ b/src/platform_impl/windows/window.rs
+@@ -960,7 +960,12 @@ impl Window {
+ 
+     #[inline]
+     pub fn set_theme(&self, theme: Option<Theme>) {
+-        try_theme(self.window, theme);
++        // Remembered, so that WM_SETTINGCHANGE does not put the system theme
++        // back over the one chosen here.
++        let current_theme = try_theme(self.window, theme);
++        let mut window_state = self.window_state_lock();
++        window_state.preferred_theme = theme;
++        window_state.current_theme = current_theme;
+     }
+ 
+     #[inline]

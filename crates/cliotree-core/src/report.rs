@@ -222,9 +222,15 @@ fn control_problem(c: &Control) -> Option<String> {
     if c.kind == ControlKind::Button {
         return Some("a report has no buttons".to_owned());
     }
+    // A list is the detail band of a multipage report (owner, 2026-11-03).
+    if c.kind == ControlKind::Repeater {
+        return Some(
+            "a report has no repeaters: a list of rows is the detail band of a multipage report"
+                .to_owned(),
+        );
+    }
     if c.path.is_some() {
         let instead = match c.kind {
-            ControlKind::Repeater => "its items come from an expression",
             ControlKind::Field => "it shows a value",
             _ => "it has no path",
         };
@@ -335,6 +341,10 @@ pub fn report_schema() -> &'static TypeSpec {
 /// fields that show expressions (`order.qty`) in place of paths. A table for
 /// scalar or flat items, designed items otherwise. None if there is no array
 /// there.
+///
+/// Not used now that reports have no repeaters (owner, 2026-11-03): starting
+/// from an array will make a multipage report whose detail band reads the
+/// item (step 12g), built from what this does.
 pub fn starting_design(
     kind: ReportKind,
     spec: &TypeSpec,

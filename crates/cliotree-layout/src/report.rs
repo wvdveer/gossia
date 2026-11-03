@@ -13,7 +13,7 @@
 
 use cliotree_core::Value;
 use cliotree_core::form::{
-    self, Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
+    self, Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, Control, ControlKind,
     DEFAULT_LABEL_WIDTH, FontFamily as Typeface, Format, GroupLayout, LabelPosition, POSITIONS,
     template,
 };
@@ -35,10 +35,6 @@ const LABEL_GAP: f32 = 8.0;
 
 /// The space between a title and what it is the title of.
 const TITLE_GAP: f32 = 4.0;
-
-/// The padding of the cells of a table, across and down.
-const CELL_X: f32 = 6.0;
-const CELL_Y: f32 = 3.0;
 
 /// The narrowest a column of a table is made when the table is shrunk.
 const MIN_COLUMN: f32 = 24.0;
@@ -91,10 +87,8 @@ pub enum Ink {
     Weak,
     /// An error value, `#ERROR!` or `#UNTRUSTED!`.
     Error,
-    /// The lines of tables, separators and borders.
+    /// The lines of separators and borders.
     Rule,
-    /// The fill of the title row of a table.
-    Header,
     Rgba([u8; 4]),
 }
 
@@ -294,11 +288,7 @@ pub const UNTRUSTED: &str = "#UNTRUSTED!";
 /// the other, as a form's top level is (a Flow group of one column).
 pub fn single_page(design: &ReportDesign, width: f32, source: &dyn Source) -> Laid {
     let fonts = Fonts::shared();
-    let mut placer = Placer {
-        fonts,
-        source,
-        limit: None,
-    };
+    let mut placer = Placer { fonts, source };
     let style = Style::body();
     let width = width.max(MIN_COLUMN);
     let mut top = Control::new(ControlKind::Group);
@@ -314,11 +304,7 @@ pub fn single_page(design: &ReportDesign, width: f32, source: &dyn Source) -> La
 /// tall as its lowest control, or its own height if that is more.
 pub fn canvas(design: &ReportDesign, source: &dyn Source) -> Laid {
     let fonts = Fonts::shared();
-    let mut placer = Placer {
-        fonts,
-        source,
-        limit: None,
-    };
+    let mut placer = Placer { fonts, source };
     let width = design.page.content_width().max(MIN_COLUMN);
     let mut top = Control::new(ControlKind::Group);
     top.layout = Some(GroupLayout::Free);
@@ -425,9 +411,6 @@ impl Style {
 struct Placer<'a> {
     fonts: &'a Fonts,
     source: &'a dyn Source,
-    /// The height of the box of the repeater about to be laid out, when it
-    /// has one, so that its table shows the rows that fit.
-    limit: Option<f32>,
 }
 
 /// A colour of the design (`#rrggbb`) or of an expression.
@@ -601,12 +584,10 @@ impl Placer<'_> {
             ControlKind::Field => self.field(c, at, rows, width, &style),
             ControlKind::Separator => self.separator(c, width),
             ControlKind::Group => self.group(c, at, rows, width, &style, fill),
-            ControlKind::Repeater => {
-                self.limit = c.height.map(|h| h as f32);
-                self.repeater(c, at, rows, width, &style)
-            }
-            // A report has no buttons (see `ReportDesign::problems`).
-            ControlKind::Button => Laid::default(),
+            // A report has no repeaters or buttons (see
+            // `ReportDesign::problems`): a list is the detail band of a
+            // multipage report.
+            ControlKind::Repeater | ControlKind::Button => Laid::default(),
         };
         laid.width = width;
         if let Some(h) = c.height {
@@ -1008,349 +989,6 @@ impl Placer<'_> {
         laid
     }
 
-    fn repeater(
-        &mut self,
-        c: &Control,
-        at: &[usize],
-        rows: &[usize],
-        width: f32,
-        style: &Style,
-    ) -> Laid {
-        let limit = self.limit.take();
-        let mut laid = Laid::default();
-        let title_h = self.title(&mut laid, c, width, style);
-        let got = self.source.control(at, rows, Prop::Items);
-        let message = |text: &str, ink: Ink, why: Option<String>| (text.to_owned(), ink, why);
-        let items = match &got {
-            Got::Value(Value::Array(items), _) => Ok(items
-                .iter()
-                .map(|n| n.value().clone())
-                .collect::<Vec<Value>>()),
-            Got::Value(other, _) => Err(message(
-                &format!(
-                    "The items are not a list: they are a {}.",
-                    other.kind_name()
-                ),
-                Ink::Weak,
-                None,
-            )),
-            Got::None => Err(message(
-                "No items: give the repeater its items.",
-                Ink::Weak,
-                None,
-            )),
-            Got::Waiting => Err(message("", Ink::Weak, None)),
-            Got::Error(e) => Err(message("#ERROR!", Ink::Error, Some(format!("Items: {e}")))),
-            Got::Untrusted => Err(message(
-                UNTRUSTED,
-                Ink::Error,
-                Some("The items run Python, so this workbook has to be trusted first.".to_owned()),
-            )),
-        };
-        let mut y = title_h;
-        match items {
-            Err((text, ink, why)) => {
-                let h = self.text(
-                    &mut laid,
-                    &text,
-                    style.text_style(),
-                    ink,
-                    (0.0, y, width),
-                    Alignment::Left,
-                );
-                if let Some(why) = why {
-                    laid.hovers.push(Hover {
-                        rect: Rect::new(0.0, y, width, h),
-                        text: why,
-                    });
-                }
-                y += h;
-            }
-            Ok(items) if c.is_stacked() => {
-                // Every item, one under the other, each laid out as a group.
-                let gap = Self::gap(c);
-                let mut first = true;
-                for i in 0..items.len() {
-                    let mut item_rows = rows.to_vec();
-                    item_rows.push(i);
-                    let body = self.flow(c, at, &item_rows, width, style);
-                    if body.height <= 0.0 {
-                        continue;
-                    }
-                    if !first {
-                        y += gap;
-                    }
-                    first = false;
-                    let h = body.height;
-                    laid.append(body, 0.0, y);
-                    y += h;
-                }
-            }
-            Ok(items) => {
-                let room = limit.map(|l| l - y);
-                let table = self.table(c, at, rows, &items, width, style, room);
-                let h = table.height;
-                laid.append(table, 0.0, y);
-                y += h;
-            }
-        }
-        if got.pending() {
-            laid.paints.push(Paint::Pending { x: width, y: 0.0 });
-        }
-        laid.height = y;
-        laid
-    }
-
-    /// A table of the items, with a title row: the columns of its design,
-    /// or with none the fields of its first item.
-    /// With `room`, the rows that fit in it are shown and the last line says
-    /// how many more there are.
-    #[allow(clippy::too_many_arguments)]
-    fn table(
-        &mut self,
-        c: &Control,
-        at: &[usize],
-        rows: &[usize],
-        items: &[Value],
-        width: f32,
-        style: &Style,
-        room: Option<f32>,
-    ) -> Laid {
-        let mut laid = Laid::default();
-        let source = self.source;
-        let columns: Vec<ColumnDesign> = if c.table_columns.is_empty() {
-            listed_names(items)
-                .into_iter()
-                .map(|n| ColumnDesign::named(&n))
-                .collect()
-        } else {
-            c.table_columns
-                .iter()
-                .filter(|col| !col.hidden)
-                .cloned()
-                .collect()
-        };
-        // A column whose *visible when* is false is left out.
-        let columns: Vec<ColumnDesign> = columns
-            .into_iter()
-            .filter(|col| {
-                !matches!(
-                    source.column(at, rows, &col.name, None, Prop::Visible),
-                    Got::Value(v, _) if !form::truthy(&v)
-                )
-            })
-            .collect();
-        if columns.is_empty() {
-            return laid;
-        }
-        let ts = style.text_style();
-        let header = TextStyle {
-            typeface: c.header_font.unwrap_or(style.typeface),
-            size: c.header_font_size.map_or(style.size, |s| s as f32),
-            bold: true,
-            italic: style.italic,
-        };
-        // Each cell: its text, its colours, and why it is an error.
-        struct Cell {
-            text: String,
-            ink: Option<Ink>,
-            fill: Option<Ink>,
-            align: Alignment,
-            pending: bool,
-            why: Option<String>,
-        }
-        let mut cells: Vec<Vec<Cell>> = Vec::with_capacity(items.len());
-        for (row, item) in items.iter().enumerate() {
-            let mut line = Vec::with_capacity(columns.len());
-            for col in &columns {
-                let got = if col.is_row_number() {
-                    Got::Value(Value::Int(row as i64 + 1), false)
-                } else if col.value.is_some() {
-                    source.column(at, rows, &col.name, Some(row), Prop::Value)
-                } else {
-                    match crate::report::cell_of(item, &col.name) {
-                        Some(v) => Got::Value(v, false),
-                        None => Got::Value(Value::Null, false),
-                    }
-                };
-                let (text, ink, why) = shown(&got, &col.format());
-                let number = matches!(&got, Got::Value(v, _) if is_number(v));
-                let text_got = source.column(at, rows, &col.name, Some(row), Prop::TextColour);
-                let fill_got = source.column(at, rows, &col.name, Some(row), Prop::FillColour);
-                let mut why = why.map(|w| format!("{}: {w}", col.name));
-                let colour_ink =
-                    colour(col.text_colour.as_deref(), &text_got).unwrap_or_else(|e| {
-                        why.get_or_insert(format!("Text colour: {e}"));
-                        None
-                    });
-                let fill = colour(col.fill_colour.as_deref(), &fill_got).unwrap_or_else(|e| {
-                    why.get_or_insert(format!("Fill colour: {e}"));
-                    None
-                });
-                line.push(Cell {
-                    text,
-                    ink: ink.or(colour_ink).or_else(|| fill.and_then(readable_on)),
-                    fill,
-                    align: col.align.unwrap_or(if number {
-                        Alignment::Right
-                    } else {
-                        Alignment::Left
-                    }),
-                    pending: got.pending() || text_got.pending() || fill_got.pending(),
-                    why,
-                });
-            }
-            cells.push(line);
-        }
-        // The widths: a column's own, or as wide as its widest text; all
-        // shrunk to fit when they do not.
-        let titles: Vec<String> = columns
-            .iter()
-            .map(|col| col.label.clone().unwrap_or_else(|| col.name.clone()))
-            .collect();
-        let mut widths: Vec<f32> = columns
-            .iter()
-            .enumerate()
-            .map(|(k, col)| match col.width {
-                Some(w) => w as f32,
-                None => {
-                    let widest = cells
-                        .iter()
-                        .map(|line| self.fonts.width(&line[k].text, &ts))
-                        .fold(self.fonts.width(&titles[k], &header), f32::max);
-                    widest + 2.0 * CELL_X
-                }
-            })
-            .collect();
-        shrink(&mut widths, &columns, width);
-        let table_w: f32 = widths.iter().sum();
-        let lefts: Vec<f32> = widths
-            .iter()
-            .scan(0.0, |x, w| {
-                let left = *x;
-                *x += w;
-                Some(left)
-            })
-            .collect();
-        // The title row.
-        let mut row_paints = Laid::default();
-        let mut head_h: f32 = 0.0;
-        for (k, title) in titles.iter().enumerate() {
-            let align = columns[k].title_align.unwrap_or(Alignment::Left);
-            let h = self.text(
-                &mut row_paints,
-                title,
-                header,
-                style.ink(),
-                (
-                    lefts[k] + CELL_X,
-                    CELL_Y,
-                    (widths[k] - 2.0 * CELL_X).max(1.0),
-                ),
-                align,
-            );
-            head_h = head_h.max(h + 2.0 * CELL_Y);
-        }
-        laid.paints.push(Paint::Fill {
-            rect: Rect::new(0.0, 0.0, table_w, head_h),
-            ink: Ink::Header,
-        });
-        laid.append(row_paints, 0.0, 0.0);
-        let mut y = head_h;
-        laid.paints.push(Paint::Line {
-            from: (0.0, y),
-            to: (table_w, y),
-            width: RULE,
-            ink: Ink::Rule,
-        });
-        let mut laid_rows: Vec<(Laid, f32)> = Vec::with_capacity(cells.len());
-        for line in &cells {
-            let mut row_laid = Laid::default();
-            let mut row_h: f32 = 0.0;
-            for (k, cell) in line.iter().enumerate() {
-                let h = self.text(
-                    &mut row_laid,
-                    &cell.text,
-                    ts,
-                    cell.ink.unwrap_or(style.ink()),
-                    (
-                        lefts[k] + CELL_X,
-                        CELL_Y,
-                        (widths[k] - 2.0 * CELL_X).max(1.0),
-                    ),
-                    cell.align,
-                );
-                row_h = row_h.max(h + 2.0 * CELL_Y);
-            }
-            for (k, cell) in line.iter().enumerate() {
-                let rect = Rect::new(lefts[k], 0.0, widths[k], row_h);
-                if let Some(ink) = cell.fill {
-                    row_laid.paints.insert(0, Paint::Fill { rect, ink });
-                }
-                if cell.pending {
-                    row_laid.paints.push(Paint::Pending {
-                        x: rect.right(),
-                        y: 0.0,
-                    });
-                }
-                if let Some(why) = &cell.why {
-                    row_laid.hovers.push(Hover {
-                        rect,
-                        text: why.clone(),
-                    });
-                }
-            }
-            laid_rows.push((row_laid, row_h));
-        }
-        // In a box: the rows that fit, with room for the line that says how
-        // many more there are.
-        let more_h = self.fonts.layout("", &ts, None).metrics.row_height + 2.0 * CELL_Y;
-        let mut shown = laid_rows.len();
-        if let Some(room) = room {
-            let total: f32 = y + laid_rows.iter().map(|(_, h)| h).sum::<f32>();
-            if total > room + 0.5 {
-                let mut bottom = y;
-                shown = 0;
-                for (_, h) in &laid_rows {
-                    if bottom + h + more_h > room + 0.5 {
-                        break;
-                    }
-                    bottom += h;
-                    shown += 1;
-                }
-            }
-        }
-        let hidden = laid_rows.len() - shown;
-        for (row_laid, row_h) in laid_rows.into_iter().take(shown) {
-            laid.append(row_laid, 0.0, y);
-            y += row_h;
-            laid.paints.push(Paint::Line {
-                from: (0.0, y),
-                to: (table_w, y),
-                width: RULE,
-                ink: Ink::Rule,
-            });
-        }
-        if hidden > 0 {
-            let text = if hidden == 1 {
-                "and 1 more row".to_owned()
-            } else {
-                format!("and {hidden} more rows")
-            };
-            self.text(
-                &mut laid,
-                &text,
-                ts,
-                Ink::Weak,
-                (CELL_X, y + CELL_Y, (width - 2.0 * CELL_X).max(1.0)),
-                Alignment::Left,
-            );
-            y += more_h;
-        }
-        laid.height = y;
-        laid
-    }
-
     /// Cuts what was laid out to a box `height` tall: what is below it goes,
     /// boxes and lines are shortened, and the last line of text that stays
     /// ends with an ellipsis when text was cut.
@@ -1473,42 +1111,6 @@ impl Placer<'_> {
     }
 }
 
-/// Shrinks the automatic columns so that the table fits in `width`: a
-/// column narrower than its share keeps its width, the others share what is
-/// left, none narrower than [`MIN_COLUMN`] (or its own width, if less).
-fn shrink(widths: &mut [f32], columns: &[ColumnDesign], width: f32) {
-    let fixed: f32 = columns
-        .iter()
-        .zip(widths.iter())
-        .filter(|(col, _)| col.width.is_some())
-        .map(|(_, w)| *w)
-        .sum();
-    let mut pool: Vec<usize> = (0..columns.len())
-        .filter(|&k| columns[k].width.is_none())
-        .collect();
-    let mut room = (width - fixed).max(0.0);
-    loop {
-        let sum: f32 = pool.iter().map(|&k| widths[k]).sum();
-        if pool.is_empty() || sum <= room {
-            return;
-        }
-        let scale = room / sum;
-        let (small, large): (Vec<usize>, Vec<usize>) =
-            pool.iter().partition(|&&k| widths[k] * scale < MIN_COLUMN);
-        if small.is_empty() {
-            for k in large {
-                widths[k] *= scale;
-            }
-            return;
-        }
-        for k in small {
-            widths[k] = widths[k].min(MIN_COLUMN);
-            room = (room - widths[k]).max(0.0);
-        }
-        pool = large;
-    }
-}
-
 /// A template's text with each expression replaced by `mark` (None: the
 /// template has none), and doubled braces made single.
 fn template_text(text: &str, mark: Option<&str>) -> String {
@@ -1521,35 +1123,5 @@ fn template_text(text: &str, mark: Option<&str>) -> String {
             })
             .collect(),
         Err(_) => text.to_owned(),
-    }
-}
-
-/// The columns of a table over items with none in its design: the fields of
-/// the first item, or `value` for items that are not records.
-fn listed_names(items: &[Value]) -> Vec<String> {
-    match items.first() {
-        Some(Value::Object(fields)) => fields.keys().cloned().collect(),
-        Some(_) => vec!["value".to_owned()],
-        None => Vec::new(),
-    }
-}
-
-/// What a cell shows when its column has no expression: the field of that
-/// name (dotted for a field of a field), or the item for the column `value`
-/// of items that are not records.
-pub fn cell_of(item: &Value, column: &str) -> Option<Value> {
-    match item {
-        Value::Object(_) => {
-            let mut at = item.clone();
-            for part in column.split('.') {
-                let Value::Object(fields) = &at else {
-                    return None;
-                };
-                at = fields.get(part)?.value().clone();
-            }
-            Some(at)
-        }
-        _ if column == "value" => Some(item.clone()),
-        _ => None,
     }
 }

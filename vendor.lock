@@ -33,6 +33,16 @@ name = "egui-file-dialog"
 url  = "https://github.com/jannistpl/egui-file-dialog.git"
 rev  = "607ad279ec359a1ba9548b9534f3302cdc783350"
 
+# The windowing library under egui (Apache-2.0), release 0.30.13, for one fix:
+# on Windows its set_theme did not remember the theme, so the next
+# WM_SETTINGCHANGE put the system's back and a dark window got a light title
+# bar. Cargo.toml [patch.crates-io] uses it in place of the crates.io release.
+[[item]]
+name  = "winit"
+url   = "https://github.com/rust-windowing/winit.git"
+rev   = "e9809ef54b18499bb4f2cac945719ecc2a61061b"
+patch = "vendor-patches/winit.patch"
+
 # Test-only: the official JSON Schema Test Suite (DESIGN.md, Testing and CI,
 # "Selecting JSON Schema Test Suite cases"). Only the 2020-12 cases are used.
 [[item]]

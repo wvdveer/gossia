@@ -116,7 +116,6 @@ fn flat_items_start_as_a_table_of_their_fields() {
         columns,
         [("sku", None), ("qty", None), ("price.amount", None)]
     );
-    assert!(design.problems().is_empty(), "{:?}", design.problems());
 }
 
 #[test]
@@ -168,7 +167,6 @@ fn items_that_hold_arrays_start_as_designed_items() {
     assert_eq!(lines.item_name.as_deref(), Some("line"));
     assert_eq!(lines.table_columns[0].name, "sku");
     assert_eq!(lines.table_columns[0].value, None);
-    assert!(design.problems().is_empty(), "{:?}", design.problems());
 }
 
 #[test]
@@ -209,9 +207,13 @@ fn a_report_lists_what_only_a_form_can_have() {
     let mut label = Control::new(ControlKind::Label);
     label.text = Some("Fine".into());
     design.layout.controls.push(label);
+    let mut repeater = Control::new(ControlKind::Repeater);
+    repeater.items = Some("Orders.items".into());
+    design.layout.controls.push(repeater);
     let problems = design.problems();
     let at: Vec<&[usize]> = problems.iter().map(|(a, _)| a.as_slice()).collect();
-    assert_eq!(at, [&[0][..], &[1], &[2]]);
+    assert_eq!(at, [&[0][..], &[1], &[2], &[4]]);
+    assert!(problems[3].1.contains("detail band"), "{}", problems[3].1);
     assert!(problems[0].1.contains("path"), "{}", problems[0].1);
     assert!(problems[1].1.contains("buttons"));
     assert!(problems[2].1.contains("enabled when"));

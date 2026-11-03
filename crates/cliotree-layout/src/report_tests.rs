@@ -2,11 +2,9 @@
 
 use std::collections::HashMap;
 
-use cliotree_core::form::{
-    Alignment, ColumnDesign, Control, ControlKind, GroupLayout, RepeaterMode, TrackSize,
-};
+use cliotree_core::Value;
+use cliotree_core::form::{Alignment, Control, ControlKind, GroupLayout, TrackSize};
 use cliotree_core::report::{ReportDesign, ReportKind};
-use cliotree_core::{Node, Value};
 
 use crate::report::{Got, Laid, Paint, Prop, Source, UNTRUSTED, canvas, single_page, to_canvas};
 
@@ -27,19 +25,6 @@ impl Fake {
 
     fn value(self, at: &[usize], rows: &[usize], prop: Prop, value: Value) -> Fake {
         self.set(at, rows, prop, Got::Value(value, false))
-    }
-
-    fn column(
-        mut self,
-        at: &[usize],
-        column: &str,
-        row: Option<usize>,
-        prop: Prop,
-        got: Got,
-    ) -> Fake {
-        self.columns
-            .insert((at.to_vec(), column.to_owned(), row, prop), got);
-        self
     }
 }
 
@@ -87,19 +72,6 @@ fn field(label: &str) -> Control {
 
 fn s(text: &str) -> Value {
     Value::Str(text.to_owned())
-}
-
-fn list(values: Vec<Value>) -> Value {
-    Value::Array(values.into_iter().map(Node::new).collect())
-}
-
-fn record(fields: &[(&str, Value)]) -> Value {
-    Value::Object(
-        fields
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), Node::new(v.clone())))
-            .collect(),
-    )
 }
 
 /// Where a text was painted: its left and top.
@@ -204,110 +176,6 @@ fn long_text_breaks_into_lines_in_a_narrow_report() {
     assert_eq!(wide.texts().len(), 1);
     assert!(narrow.texts().len() > 2, "{:?}", narrow.texts());
     assert!(narrow.height > wide.height);
-}
-
-#[test]
-fn a_table_has_a_title_row_and_a_row_for_each_item() {
-    let mut table = Control::new(ControlKind::Repeater);
-    table.mode = Some(RepeaterMode::Table);
-    table.label = Some("Lines".into());
-    let mut qty = ColumnDesign::named("qty");
-    qty.label = Some("Quantity".into());
-    let mut twice = ColumnDesign::named("twice");
-    twice.value = Some("this.qty * 2".into());
-    table.table_columns = vec![ColumnDesign::named("sku"), qty, twice];
-    let items = list(vec![
-        record(&[("sku", s("a")), ("qty", Value::Int(2))]),
-        record(&[("sku", s("b")), ("qty", Value::Int(5))]),
-    ]);
-    let fake = Fake::default()
-        .value(&[0], &[], Prop::Items, items)
-        .column(
-            &[0],
-            "twice",
-            Some(0),
-            Prop::Value,
-            Got::Value(Value::Int(4), false),
-        )
-        .column(
-            &[0],
-            "twice",
-            Some(1),
-            Prop::Value,
-            Got::Value(Value::Int(10), false),
-        );
-    let laid = single_page(&report(vec![table]), 600.0, &fake);
-    assert_eq!(
-        laid.texts(),
-        [
-            "Lines", "sku", "Quantity", "twice", "a", "2", "4", "b", "5", "10"
-        ]
-    );
-    // The rows go down, and the cells of a row line up.
-    assert!(place(&laid, "b").1 > place(&laid, "a").1);
-    assert_eq!(place(&laid, "a").1, place(&laid, "2").1);
-}
-
-#[test]
-fn a_table_with_no_columns_shows_the_fields_of_its_first_item() {
-    let mut table = Control::new(ControlKind::Repeater);
-    table.mode = Some(RepeaterMode::Table);
-    let items = list(vec![record(&[("name", s("Ada")), ("age", Value::Int(36))])]);
-    let fake = Fake::default().value(&[0], &[], Prop::Items, items);
-    let laid = single_page(&report(vec![table]), 600.0, &fake);
-    assert_eq!(laid.texts(), ["name", "age", "Ada", "36"]);
-}
-
-#[test]
-fn a_wide_table_is_shrunk_to_fit() {
-    let mut table = Control::new(ControlKind::Repeater);
-    table.mode = Some(RepeaterMode::Table);
-    let long = "a long text in a cell ".repeat(10);
-    let items = list(vec![record(&[("text", s(&long)), ("n", Value::Int(1))])]);
-    let fake = Fake::default().value(&[0], &[], Prop::Items, items);
-    let laid = single_page(&report(vec![table]), 300.0, &fake);
-    let right = laid
-        .paints
-        .iter()
-        .filter_map(|p| match p {
-            Paint::Line { to, .. } => Some(to.0),
-            _ => None,
-        })
-        .fold(0.0, f32::max);
-    assert!(right <= 300.5, "{right}");
-}
-
-#[test]
-fn designed_items_are_each_shown_one_under_the_other() {
-    let mut stacked = Control::new(ControlKind::Repeater);
-    stacked.mode = Some(RepeaterMode::Stacked);
-    stacked.children = vec![field("Order")];
-    let fake = Fake::default()
-        .value(
-            &[0],
-            &[],
-            Prop::Items,
-            list(vec![Value::Int(1), Value::Int(2)]),
-        )
-        .value(&[0, 0], &[0], Prop::Value, s("first"))
-        .value(&[0, 0], &[1], Prop::Value, s("second"));
-    let laid = single_page(&report(vec![stacked]), 500.0, &fake);
-    assert_eq!(laid.texts(), ["Order", "first", "Order", "second"]);
-    assert!(place(&laid, "second").1 > place(&laid, "first").1);
-    assert!(laid.areas.iter().any(|a| a.at == [0, 0] && a.rows == [1]));
-}
-
-#[test]
-fn items_that_are_not_a_list_say_so() {
-    let mut stacked = Control::new(ControlKind::Repeater);
-    stacked.mode = Some(RepeaterMode::Stacked);
-    let fake = Fake::default().value(&[0], &[], Prop::Items, Value::Int(3));
-    let laid = single_page(&report(vec![stacked]), 500.0, &fake);
-    assert!(
-        laid.texts().iter().any(|t| t.contains("not a list")),
-        "{:?}",
-        laid.texts()
-    );
 }
 
 #[test]
@@ -469,28 +337,6 @@ fn controls_below_a_box_that_is_too_small_do_not_move() {
         Paint::Text { y, text, .. } if text != "Below" => *y < 30.0,
         _ => true,
     }));
-}
-
-#[test]
-fn a_table_in_a_box_shows_the_rows_that_fit_and_how_many_more() {
-    let mut table = Control::new(ControlKind::Repeater);
-    table.items = Some("items".into());
-    let items: Vec<Value> = (0..30).map(|i| record(&[("n", Value::Int(i))])).collect();
-    let design = on_canvas(vec![at(table, 0, 0, 200, Some(100))]);
-    let laid = canvas(
-        &design,
-        &Fake::default().value(&[0], &[], Prop::Items, list(items)),
-    );
-    let texts = laid.texts();
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.starts_with("and ") && t.ends_with(" more rows")),
-        "{texts:?}"
-    );
-    let shown = texts.iter().filter(|t| t.parse::<i64>().is_ok()).count();
-    assert!(shown > 0 && shown < 30);
-    assert!(texts.contains(&format!("and {} more rows", 30 - shown).as_str()));
 }
 
 #[test]

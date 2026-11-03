@@ -11,7 +11,7 @@
 
 use cliotree_calc::{Calc, ExprKind, ExprState, REPORT_FORM};
 use cliotree_core::Value;
-use cliotree_core::form::{Address, Control, FormDesign};
+use cliotree_core::form::{Address, FormDesign};
 use cliotree_core::report::ReportDesign;
 use cliotree_layout::report::{self, Got, Ink, Laid, Paint, Prop, Source};
 use egui::{Color32, Sense, Stroke};
@@ -85,15 +85,10 @@ impl Source for CalcSource<'_> {
 }
 
 /// The expressions of a report in place of their values (*Show
-/// expressions*, as Crystal's design view): a field shows `[its value]`, a
-/// template its text, and a repeater one item, whose cells show their
-/// columns' expressions or names.
+/// expressions*, as Crystal's design view): a field shows `[its value]`, and
+/// a template label its text.
 pub struct ExprSource<'a> {
     pub design: &'a FormDesign,
-}
-
-fn bracketed(text: &str) -> Value {
-    Value::Str(format!("[{}]", text.trim()))
 }
 
 impl Source for ExprSource<'_> {
@@ -106,55 +101,15 @@ impl Source for ExprSource<'_> {
             Prop::Value => c
                 .value
                 .as_deref()
-                .map_or(Got::None, |v| shown(bracketed(v))),
+                .map_or(Got::None, |v| shown(Value::Str(format!("[{}]", v.trim())))),
             Prop::Template => c.text.clone().map_or(Got::None, |t| shown(Value::Str(t))),
-            Prop::Items if c.items.is_some() => {
-                shown(Value::Array(vec![cliotree_core::Node::new(one_item(c))]))
-            }
             _ => Got::None,
         }
     }
 
-    fn column(
-        &self,
-        at: &[usize],
-        _rows: &[usize],
-        column: &str,
-        row: Option<usize>,
-        prop: Prop,
-    ) -> Got {
-        let Some(c) = self.design.get(at) else {
-            return Got::None;
-        };
-        match (prop, row) {
-            (Prop::Value, Some(_)) => c
-                .table_columns
-                .iter()
-                .find(|col| col.name == column)
-                .and_then(|col| col.value.as_deref())
-                .map_or(Got::None, |v| Got::Value(bracketed(v), false)),
-            _ => Got::None,
-        }
+    fn column(&self, _: &[usize], _: &[usize], _: &str, _: Option<usize>, _: Prop) -> Got {
+        Got::None
     }
-}
-
-/// The one item a repeater shows with *Show expressions*: each column of its
-/// design names itself, or with none, the item.
-fn one_item(c: &Control) -> Value {
-    if c.table_columns.is_empty() {
-        return Value::Str("[item]".to_owned());
-    }
-    Value::Object(
-        c.table_columns
-            .iter()
-            .map(|col| {
-                (
-                    col.name.clone(),
-                    cliotree_core::Node::new(bracketed(&col.name)),
-                )
-            })
-            .collect(),
-    )
 }
 
 /// What a report tab keeps between frames: the report as it was last laid
@@ -362,11 +317,7 @@ fn results_in(calc: &Calc, name: &str, design: &ReportDesign) -> bool {
     impl Source for Probe<'_> {
         fn control(&self, at: &[usize], rows: &[usize], prop: Prop) -> Got {
             let g = self.inner.control(at, rows, prop);
-            let has = self.design.get(at).is_some_and(|c| match prop {
-                Prop::Value => c.value.is_some(),
-                Prop::Items => c.items.is_some(),
-                _ => false,
-            });
+            let has = prop == Prop::Value && self.design.get(at).is_some_and(|c| c.value.is_some());
             if matches!(g, Got::Waiting) || (has && g == Got::None) {
                 self.missing.set(true);
             }
@@ -403,7 +354,6 @@ fn colour(ink: Ink, palette: &Palette) -> Color32 {
         Ink::Weak => palette.text_weak,
         Ink::Error => palette.error,
         Ink::Rule => palette.border,
-        Ink::Header => palette.stripe,
         Ink::Rgba([r, g, b, a]) => Color32::from_rgba_unmultiplied(r, g, b, a),
     }
 }

@@ -1051,7 +1051,9 @@ impl ClioApp {
             // A click adds where the selection says; dragging one onto the
             // form puts it where it is dropped. A report has no buttons.
             for kind in ControlKind::ALL {
-                if report && kind == ControlKind::Button {
+                // A report has no buttons, and no repeaters: a list is the
+                // detail band of a multipage report.
+                if report && matches!(kind, ControlKind::Button | ControlKind::Repeater) {
                     continue;
                 }
                 let label = format!("Add {}", kind.label().to_lowercase());
@@ -1831,26 +1833,51 @@ impl ClioApp {
         if option_text(ui, "Help", &mut edited.help, "", true) {
             merge = Some(key("help"));
         }
-        ui.horizontal(|ui| {
-            ui.label("Width");
-            // 0 is automatic; anything else is at least the narrowest width.
-            let mut width = edited.width.unwrap_or(0);
-            let response = ui.add(
-                egui::DragValue::new(&mut width)
-                    .range(0..=*design::COLUMN_WIDTHS.end())
-                    .custom_formatter(|v, _| {
-                        if v < 1.0 {
-                            "Automatic".to_owned()
-                        } else {
-                            format!("{v:.0} pt")
+        // As a control's width: automatic, or ticked and then a number of
+        // points. (A number box that started at 0 for automatic swallowed the
+        // first 24 points of a drag under the narrowest width.) An id of its
+        // own, since the first width makes the column a designed one, which
+        // changes the page above, and a drag must not be lost then.
+        ui.push_id(("column_width", at, &column.name), |ui| {
+            ui.horizontal(|ui| {
+                let mut fixed = edited.width.is_some();
+                let on = fixed;
+                let response = ui.checkbox(&mut fixed, "Width");
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::Role::CheckBox,
+                        true,
+                        on,
+                        "Fixed width of the column",
+                    )
+                });
+                if fixed != on {
+                    edited.width = fixed.then_some(DEFAULT_COLUMN_WIDTH);
+                }
+                match edited.width.as_mut() {
+                    Some(width) => {
+                        let response = ui.add(
+                            egui::DragValue::new(width)
+                                .range(design::COLUMN_WIDTHS)
+                                .speed(1.0)
+                                .suffix(" pt"),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::Role::SpinButton,
+                                true,
+                                "Width of the column",
+                            )
+                        });
+                        if response.changed() {
+                            merge = Some(key("width"));
                         }
-                    }),
-            );
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Width of the column")
-            });
-            edited.width =
-                (width > 0).then(|| width.clamp(*design::COLUMN_WIDTHS.start(), u32::MAX));
+                    }
+                    None => {
+                        ui.weak("Automatic: as wide as its widest text");
+                    }
+                }
+            })
         });
         alignment_choice(ui, &mut edited.title_align, "Title alignment", "the title");
         alignment_choice(ui, &mut edited.align, "Cell alignment", "the cells");
@@ -2330,6 +2357,9 @@ fn sibling_count(design: &FormDesign, at: &[usize]) -> usize {
 
 /// The sizes the property page offers, in points.
 /// The property that lets a field with choices take a code not in the list.
+/// The width a column is given when its width is ticked, in points.
+const DEFAULT_COLUMN_WIDTH: u32 = 80;
+
 const ALLOW_OTHER: &str = "Allow other values (write-in codes)";
 const ALLOW_OTHER_HELP: &str = "A dropdown offers Other... to type a code that is not listed; a typeahead enters typed text that matches no item as it is";
 

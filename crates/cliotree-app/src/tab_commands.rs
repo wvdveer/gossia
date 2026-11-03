@@ -1340,6 +1340,8 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                     .map(|(.., shown)| shown.clone())
             })
             .unwrap_or_else(|| "nothing (an empty report)".to_owned());
+        // Starting from an array comes with multipage reports.
+        ui.disable();
         egui::ComboBox::from_id_salt("new_report_start")
             .selected_text(shown)
             .show_ui(ui, |ui| {
@@ -1367,6 +1369,8 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                     "Array the report starts from",
                 )
             });
-    });
-    ui.weak("A report starts with a table or items of the array, which can be changed later.");
+    })
+    .response
+    .on_disabled_hover_text(crate::report_tab::START_LATER);
+    ui.weak("A report starts empty; its controls are added in Edit report.");
 }
