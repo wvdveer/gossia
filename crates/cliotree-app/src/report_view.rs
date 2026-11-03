@@ -8,12 +8,16 @@
 //! Its values are the results of its expressions, which run while it is
 //! shown ([`cliotree_calc::Calc::show_report`]). A design made before the
 //! canvas is turned into one when it is first shown, once its results are in.
+//!
+//! A multipage report is shown page by page, as the PDF will have it
+//! (DESIGN.md, Reports, "On screen"), with page navigation and zoom; in
+//! layout mode it is its stack of bands.
 
 use cliotree_calc::{Calc, ExprKind, ExprState, REPORT_FORM};
 use cliotree_core::Value;
 use cliotree_core::form::{Address, FormDesign};
-use cliotree_core::report::ReportDesign;
-use cliotree_layout::report::{self, Got, Ink, Laid, Paint, Prop, Source};
+use cliotree_core::report::{DETAIL_LIMIT, ReportDesign};
+use cliotree_layout::report::{self, Got, Ink, Laid, Paged, Paint, Prop, Source};
 use egui::{Color32, Sense, Stroke};
 
 use crate::app::ClioApp;
@@ -127,6 +131,13 @@ pub struct ReportView {
     /// In layout mode: where the top left of the canvas was drawn, and the
     /// zoom, in the last frame.
     pub canvas_at: Option<(egui::Pos2, f32)>,
+    /// A multipage report laid out page by page, and what for.
+    pub paged: Option<Paged>,
+    paged_key: Option<LaidKey>,
+    /// The page of a multipage report being shown, from 0.
+    pub page: usize,
+    /// A section is being added or removed: the bands may change.
+    pub(crate) restructure: bool,
 }
 
 /// What a layout depends on: the report, the data and results, the designs,
@@ -149,6 +160,20 @@ impl ClioApp {
         );
         if self.report.key.as_ref() != Some(&key) || self.report.laid.is_none() {
             let laid = match calc.report(&self.sheet) {
+                // A multipage report in layout mode: its stack of bands.
+                Some(design) if design.bands().is_some() && expressions => report::bands(
+                    design,
+                    &ExprSource {
+                        design: &design.layout,
+                    },
+                ),
+                Some(design) if design.bands().is_some() => report::bands(
+                    design,
+                    &CalcSource {
+                        calc,
+                        report: &self.sheet,
+                    },
+                ),
                 Some(design) if expressions => report::canvas(
                     design,
                     &ExprSource {
@@ -172,6 +197,36 @@ impl ClioApp {
             self.report.key = Some(key);
         }
         self.report.laid.as_ref().expect("laid out above")
+    }
+
+    /// The current multipage report laid out page by page, made again only
+    /// when something it shows has changed.
+    pub fn lay_out_pages(&mut self) -> &Paged {
+        let calc = self.session.calc();
+        let key: LaidKey = (
+            self.sheet.clone(),
+            calc.revision(),
+            calc.forms_version(),
+            calc.is_trusted(),
+            calc.pending_expressions(),
+            false,
+        );
+        if self.report.paged_key.as_ref() != Some(&key) || self.report.paged.is_none() {
+            let paged = match calc.report(&self.sheet) {
+                Some(design) => report::pages(
+                    design,
+                    &CalcSource {
+                        calc,
+                        report: &self.sheet,
+                    },
+                    DETAIL_LIMIT,
+                ),
+                None => Paged::default(),
+            };
+            self.report.paged = Some(paged);
+            self.report.paged_key = Some(key);
+        }
+        self.report.paged.as_ref().expect("laid out above")
     }
 
     /// The zoom a report is drawn at, `available` points being the width of
@@ -217,18 +272,23 @@ impl ClioApp {
         self.form_bar(ui, REPORT_FORM);
         let problems = design.problems();
         let layout = self.layout_active();
-        if (design.layout.controls.is_empty() && !layout) || !problems.is_empty() {
+        let empty = has_no_controls(&design);
+        if (empty && !layout) || !problems.is_empty() {
             ui.add_space(MARGIN);
             ui.horizontal(|ui| {
                 ui.add_space(MARGIN);
                 ui.vertical(|ui| self.report_notes(ui, &name, &problems));
             });
-            if design.layout.controls.is_empty() && !layout {
+            if empty && !layout {
                 return;
             }
         }
         if layout {
             self.report_designer(ui);
+            return;
+        }
+        if design.bands().is_some() {
+            self.report_pages(ui);
             return;
         }
         egui::ScrollArea::both()
@@ -247,8 +307,67 @@ impl ClioApp {
             });
     }
 
-    /// The zoom, and in layout mode *Show expressions*: on the strip above a
-    /// report.
+    /// A multipage report, one page at a time, as the PDF will have it.
+    fn report_pages(&mut self, ui: &mut egui::Ui) {
+        let name = self.sheet.clone();
+        let paged = self.lay_out_pages().clone();
+        let count = paged.pages.len();
+        self.report.page = self.report.page.min(count.saturating_sub(1));
+        // Page Up and Page Down turn the pages.
+        if !ui.ctx().text_edit_focused() {
+            ui.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::PageDown) {
+                    self.report.page = (self.report.page + 1).min(count.saturating_sub(1));
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::PageUp) {
+                    self.report.page = self.report.page.saturating_sub(1);
+                }
+            });
+        }
+        for warning in &paged.warnings {
+            ui.horizontal(|ui| {
+                ui.add_space(MARGIN);
+                ui.colored_label(crate::view::error_color(ui), warning);
+            });
+        }
+        let Some(page) = paged.pages.get(self.report.page) else {
+            return;
+        };
+        egui::ScrollArea::both()
+            .id_salt(("report_pages", name.as_str()))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let zoom = self.report_zoom(ui.available_width(), paged.width);
+                let size = egui::vec2(
+                    paged.width * zoom + 2.0 * MARGIN,
+                    paged.height * zoom + 2.0 * MARGIN,
+                );
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                let origin = rect.min + egui::vec2(MARGIN, MARGIN);
+                let paper = egui::Rect::from_min_size(
+                    origin,
+                    egui::vec2(paged.width * zoom, paged.height * zoom),
+                );
+                let palette = Palette::of_ui(ui);
+                let painter = ui.painter();
+                painter.rect_filled(
+                    paper.translate(egui::vec2(3.0, 3.0)),
+                    0.0,
+                    palette.border.gamma_multiply(0.5),
+                );
+                painter.rect_filled(paper, 0.0, palette.field);
+                painter.rect_stroke(
+                    paper,
+                    0.0,
+                    Stroke::new(1.0, palette.border),
+                    egui::StrokeKind::Outside,
+                );
+                paint(ui, page, origin, zoom, true);
+            });
+    }
+
+    /// The zoom, the pages of a multipage report, and in layout mode *Show
+    /// expressions*: on the strip above a report.
     pub(crate) fn report_tools(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         let text = match self.report.zoom {
@@ -274,6 +393,35 @@ impl ClioApp {
                 .on_hover_text(
                     "Each field shows its expression, as [Orders.total], in place of its value",
                 );
+        } else if self
+            .calc()
+            .report(&self.sheet)
+            .is_some_and(|d| d.bands().is_some())
+        {
+            let count = self
+                .report
+                .paged
+                .as_ref()
+                .map_or(1, |p| p.pages.len().max(1));
+            let page = self.report.page.min(count - 1);
+            ui.separator();
+            if crate::icons::button(ui, page > 0, crate::icons::CARET_LEFT, "<", "Previous page")
+                .clicked()
+            {
+                self.report.page = page.saturating_sub(1);
+            }
+            ui.label(format!("Page {} of {count}", page + 1));
+            if crate::icons::button(
+                ui,
+                page + 1 < count,
+                crate::icons::CARET_RIGHT,
+                ">",
+                "Next page",
+            )
+            .clicked()
+            {
+                self.report.page = page + 1;
+            }
         }
     }
 
@@ -286,11 +434,7 @@ impl ClioApp {
                 format!("Control {}: {why}", place.join(".")),
             );
         }
-        if self
-            .calc()
-            .report(name)
-            .is_some_and(|d| d.layout.controls.is_empty())
-        {
+        if self.calc().report(name).is_some_and(has_no_controls) {
             ui.label("This report has no controls yet.");
             ui.weak(
                 "Turn on Edit report to add controls, or edit its design in the code editor, \
@@ -303,6 +447,15 @@ impl ClioApp {
                 self.open_report_design(name);
             }
         }
+    }
+}
+
+/// Whether a report has nothing to show: no controls, or for a multipage
+/// report, no controls on any band.
+fn has_no_controls(design: &ReportDesign) -> bool {
+    match design.bands() {
+        Some(_) => design.layout.controls.iter().all(|b| b.children.is_empty()),
+        None => design.layout.controls.is_empty(),
     }
 }
 

@@ -17,7 +17,7 @@ use cliotree_core::form::{
     DEFAULT_LABEL_WIDTH, FontFamily as Typeface, Format, GroupLayout, LabelPosition, POSITIONS,
     template,
 };
-use cliotree_core::report::ReportDesign;
+use cliotree_core::report::{BandKind, ReportDesign, ReportKind, new_band, paginate};
 
 use crate::text::{Fonts, TextStyle};
 
@@ -158,6 +158,9 @@ pub struct Laid {
     /// The boxes of the controls whose content was cut because it is taller
     /// than the box (DESIGN.md, Reports, "Fixed boxes").
     pub cuts: Vec<Rect>,
+    /// In the designer of a multipage report: each band, by its place in the
+    /// stack, where it is drawn (a hidden band as a thin strip).
+    pub bands: Vec<(usize, Rect)>,
 }
 
 impl Laid {
@@ -323,12 +326,229 @@ pub fn canvas(design: &ReportDesign, source: &dyn Source) -> Laid {
     laid
 }
 
+/// The height a hidden band is drawn in the designer, so that its bottom
+/// edge can be dragged down to show it again.
+pub const HIDDEN_BAND: f32 = 8.0;
+
+/// The space between the bands in the designer.
+pub const BAND_GAP: f32 = 4.0;
+
+/// The items the expressions of a band are shown for in the designer: the
+/// first item of each section and the first detail item, and the first page.
+fn first_rows(kind: BandKind, sections: usize) -> Vec<usize> {
+    match kind {
+        BandKind::ReportHeader | BandKind::ReportFooter => Vec::new(),
+        BandKind::PageHeader | BandKind::PageFooter => vec![0],
+        BandKind::SectionHeader(k) | BandKind::SectionFooter(k) => vec![0; k + 1],
+        BandKind::Detail => vec![0; sections + 1],
+    }
+}
+
+/// A source in which every band is visible, for the designer.
+struct AllBands<'a>(&'a dyn Source);
+
+impl Source for AllBands<'_> {
+    fn control(&self, at: &[usize], rows: &[usize], prop: Prop) -> Got {
+        if at.len() == 1 && prop == Prop::Visible {
+            return Got::None;
+        }
+        self.0.control(at, rows, prop)
+    }
+
+    fn column(
+        &self,
+        at: &[usize],
+        rows: &[usize],
+        column: &str,
+        row: Option<usize>,
+        prop: Prop,
+    ) -> Got {
+        self.0.column(at, rows, column, row, prop)
+    }
+}
+
+/// Lays out the stack of bands of a multipage report for the designer
+/// (DESIGN.md, The report designer, "A multipage report in layout mode"):
+/// each band a canvas as wide as the page less its margins, at its height,
+/// one under the other, drawn with the first item of each section and the
+/// first page. A hidden band is a thin strip.
+pub fn bands(design: &ReportDesign, source: &dyn Source) -> Laid {
+    let Some(sections) = design.bands() else {
+        return canvas(design, source);
+    };
+    let fonts = Fonts::shared();
+    let all = AllBands(source);
+    let mut placer = Placer {
+        fonts,
+        source: &all,
+    };
+    let width = design.page.content_width().max(MIN_COLUMN);
+    let mut out = Laid {
+        width,
+        ..Laid::default()
+    };
+    let mut y = 0.0;
+    for (i, kind) in BandKind::stack(sections).into_iter().enumerate() {
+        let band = &design.layout.controls[i];
+        let h = band.height.unwrap_or(0) as f32;
+        let rect = Rect::new(0.0, y, width, h.max(HIDDEN_BAND));
+        if h > 0.0
+            && let Some(laid) = placer.control(
+                band,
+                &[i],
+                &first_rows(kind, sections),
+                width,
+                &Style::body(),
+            )
+        {
+            out.append(laid, 0.0, y);
+        } else {
+            // A hidden band can still be selected, and things dropped on it
+            // go in it.
+            let area = Area {
+                rect,
+                at: vec![i],
+                rows: Vec::new(),
+            };
+            out.areas.push(area.clone());
+            out.insides.push(area);
+        }
+        out.bands.push((i, rect));
+        y = rect.bottom() + BAND_GAP;
+    }
+    out.height = (y - BAND_GAP).max(0.0);
+    out
+}
+
+/// A multipage report laid out page by page.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Paged {
+    /// Each page, in points from the top left of the paper, margins
+    /// included.
+    pub pages: Vec<Laid>,
+    /// The size of the paper.
+    pub width: f32,
+    pub height: f32,
+    /// What the report says about itself: bands cut at the end of a page,
+    /// and the limit of detail bands.
+    pub warnings: Vec<String>,
+}
+
+/// Lays out a multipage report page by page (DESIGN.md, Reports, "Breaking
+/// into pages"), as the PDF will have it: the bands where
+/// [`paginate`] puts them, each with the values of its place, inside the
+/// margins of the paper. The report stops after `limit` detail bands and
+/// says so on its last page.
+pub fn pages(design: &ReportDesign, source: &dyn Source, limit: usize) -> Paged {
+    let (paper_w, paper_h) = design.page.size();
+    let mut out = Paged {
+        width: paper_w,
+        height: paper_h,
+        ..Paged::default()
+    };
+    let Some(sections) = design.bands() else {
+        return out;
+    };
+    let level_band = |level: usize| {
+        if level < sections {
+            BandKind::SectionHeader(level).index(sections)
+        } else {
+            BandKind::Detail.index(sections)
+        }
+    };
+    let items = |level: usize, rows: &[usize]| match source.control(
+        &[level_band(level)],
+        rows,
+        Prop::Items,
+    ) {
+        Got::Value(Value::Array(items), _) => items.len(),
+        _ => 0,
+    };
+    let visible = |band: usize, rows: &[usize]| match source.control(&[band], rows, Prop::Visible) {
+        Got::Value(v, _) => form::truthy(&v),
+        _ => true,
+    };
+    let paging = paginate(design, &items, &visible, limit);
+    let fonts = Fonts::shared();
+    let mut placer = Placer { fonts, source };
+    let width = design.page.content_width().max(MIN_COLUMN);
+    let (left, top) = (
+        design.page.margins.left as f32,
+        design.page.margins.top as f32,
+    );
+    let last = paging.pages.len().saturating_sub(1);
+    for (p, placed) in paging.pages.iter().enumerate() {
+        let mut page = Laid {
+            width: paper_w,
+            height: paper_h,
+            ..Laid::default()
+        };
+        for band in placed {
+            let mut control = design.layout.controls[band.band].clone();
+            control.height = Some(band.height.max(0.0).floor() as u32);
+            if let Some(laid) =
+                placer.control(&control, &[band.band], &band.rows, width, &Style::body())
+            {
+                page.append(laid, left, top + band.y);
+            }
+        }
+        if p == last && paging.limited {
+            placer.text(
+                &mut page,
+                &format!("The report stops here: it has reached the limit of {limit} detail rows."),
+                Style::body().text_style(),
+                Ink::Error,
+                (left, top + paging.end + 4.0, width),
+                Alignment::Left,
+            );
+        }
+        out.pages.push(page);
+    }
+    for band in &paging.cut {
+        out.warnings.push(format!(
+            "The band {} is taller than the space between the page header and the page \
+             footer, so it is cut at the end of the page.",
+            design.band_name(*band)
+        ));
+    }
+    if paging.limited {
+        out.warnings.push(format!(
+            "The report stops after {limit} detail rows, the limit for a report."
+        ));
+    }
+    out
+}
+
 /// A design made before the canvas (its top level a Flow list) turned into
 /// a canvas: each control at the top level placed where the Flow layout put
 /// it at the canvas width, with the width it had, and with the height it had
 /// when `heights` (the results are final), else an automatic height. A
-/// control that is not visible goes under the one before it.
+/// control that is not visible goes under the one before it. A multipage
+/// report becomes its stack of bands, with those controls in the report
+/// header.
 pub fn to_canvas(design: &ReportDesign, source: &dyn Source, heights: bool) -> ReportDesign {
+    let placed = flow_to_canvas(design, source, heights);
+    if design.kind != ReportKind::Multipage {
+        return placed;
+    }
+    let mut out = ReportDesign::new(ReportKind::Multipage);
+    out.version = design.version;
+    out.page = design.page;
+    let lowest = placed
+        .layout
+        .controls
+        .iter()
+        .map(|c| c.y.unwrap_or(0) + c.height.unwrap_or(24))
+        .max()
+        .unwrap_or(0);
+    let mut header = new_band(lowest);
+    header.children = placed.layout.controls;
+    out.layout.title = design.layout.title.clone();
+    out.layout.controls[BandKind::ReportHeader.index(0)] = header;
+    out
+}
+
+fn flow_to_canvas(design: &ReportDesign, source: &dyn Source, heights: bool) -> ReportDesign {
     let width = design.page.content_width().max(MIN_COLUMN);
     let laid = single_page(design, width, source);
     let mut out = design.clone();

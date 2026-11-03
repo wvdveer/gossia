@@ -74,10 +74,10 @@ fn a_report_name_is_checked_as_any_tab_name() {
     assert!(app.new_tab_problem(&dialog).is_some());
 }
 
-/// Starting from an array makes a multipage report with a detail band,
-/// which comes with multipage reports: until then it is refused.
+/// Starting from an array makes a multipage report whose detail band
+/// repeats for each item.
 #[test]
-fn starting_from_an_array_waits_for_multipage_reports() {
+fn starting_from_an_array_makes_a_multipage_report_of_its_items() {
     let mut app = sample();
     let starts = app.starting_points();
     let shown: Vec<&str> = starts.iter().map(|(.., s)| s.as_str()).collect();
@@ -90,9 +90,12 @@ fn starting_from_an_array_waits_for_multipage_reports() {
     dialog.name = "Lines".to_owned();
     dialog.report_kind = ReportKind::Multipage;
     dialog.start = Some(("Orders".to_owned(), p("items")));
-    let why = app.create_tab(&dialog).unwrap_err();
-    assert!(why.contains("multipage"), "{why}");
-    assert!(app.calc().report("Lines").is_none());
+    app.create_tab(&dialog).unwrap();
+    let design = app.calc().report("Lines").unwrap();
+    assert_eq!(design.bands(), Some(0));
+    let detail = &design.layout.controls[2];
+    assert_eq!(detail.items.as_deref(), Some("Orders.items"));
+    assert_eq!(detail.item_name.as_deref(), Some("order"));
 }
 
 #[test]

@@ -7,10 +7,15 @@
 //! Places are kept in report points, not on the screen, so the zoom changes
 //! nothing; the property page and the align tools read them as they read a
 //! form's ([`FormRects`]).
+//!
+//! A multipage report is its stack of band canvases, each with its name on
+//! its left. Dragging the line under a band changes its height, and a
+//! control is dragged from one band to another.
 
 use cliotree_calc::REPORT_FORM;
-use cliotree_core::form::{Address, Control, ControlKind};
-use cliotree_layout::report::{self, Laid};
+use cliotree_core::form::{Address, CONTROL_HEIGHTS, Control, ControlKind};
+use cliotree_core::report::{BandKind, ReportDesign};
+use cliotree_layout::report::{self, BAND_GAP, Laid};
 use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use crate::app::ClioApp;
@@ -24,6 +29,10 @@ const HANDLE: f32 = 7.0;
 
 /// The room under the canvas for dragging its bottom edge down.
 const BELOW: f32 = 48.0;
+
+/// The room on the left of the bands of a multipage report for their names,
+/// on the screen.
+const STRIP: f32 = 140.0;
 
 /// What is being dragged on the canvas, in report points.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +52,8 @@ pub enum CanvasDrag {
     },
     /// The bottom edge of the canvas.
     Height { start: f32, grab: f32 },
+    /// The line under a band of a multipage report.
+    Band { band: usize, start: f32, grab: f32 },
 }
 
 /// A resize handle: which edges it moves, -1 the left or top, 1 the right or
@@ -157,25 +168,37 @@ impl ClioApp {
         let rects = canvas_rects(&laid);
         keep_rects(ui.ctx(), &self.sheet, REPORT_FORM, rects.clone());
         let name = self.sheet.clone();
+        let banded = self
+            .calc()
+            .report(&name)
+            .filter(|d| d.bands().is_some())
+            .cloned();
+        let (left, below) = if banded.is_some() {
+            (STRIP, 0.0)
+        } else {
+            (0.0, BELOW)
+        };
         egui::ScrollArea::both()
             .id_salt(("report_design", name.as_str()))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let zoom = self.report_zoom(ui.available_width(), laid.width);
+                let zoom = self.report_zoom(ui.available_width() - left, laid.width);
                 let size = vec2(
-                    laid.width * zoom + 2.0 * MARGIN,
-                    laid.height * zoom + 2.0 * MARGIN + BELOW,
+                    laid.width * zoom + 2.0 * MARGIN + left,
+                    laid.height * zoom + 2.0 * MARGIN + below,
                 );
                 let (outer, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-                let origin = outer.min + vec2(MARGIN, MARGIN);
+                let origin = outer.min + vec2(MARGIN + left, MARGIN);
                 self.report.canvas_at = Some((origin, zoom));
-                self.canvas(ui, &laid, &rects, &response, origin, zoom);
+                self.canvas(ui, &laid, &rects, &response, origin, zoom, banded.as_ref());
             });
         // Delete takes the selected controls away, the last first so that
         // the addresses of the others hold.
         let typing = ui.ctx().text_edit_focused();
         if !typing && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)) {
             let mut selected = self.selected_controls();
+            // A band is not deleted; hiding it gives it a height of 0.
+            selected.retain(|at| !self.is_band(at));
             selected.sort();
             for at in selected.into_iter().rev() {
                 self.apply_control(ControlAction::Delete(at));
@@ -183,6 +206,7 @@ impl ClioApp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn canvas(
         &mut self,
         ui: &mut egui::Ui,
@@ -191,6 +215,7 @@ impl ClioApp {
         response: &egui::Response,
         origin: Pos2,
         zoom: f32,
+        banded: Option<&ReportDesign>,
     ) {
         let palette = Palette::of_ui(ui);
         let painter = ui.painter().clone();
@@ -204,28 +229,71 @@ impl ClioApp {
         let page = Rect::from_min_size(Pos2::ZERO, vec2(laid.width, laid.height));
         let canvas = to_screen(page);
 
-        // The page, with a line of the grid every four steps.
-        painter.rect_filled(canvas, 0.0, palette.field);
+        // The page, or each band, with a line of the grid every four steps.
         let faint = Stroke::new(0.5, palette.border.gamma_multiply(0.4));
         let step = GRID * 4.0;
-        let mut x = step;
-        while x < laid.width {
-            let sx = origin.x + x * zoom;
-            painter.line_segment([pos2(sx, canvas.top()), pos2(sx, canvas.bottom())], faint);
-            x += step;
+        let sheet = |area: Rect, hidden: bool| {
+            let screen = to_screen(area);
+            if hidden {
+                painter.rect_filled(screen, 0.0, palette.border.gamma_multiply(0.3));
+            } else {
+                painter.rect_filled(screen, 0.0, palette.field);
+                let mut x = step;
+                while x < area.width() {
+                    let sx = screen.left() + x * zoom;
+                    painter
+                        .line_segment([pos2(sx, screen.top()), pos2(sx, screen.bottom())], faint);
+                    x += step;
+                }
+                let mut y = step;
+                while y < area.height() {
+                    let sy = screen.top() + y * zoom;
+                    painter
+                        .line_segment([pos2(screen.left(), sy), pos2(screen.right(), sy)], faint);
+                    y += step;
+                }
+            }
+            painter.rect_stroke(
+                screen,
+                0.0,
+                Stroke::new(1.0, palette.border),
+                egui::StrokeKind::Outside,
+            );
+        };
+        match banded {
+            Some(design) => {
+                let small = egui::FontId::proportional(11.0);
+                for (i, r) in &laid.bands {
+                    let hidden = design.layout.controls[*i].height.unwrap_or(0) == 0;
+                    sheet(rect_of(r), hidden);
+                    // Its name, on the left.
+                    let screen = to_screen(rect_of(r));
+                    let mut name = design.band_name(*i);
+                    if hidden {
+                        name.push_str(" (hidden)");
+                    }
+                    let strip = Rect::from_min_max(
+                        pos2(screen.left() - STRIP + 4.0, screen.top()),
+                        pos2(
+                            screen.left() - 6.0,
+                            screen.bottom().max(screen.top() + 13.0),
+                        ),
+                    );
+                    painter.with_clip_rect(strip).text(
+                        pos2(strip.right(), strip.top()),
+                        egui::Align2::RIGHT_TOP,
+                        name,
+                        small.clone(),
+                        if hidden {
+                            palette.text_weak
+                        } else {
+                            palette.text
+                        },
+                    );
+                }
+            }
+            None => sheet(page, false),
         }
-        let mut y = step;
-        while y < laid.height {
-            let sy = origin.y + y * zoom;
-            painter.line_segment([pos2(canvas.left(), sy), pos2(canvas.right(), sy)], faint);
-            y += step;
-        }
-        painter.rect_stroke(
-            canvas,
-            0.0,
-            Stroke::new(1.0, palette.border),
-            egui::StrokeKind::Outside,
-        );
         paint(ui, laid, origin, zoom, false);
 
         // A cut control has a mark at the middle of its bottom edge.
@@ -244,8 +312,10 @@ impl ClioApp {
         }
 
         let selected = self.selected_controls();
+        // A band has no handles: its height is the line under it.
         let primary = selected
             .first()
+            .filter(|at| banded.is_none() || at.len() > 1)
             .and_then(|at| rects.controls.get(at).map(|r| (at.clone(), *r)));
         let handle_at = |pos: Pos2| {
             let (at, r) = primary.as_ref()?;
@@ -257,14 +327,42 @@ impl ClioApp {
                 })
                 .map(|h| (at.clone(), h))
         };
+        // The bottom edge of a single page canvas; the line under each band.
         let edge = Rect::from_min_max(
             pos2(canvas.left(), canvas.bottom() - 3.0),
             pos2(canvas.right(), canvas.bottom() + 5.0),
         );
+        let edge = if banded.is_some() {
+            Rect::NOTHING
+        } else {
+            edge
+        };
+        let band_lines: Vec<(usize, Rect, Rect)> = if banded.is_some() {
+            laid.bands
+                .iter()
+                .map(|(i, r)| {
+                    let area = rect_of(r);
+                    let screen = to_screen(area);
+                    let line = Rect::from_min_max(
+                        pos2(screen.left(), screen.bottom() - 3.0),
+                        pos2(screen.right(), screen.bottom() + BAND_GAP * zoom + 1.0),
+                    );
+                    (*i, area, line)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let band_line_at = |pos: Pos2| {
+            band_lines
+                .iter()
+                .find(|(_, _, line)| line.contains(pos))
+                .map(|(i, area, _)| (*i, *area))
+        };
         if let Some(pos) = response.hover_pos() {
             if let Some((_, h)) = handle_at(pos) {
                 ui.ctx().set_cursor_icon(h.cursor());
-            } else if edge.contains(pos) {
+            } else if edge.contains(pos) || band_line_at(pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
             }
         }
@@ -289,6 +387,16 @@ impl ClioApp {
             } else if edge.contains(pos) {
                 Some(CanvasDrag::Height {
                     start: laid.height,
+                    grab: p.y,
+                })
+            } else if let Some((band, _)) = band_line_at(pos) {
+                let start = banded
+                    .and_then(|d| d.layout.controls.get(band))
+                    .and_then(|c| c.height)
+                    .unwrap_or(0) as f32;
+                Some(CanvasDrag::Band {
+                    band,
+                    start,
                     grab: p.y,
                 })
             } else if let Some(at) = control_at(rects, p) {
@@ -321,10 +429,21 @@ impl ClioApp {
         let mut preview: Option<(Address, Rect, Rect)> = None;
         let mut guides: Vec<(Rect, Guide)> = Vec::new();
         let mut new_height = None;
+        let mut band_height: Option<(usize, f32, f32)> = None;
+        // Where a moved control goes: the Free group or band under the
+        // pointer, which may be another than its own.
+        let mut target: Option<Address> = None;
         if let (Some(drag), Some(p)) = (self.report.drag.clone(), pointer) {
             match drag {
                 CanvasDrag::Move { at, start, grab } => {
-                    let parent = at.split_last().map(|(_, p)| p.to_vec()).unwrap_or_default();
+                    let own = at.split_last().map(|(_, p)| p.to_vec()).unwrap_or_default();
+                    let parent = rects
+                        .free
+                        .iter()
+                        .filter(|(a, r)| r.contains(p) && !a.starts_with(&at))
+                        .max_by_key(|(a, _)| a.len())
+                        .map_or(own, |(a, _)| a.clone());
+                    target = Some(parent.clone());
                     let region = rects.free.get(&parent).copied().unwrap_or(page);
                     let moved = start.translate(p - grab).translate(-region.min.to_vec2());
                     let others: Vec<Rect> = rects
@@ -393,6 +512,24 @@ impl ClioApp {
                     let h = snap(start + p.y - grab, grid).max(lowest.ceil());
                     new_height = Some(h);
                 }
+                CanvasDrag::Band { band, start, grab } => {
+                    // Not above the lowest control on it.
+                    let top = laid
+                        .bands
+                        .iter()
+                        .find(|(i, _)| *i == band)
+                        .map_or(0.0, |(_, r)| r.y);
+                    let lowest = rects
+                        .controls
+                        .iter()
+                        .filter(|(a, _)| a.len() == 2 && a[0] == band)
+                        .map(|(_, r)| r.bottom() - top)
+                        .fold(0.0, f32::max);
+                    let h = snap(start + p.y - grab, grid)
+                        .max(lowest.ceil())
+                        .clamp(0.0, *CONTROL_HEIGHTS.end() as f32);
+                    band_height = Some((band, top, h));
+                }
             }
         }
         let accent = palette.accent;
@@ -423,12 +560,43 @@ impl ClioApp {
                 Stroke::new(1.5, accent),
             );
         }
+        if let Some((_, top, h)) = band_height {
+            let y = origin.y + (top + h) * zoom;
+            painter.line_segment(
+                [pos2(canvas.left(), y), pos2(canvas.right(), y)],
+                Stroke::new(1.5, accent),
+            );
+            painter.text(
+                pos2(canvas.right() + 6.0, y),
+                egui::Align2::LEFT_CENTER,
+                format!("{h:.0} pt"),
+                egui::FontId::proportional(11.0),
+                accent,
+            );
+        }
 
         // Let go: the change, as one step of Undo layout.
         if response.drag_stopped()
             && let Some(drag) = self.report.drag.take()
         {
             match (drag, preview) {
+                // Into another band or Free group: moved there, at its place.
+                (CanvasDrag::Move { at, .. }, Some((_, r, region)))
+                    if target
+                        .as_ref()
+                        .is_some_and(|t| at.split_last().map(|(_, p)| p) != Some(t.as_slice())) =>
+                {
+                    let target = target.unwrap_or_default();
+                    let (x, y) = (r.left() - region.left(), r.top() - region.top());
+                    self.edit_design(|d| {
+                        let index = d.get(&target).map_or(0, |g| g.children.len());
+                        let moved = d.move_to(&at, &target, index)?;
+                        let c = d.get_mut(&moved)?;
+                        c.x = Some(x.round().max(0.0) as u32);
+                        c.y = Some(y.round().max(0.0) as u32);
+                        Some(Some(moved))
+                    });
+                }
                 (CanvasDrag::Move { at, start, .. }, Some((_, r, region)))
                     if r.min != start.min =>
                 {
@@ -459,6 +627,13 @@ impl ClioApp {
                 (CanvasDrag::Height { .. }, _) => {
                     if let Some(h) = new_height {
                         self.set_canvas_height(h);
+                    }
+                }
+                (CanvasDrag::Band { band, start, .. }, _) => {
+                    if let Some((_, _, h)) = band_height
+                        && h != start
+                    {
+                        self.resize_control(&vec![band], None, Some(Some(h as u32)), None);
                     }
                 }
                 _ => {}
@@ -492,7 +667,7 @@ impl ClioApp {
                 Stroke::new(width, palette.selection_outline),
                 egui::StrokeKind::Outside,
             );
-            if i == 0 && !dragging {
+            if i == 0 && !dragging && primary.is_some() {
                 for h in Handle::ALL {
                     let square = Rect::from_center_size(h.point(r), Vec2::splat(HANDLE));
                     painter.rect_filled(square, 1.0, palette.selection_outline);
@@ -547,8 +722,35 @@ impl ClioApp {
     }
 
     /// Adds a control of `kind` from the palette by a click: on the canvas,
-    /// under the lowest control.
+    /// under the lowest control. In a multipage report it goes on the band
+    /// of the selection, or the detail band, which grows to hold it.
     pub(crate) fn add_to_canvas(&mut self, kind: ControlKind) {
+        if let Some(design) = self.calc().report(&self.sheet).cloned()
+            && let Some(sections) = design.bands()
+        {
+            let band = self
+                .selected_control()
+                .and_then(|at| at.first().copied())
+                .unwrap_or(BandKind::Detail.index(sections));
+            let lowest = design.layout.controls[band]
+                .children
+                .iter()
+                .map(|c| c.y.unwrap_or(0) + c.height.unwrap_or(20))
+                .max();
+            let mut c = sized_control(kind);
+            c.x = Some(0);
+            let y = lowest.map_or(0, |b| snap(b as f32 + 8.0, true).ceil() as u32);
+            c.y = Some(y);
+            let needed = y + c.height.unwrap_or(20);
+            self.edit_design(|d| {
+                let group = d.get_mut(&[band])?;
+                if group.height.unwrap_or(0) < needed {
+                    group.height = Some(needed);
+                }
+                d.insert(&[band], None, c).map(Some)
+            });
+            return;
+        }
         let bottom = self.report.laid.as_ref().map_or(0.0, |l| {
             l.areas
                 .iter()

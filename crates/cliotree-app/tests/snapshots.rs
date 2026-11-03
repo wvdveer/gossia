@@ -503,3 +503,32 @@ fn a_drawn_report() {
     }
     check(&mut harness, "report_layout", &mut results);
 }
+
+/// A multipage report started from the items of Orders: its first page, and
+/// in Edit report its stack of bands with the detail band selected.
+#[test]
+fn a_multipage_report() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .create_report_tab(
+            "Lines",
+            cliotree_core::report::ReportKind::Multipage,
+            Some(&("Orders".to_owned(), "items".parse().unwrap())),
+        )
+        .unwrap();
+    for _ in 0..3 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_pages", &mut results);
+    harness.state_mut().set_layout(true);
+    harness.state_mut().select_control(Some(vec![2]));
+    for _ in 0..2 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_bands", &mut results);
+}

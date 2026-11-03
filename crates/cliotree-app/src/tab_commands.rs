@@ -1323,7 +1323,18 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
     ui.horizontal(|ui| {
         ui.label("Kind");
         for kind in ReportKind::ALL {
-            if ui.radio(dialog.report_kind == kind, kind.label()).clicked() {
+            // Starting from an array makes a multipage report.
+            let allowed = dialog.start.is_none() || kind == ReportKind::Multipage;
+            let response = ui
+                .add_enabled(
+                    allowed,
+                    egui::RadioButton::new(dialog.report_kind == kind, kind.label()),
+                )
+                .on_disabled_hover_text(
+                    "A report that starts from an array is multipage: its detail band repeats \
+                     for each item.",
+                );
+            if response.clicked() {
                 dialog.report_kind = kind;
             }
         }
@@ -1340,8 +1351,6 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                     .map(|(.., shown)| shown.clone())
             })
             .unwrap_or_else(|| "nothing (an empty report)".to_owned());
-        // Starting from an array comes with multipage reports.
-        ui.disable();
         egui::ComboBox::from_id_salt("new_report_start")
             .selected_text(shown)
             .show_ui(ui, |ui| {
@@ -1358,6 +1367,7 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                         .is_some_and(|(t, p)| t == tab && p == path);
                     if ui.selectable_label(chosen, shown).clicked() {
                         dialog.start = Some((tab.clone(), path.clone()));
+                        dialog.report_kind = ReportKind::Multipage;
                     }
                 }
             })
@@ -1369,8 +1379,9 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                     "Array the report starts from",
                 )
             });
-    })
-    .response
-    .on_disabled_hover_text(crate::report_tab::START_LATER);
-    ui.weak("A report starts empty; its controls are added in Edit report.");
+    });
+    ui.weak(
+        "Empty, a report's controls are added in Edit report. From an array, it is a multipage \
+         report whose detail band shows each item's fields.",
+    );
 }

@@ -28,8 +28,21 @@
 //! they run at the root of a tab that does not exist, with `this`, `parent`
 //! and `root` bound to `None` outside the items of a repeater. A report's
 //! expressions run only while it is shown ([`Calc::show_report`]).
+//!
+//! The bands of a multipage report (DESIGN.md, Reports, "Multipage") run
+//! once for each place they are drawn: a section's header and footer for
+//! each item of the section, keyed by the item of each section around and
+//! its own; the detail band for each detail item, with the detail item last;
+//! the page header and footer for each page, keyed by the page, with `page`
+//! (`page.number`, `page.count`); the report header and footer once. The
+//! items of a section are an expression on its header band, run in each
+//! occurrence of the section around it; the bands inside see each item by
+//! the section's item name and its list by its list name, and so do the
+//! header and footer of the section around. The pages come from
+//! [`cliotree_core::report::paginate`], as the layout's do.
 
-use cliotree_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template};
+use cliotree_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template, truthy};
+use cliotree_core::report::{BandKind, DETAIL_LIMIT, ReportDesign, paginate};
 use cliotree_core::{Kind, Node, Path, Value};
 use indexmap::IndexMap;
 
@@ -371,6 +384,41 @@ struct Instance {
 /// its column, and the items it is for.
 type KeyOf<'a> = dyn Fn(ExprKind, Option<&str>, Vec<usize>) -> ExprKey + 'a;
 
+/// Controls whose expressions are synced, each with its address and the
+/// instances it runs in.
+type Seeds<'a> = Vec<(Vec<usize>, &'a Control, Vec<Instance>)>;
+
+/// The controls at the top level of a design, each run once in `top`.
+fn seed<'a>(controls: &'a [Control], top: &Instance) -> Seeds<'a> {
+    controls
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (vec![i], c, vec![top.clone()]))
+        .collect()
+}
+
+/// What working out the occurrences of the bands of a multipage report
+/// gathers: the instances of each band, how many items each section has in
+/// each occurrence (by its depth and the occurrence), and the detail items
+/// so far.
+struct BandWalk {
+    per_band: Vec<Vec<Instance>>,
+    counts: HashMap<(usize, Vec<usize>), usize>,
+    details: usize,
+}
+
+/// The value of `page` in a page header or footer.
+fn page_value(index: usize, count: usize) -> Value {
+    let mut fields = IndexMap::new();
+    fields.insert("number".to_owned(), Node::new(Value::Int(index as i64 + 1)));
+    fields.insert("count".to_owned(), Node::new(Value::Int(count as i64)));
+    Value::Object(fields)
+}
+
+fn name_of(n: &Option<String>) -> Option<&str> {
+    n.as_deref().map(str::trim).filter(|n| !n.is_empty())
+}
+
 /// An expression the designs ask for.
 struct Wanted {
     key: ExprKey,
@@ -439,10 +487,10 @@ impl Calc {
         let mut has_rows = false;
         // The forms, then the report being shown, whose expressions have no
         // node: `this`, `parent` and `root` are None.
-        let mut designs: Vec<(&str, &str, &cliotree_core::form::FormDesign, Instance)> = self
+        let mut designs: Vec<(&str, &str, Seeds)> = self
             .forms
             .iter()
-            .map(|(tab, form, design)| (tab, form, design, Instance::default()))
+            .map(|(tab, form, design)| (tab, form, seed(&design.controls, &Instance::default())))
             .collect();
         if let Some(name) = &self.exprs.shown_report
             && let Some(report) = self.reports.get(name)
@@ -454,15 +502,17 @@ impl Calc {
                     .collect(),
                 ..Instance::default()
             };
-            designs.push((name.as_str(), REPORT_FORM, &report.layout, top));
+            let seeds = match report.bands() {
+                Some(sections) => {
+                    has_rows = true;
+                    self.band_seeds(name, report, sections, top, &mut wanted)
+                }
+                None => seed(&report.layout.controls, &top),
+            };
+            designs.push((name.as_str(), REPORT_FORM, seeds));
         }
-        for (tab, form, design, top) in designs {
-            let mut stack: Vec<(Vec<usize>, &Control, Vec<Instance>)> = design
-                .controls
-                .iter()
-                .enumerate()
-                .map(|(i, c)| (vec![i], c, vec![top.clone()]))
-                .collect();
+        for (tab, form, seeds) in designs {
+            let mut stack = seeds;
             while let Some((at, control, instances)) = stack.pop() {
                 let key = |kind, column: Option<&str>, rows: Vec<usize>| ExprKey {
                     tab: tab.to_owned(),
@@ -618,6 +668,146 @@ impl Calc {
             self.exprs.by_key.insert(w.key, expr);
         }
         self.exprs.has_rows = has_rows;
+    }
+
+    /// The bands of a multipage report with `sections` sections, each with
+    /// the instances it runs in (see the module's notes), and the items
+    /// expressions of its sections and detail band in `wanted`.
+    fn band_seeds<'a>(
+        &self,
+        name: &str,
+        report: &'a ReportDesign,
+        sections: usize,
+        top: Instance,
+        wanted: &mut Vec<Wanted>,
+    ) -> Seeds<'a> {
+        let layout = &report.layout;
+        let mut walk = BandWalk {
+            per_band: vec![Vec::new(); layout.controls.len()],
+            counts: HashMap::new(),
+            details: 0,
+        };
+        let top = self.band_level(name, report, sections, 0, &top, &mut walk, wanted);
+        for band in [BandKind::ReportHeader, BandKind::ReportFooter] {
+            walk.per_band[band.index(sections)].push(top.clone());
+        }
+        // The pages, from the items and the bands that are not visible.
+        let visible = |band: usize, rows: &[usize]| {
+            let key = ExprKey {
+                tab: name.to_owned(),
+                form: REPORT_FORM.to_owned(),
+                at: vec![band],
+                column: None,
+                rows: rows.to_vec(),
+                kind: ExprKind::Visible,
+            };
+            match self.exprs.by_key.get(&key).and_then(|e| e.result.as_ref()) {
+                Some(Ok(value)) => truthy(value),
+                _ => true,
+            }
+        };
+        let items = |level: usize, rows: &[usize]| {
+            walk.counts
+                .get(&(level, rows.to_vec()))
+                .copied()
+                .unwrap_or(0)
+        };
+        let pages = paginate(report, &items, &visible, DETAIL_LIMIT).pages.len();
+        for p in 0..pages {
+            let instance = Instance {
+                rows: vec![p],
+                base: None,
+                bindings: bind(&top.bindings, [("page".to_owned(), page_value(p, pages))]),
+            };
+            for band in [BandKind::PageHeader, BandKind::PageFooter] {
+                walk.per_band[band.index(sections)].push(instance.clone());
+            }
+        }
+        layout
+            .controls
+            .iter()
+            .zip(walk.per_band)
+            .enumerate()
+            .map(|(i, (c, instances))| (vec![i], c, instances))
+            .collect()
+    }
+
+    /// The occurrences of the section at depth `level` (the detail band,
+    /// after the last section) in the occurrence `outer` of the sections
+    /// around it. Returns `outer` with the list of this level under its list
+    /// name, which the header and footer around it see.
+    #[allow(clippy::too_many_arguments)]
+    fn band_level(
+        &self,
+        name: &str,
+        report: &ReportDesign,
+        sections: usize,
+        level: usize,
+        outer: &Instance,
+        walk: &mut BandWalk,
+        wanted: &mut Vec<Wanted>,
+    ) -> Instance {
+        let band = if level < sections {
+            BandKind::SectionHeader(level).index(sections)
+        } else {
+            BandKind::Detail.index(sections)
+        };
+        let control = &report.layout.controls[band];
+        let Some(text) = name_of(&control.items) else {
+            return outer.clone();
+        };
+        let loc = Loc::new(name, Path::root());
+        let key = ExprKey {
+            tab: name.to_owned(),
+            form: REPORT_FORM.to_owned(),
+            at: vec![band],
+            column: None,
+            rows: outer.rows.clone(),
+            kind: ExprKind::Items,
+        };
+        wanted.push(Wanted {
+            key: key.clone(),
+            text: Ok(text.to_owned()),
+            loc: loc.clone(),
+            bindings: outer.bindings.clone(),
+        });
+        let Some(list) = self.listed(&key, text, &loc, &outer.bindings) else {
+            return outer.clone();
+        };
+        let Value::Array(items) = &list else {
+            return outer.clone();
+        };
+        let listed = name_of(&control.list_name).map(|n| (n.to_owned(), list.clone()));
+        let around = Instance {
+            bindings: bind(&outer.bindings, listed),
+            ..outer.clone()
+        };
+        let mut count = 0;
+        for (i, item) in items.iter().enumerate() {
+            if walk.details >= DETAIL_LIMIT {
+                break;
+            }
+            count += 1;
+            let mut rows = outer.rows.clone();
+            rows.push(i);
+            let child = Instance {
+                rows,
+                base: None,
+                bindings: bind(&around.bindings, item_names(control, item.value(), &list)),
+            };
+            if level == sections {
+                walk.details += 1;
+                walk.per_band[band].push(child);
+            } else {
+                let child =
+                    self.band_level(name, report, sections, level + 1, &child, walk, wanted);
+                let footer = BandKind::SectionFooter(level).index(sections);
+                walk.per_band[band].push(child.clone());
+                walk.per_band[footer].push(child);
+            }
+        }
+        walk.counts.insert((level, outer.rows.clone()), count);
+        around
     }
 
     /// The list a repeater's items expression came to, if it has run with
@@ -1012,8 +1202,13 @@ impl Calc {
             if overtaken || e.text != outcome.text {
                 continue;
             }
-            // The items of a repeater decide which expressions run inside it.
-            if outcome.key.kind == ExprKind::Items && e.result.as_ref() != Some(&outcome.result) {
+            // The items of a repeater decide which expressions run inside it,
+            // and the items and visible bands of a multipage report its pages.
+            let decides = outcome.key.kind == ExprKind::Items
+                || (outcome.key.form == REPORT_FORM
+                    && outcome.key.at.len() == 1
+                    && outcome.key.kind == ExprKind::Visible);
+            if decides && e.result.as_ref() != Some(&outcome.result) {
                 self.exprs.resync = true;
             }
             e.result = Some(outcome.result);

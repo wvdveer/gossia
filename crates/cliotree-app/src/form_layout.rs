@@ -236,7 +236,7 @@ impl ClioApp {
         self.edit_design_merging(None, change)
     }
 
-    fn edit_design_merging(
+    pub(crate) fn edit_design_merging(
         &mut self,
         merge: Option<String>,
         change: impl FnOnce(&mut FormDesign) -> Option<Option<Address>>,
@@ -248,6 +248,16 @@ impl ClioApp {
             return false;
         };
         if before.as_ref() == Some(&design) {
+            return false;
+        }
+        // The bands of a multipage report stay its bands: only adding or
+        // removing a section changes them.
+        if form == REPORT_FORM
+            && !self.report.restructure
+            && let Some(report) = self.calc().report(&self.sheet)
+            && report.bands().is_some()
+            && cliotree_core::report::band_sections(&design) != report.bands()
+        {
             return false;
         }
         self.put_design(&form, Some(design));
@@ -1130,7 +1140,9 @@ impl ClioApp {
                         .as_ref()
                         .and_then(|at| design.get(at).map(|c| (at, c)))
                     {
+                        Some((at, _)) if self.is_band(at) => self.band_properties(ui, at[0]),
                         Some((at, control)) => self.control_properties(ui, &design, at, control),
+                        None if self.in_report() => self.report_properties(ui),
                         None => {
                             ui.weak("Select a control on the form to change it.");
                         }
@@ -2030,7 +2042,7 @@ impl ClioApp {
     /// the full message on hover. For one that runs for each row, the first
     /// row that failed. Nothing before it has run, when it worked, or in a
     /// workbook that is not trusted.
-    fn expression_error(
+    pub(crate) fn expression_error(
         &self,
         ui: &mut egui::Ui,
         at: &Address,
@@ -2670,7 +2682,7 @@ fn format_properties(
 
 /// Where the text of an expression box is kept while it is typed: the box of
 /// that expression of the control at `at`, or of its column `column`.
-fn draft_id(at: &[usize], column: Option<&str>, kind: ExprKind) -> egui::Id {
+pub(crate) fn draft_id(at: &[usize], column: Option<&str>, kind: ExprKind) -> egui::Id {
     egui::Id::unique((
         "expression_draft",
         at.to_vec(),
@@ -2683,7 +2695,7 @@ fn draft_id(at: &[usize], column: Option<&str>, kind: ExprKind) -> egui::Id {
 /// aside, and is neither stored nor run, until the box loses the focus (a
 /// click elsewhere, Tab, or Enter): a half-typed expression is no error.
 /// Returns whether the stored expression changed.
-fn expr_text(
+pub(crate) fn expr_text(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut Option<String>,
@@ -2739,7 +2751,7 @@ fn expr_box(
 }
 
 /// The box of an expression of a control or column: a colour, or another.
-fn expression_box(
+pub(crate) fn expression_box(
     ui: &mut egui::Ui,
     kind: ExprKind,
     value: &mut Option<String>,
@@ -2814,7 +2826,7 @@ fn hex_colour([r, g, b]: [u8; 3]) -> String {
 }
 
 /// Whether a name can be an item or list name: a Python identifier.
-fn is_name(name: &str) -> bool {
+pub(crate) fn is_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()
@@ -2929,7 +2941,7 @@ fn procedure_choice(
 
 /// A labelled text field for an optional property: empty is absent. Returns
 /// whether it was typed into.
-fn option_text(
+pub(crate) fn option_text(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut Option<String>,

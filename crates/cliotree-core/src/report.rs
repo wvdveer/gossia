@@ -5,17 +5,27 @@
 //! validated against `builtin:report`, whose definitions come from
 //! `builtin:form`, so a property has one name in both.
 //!
-//! A report holds no data and edits none: its fields show expressions, and
-//! its repeaters take their items from expressions. [`ReportDesign::problems`]
-//! lists what a report cannot have.
+//! A report holds no data and edits none: its fields show expressions.
+//! [`ReportDesign::problems`] lists what a report cannot have.
+//!
+//! A multipage report's controls at the top level are its bands, in the
+//! order of the designer's stack (DESIGN.md, Reports, "Multipage"): report
+//! header, page header, the header of each section from the outermost in,
+//! the detail band, the footer of each section from the innermost out, page
+//! footer and report footer. Each band is a Free group with a height (0
+//! hides it). The items of a section are on its header band (`items`,
+//! `item_name`, `list_name`), and those of the detail band on it.
+//! [`paginate`] breaks such a report into pages.
+
+mod paging;
+
+pub use paging::{DETAIL_LIMIT, Paging, Placed, paginate};
 
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::form::{
-    self, Address, ColumnDesign, Control, ControlKind, DESIGN_VERSION, FormDesign, RepeaterMode,
-};
+use crate::form::{self, Address, Control, ControlKind, DESIGN_VERSION, FormDesign};
 use crate::typespec::{Kind, TypeSpec};
 use crate::validate::validate;
 use crate::{Path, Segment, TypeId, json, jsonschema};
@@ -155,19 +165,213 @@ pub struct ReportDesign {
     /// lowest control.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    /// The options of the sections of a multipage report, the outermost
+    /// first. A section without an entry has the default options.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<SectionOptions>,
+}
+
+/// How a section of a multipage report breaks into pages (DESIGN.md,
+/// Reports, "Breaking into pages").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SectionOptions {
+    /// Each occurrence starts on a new page.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_page: bool,
+    /// The header stays on the page of the first band after it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_with_first: bool,
+    /// The header is drawn again at the top of a page the section continues
+    /// on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeat_header: bool,
+}
+
+/// Which band of a multipage report a control at the top level is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandKind {
+    ReportHeader,
+    PageHeader,
+    /// The header of the section at this depth, 0 the outermost.
+    SectionHeader(usize),
+    Detail,
+    SectionFooter(usize),
+    PageFooter,
+    ReportFooter,
+}
+
+impl BandKind {
+    /// The bands of a report with `sections` sections, in the order of the
+    /// stack.
+    pub fn stack(sections: usize) -> Vec<BandKind> {
+        let mut out = vec![BandKind::ReportHeader, BandKind::PageHeader];
+        out.extend((0..sections).map(BandKind::SectionHeader));
+        out.push(BandKind::Detail);
+        out.extend((0..sections).rev().map(BandKind::SectionFooter));
+        out.extend([BandKind::PageFooter, BandKind::ReportFooter]);
+        out
+    }
+
+    /// Where it is in the stack of a report with `sections` sections.
+    pub fn index(self, sections: usize) -> usize {
+        match self {
+            BandKind::ReportHeader => 0,
+            BandKind::PageHeader => 1,
+            BandKind::SectionHeader(k) => 2 + k,
+            BandKind::Detail => 2 + sections,
+            BandKind::SectionFooter(k) => 3 + sections + (sections - 1 - k),
+            BandKind::PageFooter => 3 + 2 * sections,
+            BandKind::ReportFooter => 4 + 2 * sections,
+        }
+    }
+
+    /// Its name in the designer, without the section's item.
+    pub fn label(self) -> &'static str {
+        match self {
+            BandKind::ReportHeader => "Report header",
+            BandKind::PageHeader => "Page header",
+            BandKind::SectionHeader(_) => "Section header",
+            BandKind::Detail => "Detail",
+            BandKind::SectionFooter(_) => "Section footer",
+            BandKind::PageFooter => "Page footer",
+            BandKind::ReportFooter => "Report footer",
+        }
+    }
+
+    /// Whether its band is drawn on every page, and so can use `page`.
+    pub fn on_every_page(self) -> bool {
+        matches!(self, BandKind::PageHeader | BandKind::PageFooter)
+    }
+}
+
+/// The heights the bands of a new multipage report start with, in points:
+/// the report header and footer are optional, so they start hidden.
+const START_HEIGHTS: [(BandKind, u32); 5] = [
+    (BandKind::ReportHeader, 0),
+    (BandKind::PageHeader, 28),
+    (BandKind::Detail, 24),
+    (BandKind::PageFooter, 28),
+    (BandKind::ReportFooter, 0),
+];
+
+/// A new band: a Free group `height` points tall.
+pub fn new_band(height: u32) -> Control {
+    let mut band = Control::new(ControlKind::Group);
+    band.layout = Some(form::GroupLayout::Free);
+    band.height = Some(height);
+    band
+}
+
+/// The number of sections of a layout that is a stack of bands, or None if
+/// it is not one: an odd number of controls, at least five, all Free groups.
+pub fn band_sections(layout: &FormDesign) -> Option<usize> {
+    let n = layout.controls.len();
+    let bands = n >= 5 && n % 2 == 1 && layout.controls.iter().all(Control::is_free);
+    bands.then(|| (n - 5) / 2)
+}
+
+/// Adds a section inside the innermost one (or the first), around the
+/// detail band: its header goes just above the detail band and its footer
+/// just under it. Returns its depth. None if the layout is not a stack of
+/// bands.
+pub fn add_section(layout: &mut FormDesign) -> Option<usize> {
+    let n = band_sections(layout)?;
+    let detail = BandKind::Detail.index(n);
+    let mut header = new_band(24);
+    header.item_name = Some(if n == 0 {
+        "group".to_owned()
+    } else {
+        format!("group{}", n + 1)
+    });
+    layout.controls.insert(detail, header);
+    // The detail band is now one further down; the footer goes under it.
+    layout.controls.insert(detail + 2, new_band(0));
+    Some(n)
+}
+
+/// Takes away the section at depth `k`, its header and its footer with what
+/// is on them. Returns whether there was one.
+pub fn remove_section(layout: &mut FormDesign, k: usize) -> bool {
+    let Some(n) = band_sections(layout) else {
+        return false;
+    };
+    if k >= n {
+        return false;
+    }
+    let footer = BandKind::SectionFooter(k).index(n);
+    let header = BandKind::SectionHeader(k).index(n);
+    layout.controls.remove(footer);
+    layout.controls.remove(header);
+    true
 }
 
 impl ReportDesign {
     /// An empty report of `kind`.
+    /// A multipage report starts as its stack of bands, without sections.
     pub fn new(kind: ReportKind) -> ReportDesign {
+        let mut layout = FormDesign::default();
+        if kind == ReportKind::Multipage {
+            layout.controls = BandKind::stack(0)
+                .into_iter()
+                .map(|band| {
+                    let height = START_HEIGHTS
+                        .iter()
+                        .find(|(b, _)| *b == band)
+                        .map_or(24, |(_, h)| *h);
+                    new_band(height)
+                })
+                .collect();
+        }
         ReportDesign {
             version: REPORT_VERSION,
             kind,
             page: PageSetup::default(),
-            layout: FormDesign::default(),
-            canvas: false,
+            layout,
+            canvas: kind == ReportKind::Multipage,
             height: None,
+            sections: Vec::new(),
         }
+    }
+
+    /// The number of sections, if this is a multipage report whose controls
+    /// are its stack of bands.
+    pub fn bands(&self) -> Option<usize> {
+        if self.kind != ReportKind::Multipage || !self.canvas {
+            return None;
+        }
+        band_sections(&self.layout)
+    }
+
+    /// Which band the control at the top level at `index` is.
+    pub fn band_kind(&self, index: usize) -> Option<BandKind> {
+        BandKind::stack(self.bands()?).get(index).copied()
+    }
+
+    /// The name of a band in the designer: *Section header: unit*, with the
+    /// item name of its section.
+    pub fn band_name(&self, index: usize) -> String {
+        let Some(kind) = self.band_kind(index) else {
+            return String::new();
+        };
+        match kind {
+            BandKind::SectionHeader(k) | BandKind::SectionFooter(k) => {
+                let n = self.bands().unwrap_or(0);
+                let header = BandKind::SectionHeader(k).index(n);
+                let item = self.layout.controls[header]
+                    .item_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map_or_else(|| format!("{}", k + 1), str::to_owned);
+                format!("{}: {item}", kind.label())
+            }
+            _ => kind.label().to_owned(),
+        }
+    }
+
+    /// The options of the section at depth `k`.
+    pub fn section_options(&self, k: usize) -> SectionOptions {
+        self.sections.get(k).copied().unwrap_or_default()
     }
 
     /// The design as the JSON document it is stored as, pretty-printed.
@@ -204,6 +408,32 @@ impl ReportDesign {
     /// write procedures.
     pub fn problems(&self) -> Vec<(Address, String)> {
         let mut out = Vec::new();
+        if self.kind == ReportKind::Multipage && self.canvas {
+            match self.bands() {
+                None => out.push((
+                    Vec::new(),
+                    "the controls of a multipage report are its bands: report header, page \
+                     header, a header and a footer for each section, detail, page footer and \
+                     report footer, each a Free group"
+                        .to_owned(),
+                )),
+                Some(n) => {
+                    for k in 0..n {
+                        let at = BandKind::SectionHeader(k).index(n);
+                        if !has_text(&self.layout.controls[at].items) {
+                            out.push((
+                                vec![at],
+                                format!(
+                                    "section {} has no items: give its header band an items \
+                                     expression",
+                                    k + 1
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         for (at, control) in self.layout.walk() {
             if let Some(why) = control_problem(control) {
                 out.push((at, why));
@@ -301,9 +531,18 @@ const REPORT_DEFS: &str = r##"{
       "page": {"$ref": "#/$defs/PageSetup"},
       "layout": {"$ref": "#/$defs/Form"},
       "canvas": {"type": "boolean"},
-      "height": {"type": "integer", "minimum": 0, "maximum": 20000}
+      "height": {"type": "integer", "minimum": 0, "maximum": 20000},
+      "sections": {"type": "array", "items": {"$ref": "#/$defs/SectionOptions"}}
     },
     "required": ["version", "kind", "layout"]
+  },
+  "SectionOptions": {
+    "type": "object",
+    "properties": {
+      "new_page": {"type": "boolean"},
+      "keep_with_first": {"type": "boolean"},
+      "repeat_header": {"type": "boolean"}
+    }
   },
   "PageSetup": {
     "type": "object",
@@ -335,42 +574,125 @@ pub fn report_schema() -> &'static TypeSpec {
 
 // ------------------------------------------------- the starting point
 
-/// A new report of `kind` that starts from the array at `array` of the tab
-/// `tab` (whose schema is `spec`): what the generated form has for that
-/// array, with the items from an expression (`Orders.items as order`) and
-/// fields that show expressions (`order.qty`) in place of paths. A table for
-/// scalar or flat items, designed items otherwise. None if there is no array
-/// there.
-///
-/// Not used now that reports have no repeaters (owner, 2026-11-03): starting
-/// from an array will make a multipage report whose detail band reads the
-/// item (step 12g), built from what this does.
-pub fn starting_design(
-    kind: ReportKind,
-    spec: &TypeSpec,
-    tab: &str,
-    array: &Path,
-) -> Option<ReportDesign> {
+/// The height of a row of the fields a report starts with, and its gap.
+const START_ROW: u32 = 18;
+const START_GAP: u32 = 12;
+
+/// The narrowest column a report starts with.
+const START_MIN_COLUMN: u32 = 60;
+
+/// A new multipage report that starts from the array at `array` of the tab
+/// `tab` (whose schema is `spec`), as DESIGN.md, The report designer, "A
+/// starting point" has it: the detail band repeats for each item
+/// (`Orders.items as order`), with a field for each scalar of the item that
+/// shows an expression (`order.qty`), side by side, and the page header has
+/// a heading over each. The page footer numbers the pages. None if there is
+/// no array there.
+pub fn starting_design(spec: &TypeSpec, tab: &str, array: &Path) -> Option<ReportDesign> {
     let resolved = spec.resolve(array)?;
     let Kind::Array { items, .. } = &spec.get(resolved.ty).kind else {
         return None;
     };
     let item = item_name(tab, array, &[]);
-    let label = match array.segments().last() {
-        Some(Segment::Key(key)) => key.clone(),
-        _ => tab.to_owned(),
-    };
-    let repeater = repeater_over(
-        spec,
-        *items,
-        attribute_chain(tab, array),
-        item,
-        label,
-        &mut Vec::new(),
-    );
-    let mut design = ReportDesign::new(kind);
-    design.layout.controls.push(repeater);
+    let columns = flat_columns(spec, *items).unwrap_or_else(|| scalar_fields(spec, *items));
+    let mut design = ReportDesign::new(ReportKind::Multipage);
+    let width = design.page.content_width().floor() as u32;
+    let count = columns.len().max(1) as u32;
+    let fits = (width + START_GAP) / (START_MIN_COLUMN + START_GAP);
+    let per_row = count.min(fits.max(1));
+    let column_w = (width - START_GAP * (per_row - 1)) / per_row;
+    let rows = count.div_ceil(per_row);
+    let mut header = new_band(rows * (START_ROW + START_GAP) + 4);
+    let mut detail = new_band(rows * (START_ROW + START_GAP));
+    detail.items = Some(attribute_chain(tab, array));
+    detail.item_name = Some(item.clone());
+    for (i, fields) in columns.iter().enumerate() {
+        let i = i as u32;
+        let x = (i % per_row) * (column_w + START_GAP);
+        let y = (i / per_row) * (START_ROW + START_GAP);
+        let mut heading = Control::new(ControlKind::Label);
+        heading.text = Some(if fields.is_empty() {
+            item.clone()
+        } else {
+            fields.join(".")
+        });
+        heading.bold = Some(true);
+        let mut field = Control::new(ControlKind::Field);
+        field.value = Some(read_chain(spec, *items, &item, fields));
+        // A number is on the right of its column, under its heading.
+        let number = field_type(spec, *items, fields)
+            .is_some_and(|t| matches!(spec.get(t).kind, Kind::Integer(_) | Kind::Number(_)));
+        for (c, top) in [(&mut heading, y + 4), (&mut field, y)] {
+            if number {
+                c.align = Some(form::Alignment::Right);
+            }
+            c.x = Some(x);
+            c.y = Some(top);
+            c.width = Some(column_w);
+            c.height = Some(START_ROW);
+        }
+        header.children.push(heading);
+        detail.children.push(field);
+    }
+    let mut footer = new_band(28);
+    let mut number = Control::new(ControlKind::Label);
+    number.template = true;
+    number.text = Some("Page {page.number} of {page.count}".to_owned());
+    number.align = Some(form::Alignment::Right);
+    number.x = Some(width.saturating_sub(160));
+    number.y = Some(6);
+    number.width = Some(160);
+    number.height = Some(START_ROW);
+    footer.children.push(number);
+    let n = 0;
+    design.layout.controls[BandKind::PageHeader.index(n)] = header;
+    design.layout.controls[BandKind::Detail.index(n)] = detail;
+    design.layout.controls[BandKind::PageFooter.index(n)] = footer;
     Some(design)
+}
+
+/// The type reached from `ty` by the field names `fields`.
+fn field_type(spec: &TypeSpec, ty: TypeId, fields: &[String]) -> Option<TypeId> {
+    let mut here = ty;
+    for name in fields {
+        here = match &spec.get(here).kind {
+            Kind::Object { fields } => fields.iter().find(|f| &f.name == name)?.ty,
+            _ => return None,
+        };
+    }
+    Some(here)
+}
+
+/// The scalar fields of items of type `ty` that are objects with arrays or
+/// maps in them: each as the names that reach it, objects flattened.
+fn scalar_fields(spec: &TypeSpec, ty: TypeId) -> Vec<Vec<String>> {
+    fn collect(
+        spec: &TypeSpec,
+        ty: TypeId,
+        prefix: &mut Vec<String>,
+        out: &mut Vec<Vec<String>>,
+        open: &mut Vec<TypeId>,
+    ) {
+        let Kind::Object { fields } = &spec.get(ty).kind else {
+            return;
+        };
+        for field in fields {
+            prefix.push(field.name.clone());
+            match &spec.get(field.ty).kind {
+                Kind::Object { .. } if !open.contains(&field.ty) => {
+                    open.push(field.ty);
+                    collect(spec, field.ty, prefix, out, open);
+                    open.pop();
+                }
+                Kind::Object { .. } | Kind::Array { .. } | Kind::Map { .. } => {}
+                _ => out.push(prefix.clone()),
+            }
+            prefix.pop();
+        }
+    }
+    let mut out = Vec::new();
+    collect(spec, ty, &mut Vec::new(), &mut out, &mut vec![ty]);
+    out
 }
 
 /// The array paths of a schema that a report can start from: every array
@@ -404,147 +726,25 @@ fn collect_arrays(
     }
 }
 
-/// A repeater over `items`, of item type `ty`, naming its item `item`.
-/// `outer` holds the item names of the repeaters around it.
-fn repeater_over(
-    spec: &TypeSpec,
-    ty: TypeId,
-    items: String,
-    item: String,
-    label: String,
-    outer: &mut Vec<String>,
-) -> Control {
-    let mut repeater = Control::new(ControlKind::Repeater);
-    repeater.label = Some(label);
-    repeater.items = Some(items);
-    repeater.item_name = Some(item.clone());
-    match flat_columns(spec, ty) {
-        Some(columns) => {
-            repeater.mode = Some(RepeaterMode::Table);
-            // A column with no expression shows the item's field of its name
-            // (blank when it is absent), or the item for `value`.
-            repeater.table_columns = columns
-                .into_iter()
-                .map(|fields| {
-                    let name = if fields.is_empty() {
-                        "value".to_owned()
-                    } else {
-                        fields.join(".")
-                    };
-                    ColumnDesign::named(&name)
-                })
-                .collect();
-        }
-        None => {
-            repeater.mode = Some(RepeaterMode::Stacked);
-            outer.push(item.clone());
-            repeater.children = form::item_controls(spec, ty)
-                .into_iter()
-                .map(|c| to_expressions(spec, ty, c, &item, outer))
-                .collect();
-            outer.pop();
-        }
-    }
-    repeater
-}
-
-/// A control of the generated items, with its path (relative to the item)
-/// replaced by an expression of `item`.
-fn to_expressions(
-    spec: &TypeSpec,
-    item_ty: TypeId,
-    mut control: Control,
-    item: &str,
-    outer: &mut Vec<String>,
-) -> Control {
-    let path = control.bound_path().unwrap_or_else(Path::root);
-    control.path = None;
-    control.allow_other = false;
-    let fields: Vec<String> = path
-        .segments()
-        .iter()
-        .filter_map(|s| match s {
-            Segment::Key(k) => Some(k.clone()),
-            Segment::Index(_) => None,
-        })
-        .collect();
-    match control.kind {
-        ControlKind::Field => {
-            control.value = Some(read_chain(spec, item_ty, item, &fields, None));
-        }
-        ControlKind::Repeater => {
-            let ty = resolve_from(spec, item_ty, &fields).and_then(|t| match &spec.get(t).kind {
-                Kind::Array { items, .. } => Some(*items),
-                _ => None,
-            });
-            if let Some(inner_ty) = ty {
-                let mut taken = outer.clone();
-                taken.push(item.to_owned());
-                let inner = item_name("", &path, &taken);
-                let label = control.label.clone().unwrap_or_default();
-                return repeater_over(
-                    spec,
-                    inner_ty,
-                    read_chain(spec, item_ty, item, &fields, Some("[]")),
-                    inner,
-                    label,
-                    outer,
-                );
-            }
-        }
-        _ => {}
-    }
-    control.children = std::mem::take(&mut control.children)
-        .into_iter()
-        .map(|c| to_expressions(spec, item_ty, c, item, outer))
-        .collect();
-    control
-}
-
 /// The expression that reads `fields` from `item`, of type `ty`: a field
 /// that may be absent is read with `.get("name")`, so that it gives `None`
-/// (or `default`, for the last one) rather than an error.
-fn read_chain(
-    spec: &TypeSpec,
-    ty: TypeId,
-    item: &str,
-    fields: &[String],
-    default: Option<&str>,
-) -> String {
+/// rather than an error.
+fn read_chain(spec: &TypeSpec, ty: TypeId, item: &str, fields: &[String]) -> String {
     let mut out = item.to_owned();
     let mut here = Some(ty);
-    for (i, name) in fields.iter().enumerate() {
+    for name in fields {
         let field = here.and_then(|t| match &spec.get(t).kind {
             Kind::Object { fields } => fields.iter().find(|f| &f.name == name),
             _ => None,
         });
         let quoted = serde_json::Value::from(name.as_str()).to_string();
         match field {
-            Some(f) if !f.required => {
-                let last = i + 1 == fields.len();
-                match default.filter(|_| last) {
-                    Some(d) => out.push_str(&format!(".get({quoted}, {d})")),
-                    None => out.push_str(&format!(".get({quoted})")),
-                }
-            }
+            Some(f) if !f.required => out.push_str(&format!(".get({quoted})")),
             _ => out = chain_from(&out, std::slice::from_ref(name)),
         }
         here = field.map(|f| f.ty);
     }
     out
-}
-
-/// The type of the field reached from type `ty` by `fields`.
-fn resolve_from(spec: &TypeSpec, ty: TypeId, fields: &[String]) -> Option<TypeId> {
-    let mut here = ty;
-    for name in fields {
-        here = match &spec.get(here).kind {
-            Kind::Object { fields } => fields.iter().find(|f| &f.name == name)?.ty,
-            Kind::Map { value } => *value,
-            _ => return None,
-        };
-    }
-    Some(here)
 }
 
 /// The columns of a table of items of type `ty`, as the field names of each

@@ -7,7 +7,7 @@ use std::time::Duration;
 use cliotree_app::ClioApp;
 use cliotree_app::control;
 use cliotree_core::form::{Control, ControlKind};
-use cliotree_core::report::ReportDesign;
+use cliotree_core::report::{BandKind, ReportDesign, ReportKind};
 use cliotree_core::{Path, Value};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -87,16 +87,217 @@ fn the_palette_of_a_report_has_no_repeater_and_a_repeater_is_a_problem() {
     assert!(problems[0].1.contains("detail band"), "{problems:?}");
 }
 
+// ------------------------------------------------------- multipage
+
+/// A multipage report of the items of Orders, started from the array.
+fn lines_report(harness: &mut Harness<'_, ClioApp>) {
+    new_report(
+        harness,
+        json!({"name": "Lines", "report": true, "start_tab": "Orders", "start_path": "items"}),
+    );
+    settle(harness);
+}
+
+/// The text of the page of a multipage report being shown.
+fn page_texts(harness: &Harness<'_, ClioApp>) -> Vec<String> {
+    let app = harness.state();
+    app.report
+        .paged
+        .as_ref()
+        .and_then(|p| p.pages.get(app.report.page))
+        .map(|l| l.texts().into_iter().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+fn lines(harness: &Harness<'_, ClioApp>) -> ReportDesign {
+    harness.state().calc().report("Lines").unwrap().clone()
+}
+
+fn set_lines(harness: &mut Harness<'_, ClioApp>, design: ReportDesign) {
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Lines", design)
+        .unwrap();
+    settle(harness);
+}
+
 #[test]
-fn a_report_does_not_start_from_an_array_yet() {
+fn a_report_started_from_an_array_shows_each_item_page_by_page() {
     let mut harness = window();
-    let why = control::run(
-        harness.state_mut(),
-        "new_tab",
-        &json!({"name": "Lines", "report": true, "start_tab": "Orders", "start_path": "items"}),
-    )
-    .unwrap_err();
-    assert!(why.contains("multipage"), "{why}");
+    lines_report(&mut harness);
+    let design = lines(&harness);
+    assert_eq!(design.kind, ReportKind::Multipage);
+    assert_eq!(design.bands(), Some(0));
+    let texts = page_texts(&harness);
+    for expected in [
+        "sku",
+        "qty",
+        "A-100",
+        "B-220",
+        "C-310",
+        "gift wrap",
+        "Page 1 of 1",
+    ] {
+        assert!(texts.iter().any(|t| t == expected), "{expected}: {texts:?}");
+    }
+    assert!(harness.query_by_label("Page 1 of 1").is_some());
+}
+
+#[test]
+fn the_pages_turn_with_the_buttons_and_the_page_keys() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    // Two rows of 300 points to a page: the third item is on page 2.
+    let mut design = lines(&harness);
+    design.layout.controls[BandKind::Detail.index(0)].height = Some(300);
+    set_lines(&mut harness, design);
+    assert!(harness.query_by_label("Page 1 of 2").is_some());
+    assert!(!page_texts(&harness).iter().any(|t| t == "C-310"));
+    click(&mut harness, "Next page");
+    harness.run();
+    assert_eq!(harness.state().report.page, 1);
+    let texts = page_texts(&harness);
+    assert!(texts.iter().any(|t| t == "C-310"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Page 2 of 2"), "{texts:?}");
+    harness.key_press(egui::Key::PageUp);
+    harness.run();
+    assert_eq!(harness.state().report.page, 0);
+}
+
+#[test]
+fn edit_report_shows_the_stack_of_bands_and_a_band_is_resized_by_its_line() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.run();
+    let laid = harness.state().report.laid.clone().unwrap();
+    assert_eq!(laid.bands.len(), 5);
+    // The detail band shows the first item.
+    assert!(laid.texts().contains(&"A-100"), "{:?}", laid.texts());
+    let detail = BandKind::Detail.index(0);
+    let band = laid.bands[detail].1;
+    let before = lines(&harness).layout.controls[detail].height.unwrap();
+    let from = on_screen(&harness, 300.0, band.y + band.h + 1.0);
+    let to = on_screen(&harness, 300.0, band.y + band.h + 41.0);
+    drag(&mut harness, from, to);
+    let after = lines(&harness).layout.controls[detail].height.unwrap();
+    // Forty points down, snapped to the 4-point grid.
+    assert_eq!(after, (before + 40).div_ceil(4) * 4);
+    click(&mut harness, "Undo layout");
+    assert_eq!(
+        lines(&harness).layout.controls[detail].height.unwrap(),
+        before
+    );
+}
+
+#[test]
+fn the_palette_adds_to_the_detail_band_and_a_band_is_not_deleted() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    let detail = BandKind::Detail.index(0);
+    let before = lines(&harness).layout.controls[detail].clone();
+    click(&mut harness, "Add label");
+    let after = lines(&harness).layout.controls[detail].clone();
+    assert_eq!(after.children.len(), before.children.len() + 1);
+    // The band grew to hold it.
+    let added = after.children.last().unwrap();
+    assert!(after.height.unwrap() >= added.y.unwrap() + added.height.unwrap());
+    assert_eq!(
+        harness.state().selected_control(),
+        Some(vec![detail, after.children.len() - 1])
+    );
+    // A band selected is not deleted.
+    harness.state_mut().select_control(Some(vec![detail]));
+    harness.run();
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    assert_eq!(lines(&harness).bands(), Some(0));
+}
+
+#[test]
+fn a_control_is_dragged_from_one_band_to_another() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.run();
+    let laid = harness.state().report.laid.clone().unwrap();
+    let detail = BandKind::Detail.index(0);
+    let header = BandKind::PageHeader.index(0);
+    let (from_band, to_band) = (laid.bands[detail].1, laid.bands[header].1);
+    let headings = lines(&harness).layout.controls[header].children.len();
+    let from = on_screen(&harness, 10.0, from_band.y + 6.0);
+    let to = on_screen(&harness, 210.0, to_band.y + 2.0);
+    drag(&mut harness, from, to);
+    let design = lines(&harness);
+    assert_eq!(design.layout.controls[header].children.len(), headings + 1);
+    let moved = design.layout.controls[header].children.last().unwrap();
+    assert_eq!(moved.value.as_deref(), Some("order.sku"));
+    assert!(moved.x.unwrap() >= 196);
+}
+
+#[test]
+fn the_property_page_sets_up_the_page_and_adds_sections() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    harness.state_mut().select_control(None);
+    harness.run();
+    assert!(harness.query_by_label("Top margin").is_some());
+    click(&mut harness, "Add section");
+    settle(&mut harness);
+    let design = lines(&harness);
+    assert_eq!(design.bands(), Some(1));
+    // Its header band is selected, and says it needs items.
+    assert_eq!(harness.state().selected_control(), Some(vec![2]));
+    assert!(design.problems()[0].1.contains("items"));
+    click(&mut harness, "Undo layout");
+    assert_eq!(lines(&harness).bands(), Some(0));
+}
+
+#[test]
+fn a_section_groups_the_detail_bands_and_its_footer_totals_them() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    let mut design = lines(&harness);
+    cliotree_core::report::add_section(&mut design.layout);
+    // A section for the item with a note (B-220) and those without.
+    let header = &mut design.layout.controls[2];
+    header.items = Some("[True, False]".into());
+    header.item_name = Some("noted".into());
+    let mut name = Control::new(ControlKind::Field);
+    name.value = Some("'With a note' if noted else 'Without'".into());
+    name.width = Some(200);
+    name.height = Some(20);
+    header.children.push(name);
+    let detail = &mut design.layout.controls[3];
+    detail.items = Some("[o for o in Orders.items if (o.sku == 'B-220') == noted]".into());
+    detail.list_name = Some("rows".into());
+    let mut total = Control::new(ControlKind::Field);
+    total.value = Some("f'{len(rows)} lines'".into());
+    total.width = Some(200);
+    total.height = Some(20);
+    let footer = &mut design.layout.controls[4];
+    footer.height = Some(24);
+    footer.children.push(total);
+    set_lines(&mut harness, design);
+    settle(&mut harness);
+    let texts = page_texts(&harness);
+    let at = |t: &str| {
+        texts
+            .iter()
+            .position(|x| x == t)
+            .unwrap_or_else(|| panic!("{t}: {texts:?}"))
+    };
+    assert!(at("With a note") < at("B-220"));
+    assert!(at("B-220") < at("1 lines"));
+    assert!(at("1 lines") < at("Without"));
+    assert!(at("Without") < at("A-100"));
+    assert!(at("C-310") < at("2 lines"));
 }
 
 /// A report with one field showing `expression`, labelled `label`.

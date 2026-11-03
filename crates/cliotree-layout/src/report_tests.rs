@@ -2,11 +2,14 @@
 
 use std::collections::HashMap;
 
-use cliotree_core::Value;
 use cliotree_core::form::{Alignment, Control, ControlKind, GroupLayout, TrackSize};
-use cliotree_core::report::{ReportDesign, ReportKind};
+use cliotree_core::report::{Paper, ReportDesign, ReportKind, add_section};
+use cliotree_core::{Node, Value};
 
-use crate::report::{Got, Laid, Paint, Prop, Source, UNTRUSTED, canvas, single_page, to_canvas};
+use crate::report::{
+    BAND_GAP, Got, HIDDEN_BAND, Laid, Paint, Prop, Source, UNTRUSTED, bands, canvas, pages,
+    single_page, to_canvas,
+};
 
 /// Values by control, items and expression; columns by control, column, row
 /// and expression. What is not there is no expression.
@@ -359,4 +362,109 @@ fn a_flow_design_becomes_a_canvas_with_its_controls_where_they_were() {
         to_canvas(&design, &source, false).layout.controls[1].height,
         None
     );
+}
+
+// ------------------------------------------------------- multipage
+
+fn multipage() -> ReportDesign {
+    let mut design = ReportDesign::new(ReportKind::Multipage);
+    design.page.paper = Paper::Letter;
+    design
+}
+
+fn rows(n: i64) -> Value {
+    Value::Array((0..n).map(|i| Node::new(Value::Int(i))).collect())
+}
+
+#[test]
+fn the_designer_stacks_the_bands_with_the_first_items() {
+    let mut design = multipage();
+    add_section(&mut design.layout);
+    design.layout.controls[1]
+        .children
+        .push(at(label("Heading"), 10, 4, 100, Some(20)));
+    design.layout.controls[3]
+        .children
+        .push(at(field(""), 0, 0, 200, Some(20)));
+    // The detail field shows the first detail item of the first section.
+    let fake = Fake::default().value(&[3, 0], &[0, 0], Prop::Value, s("first"));
+    let laid = bands(&design, &fake);
+    assert_eq!(laid.bands.len(), 7);
+    // The report header is hidden: a thin strip.
+    assert_eq!(laid.bands[0].1.h, HIDDEN_BAND);
+    let page_header = laid.bands[1].1;
+    assert_eq!(page_header.y, HIDDEN_BAND + BAND_GAP);
+    assert_eq!(page_header.h, 28.0);
+    assert_eq!(place(&laid, "Heading"), (10.0, page_header.y + 4.0));
+    assert!(laid.texts().contains(&"first"), "{:?}", laid.texts());
+    // Each band is a place to drop controls, the hidden one too.
+    let insides: Vec<&[usize]> = laid.insides.iter().map(|a| a.at.as_slice()).collect();
+    for i in 0..7 {
+        assert!(insides.contains(&&[i][..]), "{i}: {insides:?}");
+    }
+    assert_eq!(laid.width, design.page.content_width());
+}
+
+#[test]
+fn a_multipage_report_breaks_into_pages_between_bands() {
+    let mut design = multipage();
+    design.layout.controls[1]
+        .children
+        .push(at(label("Top"), 0, 0, 100, Some(20)));
+    let detail = &mut design.layout.controls[2];
+    detail.height = Some(100);
+    detail.children.push(at(field(""), 0, 0, 200, Some(20)));
+    let mut fake = Fake::default().value(&[2], &[], Prop::Items, rows(10));
+    for i in 0..10 {
+        fake = fake.value(&[2, 0], &[i], Prop::Value, s(&format!("row {i}")));
+    }
+    // 720 points inside the margins, less 28 for each of the page header
+    // and footer: six rows of 100 to a page.
+    let paged = pages(&design, &fake, 100_000);
+    assert_eq!((paged.width, paged.height), (612.0, 792.0));
+    assert_eq!(paged.pages.len(), 2);
+    assert_eq!(place(&paged.pages[0], "row 0").1, 36.0 + 28.0);
+    assert_eq!(place(&paged.pages[0], "row 5").1, 36.0 + 28.0 + 500.0);
+    assert_eq!(place(&paged.pages[1], "row 6").1, 36.0 + 28.0);
+    assert_eq!(place(&paged.pages[1], "Top"), (36.0, 36.0));
+    assert!(paged.warnings.is_empty());
+
+    // A band taller than the page is cut, and the report says so.
+    design.layout.controls[2].height = Some(700);
+    let paged = pages(&design, &fake, 100_000);
+    assert!(paged.warnings[0].contains("Detail"), "{:?}", paged.warnings);
+    // And it stops at the limit.
+    design.layout.controls[2].height = Some(100);
+    let paged = pages(&design, &fake, 3);
+    assert_eq!(paged.pages.len(), 1);
+    assert!(paged.pages[0].texts().iter().any(|t| t.contains("limit")));
+}
+
+#[test]
+fn a_band_that_is_not_visible_is_left_out_of_the_pages() {
+    let mut design = multipage();
+    design.layout.controls[2]
+        .children
+        .push(at(field(""), 0, 0, 200, Some(20)));
+    let fake = Fake::default()
+        .value(&[2], &[], Prop::Items, rows(3))
+        .value(&[2], &[1], Prop::Visible, Value::Bool(false))
+        .value(&[2, 0], &[0], Prop::Value, s("a"))
+        .value(&[2, 0], &[1], Prop::Value, s("b"))
+        .value(&[2, 0], &[2], Prop::Value, s("c"));
+    let paged = pages(&design, &fake, 100_000);
+    assert_eq!(paged.pages[0].texts(), ["a", "c"]);
+    assert_eq!(place(&paged.pages[0], "c").1, 36.0 + 28.0 + 24.0);
+}
+
+#[test]
+fn an_old_multipage_design_becomes_its_bands() {
+    let mut design = ReportDesign::new(ReportKind::Multipage);
+    design.canvas = false;
+    design.layout.controls = vec![label("Hello")];
+    let turned = to_canvas(&design, &Fake::default(), true);
+    assert_eq!(turned.bands(), Some(0));
+    let header = &turned.layout.controls[0];
+    assert_eq!(header.children.len(), 1);
+    assert!(header.height.unwrap() > 0);
 }

@@ -1523,7 +1523,7 @@ pub fn form_schema_source() -> &'static str {
         "header_font_size": {"type": "integer", "minimum": 6, "maximum": 72},
         "width": {"type": "integer", "minimum": 24, "maximum": 2000},
         "fill": {"type": "boolean"},
-        "height": {"type": "integer", "minimum": 16, "maximum": 2000},
+        "height": {"type": "integer", "minimum": 0, "maximum": 2000},
         "align": {"type": "string", "enum": ["left", "center", "right"]},
         "label_position": {"type": "string", "enum": ["left", "top", "none"]},
         "label_width": {"type": "integer", "minimum": 0, "maximum": 600},

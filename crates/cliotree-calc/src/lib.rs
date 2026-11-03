@@ -121,6 +121,10 @@ mod reports_tests;
 mod report_exprs_tests;
 
 #[cfg(test)]
+#[path = "report_bands_tests.rs"]
+mod report_bands_tests;
+
+#[cfg(test)]
 #[path = "formats_tests.rs"]
 mod formats_tests;
 
