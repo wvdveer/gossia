@@ -647,3 +647,181 @@ fn a_separator_s_thickness_is_set_on_the_property_page() {
     click(&mut harness, "Undo layout");
     assert_eq!(separator(&harness).thickness, None);
 }
+
+// ------------------------------------------------------- parameters
+
+/// A report with a field per expression and the given parameters.
+fn report_with_params(
+    harness: &mut Harness<'_, ClioApp>,
+    values: &[&str],
+    params: Vec<cliotree_core::report::ReportParam>,
+) {
+    new_report(harness, json!({"name": "Summary", "report": true}));
+    let mut design = ReportDesign::new(Default::default());
+    for (i, value) in values.iter().enumerate() {
+        let mut field = Control::new(ControlKind::Field);
+        field.value = Some((*value).to_owned());
+        field.x = Some(0);
+        field.y = Some(i as u32 * 24);
+        field.width = Some(300);
+        field.height = Some(20);
+        design.layout.controls.push(field);
+    }
+    design.canvas = true;
+    design.params = params;
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(harness);
+}
+
+fn sku_param() -> cliotree_core::report::ReportParam {
+    use cliotree_core::report::{ParamKind, ReportParam};
+    let mut p = ReportParam::new("sku", ParamKind::Choice);
+    p.label = Some("Product".into());
+    p.choices = Some("[i.sku for i in Orders.items]".into());
+    p.default = Some("'A-100'".into());
+    p
+}
+
+#[test]
+fn the_parameter_bar_chooses_a_value_and_the_report_follows() {
+    let mut harness = window();
+    report_with_params(
+        &mut harness,
+        &["[i.qty for i in Orders.items if i.sku == params.sku][0]"],
+        vec![sku_param()],
+    );
+    let before = texts(&harness);
+    // Open the list and pick another product.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Product")
+        .click();
+    harness.run();
+    harness.get_by_label("B-220").click();
+    settle(&mut harness);
+    let chosen = harness.state().calc().chosen_params("Summary").cloned();
+    assert_eq!(
+        chosen.and_then(|m| m.get("sku").cloned()),
+        Some(Value::Str("B-220".into()))
+    );
+    assert_ne!(texts(&harness), before);
+    // Defaults puts it back, and it is not an edit Undo takes back.
+    click(&mut harness, "Defaults");
+    settle(&mut harness);
+    assert_eq!(texts(&harness), before);
+    assert!(harness.state().calc().chosen_params("Summary").is_none());
+}
+
+#[test]
+fn a_required_parameter_that_is_empty_stops_the_report() {
+    use cliotree_core::report::{ParamKind, ReportParam};
+    let mut harness = window();
+    let mut customer = ReportParam::new("customer", ParamKind::Text);
+    customer.label = Some("Customer".into());
+    customer.required = true;
+    report_with_params(&mut harness, &["params.customer.upper()"], vec![customer]);
+    assert!(
+        harness
+            .query_by_label("Fill in Customer to see the report.")
+            .is_some()
+    );
+    control::run(
+        harness.state_mut(),
+        "report_param",
+        &json!({"report": "Summary", "name": "customer", "value": "acme"}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    assert!(
+        harness
+            .query_by_label("Fill in Customer to see the report.")
+            .is_none()
+    );
+    assert_eq!(texts(&harness), ["ACME"]);
+}
+
+#[test]
+fn a_period_parameter_and_parameters_on_the_property_page() {
+    use cliotree_core::report::{ParamKind, PeriodPreset, ReportParam};
+    let mut harness = window();
+    let mut when = ReportParam::new("when", ParamKind::Period);
+    when.preset = Some(PeriodPreset::ThisYear);
+    report_with_params(&mut harness, &["str(params.when.start)"], vec![when]);
+    let year = cliotree_calc::today().format("%Y").to_string();
+    assert_eq!(texts(&harness), [format!("{year}-01-01")]);
+    control::run(
+        harness.state_mut(),
+        "report_param",
+        &json!({"report": "Summary", "name": "when",
+                "value": {"start": "2025-03-01", "end": "2025-03-31"}}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    assert_eq!(texts(&harness), ["2025-03-01"]);
+
+    // On the property page, with nothing selected.
+    click(&mut harness, "Edit report");
+    harness.state_mut().select_control(None);
+    harness.run();
+    click(&mut harness, "Add parameter");
+    settle(&mut harness);
+    let design = harness.state().calc().report("Summary").unwrap().clone();
+    assert_eq!(design.params.len(), 2);
+    assert_eq!(design.params[1].name, "param1");
+    assert_eq!(design.params[1].kind, ParamKind::Date);
+}
+
+// ------------------------------------------------------- results cache
+
+#[test]
+fn a_report_opened_untrusted_is_drawn_from_its_results_cache() {
+    let folder = std::env::temp_dir().join(format!(
+        "cliotree-report-cache-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("cache.clio");
+    let mut harness = window();
+    report_with_params(
+        &mut harness,
+        &["[i.qty for i in Orders.items if i.sku == params.sku][0]"],
+        vec![sku_param()],
+    );
+    control::run(
+        harness.state_mut(),
+        "report_param",
+        &json!({"report": "Summary", "name": "sku", "value": "B-220"}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    let shown = texts(&harness);
+    assert!(harness.state().is_dirty(), "a parameter chosen is unsaved");
+    harness.state_mut().save_as(&path).unwrap();
+    assert!(!harness.state().is_dirty());
+
+    harness.state_mut().open_path(&path).unwrap();
+    harness.state_mut().withhold_trust(Vec::new());
+    harness.state_mut().switch_to("Summary");
+    settle(&mut harness);
+    assert_eq!(texts(&harness), shown);
+    let note = harness
+        .state()
+        .calc()
+        .report_cache("Summary")
+        .map(|c| cliotree_app::report_view::local_time(&c.calculated))
+        .unwrap();
+    assert!(
+        harness
+            .query_by_label_contains(&format!("calculated on {note}"))
+            .is_some()
+    );
+    // Its parameter is as it was, and cannot be changed.
+    let params = harness.state().calc().report_params("Summary");
+    assert_eq!(params[0].value, Value::Str("B-220".into()));
+    let _ = std::fs::remove_dir_all(&folder);
+}

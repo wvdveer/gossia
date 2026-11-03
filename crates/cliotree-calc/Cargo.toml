@@ -11,6 +11,9 @@ repository.workspace = true
 cliotree-core.workspace = true
 cliotree-std.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+# Today's date in the local time zone, for the presets of a report's period
+# parameters (the app's date picker uses it too).
+jiff = { version = "0.2.38", default-features = false, features = ["std"] }
 indexmap = "2.14.2"
 # The derive macros of RustPython name `rustpython_vm` in the code they write,
 # so the crate has to be a direct dependency as well as the one below.

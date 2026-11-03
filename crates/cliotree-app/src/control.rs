@@ -176,6 +176,8 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                     .into_iter()
                     .find(|t| t.key() == text)
                     .ok_or_else(|| format!("there is no theme {text:?}"))?;
+            } else if name == cliotree_calc::KEEP_REPORT_RESULTS {
+                dialog.keep_report_results = text == "true";
             } else if name == "display.row_density" {
                 dialog.density = crate::prefs::Density::from_key(&text)
                     .ok_or_else(|| format!("there is no row density {text:?}"))?;
@@ -308,6 +310,27 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
                 app.cancel_editing();
                 Err(why)
             }
+        }
+        // Chooses the value of a parameter of a report, as the parameter bar
+        // does: `value` read by the parameter's kind (a date as "2026-01-31",
+        // a period as {"start": ..., "end": ...}, choices as a list, null for
+        // empty), or with no `value`, its default.
+        "report_param" => {
+            let report = text_arg(args, "report")?;
+            let name = text_arg(args, "name")?;
+            let kind = app
+                .calc()
+                .report(report)
+                .ok_or_else(|| format!("there is no report called {report}"))?
+                .param(name)
+                .ok_or_else(|| format!("{report} has no parameter called {name}"))?
+                .kind;
+            let value = match args.get("value") {
+                None => None,
+                Some(v) => Some(param_value(kind, v)?),
+            };
+            app.session.calc_mut().set_report_param(report, name, value);
+            Ok(Json::Null)
         }
         // The decision of trust, so that a test need not drive the banner:
         // `{"trusted": false}` withholds it, as opening an unknown file does.
@@ -450,6 +473,54 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             "{other} is not supported yet: it waits for the workbook layer"
         )),
         other => Err(format!("unknown command {other}")),
+    }
+}
+
+/// A parameter's value from JSON, read by its kind.
+fn param_value(kind: cliotree_core::report::ParamKind, v: &Json) -> Result<Value, String> {
+    use cliotree_core::report::{ParamKind, period};
+    let date = |v: &Json| -> Result<chrono::NaiveDate, String> {
+        v.as_str()
+            .and_then(|t| t.parse().ok())
+            .ok_or_else(|| format!("{v} is not a date written as 2026-01-31"))
+    };
+    let scalar = |v: &Json| -> Result<Value, String> {
+        match v {
+            Json::String(s) => Ok(Value::Str(s.clone())),
+            Json::Bool(b) => Ok(Value::Bool(*b)),
+            Json::Number(n) => Ok(n
+                .as_i64()
+                .map(Value::Int)
+                .or_else(|| n.as_f64().map(Value::Float))
+                .ok_or("a number that does not fit")?),
+            other => Err(format!("{other} is not a value")),
+        }
+    };
+    if v.is_null() {
+        return Ok(Value::Null);
+    }
+    let value = match kind {
+        ParamKind::Date => Value::Date(date(v)?),
+        ParamKind::Period => period(
+            date(v.get("start").unwrap_or(&Json::Null))?,
+            date(v.get("end").unwrap_or(&Json::Null))?,
+        ),
+        ParamKind::Choices => Value::Array(
+            v.as_array()
+                .ok_or("choices are a list")?
+                .iter()
+                .map(|x| scalar(x).map(Node::new))
+                .collect::<Result<_, _>>()?,
+        ),
+        _ => scalar(v)?,
+    };
+    if kind.accepts(&value) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{v} is not a value of a {} parameter",
+            kind.label().to_lowercase()
+        ))
     }
 }
 

@@ -110,7 +110,7 @@ pub use modules::{ModuleProblem, ModuleStatus};
 
 #[path = "settings.rs"]
 mod settings;
-pub use settings::{Ceilings, Effective, Setting, Unit, WorkbookSettings};
+pub use settings::{Ceilings, Effective, KEEP_REPORT_RESULTS, Setting, Unit, WorkbookSettings};
 
 #[path = "export.rs"]
 mod export;
@@ -132,6 +132,17 @@ pub(crate) use tabs::SavedTab;
 mod reports;
 pub(crate) use reports::SavedReport;
 pub use reports::TabKind;
+
+#[path = "report_params.rs"]
+mod report_params;
+pub use report_params::{ParamState, today};
+pub(crate) use report_params::{mentions_params, param_key};
+
+#[path = "report_cache.rs"]
+mod report_cache;
+pub use report_cache::{ReportCache, design_digest};
+#[cfg(test)]
+pub(crate) use report_cache::{value_from_json, value_to_json};
 
 #[path = "disconnect.rs"]
 mod disconnect;
@@ -283,6 +294,14 @@ pub struct Calc {
     removed: Vec<String>,
     /// The expressions on the controls of the forms, and what they came to.
     exprs: control_exprs::ControlExprs,
+    /// The values chosen for the parameters of each report, by report and
+    /// parameter (DESIGN.md, Reports, "Report parameters").
+    params: HashMap<String, indexmap::IndexMap<String, Value>>,
+    /// Counts the changes to `params`.
+    params_version: u64,
+    /// The results cache of each report, by report (DESIGN.md, Reports,
+    /// "Report storage and the results cache").
+    caches: HashMap<String, report_cache::ReportCache>,
 }
 
 impl Calc {
@@ -311,6 +330,9 @@ impl Calc {
             module_renames: Vec::new(),
             removed: Vec::new(),
             exprs: control_exprs::ControlExprs::default(),
+            params: HashMap::new(),
+            params_version: 0,
+            caches: HashMap::new(),
         }
     }
 

@@ -33,19 +33,21 @@ pub enum Page {
     CodeEditor,
     Evaluation,
     DataSources,
+    Reports,
     Trust,
     Files,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 9] = [
+    pub const ALL: [Page; 10] = [
         Page::General,
         Page::Display,
         Page::Editing,
         Page::CodeEditor,
         Page::Evaluation,
         Page::DataSources,
+        Page::Reports,
         Page::Trust,
         Page::Files,
         Page::About,
@@ -59,6 +61,7 @@ impl Page {
             Page::CodeEditor => "Code editor",
             Page::Evaluation => "Evaluation",
             Page::DataSources => "Data sources",
+            Page::Reports => "Reports",
             Page::Trust => "Trust and security",
             Page::Files => "Files and import",
             Page::About => "About",
@@ -67,7 +70,7 @@ impl Page {
 
     /// Whether the page's settings are stored in the workbook.
     pub fn is_workbook(self) -> bool {
-        matches!(self, Page::Evaluation | Page::DataSources)
+        matches!(self, Page::Evaluation | Page::DataSources | Page::Reports)
     }
 }
 
@@ -393,6 +396,8 @@ pub struct OptionsDialog {
     pub clear_history: bool,
     /// How *Copy* writes COBOL records.
     pub binary_copy: cliotree_core::binary::BinaryText,
+    /// *Keep report results in the file*, a workbook setting.
+    pub keep_report_results: bool,
 }
 
 impl OptionsDialog {
@@ -419,6 +424,7 @@ impl OptionsDialog {
             wrap: prefs.code.wrap,
             clear_history: false,
             binary_copy: prefs.binary_copy,
+            keep_report_results: settings.keep_report_results(),
         }
     }
 
@@ -487,6 +493,7 @@ impl OptionsDialog {
                 settings.set(setting, value);
             }
         }
+        settings.set_keep_report_results(self.keep_report_results);
         settings
     }
 
@@ -916,6 +923,24 @@ impl ClioApp {
                     ui,
                     "Data sources are not part of this version yet; these limits are kept for \
                      them.",
+                );
+            }
+            Page::Reports => {
+                group(ui, "Storage", |ui| {
+                    ui.checkbox(
+                        &mut dialog.keep_report_results,
+                        "Keep report results in the file",
+                    )
+                    .on_hover_text(
+                        "Each report keeps the values of its last run in the workbook, so it \
+                             is drawn at once when the workbook is opened, and from them when it \
+                             is not trusted.",
+                    );
+                });
+                note(
+                    ui,
+                    "Off, a report keeps only its parameters: the file stays small and holds no \
+                     copies of report data, and the report is calculated again when it is shown.",
                 );
             }
             Page::Trust => {

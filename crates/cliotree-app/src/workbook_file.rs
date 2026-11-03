@@ -87,8 +87,9 @@ pub struct Document {
     /// The state of the view of the whole workbook as it was in the file
     /// (`view.json`), kept for what this version does not know of it.
     pub workbook_view: Option<Json>,
-    /// The version of the forms as they were saved.
-    saved_forms: u64,
+    /// The version of the forms, and of the chosen parameters of reports,
+    /// as they were saved.
+    saved_forms: (u64, u64),
 }
 
 impl Default for Document {
@@ -99,9 +100,15 @@ impl Default for Document {
             unknown: Vec::new(),
             views: BTreeMap::new(),
             workbook_view: None,
-            saved_forms: 0,
+            saved_forms: (0, 0),
         }
     }
+}
+
+/// What changes when the forms or reports change, or a report's parameter
+/// is chosen: unsaved changes that are not in the history.
+fn designs_version(calc: &cliotree_calc::Calc) -> (u64, u64) {
+    (calc.forms_version(), calc.params_version())
 }
 
 /// A random id for a workbook. It is not a secret: the trust model needs the
@@ -203,9 +210,9 @@ impl ClioApp {
     }
 
     /// Whether there are changes that a save would keep: edits of the data,
-    /// and changes to the forms.
+    /// changes to the forms and reports, and parameters chosen.
     pub fn is_dirty(&self) -> bool {
-        self.calc().is_modified() || self.calc().forms_version() != self.doc.saved_forms
+        self.calc().is_modified() || designs_version(self.calc()) != self.doc.saved_forms
     }
 
     /// The title of the window.
@@ -310,7 +317,7 @@ impl ClioApp {
             unknown,
             views: views.clone(),
             workbook_view: workbook_view.clone(),
-            saved_forms: fresh.calc().forms_version(),
+            saved_forms: designs_version(fresh.calc()),
         };
         fresh.restore_view_state(&views);
         fresh.restore_workbook_view(workbook_view.as_ref());
@@ -383,11 +390,13 @@ impl ClioApp {
             workbook_view: self.workbook_view(),
             unknown: self.doc.unknown.clone(),
         };
+        // The report being shown keeps its run in its results cache.
+        self.session.calc_mut().take_report_run();
         let package = self.calc().to_package(&meta).map_err(|e| e.to_string())?;
         let bytes = write_zip(&package)?;
         save_atomic(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         self.session.calc_mut().mark_saved();
-        self.doc.saved_forms = self.calc().forms_version();
+        self.doc.saved_forms = designs_version(self.calc());
         self.doc.views = meta.views;
         self.doc.workbook_view = meta.workbook_view;
         self.doc.path = Some(path.to_path_buf());

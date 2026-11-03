@@ -532,3 +532,45 @@ fn a_multipage_report() {
     }
     check(&mut harness, "report_bands", &mut results);
 }
+
+/// A report with parameters: the parameter bar over the page, with a
+/// choice, a period and a required text left empty, which stops the report.
+#[test]
+fn a_report_with_parameters() {
+    use cliotree_core::report::{ParamKind, PeriodPreset, ReportParam};
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .create_report_tab(
+            "Lines",
+            cliotree_core::report::ReportKind::Multipage,
+            Some(&("Orders".to_owned(), "items".parse().unwrap())),
+        )
+        .unwrap();
+    let mut design = harness.state().calc().report("Lines").unwrap().clone();
+    let mut sku = ReportParam::new("sku", ParamKind::Choice);
+    sku.label = Some("Product".into());
+    sku.choices = Some("[i.sku for i in Orders.items]".into());
+    sku.default = Some("'A-100'".into());
+    let mut when = ReportParam::new("when", ParamKind::Period);
+    when.label = Some("Period".into());
+    when.preset = Some(PeriodPreset::LastMonth);
+    let mut note = ReportParam::new("note", ParamKind::Text);
+    note.label = Some("Note".into());
+    note.required = true;
+    design.params = vec![sku, when, note];
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Lines", design)
+        .unwrap();
+    for _ in 0..3 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_params", &mut results);
+}

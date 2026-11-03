@@ -4384,7 +4384,7 @@ fn cell_gate(
 }
 
 /// Phosphor's calendar, on the button that opens one.
-const CALENDAR: &str = "\u{E108}";
+pub(crate) const CALENDAR: &str = "\u{E108}";
 
 /// Whether a type is a date (`Some(false)`) or a date and time
 /// (`Some(true)`), as a type or as a string format.

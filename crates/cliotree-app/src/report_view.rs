@@ -47,19 +47,30 @@ fn kind(prop: Prop) -> ExprKind {
     }
 }
 
-/// What an expression came to, as the report shows it: nothing runs in a
-/// workbook that is not trusted.
-fn got(trusted: bool, state: Option<ExprState>) -> Got {
-    let Some(state) = state else {
-        return Got::None;
+/// What an expression came to, as the report shows it. Nothing runs in a
+/// workbook that is not trusted: it shows what the results cache has, and
+/// `#UNTRUSTED!` for what it has not. In a trusted one, an expression that
+/// has not run yet shows its cached result as pending until it has.
+fn got(trusted: bool, state: Option<ExprState>, cached: Option<&Result<Value, String>>) -> Got {
+    let from_cache = |pending: bool| match cached {
+        Some(Ok(value)) => Some(Got::Value(value.clone(), pending)),
+        Some(Err(error)) => Some(Got::Error(error.clone())),
+        None => None,
     };
     if !trusted {
-        return Got::Untrusted;
+        return from_cache(false).unwrap_or(if state.is_some() {
+            Got::Untrusted
+        } else {
+            Got::None
+        });
     }
+    let Some(state) = state else {
+        return from_cache(true).unwrap_or(Got::None);
+    };
     match state.result {
         Some(Ok(value)) => Got::Value(value, state.pending),
         Some(Err(error)) => Got::Error(error),
-        None => Got::Waiting,
+        None => from_cache(true).unwrap_or(Got::Waiting),
     }
 }
 
@@ -69,6 +80,8 @@ impl Source for CalcSource<'_> {
             self.calc.is_trusted(),
             self.calc
                 .report_expression(self.report, at, rows, kind(prop)),
+            self.calc
+                .cached_expression(self.report, at, None, rows, kind(prop)),
         )
     }
 
@@ -80,10 +93,17 @@ impl Source for CalcSource<'_> {
         row: Option<usize>,
         prop: Prop,
     ) -> Got {
+        let kind = kind(prop);
+        let mut cached_rows = rows.to_vec();
+        if kind.per_row() {
+            cached_rows.extend(row);
+        }
         got(
             self.calc.is_trusted(),
             self.calc
-                .report_column_expression(self.report, at, rows, column, row, kind(prop)),
+                .report_column_expression(self.report, at, rows, column, row, kind),
+            self.calc
+                .cached_expression(self.report, at, Some(column), &cached_rows, kind),
         )
     }
 }
@@ -138,11 +158,15 @@ pub struct ReportView {
     pub page: usize,
     /// A section is being added or removed: the bands may change.
     pub(crate) restructure: bool,
+    /// What is typed in the boxes of the parameter bar, while they have the
+    /// focus, by parameter and box.
+    pub(crate) param_drafts: std::collections::HashMap<String, String>,
 }
 
-/// What a layout depends on: the report, the data and results, the designs,
-/// trust, what is waiting to run, and whether expressions are shown.
-type LaidKey = (String, u64, u64, bool, usize, bool);
+/// What a layout depends on: the report, the data and results, the designs
+/// and the chosen parameters, trust, what is waiting to run, and whether
+/// expressions are shown.
+type LaidKey = (String, u64, (u64, u64), bool, usize, bool);
 
 impl ClioApp {
     /// The current report laid out, made again only when something it shows
@@ -153,7 +177,7 @@ impl ClioApp {
         let key: LaidKey = (
             self.sheet.clone(),
             calc.revision(),
-            calc.forms_version(),
+            (calc.forms_version(), calc.params_version()),
             calc.is_trusted(),
             calc.pending_expressions(),
             expressions,
@@ -206,7 +230,7 @@ impl ClioApp {
         let key: LaidKey = (
             self.sheet.clone(),
             calc.revision(),
-            calc.forms_version(),
+            (calc.forms_version(), calc.params_version()),
             calc.is_trusted(),
             calc.pending_expressions(),
             false,
@@ -270,6 +294,8 @@ impl ClioApp {
             ui.colored_label(color, notice);
         }
         self.form_bar(ui, REPORT_FORM);
+        self.parameter_bar(ui);
+        self.cache_note(ui, &name);
         let problems = design.problems();
         let layout = self.layout_active();
         let empty = has_no_controls(&design);
@@ -285,6 +311,19 @@ impl ClioApp {
         }
         if layout {
             self.report_designer(ui);
+            return;
+        }
+        // While a required parameter is empty the report is not drawn.
+        let missing = self.calc().missing_params(&name);
+        if !missing.is_empty() {
+            ui.add_space(MARGIN);
+            ui.horizontal(|ui| {
+                ui.add_space(MARGIN);
+                ui.label(format!(
+                    "Fill in {} to see the report.",
+                    crate::report_params::and_list(&missing)
+                ));
+            });
             return;
         }
         if design.bands().is_some() {
@@ -305,6 +344,33 @@ impl ClioApp {
                 let origin = rect.min + egui::vec2(MARGIN, MARGIN);
                 paint(ui, &laid, origin, zoom, true);
             });
+    }
+
+    /// When the report's values come from its results cache, says when they
+    /// were calculated: always in a workbook that is not trusted, and in a
+    /// trusted one until the new ones are in.
+    fn cache_note(&self, ui: &mut egui::Ui, name: &str) {
+        let calc = self.calc();
+        let cache = calc.report_cache(name);
+        let note = match (calc.is_trusted(), cache) {
+            (false, Some(c)) => format!(
+                "This workbook is not trusted, so nothing runs: the report is as it was \
+                 calculated on {}.",
+                local_time(&c.calculated)
+            ),
+            (false, None) => "This workbook is not trusted, so nothing runs, and no results \
+                              of the report were kept."
+                .to_owned(),
+            (true, Some(c)) if calc.pending_expressions() > 0 => format!(
+                "Showing the results calculated on {} until the new ones are in.",
+                local_time(&c.calculated)
+            ),
+            _ => return,
+        };
+        ui.horizontal(|ui| {
+            ui.add_space(MARGIN);
+            ui.weak(note);
+        });
     }
 
     /// A multipage report, one page at a time, as the PDF will have it.
@@ -447,6 +513,17 @@ impl ClioApp {
                 self.open_report_design(name);
             }
         }
+    }
+}
+
+/// A time the cache wrote (RFC 3339, UTC) as the user's clock has it.
+pub fn local_time(stamp: &str) -> String {
+    match stamp.parse::<jiff::Timestamp>() {
+        Ok(t) => t
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y-%m-%d %H:%M")
+            .to_string(),
+        Err(_) => stamp.to_owned(),
     }
 }
 

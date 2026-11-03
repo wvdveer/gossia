@@ -85,6 +85,7 @@ impl Calc {
         *own = design;
         self.forms_version += 1;
         self.exprs.resync = true;
+        self.refit_cache(name);
         Ok(())
     }
 
@@ -175,6 +176,8 @@ impl Calc {
     pub(super) fn store_remove_report(&mut self, name: &str) -> Option<SavedReport> {
         let index = self.tab_names().iter().position(|n| n == name)?;
         let design = self.reports.shift_remove(name)?;
+        self.params.remove(name);
+        self.caches.remove(name);
         self.order.retain(|n| n != name);
         self.removed.push(name.to_owned());
         self.forms_version += 1;
@@ -200,6 +203,12 @@ impl Calc {
         self.reports.insert(to.to_owned(), design);
         let last = self.reports.len() - 1;
         self.reports.move_index(last, at);
+        if let Some(values) = self.params.remove(from) {
+            self.params.insert(to.to_owned(), values);
+        }
+        if let Some(cache) = self.caches.remove(from) {
+            self.caches.insert(to.to_owned(), cache);
+        }
         self.rename_in_order(from, to);
         self.renames.push((from.to_owned(), to.to_owned()));
         self.forms_version += 1;

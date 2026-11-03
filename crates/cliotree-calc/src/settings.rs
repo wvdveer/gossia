@@ -140,12 +140,19 @@ fn number(setting: Setting, value: &Json) -> Result<u64, String> {
     }
 }
 
+/// The key in `settings.json` of *Keep report results in the file*.
+pub const KEEP_REPORT_RESULTS: &str = "keep_report_results";
+
 /// The settings a workbook asks for. A setting it does not mention has its
 /// default.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorkbookSettings {
     /// Only the settings that differ from their defaults.
     values: BTreeMap<Setting, u64>,
+    /// *Keep report results in the file* is off: a report's cache keeps only
+    /// its parameters (DESIGN.md, Reports, "Report storage and the results
+    /// cache").
+    discard_report_results: bool,
     /// What a newer version wrote that this one does not know: kept, and
     /// written back unchanged.
     unknown: Map<String, Json>,
@@ -169,10 +176,20 @@ impl WorkbookSettings {
         }
     }
 
+    /// Whether a report's results are kept in the file with its parameters
+    /// (on until it is turned off).
+    pub fn keep_report_results(&self) -> bool {
+        !self.discard_report_results
+    }
+
+    pub fn set_keep_report_results(&mut self, keep: bool) {
+        self.discard_report_results = !keep;
+    }
+
     /// Every setting has its default and nothing unknown is kept, so the
     /// workbook needs no `settings.json`.
     pub fn is_default(&self) -> bool {
-        self.values.is_empty() && self.unknown.is_empty()
+        self.values.is_empty() && self.unknown.is_empty() && !self.discard_report_results
     }
 
     /// The text of `settings.json`, or `None` when the file is not needed.
@@ -188,6 +205,9 @@ impl WorkbookSettings {
             if let Some(value) = self.values.get(&setting) {
                 out.insert(setting.key().to_owned(), Json::from(*value));
             }
+        }
+        if self.discard_report_results {
+            out.insert(KEEP_REPORT_RESULTS.to_owned(), Json::Bool(false));
         }
         let mut unknown: Vec<(&String, &Json)> = self.unknown.iter().collect();
         unknown.sort_by(|a, b| a.0.cmp(b.0));
@@ -223,6 +243,16 @@ impl WorkbookSettings {
             }
         };
         for (key, value) in object {
+            if key == KEEP_REPORT_RESULTS {
+                match value.as_bool() {
+                    Some(keep) => settings.discard_report_results = !keep,
+                    None => warnings.push(format!(
+                        "In settings.json, {KEEP_REPORT_RESULTS} is {value}, which is not true \
+                         or false; report results are kept."
+                    )),
+                }
+                continue;
+            }
             match Setting::from_key(&key) {
                 Some(setting) => match number(setting, &value) {
                     Ok(n) => settings.set(setting, n),

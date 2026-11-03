@@ -18,8 +18,13 @@
 //! [`paginate`] breaks such a report into pages.
 
 mod paging;
+mod params;
 
 pub use paging::{DETAIL_LIMIT, Paging, Placed, paginate};
+pub use params::{
+    ParamKind, PeriodPreset, ReportParam, choice_values, is_empty as param_is_empty, period,
+    period_dates,
+};
 
 use std::sync::OnceLock;
 
@@ -169,6 +174,11 @@ pub struct ReportDesign {
     /// first. A section without an entry has the default options.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sections: Vec<SectionOptions>,
+    /// The parameters the user chooses when the report is shown
+    /// (DESIGN.md, Reports, "Report parameters"), in the order of the
+    /// parameter bar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ReportParam>,
 }
 
 /// How a section of a multipage report breaks into pages (DESIGN.md,
@@ -330,6 +340,7 @@ impl ReportDesign {
             canvas: kind == ReportKind::Multipage,
             height: None,
             sections: Vec::new(),
+            params: Vec::new(),
         }
     }
 
@@ -434,12 +445,44 @@ impl ReportDesign {
                 }
             }
         }
+        for (i, p) in self.params.iter().enumerate() {
+            if let Some(why) = self.param_problem(i, p) {
+                out.push((Vec::new(), why));
+            }
+        }
         for (at, control) in self.layout.walk() {
             if let Some(why) = control_problem(control) {
                 out.push((at, why));
             }
         }
         out
+    }
+}
+
+impl ReportDesign {
+    /// What is wrong with the parameter `p`, the `i`th: its name, or a list
+    /// to choose from that it needs.
+    fn param_problem(&self, i: usize, p: &ReportParam) -> Option<String> {
+        let name = p.name.trim();
+        if !is_identifier(name) || is_keyword(name) {
+            return Some(format!(
+                "the parameter {name:?} needs a name of letters, digits and _, not starting with                  a digit"
+            ));
+        }
+        if self.params[..i].iter().any(|q| q.name.trim() == name) {
+            return Some(format!("two parameters are named {name}"));
+        }
+        if p.kind.has_choices() && p.choices_expression().is_none() {
+            return Some(format!(
+                "the parameter {name} is chosen from a list: give it choices"
+            ));
+        }
+        None
+    }
+
+    /// The parameter named `name`.
+    pub fn param(&self, name: &str) -> Option<&ReportParam> {
+        self.params.iter().find(|p| p.name == name)
     }
 }
 
@@ -532,9 +575,23 @@ const REPORT_DEFS: &str = r##"{
       "layout": {"$ref": "#/$defs/Form"},
       "canvas": {"type": "boolean"},
       "height": {"type": "integer", "minimum": 0, "maximum": 20000},
-      "sections": {"type": "array", "items": {"$ref": "#/$defs/SectionOptions"}}
+      "sections": {"type": "array", "items": {"$ref": "#/$defs/SectionOptions"}},
+      "params": {"type": "array", "items": {"$ref": "#/$defs/ReportParam"}}
     },
     "required": ["version", "kind", "layout"]
+  },
+  "ReportParam": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string"},
+      "label": {"type": "string"},
+      "kind": {"type": "string", "enum": ["date", "period", "choice", "choices", "number", "text", "yes_no"]},
+      "default": {"type": "string"},
+      "preset": {"type": "string", "enum": ["this_month", "last_month", "this_quarter", "last_quarter", "this_year", "last_year", "year_to_date"]},
+      "choices": {"type": "string"},
+      "required": {"type": "boolean"}
+    },
+    "required": ["name", "kind"]
   },
   "SectionOptions": {
     "type": "object",

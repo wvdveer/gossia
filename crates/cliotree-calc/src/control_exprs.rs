@@ -359,6 +359,20 @@ impl ControlExprs {
         }
     }
 
+    /// Every expression with its result, None before it has first run.
+    pub(crate) fn entries(
+        &self,
+    ) -> impl Iterator<Item = (&ExprKey, Option<Result<Value, String>>)> {
+        self.by_key.iter().map(|(k, e)| {
+            let result = if e.stale && !e.syntax_error {
+                None
+            } else {
+                e.result.clone()
+            };
+            (k, result)
+        })
+    }
+
     pub fn mark_all_stale(&mut self) {
         for e in self.by_key.values_mut() {
             e.stale = !e.syntax_error;
@@ -438,6 +452,20 @@ fn bind(base: &Bindings, more: impl IntoIterator<Item = (String, Value)>) -> Bin
     out
 }
 
+/// The names an expression is given: all of them, but `params` only if it
+/// names it, so that a change to a parameter runs only those that use one.
+fn fit(bindings: &Bindings, text: &str) -> Bindings {
+    if bindings.iter().any(|(n, _)| n == "params") && !mentions_params(text) {
+        bindings
+            .iter()
+            .filter(|(n, _)| n != "params")
+            .cloned()
+            .collect()
+    } else {
+        bindings.clone()
+    }
+}
+
 /// The names an item of a repeater whose items come from an expression is
 /// given: `this`, and the repeater's item and list names.
 fn item_names(control: &Control, item: &Value, list: &Value) -> Vec<(String, Value)> {
@@ -495,14 +523,39 @@ impl Calc {
         if let Some(name) = &self.exprs.shown_report
             && let Some(report) = self.reports.get(name)
         {
-            let top = Instance {
+            let mut top = Instance {
                 bindings: ["this", "parent", "root"]
                     .into_iter()
                     .map(|n| (n.to_owned(), Value::Null))
                     .collect(),
                 ..Instance::default()
             };
+            // The defaults and lists of its parameters, which do not see
+            // `params`.
+            for p in &report.params {
+                let wants = [
+                    (ExprKind::Value, p.default_expression()),
+                    (ExprKind::Choices, p.choices_expression()),
+                ];
+                for (kind, text) in wants {
+                    if let Some(text) = text {
+                        wanted.push(Wanted {
+                            key: param_key(name, &p.name, kind),
+                            text: Ok(text.to_owned()),
+                            loc: Loc::new(name, Path::root()),
+                            bindings: top.bindings.clone(),
+                        });
+                    }
+                }
+            }
+            if !report.params.is_empty() {
+                top.bindings
+                    .push(("params".to_owned(), self.params_value(name)));
+            }
+            // While a required parameter is empty nothing else runs.
+            let missing = !self.missing_params(name).is_empty();
             let seeds = match report.bands() {
+                _ if missing => Vec::new(),
                 Some(sections) => {
                     has_rows = true;
                     self.band_seeds(name, report, sections, top, &mut wanted)
@@ -628,11 +681,12 @@ impl Calc {
             }
         }
         let mut old = std::mem::take(&mut self.exprs.by_key);
-        for w in wanted {
+        for mut w in wanted {
             let text_now = match &w.text {
                 Ok(t) => t.clone(),
                 Err(e) => e.clone(),
             };
+            w.bindings = fit(&w.bindings, &text_now);
             let kept = old
                 .swap_remove(&w.key)
                 .filter(|e| e.text == text_now && e.loc == w.loc && e.bindings == w.bindings);
@@ -814,7 +868,7 @@ impl Calc {
     /// this text, at this node and with these names.
     fn listed(&self, key: &ExprKey, text: &str, loc: &Loc, bindings: &Bindings) -> Option<Value> {
         let e = self.exprs.by_key.get(key)?;
-        if e.text != text || &e.loc != loc || &e.bindings != bindings {
+        if e.text != text || &e.loc != loc || e.bindings != fit(bindings, text) {
             return None;
         }
         match &e.result {
@@ -1118,6 +1172,8 @@ impl Calc {
             .filter(|n| self.reports.contains_key(*n))
             .map(str::to_owned);
         if self.exprs.shown_report != name {
+            // The report shown until now keeps its run, if it is whole.
+            self.take_report_run();
             self.exprs.shown_report = name;
             self.exprs.resync = true;
         }
@@ -1153,7 +1209,7 @@ impl Calc {
         self.column_expression_at(report, REPORT_FORM, at, outer, column, row, kind)
     }
 
-    fn expression_state(&self, key: &ExprKey) -> Option<ExprState> {
+    pub(crate) fn expression_state(&self, key: &ExprKey) -> Option<ExprState> {
         let e = self.exprs.by_key.get(key)?;
         Some(ExprState {
             result: e.result.clone(),
@@ -1204,10 +1260,13 @@ impl Calc {
             }
             // The items of a repeater decide which expressions run inside it,
             // and the items and visible bands of a multipage report its pages.
+            // So do the defaults and lists of a report's parameters, which
+            // give `params`.
             let decides = outcome.key.kind == ExprKind::Items
                 || (outcome.key.form == REPORT_FORM
                     && outcome.key.at.len() == 1
-                    && outcome.key.kind == ExprKind::Visible);
+                    && outcome.key.kind == ExprKind::Visible)
+                || (outcome.key.form == REPORT_FORM && outcome.key.at.is_empty());
             if decides && e.result.as_ref() != Some(&outcome.result) {
                 self.exprs.resync = true;
             }

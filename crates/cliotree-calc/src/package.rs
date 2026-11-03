@@ -486,6 +486,15 @@ impl Calc {
                 )));
             }
             files.push((format!("reports/{name}/design.json"), lf(design.to_json())));
+            // Its results cache: the parameters, and the results unless the
+            // workbook keeps none.
+            if let Some(cache) = self.stored_report_cache(name) {
+                let results = self.settings().keep_report_results();
+                files.push((
+                    format!("reports/{name}/cache.json"),
+                    lf(cache.to_json(results)),
+                ));
+            }
             tabs.push(TabEntry {
                 name: name.clone(),
                 kind: "report".to_owned(),
@@ -765,7 +774,24 @@ impl Calc {
                     used.insert(path);
                     calc.reports.insert(tab.name.clone(), design);
                 }
-                Err(e) => warnings.push(format!("The report {} is not used: {e}", tab.name)),
+                Err(e) => {
+                    warnings.push(format!("The report {} is not used: {e}", tab.name));
+                    continue;
+                }
+            }
+            // Its results cache. One that cannot be read is dropped: the
+            // report is drawn as never calculated.
+            let cache_path = format!("reports/{}/cache.json", tab.name);
+            if let Some(text) = package.text(&cache_path)? {
+                used.insert(cache_path);
+                match super::ReportCache::from_json(text) {
+                    Ok(cache) => calc.set_report_cache(&tab.name, cache),
+                    Err(e) => warnings.push(format!(
+                        "The results of the report {} were not read ({e}), so it is drawn as \
+                         never calculated.",
+                        tab.name
+                    )),
+                }
             }
         }
         calc.order = manifest

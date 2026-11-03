@@ -108,6 +108,8 @@ impl ClioApp {
         if edited != design {
             self.put_report(edited);
         }
+        ui.separator();
+        self.params_properties(ui, &design);
         if let Some(n) = design.bands() {
             ui.separator();
             ui.label(match n {

@@ -455,3 +455,113 @@ fn a_report_lists_what_only_a_form_can_have() {
     assert!(problems[1].1.contains("buttons"));
     assert!(problems[2].1.contains("enabled when"));
 }
+
+// ------------------------------------------------------------ parameters
+
+mod params {
+    use chrono::NaiveDate;
+
+    use crate::report::{
+        ParamKind, PeriodPreset, ReportDesign, ReportKind, ReportParam, choice_values, period,
+        period_dates,
+    };
+    use crate::{Node, Value};
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn each_preset_gives_its_dates() {
+        let today = day(2026, 11, 3);
+        let cases = [
+            (PeriodPreset::ThisMonth, day(2026, 11, 1), day(2026, 11, 30)),
+            (PeriodPreset::LastMonth, day(2026, 10, 1), day(2026, 10, 31)),
+            (
+                PeriodPreset::ThisQuarter,
+                day(2026, 10, 1),
+                day(2026, 12, 31),
+            ),
+            (PeriodPreset::LastQuarter, day(2026, 7, 1), day(2026, 9, 30)),
+            (PeriodPreset::ThisYear, day(2026, 1, 1), day(2026, 12, 31)),
+            (PeriodPreset::LastYear, day(2025, 1, 1), day(2025, 12, 31)),
+            (PeriodPreset::YearToDate, day(2026, 1, 1), today),
+        ];
+        for (preset, start, end) in cases {
+            assert_eq!(preset.dates(today), (start, end), "{preset:?}");
+            assert_eq!(PeriodPreset::of(start, end, today), Some(preset));
+        }
+        // Last month in January is December of the year before; March has 31.
+        assert_eq!(
+            PeriodPreset::LastMonth.dates(day(2026, 1, 15)),
+            (day(2025, 12, 1), day(2025, 12, 31))
+        );
+        assert_eq!(
+            PeriodPreset::LastQuarter.dates(day(2026, 2, 28)),
+            (day(2025, 10, 1), day(2025, 12, 31))
+        );
+        let value = period(day(2026, 3, 1), day(2026, 3, 31));
+        assert_eq!(
+            period_dates(&value),
+            Some((day(2026, 3, 1), day(2026, 3, 31)))
+        );
+        assert!(ParamKind::Period.accepts(&value));
+        assert!(!ParamKind::Date.accepts(&value));
+    }
+
+    #[test]
+    fn choices_are_values_pairs_or_dicts() {
+        let list = Value::Array(vec![
+            Node::new(Value::Str("North".into())),
+            Node::new(Value::Array(vec![
+                Node::new(Value::Int(2)),
+                Node::new(Value::Str("South".into())),
+            ])),
+        ]);
+        assert_eq!(
+            choice_values(&list).unwrap(),
+            vec![
+                (Value::Str("North".into()), None),
+                (Value::Int(2), Some(Value::Str("South".into())))
+            ]
+        );
+        assert!(choice_values(&Value::Int(3)).is_err());
+        let nested = Value::Array(vec![Node::new(Value::Array(vec![]))]);
+        assert!(choice_values(&nested).unwrap_err().contains("item 0"));
+    }
+
+    #[test]
+    fn parameters_are_stored_and_checked() {
+        let mut design = ReportDesign::new(ReportKind::SinglePage);
+        let mut period = ReportParam::new("when", ParamKind::Period);
+        period.preset = Some(PeriodPreset::LastMonth);
+        let mut units = ReportParam::new("units", ParamKind::Choices);
+        units.choices = Some("['North', 'South']".into());
+        units.required = true;
+        design.params = vec![period, units];
+        let back = ReportDesign::from_json(&design.to_json()).unwrap();
+        assert_eq!(back, design);
+        assert!(design.problems().is_empty());
+
+        design
+            .params
+            .push(ReportParam::new("when", ParamKind::Date));
+        design.params.push(ReportParam::new("2nd", ParamKind::Text));
+        design
+            .params
+            .push(ReportParam::new("unit", ParamKind::Choice));
+        let problems: Vec<String> = design.problems().into_iter().map(|p| p.1).collect();
+        assert!(
+            problems[0].contains("two parameters are named when"),
+            "{problems:?}"
+        );
+        assert!(problems[1].contains("\"2nd\""), "{problems:?}");
+        assert!(problems[2].contains("give it choices"), "{problems:?}");
+        // A plain report writes no parameters.
+        assert!(
+            !ReportDesign::new(ReportKind::SinglePage)
+                .to_json()
+                .contains("params")
+        );
+    }
+}
