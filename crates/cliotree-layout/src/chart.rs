@@ -8,6 +8,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::fonts;
+use crate::report::Ink;
 
 /// The largest SVG a chart function may return, until the Options page sets
 /// it (DESIGN.md, "Settings and limits").
@@ -51,6 +52,44 @@ pub fn svg_options() -> usvg::Options<'static> {
             resolve_string: Box::new(|_, _| None),
         },
         ..usvg::Options::default()
+    }
+}
+
+/// The style sheet that gives a chart its colours, or None for the colours
+/// it has: the root element's `color` (which `currentColor` follows) is the
+/// text colour; with a fill, an element of class `background` is
+/// transparent (the fill is painted behind the chart), and the classes
+/// `surface` and `surface-stroke` fill and stroke with the fill colour, as
+/// it shows on the white page.
+pub fn style_sheet(text: Option<Ink>, fill: Option<Ink>) -> Option<String> {
+    let mut css = String::new();
+    if let Some(Ink::Rgba([r, g, b, a])) = text {
+        let a = f32::from(a) / 255.0;
+        css.push_str(&format!("svg {{ color: rgba({r}, {g}, {b}, {a}) }}\n"));
+    }
+    if let Some(Ink::Rgba([r, g, b, a])) = fill {
+        let over_white = |c: u8| {
+            let a = f32::from(a) / 255.0;
+            (f32::from(c) * a + 255.0 * (1.0 - a)).round() as u8
+        };
+        let hex = format!(
+            "#{:02x}{:02x}{:02x}",
+            over_white(r),
+            over_white(g),
+            over_white(b)
+        );
+        css.push_str(&format!(
+            ".background {{ fill: none }}\n.surface {{ fill: {hex} }}\n.surface-stroke {{ stroke: {hex} }}\n"
+        ));
+    }
+    (!css.is_empty()).then_some(css)
+}
+
+/// The options SVG is parsed with, with a chart's style sheet.
+pub fn svg_options_styled(style: Option<&str>) -> usvg::Options<'static> {
+    usvg::Options {
+        style_sheet: style.map(str::to_owned),
+        ..svg_options()
     }
 }
 

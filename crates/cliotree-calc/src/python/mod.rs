@@ -59,6 +59,7 @@ pub const CHART_FUNCTIONS: &[(&str, &str)] = &[
     ("Line", "line_chart"),
     ("Pie", "pie_chart"),
     ("Scatter", "scatter_chart"),
+    ("Sankey", "sankey_chart"),
 ];
 
 /// Standard library modules formulas can use by name, without importing them

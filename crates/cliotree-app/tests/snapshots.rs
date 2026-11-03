@@ -636,18 +636,23 @@ fn a_report_with_charts() {
             200,
             180,
         ),
-        chart(
-            "Line",
-            &[
-                ("labels", "['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']"),
-                ("values", "[3, 5, 4, 8, 7, 11]"),
-                ("title", "'Orders per month'"),
-            ],
-            0,
-            200,
-            500,
-            150,
-        ),
+        {
+            // On a fill of its own, with white text.
+            let mut c = chart(
+                "Line",
+                &[
+                    ("labels", "['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']"),
+                    ("values", "[3, 5, 4, 8, 7, 11]"),
+                    ("title", "'Orders per month'"),
+                ],
+                0,
+                200,
+                500,
+                150,
+            );
+            c.fill_colour = Some("#1f2a44".into());
+            c
+        },
     ];
     harness
         .state_mut()
@@ -661,4 +666,58 @@ fn a_report_with_charts() {
         settle(&mut harness);
     }
     check(&mut harness, "report_charts", &mut results);
+}
+
+#[test]
+fn a_report_with_a_sankey_diagram() {
+    use cliotree_core::form::{Control, ControlKind};
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .create_report_tab(
+            "Budget",
+            cliotree_core::report::ReportKind::SinglePage,
+            None,
+        )
+        .unwrap();
+    let mut design = harness.state().calc().report("Budget").unwrap().clone();
+    let mut c = Control::new(ControlKind::Chart);
+    c.chart = Some("Sankey".into());
+    for (k, v) in [
+        (
+            "sources",
+            "['Salary', 'Salary', 'Freelance', 'Budget', 'Budget', 'Budget', 'Budget', 'Living', 'Living']",
+        ),
+        (
+            "targets",
+            "['Budget', 'Tax', 'Budget', 'Rent', 'Living', 'Savings', 'Holidays', 'Food', 'Transport']",
+        ),
+        (
+            "values",
+            "[3200, 1100, 600, 1300, 1100, 900, 500, 700, 400]",
+        ),
+        ("title", "'Where the money goes'"),
+    ] {
+        c.chart_args.insert(k.into(), v.into());
+    }
+    c.x = Some(0);
+    c.y = Some(0);
+    c.width = Some(500);
+    c.height = Some(230);
+    design.canvas = true;
+    design.layout.controls = vec![c];
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Budget", design)
+        .unwrap();
+    for _ in 0..3 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_sankey", &mut results);
 }

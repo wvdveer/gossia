@@ -11,18 +11,30 @@
 # A report passes `width` and `height`, the size of the chart in points.
 # The parameters before them are the boxes on the chart's property page; one
 # with a default may be left empty.
+#
+# The chart's Text colour and Fill colour reach the SVG through a style
+# sheet the report adds: the root element's `color` is the text colour, so
+# draw text and lines in `currentColor`; an element of class `background`
+# is made transparent when the chart has a fill (the report paints it
+# behind); one of class `surface` is filled with the fill colour and one of
+# class `surface-stroke` stroked with it (holes, gaps and rings that show
+# the background through).
 
 import math as _math
 
 # The colours of the series, in order (never cycled: a ninth series is an
-# error), and of the rest of the chart. They are for the light page of a
-# report, which is how it is printed.
+# error). The rest of the chart is drawn in the text colour (lighter for
+# what matters less) on the surface, for the light page of a report unless
+# the chart has colours of its own.
 _SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100',
            '#e87ba4', '#008300', '#6250d6', '#e34948']
 _SURFACE = '#fcfcfb'
-_TEXT = '#0b0b0b'
-_MUTED = '#52514e'
-_GRID = '#e4e3df'
+_INK = '#0b0b0b'
+_TEXT = 'currentColor'
+_MUTED = 'muted'
+_GRID = 'stroke="currentColor" stroke-opacity="0.16"'
+_BASELINE = 'stroke="currentColor" stroke-opacity="0.6"'
+_RING = 'stroke="%s" class="surface-stroke"' % _SURFACE
 _FONT = 'Inter'
 
 
@@ -119,14 +131,23 @@ class _Svg:
 
     def text(self, x, y, text, size=9, anchor='start', color=_MUTED, weight=None):
         w = ' font-weight="%s"' % weight if weight else ''
-        self.add('<text x="%.1f" y="%.1f" font-size="%g" text-anchor="%s" fill="%s"%s>%s</text>'
-                 % (x, y, size, anchor, color, w, _esc(text)))
+        fill = 'fill="currentColor" fill-opacity="0.72"' if color == _MUTED else 'fill="%s"' % color
+        self.add('<text x="%.1f" y="%.1f" font-size="%g" text-anchor="%s" %s%s>%s</text>'
+                 % (x, y, size, anchor, fill, w, _esc(text)))
+
+    def label(self, x, y, name, extra, anchor='start'):
+        # A name with a value after it in lighter text, with a ring of the
+        # surface so it reads over what is behind it.
+        self.add('<text x="%.1f" y="%.1f" font-size="9" text-anchor="%s" fill="currentColor" '
+                 'stroke="%s" stroke-width="3" stroke-linejoin="round" paint-order="stroke" '
+                 'class="surface-stroke">%s <tspan fill-opacity="0.72">%s</tspan></text>'
+                 % (x, y, anchor, _SURFACE, _esc(name), _esc(extra)))
 
     def done(self):
         return ('<svg xmlns="http://www.w3.org/2000/svg" width="%g" height="%g" '
-                'viewBox="0 0 %g %g" font-family="%s">'
-                % (self.width, self.height, self.width, self.height, _FONT)
-                + '<rect width="100%%" height="100%%" fill="%s"/>' % _SURFACE
+                'viewBox="0 0 %g %g" font-family="%s" color="%s">'
+                % (self.width, self.height, self.width, self.height, _FONT, _INK)
+                + '<rect width="100%%" height="100%%" fill="%s" class="background"/>' % _SURFACE
                 + ''.join(self.parts) + '</svg>')
 
 
@@ -166,7 +187,7 @@ def _value_axis(svg, ticks, left, top, right, bottom, horizontal=False):
             return left + (v - lo) / (hi - lo) * (right - left)
         for t in ticks:
             x = place(t)
-            svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1"/>'
+            svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" %s stroke-width="1"/>'
                     % (x, top, x, bottom, _GRID))
             svg.text(x, bottom + 11, _tick_text(t), anchor='middle')
     else:
@@ -174,7 +195,7 @@ def _value_axis(svg, ticks, left, top, right, bottom, horizontal=False):
             return bottom - (v - lo) / (hi - lo) * (bottom - top)
         for t in ticks:
             y = place(t)
-            svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1"/>'
+            svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" %s stroke-width="1"/>'
                     % (left, y, right, y, _GRID))
             svg.text(left - 4, y + 3, _tick_text(t), anchor='end')
     return place
@@ -241,8 +262,8 @@ def bar_chart(labels, values, title=None, series=None, horizontal=False, *, widt
             svg.text(mid, bottom + 12, label, anchor='middle')
     # The baseline, at zero.
     line = (zero, top, zero, bottom) if horizontal else (left, zero, right, zero)
-    svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1"/>'
-            % (line + (_MUTED,)))
+    svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" %s stroke-width="1"/>'
+            % (line + (_BASELINE,)))
     return svg.done()
 
 
@@ -281,8 +302,8 @@ def line_chart(labels, values, title=None, series=None, *, width, height):
         svg.add('<polyline points="%s" fill="none" stroke="%s" stroke-width="2" '
                 'stroke-linejoin="round" stroke-linecap="round"/>' % (points, _SERIES[k]))
         if v:
-            svg.add('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="%s" stroke-width="2"/>'
-                    % (x_of(len(v) - 1), place(v[-1]), _SERIES[k], _SURFACE))
+            svg.add('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" %s stroke-width="2"/>'
+                    % (x_of(len(v) - 1), place(v[-1]), _SERIES[k], _RING))
     return svg.done()
 
 
@@ -314,12 +335,13 @@ def pie_chart(labels, values, title=None, donut=True, *, width, height):
             x0, y0 = cx + r * _math.cos(angle), cy + r * _math.sin(angle)
             x1, y1 = cx + r * _math.cos(angle + sweep), cy + r * _math.sin(angle + sweep)
             svg.add('<path d="M%.1f %.1f L%.1f %.1f A%.1f %.1f 0 %d 1 %.1f %.1f Z" fill="%s" '
-                    'stroke="%s" stroke-width="2" stroke-linejoin="round"/>'
+                    '%s stroke-width="2" stroke-linejoin="round"/>'
                     % (cx, cy, x0, y0, r, r, 1 if sweep > _math.pi else 0, x1, y1,
-                       _SERIES[i], _SURFACE))
+                       _SERIES[i], _RING))
         angle += sweep
     if donut:
-        svg.add('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>' % (cx, cy, r * 0.58, _SURFACE))
+        svg.add('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" class="surface"/>'
+                % (cx, cy, r * 0.58, _SURFACE))
         svg.text(cx, cy + 4, _tick_text(round(total, 2)), size=11, anchor='middle', color=_TEXT,
                  weight='600')
     y = cy - len(labels) * 8 + 8
@@ -358,8 +380,163 @@ def scatter_chart(x, y, title=None, labels=None, *, width, height):
         svg.text(place_x(t), bottom + 12, _tick_text(t), anchor='middle')
     for i, (a, b) in enumerate(zip(xs, ys)):
         px, py = place_x(a), place_y(b)
-        svg.add('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="%s" stroke-width="2"/>'
-                % (px, py, _SERIES[0], _SURFACE))
+        svg.add('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" %s stroke-width="2"/>'
+                % (px, py, _SERIES[0], _RING))
         if i < len(names) and names[i]:
             svg.text(px + 6, py - 4, names[i], size=8)
+    return svg.done()
+
+
+@chart("Sankey")
+def sankey_chart(sources, targets, values, title=None, *, width, height):
+    """Flows from each source to its target, as bands as thick as their
+    values: sources, targets and values are lists of the same length, one
+    flow at each place. A name can be the target of one flow and the source
+    of others; flows lead on, never round in a circle."""
+    froms = [_label(s) for s in _list(sources, 'sources')]
+    tos = [_label(t) for t in _list(targets, 'targets')]
+    amounts = [_number(v, 'values') for v in _list(values, 'values')]
+    if not len(froms) == len(tos) == len(amounts):
+        raise ValueError('there are %d sources, %d targets and %d values; they go together, '
+                         'one flow at each place' % (len(froms), len(tos), len(amounts)))
+    names = []
+    index = {}
+
+    def node(name):
+        if name not in index:
+            index[name] = len(names)
+            names.append(name)
+        return index[name]
+
+    flows = []
+    for a, b, v in zip(froms, tos, amounts):
+        if v < 0:
+            raise ValueError('a flow cannot be negative: %s to %s is %s' % (a, b, _tick_text(v)))
+        if a == b:
+            raise ValueError('%s flows to itself' % a)
+        i, j = node(a), node(b)
+        if v > 0:
+            flows.append((i, j, v))
+    n = len(names)
+    outs = [[] for _ in range(n)]
+    ins = [[] for _ in range(n)]
+    for k, (i, j, v) in enumerate(flows):
+        outs[i].append(k)
+        ins[j].append(k)
+
+    # Columns: the longest way from a start; the ends all in the last column.
+    column = [0] * n
+    waiting = [len(ins[i]) for i in range(n)]
+    ready = [i for i in range(n) if waiting[i] == 0]
+    done = 0
+    while ready:
+        i = ready.pop(0)
+        done += 1
+        for k in outs[i]:
+            j = flows[k][1]
+            column[j] = max(column[j], column[i] + 1)
+            waiting[j] -= 1
+            if waiting[j] == 0:
+                ready.append(j)
+    if done < n:
+        raise ValueError('the flows go round in a circle; a Sankey diagram shows flows that '
+                         'lead on, never back')
+    last = max(column or [0])
+    for i in range(n):
+        if ins[i] and not outs[i]:
+            column[i] = last
+    value = [max(sum(flows[k][2] for k in ins[i]), sum(flows[k][2] for k in outs[i]))
+             for i in range(n)]
+
+    svg, (left, top, right, bottom) = _frame(width, height, title, [])
+    bar = 6.0
+    span = bottom - top
+    columns = [[i for i in range(n) if column[i] == c] for c in range(last + 1)]
+    gap = min([8.0] + [span * 0.4 / (len(c) - 1) for c in columns if len(c) > 1])
+    scales = [(span - gap * (len(c) - 1)) / sum(value[i] for i in c)
+              for c in columns if c and sum(value[i] for i in c) > 0]
+    ky = max(0.0, min(scales)) if scales else 0.0
+
+    def x_of(c):
+        return left + (right - left - bar) * c / last if last else left
+
+    y0 = [0.0] * n
+    sy = {}
+    ty = {}
+
+    def stack():
+        for members in columns:
+            used = sum(value[i] * ky for i in members) + gap * max(len(members) - 1, 0)
+            y = top + (span - used) / 2
+            for i in members:
+                y0[i] = y
+                y += value[i] * ky + gap
+        # The bands, stacked at each end in the order of the other end.
+        for i in range(n):
+            outs[i].sort(key=lambda k: (y0[flows[k][1]], flows[k][1]))
+            ins[i].sort(key=lambda k: (y0[flows[k][0]], flows[k][0]))
+            at = y0[i]
+            for k in outs[i]:
+                sy[k] = at
+                at += flows[k][2] * ky
+            at = y0[i]
+            for k in ins[i]:
+                ty[k] = at
+                at += flows[k][2] * ky
+
+    def middle(i, ends, mine):
+        # Where the bands of a node meet the other column, on average.
+        total = sum(flows[k][2] for k in ends)
+        if not total:
+            return y0[i] + value[i] * ky / 2
+        return sum((mine[k] + flows[k][2] * ky / 2) * flows[k][2] for k in ends) / total
+
+    # In order of the flows' places at their other end, a few times over:
+    # fewer bands cross.
+    stack()
+    for _ in range(4):
+        for c in range(1, last + 1):
+            columns[c].sort(key=lambda i: middle(i, ins[i], sy))
+        stack()
+        for c in range(last - 1, -1, -1):
+            columns[c].sort(key=lambda i: middle(i, outs[i], ty))
+        stack()
+
+    # A colour for each name that flows on, in order, when there are few
+    # enough; otherwise the flows are in the text colour.
+    starts = [i for i in range(n) if outs[i]]
+    colour = {}
+    if len(starts) <= len(_SERIES):
+        for pos, i in enumerate(starts):
+            colour[i] = _SERIES[pos]
+
+    def paint(i, opacity):
+        if i in colour:
+            return 'fill="%s" fill-opacity="%g"' % (colour[i], opacity)
+        return 'fill="currentColor" fill-opacity="%g"' % (opacity * 0.5)
+
+    for k, (i, j, v) in enumerate(flows):
+        t = v * ky
+        x0 = x_of(column[i]) + bar
+        x1 = x_of(column[j])
+        xm = (x0 + x1) / 2
+        a, b = sy[k], ty[k]
+        svg.add('<path d="M%.1f %.1f C%.1f %.1f %.1f %.1f %.1f %.1f L%.1f %.1f '
+                'C%.1f %.1f %.1f %.1f %.1f %.1f Z" %s/>'
+                % (x0, a, xm, a, xm, b, x1, b, x1, b + t, xm, b + t, xm, a + t, x0, a + t,
+                   paint(i, 0.38)))
+    for i in range(n):
+        h = max(value[i] * ky, 1.0)
+        svg.add('<rect x="%.1f" y="%.1f" width="%g" height="%.1f" rx="1" %s/>'
+                % (x_of(column[i]), y0[i], bar, h, paint(i, 1)))
+    # A label beside each node with room for it: on the right, but the last
+    # column on the left.
+    for i in range(n):
+        h = value[i] * ky
+        if h + gap < 9:
+            continue
+        x = x_of(column[i])
+        end = column[i] == last and last > 0
+        svg.label(x - 4 if end else x + bar + 4, y0[i] + h / 2 + 3, names[i],
+                  _tick_text(round(value[i], 2)), 'end' if end else 'start')
     return svg.done()

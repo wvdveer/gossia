@@ -13,7 +13,8 @@ const MAX_SIDE: u32 = 4096;
 /// How many rendered charts are kept.
 const KEPT: usize = 64;
 
-/// A rendered chart by the hash of its SVG and its size in pixels.
+/// A rendered chart by the hash of its SVG and style sheet, and its size in
+/// pixels.
 type Kept = HashMap<(u64, u32, u32), egui::TextureHandle>;
 
 #[derive(Default, Clone)]
@@ -22,7 +23,13 @@ struct Textures(Arc<Mutex<Kept>>);
 /// Paints `svg` into `rect`, scaled to fit and centred, keeping its
 /// proportions. SVG that does not parse paints nothing: the layout has
 /// already shown why.
-pub fn paint_svg(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, svg: &str) {
+pub fn paint_svg(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    svg: &str,
+    style: Option<&str>,
+) {
     if !ui.is_rect_visible(rect) || rect.width() < 1.0 || rect.height() < 1.0 {
         return;
     }
@@ -31,6 +38,7 @@ pub fn paint_svg(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, svg: 
     let h = ((rect.height() * ppp).round() as u32).clamp(1, MAX_SIDE);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     svg.hash(&mut hasher);
+    style.hash(&mut hasher);
     let key = (hasher.finish(), w, h);
     let textures = ui.ctx().data_mut(|d| {
         d.get_temp_mut_or_default::<Textures>(egui::Id::unique("chart_textures"))
@@ -40,7 +48,7 @@ pub fn paint_svg(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, svg: 
     let texture = match kept.get(&key) {
         Some(t) => t.clone(),
         None => {
-            let Some(image) = render(svg, w, h) else {
+            let Some(image) = render(svg, style, w, h) else {
                 return;
             };
             if kept.len() >= KEPT {
@@ -60,9 +68,11 @@ pub fn paint_svg(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, svg: 
     painter.image(texture.id(), rect, uv, egui::Color32::WHITE);
 }
 
-/// The SVG rendered into a `w` by `h` image, fitted and centred.
-pub fn render(svg: &str, w: u32, h: u32) -> Option<egui::ColorImage> {
-    let tree = usvg::Tree::from_str(svg, &cliotree_layout::chart::svg_options()).ok()?;
+/// The SVG rendered into a `w` by `h` image, fitted and centred, with the
+/// chart's style sheet.
+pub fn render(svg: &str, style: Option<&str>, w: u32, h: u32) -> Option<egui::ColorImage> {
+    let options = cliotree_layout::chart::svg_options_styled(style);
+    let tree = usvg::Tree::from_str(svg, &options).ok()?;
     let mut pixmap = tiny_skia::Pixmap::new(w, h)?;
     let size = tree.size();
     let scale = (w as f32 / size.width()).min(h as f32 / size.height());

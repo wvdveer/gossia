@@ -121,7 +121,7 @@ fn a_chart_type_is_read_from_its_decorator_without_running_the_module() {
 fn the_built_in_chart_types_come_first_then_those_of_the_modules() {
     let b = book(&[("Shapes", FUNNEL)], Vec::new());
     let names: Vec<String> = b.calc.chart_types().into_iter().map(|t| t.name).collect();
-    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Funnel"]);
+    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Sankey", "Funnel"]);
     let funnel = b.calc.chart_type("funnel").unwrap();
     assert_eq!(funnel.module.as_deref(), Some("Shapes"));
     let bar = b.calc.chart_type("Bar").unwrap();
@@ -181,6 +181,25 @@ fn each_built_in_chart_draws_svg_that_parses() {
                 ("y", "Shop.sales"),
                 ("labels", "Shop.regions"),
             ],
+        ),
+        chart(
+            "Sankey",
+            &[
+                (
+                    "sources",
+                    "['Pay', 'Pay', 'Gifts', 'Budget', 'Budget', 'Budget']",
+                ),
+                (
+                    "targets",
+                    "['Budget', 'Tax', 'Budget', 'Rent', 'Food', 'Saved']",
+                ),
+                ("values", "[3000, 900, 200, 1400, 600, 1200]"),
+                ("title", "'Where it goes'"),
+            ],
+        ),
+        chart(
+            "Sankey",
+            &[("sources", "[]"), ("targets", "[]"), ("values", "[]")],
         ),
         chart("Bar", &[("labels", "[]"), ("values", "[]")]),
         chart("Line", &[("labels", "['a']"), ("values", "[-5]")]),
@@ -262,7 +281,7 @@ fn a_module_whose_chart_type_name_is_taken_is_not_loaded() {
         Vec::new(),
     );
     let names: Vec<String> = b.calc.chart_types().into_iter().map(|t| t.name).collect();
-    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Funnel"]);
+    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Sankey", "Funnel"]);
     assert!(matches!(
         b.calc.module_status("Other"),
         Some(ModuleStatus::Failed(_))
@@ -305,4 +324,36 @@ fn the_detail_and_svg_limits_are_set_by_the_application() {
     assert_eq!(b.calc.svg_limit(), 5 << 20);
     b.calc.set_report_limits(10, 1000);
     assert_eq!((b.calc.detail_limit(), b.calc.svg_limit()), (10, 1000));
+}
+
+#[test]
+fn a_sankey_diagram_lays_out_its_flows_and_refuses_a_circle() {
+    let flows = |s: &str, t: &str, v: &str| {
+        chart("Sankey", &[("sources", s), ("targets", t), ("values", v)])
+    };
+    let b = book(
+        &[],
+        vec![
+            flows("['A', 'A', 'B']", "['B', 'C', 'C']", "[5, 2, 5]"),
+            flows("['A', 'B']", "['B', 'A']", "[1, 1]"),
+            flows("['A']", "['A']", "[1]"),
+            flows("['A', 'B']", "['B']", "[1, 2]"),
+            flows("['A']", "['B']", "[-1]"),
+        ],
+    );
+    let svg = b.text(0);
+    // A band for each flow and a node for each name, each labelled.
+    assert_eq!(svg.matches("<path ").count(), 3, "{svg}");
+    assert_eq!(svg.matches("<rect ").count(), 1 + 3, "{svg}");
+    for name in ["A ", "B ", "C "] {
+        assert!(svg.contains(&format!(">{name}<tspan")), "{svg}");
+    }
+    let error = |at: usize| match b.svg(at) {
+        Some(Err(e)) => e,
+        other => panic!("{other:?}"),
+    };
+    assert!(error(1).contains("round in a circle"), "{}", error(1));
+    assert!(error(2).contains("A flows to itself"), "{}", error(2));
+    assert!(error(3).contains("2 sources, 1 targets"), "{}", error(3));
+    assert!(error(4).contains("cannot be negative"), "{}", error(4));
 }

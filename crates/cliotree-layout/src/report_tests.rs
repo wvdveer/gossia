@@ -574,3 +574,23 @@ fn svg_over_the_limit_is_a_value_error() {
     assert_eq!(chart_paints(&laid), ["#VALUE!"]);
     assert!(laid.hovers[0].text.contains("more than the limit of 10"));
 }
+
+#[test]
+fn a_chart_style_sheet_gives_its_text_colour_and_lets_the_fill_through() {
+    use crate::chart::style_sheet;
+    assert_eq!(style_sheet(None, None), None);
+    let css = style_sheet(
+        Some(crate::report::Ink::Rgba([255, 255, 255, 255])),
+        Some(crate::report::Ink::Rgba([0, 0x33, 0x66, 255])),
+    )
+    .unwrap();
+    assert!(
+        css.contains("svg { color: rgba(255, 255, 255, 1) }"),
+        "{css}"
+    );
+    assert!(css.contains(".background { fill: none }"), "{css}");
+    assert!(css.contains(".surface { fill: #003366 }"), "{css}");
+    // A see-through fill as it shows on the white page.
+    let css = style_sheet(None, Some(crate::report::Ink::Rgba([0, 0, 0, 0]))).unwrap();
+    assert!(css.contains(".surface-stroke { stroke: #ffffff }"), "{css}");
+}

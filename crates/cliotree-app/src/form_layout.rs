@@ -2102,7 +2102,7 @@ impl ClioApp {
         }
         let Some(name) = edited.chart.clone() else {
             ui.weak(
-                "Bar, Line, Pie and Scatter are built in. A function of a module marked \
+                "Bar, Line, Pie, Scatter and Sankey are built in. A function of a module marked \
                  @chart(\"Name\") is a chart type too.",
             );
             return changed;

@@ -877,8 +877,41 @@ fn a_chart_draws_the_svg_its_function_returns() {
         panic!("{:?}", state.result)
     };
     // It renders.
-    let image = cliotree_app::chart_view::render(&svg, 320, 200).unwrap();
+    let image = cliotree_app::chart_view::render(&svg, None, 320, 200).unwrap();
     assert_eq!(image.size, [320, 200]);
+}
+
+#[test]
+fn a_chart_takes_its_fill_and_text_colour() {
+    let mut harness = window();
+    report_with_chart(&mut harness);
+    let mut design = harness.state().calc().report("Summary").unwrap().clone();
+    design.layout.controls[0].fill_colour = Some("#003366".into());
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(&mut harness);
+    let laid = harness.state().report.laid.clone().unwrap();
+    let (svg, style) = laid
+        .paints
+        .iter()
+        .find_map(|p| match p {
+            cliotree_layout::report::Paint::Svg { svg, style, .. } => {
+                Some((svg.clone(), style.clone()))
+            }
+            _ => None,
+        })
+        .unwrap();
+    // The fill shows through the chart, and its text is white on it.
+    let style = style.expect("a style sheet");
+    assert!(style.contains("color: rgba(255, 255, 255"), "{style}");
+    let image = cliotree_app::chart_view::render(&svg, Some(&style), 320, 200).unwrap();
+    assert_eq!(image.pixels[0].a(), 0, "the background is left to the fill");
+    let plain = cliotree_app::chart_view::render(&svg, None, 320, 200).unwrap();
+    assert_eq!(plain.pixels[0].a(), 255);
 }
 
 #[test]

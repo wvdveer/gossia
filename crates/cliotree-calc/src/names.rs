@@ -221,6 +221,7 @@ const SPECIAL: &[&str] = &[
     "line_chart",
     "pie_chart",
     "scatter_chart",
+    "sankey_chart",
 ];
 
 fn reserved_set() -> &'static HashSet<&'static str> {

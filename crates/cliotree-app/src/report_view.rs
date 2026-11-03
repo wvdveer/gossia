@@ -662,8 +662,8 @@ pub fn paint(ui: &mut egui::Ui, laid: &Laid, origin: egui::Pos2, zoom: f32, hove
             Paint::Pending { x, y } => {
                 painter.circle_filled(at(*x, *y) + egui::vec2(-5.0, 5.0), 3.0, palette.pending);
             }
-            Paint::Svg { rect, svg } => {
-                crate::chart_view::paint_svg(ui, &painter, rect_of(rect), svg);
+            Paint::Svg { rect, svg, style } => {
+                crate::chart_view::paint_svg(ui, &painter, rect_of(rect), svg, style.as_deref());
             }
         }
     }

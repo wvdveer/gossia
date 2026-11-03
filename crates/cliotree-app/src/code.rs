@@ -787,7 +787,7 @@ impl ClioApp {
                         let response = ui
                             .selectable_label(shown == Some(item), BUILT_IN_CHARTS)
                             .on_hover_text(
-                                "The built-in chart types, Bar, Line, Pie and Scatter: read-only, \
+                                "The built-in chart types, Bar, Line, Pie, Scatter and Sankey: read-only, \
                                  to read and copy as the start of a chart type of your own.",
                             );
                         if response.clicked() || response.double_clicked() {

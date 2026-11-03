@@ -128,9 +128,12 @@ pub enum Paint {
     /// The SVG a chart function returned, checked by
     /// [`crate::chart::parse_svg`], scaled into `rect` keeping its
     /// proportions.
+    /// `style` is the style sheet that gives it the chart's colours (see
+    /// [`crate::chart::style_sheet`]).
     Svg {
         rect: Rect,
         svg: std::sync::Arc<str>,
+        style: Option<std::sync::Arc<str>>,
     },
 }
 
@@ -211,9 +214,10 @@ impl Laid {
                     x: x + dx,
                     y: y + dy,
                 },
-                Paint::Svg { rect, svg } => Paint::Svg {
+                Paint::Svg { rect, svg, style } => Paint::Svg {
                     rect: rect.moved(dx, dy),
                     svg,
+                    style,
                 },
             });
         }
@@ -827,7 +831,7 @@ impl Placer<'_> {
             ControlKind::Label => self.label(c, at, rows, width, &style),
             ControlKind::Field => self.field(c, at, rows, width, &style),
             ControlKind::Separator => self.separator(c, width),
-            ControlKind::Chart => self.chart(c, at, rows, width),
+            ControlKind::Chart => self.chart(c, at, rows, width, style.text, fill_here),
             ControlKind::Group => self.group(c, at, rows, width, &style, fill),
             // A report has no repeaters or buttons (see
             // `ReportDesign::problems`): a list is the detail band of a
@@ -871,8 +875,17 @@ impl Placer<'_> {
     }
 
     /// A chart: the SVG its function returned, scaled into its box, or in
-    /// its place why there is none.
-    fn chart(&mut self, c: &Control, at: &[usize], rows: &[usize], width: f32) -> Laid {
+    /// its place why there is none. `text` and `fill` are its colours, given
+    /// to the SVG by a style sheet.
+    fn chart(
+        &mut self,
+        c: &Control,
+        at: &[usize],
+        rows: &[usize],
+        width: f32,
+        text: Option<Ink>,
+        fill: Option<Ink>,
+    ) -> Laid {
         let mut laid = Laid::default();
         let height = c
             .height
@@ -888,6 +901,7 @@ impl Placer<'_> {
                         laid.paints.push(Paint::Svg {
                             rect,
                             svg: std::sync::Arc::from(svg.as_str()),
+                            style: crate::chart::style_sheet(text, fill).map(std::sync::Arc::from),
                         });
                         None
                     }
@@ -1353,9 +1367,9 @@ impl Placer<'_> {
                     }
                 }
                 // A chart in a group cut short goes whole, or not at all.
-                Paint::Svg { rect, svg } => {
+                Paint::Svg { rect, svg, style } => {
                     if rect.y + rect.h <= limit {
-                        kept.push(Paint::Svg { rect, svg });
+                        kept.push(Paint::Svg { rect, svg, style });
                     } else {
                         text_cut = true;
                     }
