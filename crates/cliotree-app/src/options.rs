@@ -926,6 +926,12 @@ impl ClioApp {
                 );
             }
             Page::Reports => {
+                let ceilings = dialog.ceilings();
+                section(ui, "Limits", |ui| {
+                    for s in [Setting::MaxDetailRows, Setting::MaxChartSvg] {
+                        number(ui, dialog, Field::Workbook(s), Some(ceilings.get(s)));
+                    }
+                });
                 group(ui, "Storage", |ui| {
                     ui.checkbox(
                         &mut dialog.keep_report_results,

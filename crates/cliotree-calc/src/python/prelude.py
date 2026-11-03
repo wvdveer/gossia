@@ -673,3 +673,33 @@ def _as_literal(value):
         raise TypeError('a %s has no literal' % type(v).__name__)
 
     return lit(value)
+
+
+# Charts (DESIGN.md, Reports, "Chart functions"). `@chart("Name")` marks a
+# module function as a chart type. The application finds chart types by
+# reading the module, not by running it, so the decorator only checks its
+# name and gives the function back unchanged.
+
+def chart(name):
+    if not isinstance(name, str) or not name.strip():
+        raise TypeError('@chart takes the name of the chart type, as text')
+
+    def mark(function):
+        return function
+
+    return mark
+
+
+def _chart_svg(result):
+    """What a chart function returned, as the text of its SVG."""
+    if isinstance(result, ErrorValue):
+        return result
+    if isinstance(result, bytes):
+        try:
+            return result.decode('utf-8')
+        except UnicodeDecodeError as e:
+            return ErrorValue('#VALUE!', 'the SVG is not UTF-8: %s' % e, '')
+    if isinstance(result, str):
+        return result
+    return ErrorValue('#TYPE!', 'a chart function returns SVG as text or bytes, not %s'
+                      % type(result).__name__, '')

@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cliotree_calc::{Calc, Ceilings, Effective, Evaluator, Session, python};
+use cliotree_calc::{Calc, Ceilings, Effective, Evaluator, Session, Setting, python};
 use cliotree_core::validate::validate;
 use cliotree_core::{Node, Path, Value};
 
@@ -275,6 +275,10 @@ impl ClioApp {
     /// changed since it was last given them (an undo, a file, a preference).
     pub fn apply_settings(&mut self) {
         let effective = self.effective_settings();
+        self.session.calc_mut().set_report_limits(
+            effective.get(Setting::MaxDetailRows) as usize,
+            effective.get(Setting::MaxChartSvg) as usize,
+        );
         if self.applied.as_ref() == Some(&effective) {
             return;
         }

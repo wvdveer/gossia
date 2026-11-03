@@ -205,8 +205,14 @@ impl Calc {
                 ));
             }
         }
+        let charts = self.chart_problems(name);
+        let clash = !charts.is_empty();
+        for (line, column, message) in charts {
+            problems.push(ModuleProblem::at(line, column, message));
+        }
         if let ModuleStatus::Failed(why) = &module.status
             && cycle.is_none()
+            && !clash
             && !(unknown && why.contains("no module named"))
         {
             problems.push(ModuleProblem {
@@ -494,7 +500,12 @@ impl Calc {
                 .map(|(name, m)| {
                     let refused = match &m.info {
                         Err(e) => Some(format!("syntax error: {e}")),
-                        Ok(_) => cycles.get(name).cloned(),
+                        Ok(_) => cycles.get(name).cloned().or_else(|| {
+                            self.chart_problems(name)
+                                .into_iter()
+                                .next()
+                                .map(|(line, _, message)| format!("line {line}: {message}"))
+                        }),
                     };
                     ModuleSpec {
                         name: name.clone(),

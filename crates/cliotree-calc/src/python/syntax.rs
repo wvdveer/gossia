@@ -13,7 +13,9 @@ use ruff_python_parser::{parse_expression, parse_module};
 use ruff_source_file::LineIndex;
 use ruff_text_size::{Ranged, TextRange, TextSize};
 
-use crate::engine::{ModuleInfo, SourceRead, SourceScan, Syntax, SyntaxError};
+use crate::engine::{
+    ChartInfo, ChartParam, ModuleInfo, SourceRead, SourceScan, Syntax, SyntaxError,
+};
 
 /// The syntax check for Python formulas.
 #[derive(Debug, Default, Clone, Copy)]
@@ -97,12 +99,54 @@ impl PythonSyntax {
                 }
                 Stmt::FunctionDef(function) => {
                     info.functions.push(function.name.as_str().to_owned());
+                    if let Some((name, offset)) = chart_name(function) {
+                        let p = &function.parameters;
+                        let params = p
+                            .posonlyargs
+                            .iter()
+                            .chain(&p.args)
+                            .chain(&p.kwonlyargs)
+                            .filter(|a| !matches!(a.parameter.name.as_str(), "width" | "height"))
+                            .map(|a| ChartParam {
+                                name: a.parameter.name.as_str().to_owned(),
+                                required: a.default.is_none(),
+                            })
+                            .collect();
+                        info.charts.push(ChartInfo {
+                            name,
+                            function: function.name.as_str().to_owned(),
+                            params,
+                            at: at(offset),
+                        });
+                    }
                 }
                 _ => {}
             }
         }
         Ok(info)
     }
+}
+
+/// The name in a function's `@chart("Name")` decorator, and where the
+/// decorator is. Only a plain string literal counts, since the module is not
+/// run to find it.
+fn chart_name(function: &ruff_python_ast::StmtFunctionDef) -> Option<(String, TextSize)> {
+    function.decorator_list.iter().find_map(|d| {
+        let Expr::Call(call) = &d.expression else {
+            return None;
+        };
+        let Expr::Name(name) = call.func.as_ref() else {
+            return None;
+        };
+        if name.id.as_str() != "chart" || call.arguments.args.len() != 1 {
+            return None;
+        }
+        let Expr::StringLiteral(text) = &call.arguments.args[0] else {
+            return None;
+        };
+        let text = text.value.to_str().trim().to_owned();
+        (!text.is_empty()).then_some((text, d.start()))
+    })
 }
 
 /// The methods of a data source that read, and so can be replaced by what they

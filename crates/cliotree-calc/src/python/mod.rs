@@ -13,7 +13,7 @@ mod modules;
 mod node;
 mod shared;
 mod sources;
-mod syntax;
+pub(crate) mod syntax;
 mod watchdog;
 mod xmlpath;
 
@@ -48,6 +48,18 @@ pub fn factory(settings: PythonSettings) -> crate::EngineFactory {
 
 /// The Python source that defines `ErrorValue`, `IFERROR` and the rest.
 const PRELUDE: &str = include_str!("prelude.py");
+
+/// The built-in chart types (DESIGN.md, Reports, "Chart functions"), which
+/// the code editor shows read-only.
+pub const CHARTS: &str = include_str!("charts.py");
+
+/// The names of the built-in chart types and the functions that draw them.
+pub const CHART_FUNCTIONS: &[(&str, &str)] = &[
+    ("Bar", "bar_chart"),
+    ("Line", "line_chart"),
+    ("Pie", "pie_chart"),
+    ("Scatter", "scatter_chart"),
+];
 
 /// Standard library modules formulas can use by name, without importing them
 /// (DESIGN.md, "Python engine", "Modules that work").
@@ -599,6 +611,9 @@ fn set_up(
     // The Excel-named functions run in the same namespace.
     let scope = Scope::with_builtins(None, prelude.clone(), vm);
     vm.run_string(scope, cliotree_std::PYTHON, "<cliotree std>")?;
+    // And the built-in chart types, which use the prelude's `chart`.
+    let scope = Scope::with_builtins(None, prelude.clone(), vm);
+    vm.run_string(scope, CHARTS, "<cliotree charts>")?;
     // After the prelude, which imports `_cliotree` and so makes its types.
     // The prelude only reads `_source_access` when a source is used.
     let access = node::_cliotree::SourceAccess {
@@ -666,9 +681,12 @@ fn set_up(
         "_decimal",
         "_record",
         "_as_literal",
+        "chart",
+        "_chart_svg",
     ]
     .iter()
     .chain(cliotree_std::NAMES)
+    .chain(CHART_FUNCTIONS.iter().map(|(_, f)| f))
     {
         globals.set_item(*name, prelude.get_item(*name, vm)?, vm)?;
     }

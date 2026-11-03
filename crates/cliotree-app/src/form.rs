@@ -2233,6 +2233,10 @@ impl Painter<'_> {
                     ui.separator();
                 }
             },
+            // Charts are drawn in reports only, for now.
+            ControlKind::Chart => {
+                ui.weak("A chart is drawn in reports only");
+            }
             ControlKind::Button => {
                 let label = c.label.clone().unwrap_or_else(|| "Button".to_owned());
                 let running = self
@@ -4685,6 +4689,7 @@ pub(crate) fn control_name(control: &Control) -> String {
             .or_else(|| control.procedure.clone())
             .unwrap_or_default(),
         ControlKind::Separator => String::new(),
+        ControlKind::Chart => control.chart.clone().unwrap_or_default(),
         _ => control
             .path
             .clone()

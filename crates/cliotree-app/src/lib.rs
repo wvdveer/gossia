@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod app_icon;
+pub mod chart_view;
 pub mod clipboard;
 #[cfg(test)]
 mod clipboard_tests;

@@ -27,11 +27,12 @@ pub mod sqlite;
 mod trie;
 
 pub use calc::{
-    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ColumnFormula, Decision, Detail, Disconnect,
-    DisconnectPlan, EditError, Effective, ExportFormat, ExprKey, ExprKind, ExprState, FieldKind,
-    FieldPlaces, Fingerprint, KEEP_REPORT_RESULTS, Mentions, ModuleProblem, ModuleStatus,
-    ParamState, REPORT_FORM, RedefineGroup, ReportCache, SchemaFormat, Setting, TabKind,
-    TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem, design_digest, today,
+    Applied, Calc, Ceilings, Cell, Change, ChangeKind, ChartType, ColumnFormula, Decision, Detail,
+    Disconnect, DisconnectPlan, EditError, Effective, ExportFormat, ExprKey, ExprKind, ExprState,
+    FieldKind, FieldPlaces, Fingerprint, KEEP_REPORT_RESULTS, Mentions, ModuleProblem,
+    ModuleStatus, ParamState, REPORT_FORM, RedefineGroup, ReportCache, SchemaFormat, Setting,
+    TabKind, TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem, design_digest,
+    today,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -39,8 +40,9 @@ pub use calc::{
 };
 pub use check::Computed;
 pub use engine::{
-    Answer, Call, Context, Depth, Engine, Failure, Immediate, ImmediateResult, ModuleInfo,
-    ModuleReport, ModuleSpec, Read, SourceRead, SourceScan, Syntax, SyntaxError, Write, WriteOp,
+    Answer, Call, ChartInfo, ChartParam, Context, Depth, Engine, Failure, Immediate,
+    ImmediateResult, ModuleInfo, ModuleReport, ModuleSpec, Read, SourceRead, SourceScan, Syntax,
+    SyntaxError, Write, WriteOp,
 };
 pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
@@ -128,6 +130,9 @@ mod report_bands_tests;
 #[path = "report_params_tests.rs"]
 mod report_params_tests;
 
+#[cfg(test)]
+#[path = "charts_tests.rs"]
+mod charts_tests;
 #[cfg(test)]
 #[path = "report_cache_tests.rs"]
 mod report_cache_tests;

@@ -106,6 +106,7 @@ fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> G
             ExprKind::Value => "Value",
             ExprKind::Template => "Text",
             ExprKind::Items => "Items",
+            ExprKind::Chart => "Chart",
         };
         if !trusted {
             // Nothing runs: shown, and disabled if it has an *enabled when*.
@@ -139,7 +140,11 @@ fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> G
                     Ok(c) => gate.fill = c,
                     Err(error) => gate.why.push(format!("{what}: {error}")),
                 },
-                ExprKind::Choices | ExprKind::Value | ExprKind::Template | ExprKind::Items => {}
+                ExprKind::Choices
+                | ExprKind::Value
+                | ExprKind::Template
+                | ExprKind::Items
+                | ExprKind::Chart => {}
             },
         }
     }

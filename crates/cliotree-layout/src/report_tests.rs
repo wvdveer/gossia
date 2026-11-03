@@ -490,3 +490,87 @@ fn a_separator_is_drawn_at_its_thickness() {
     assert_eq!(line(&laid), (6.0, 5.0));
     assert_eq!(laid.height, 10.0);
 }
+
+// ------------------------------------------------------------------ charts
+
+const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><rect width="100" height="50" fill="red"/></svg>"#;
+
+fn chart(width: u32, height: u32) -> Control {
+    let mut c = Control::new(ControlKind::Chart);
+    c.chart = Some("Bar".to_owned());
+    c.width = Some(width);
+    c.height = Some(height);
+    c
+}
+
+/// The text painted for each chart, or "svg" for one drawn.
+fn chart_paints(laid: &Laid) -> Vec<String> {
+    laid.paints
+        .iter()
+        .filter_map(|p| match p {
+            Paint::Svg { .. } => Some("svg".to_owned()),
+            Paint::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_chart_draws_its_svg_in_its_box_or_says_why_it_cannot() {
+    let design = report(vec![chart(200, 100); 6]);
+    let fake = Fake::default()
+        .value(&[0], &[], Prop::Chart, s(SVG))
+        .value(&[1], &[], Prop::Chart, Value::Int(3))
+        .value(&[2], &[], Prop::Chart, s("<svg"))
+        .set(
+            &[3],
+            &[],
+            Prop::Chart,
+            Got::Error("#PYERR!: boom".to_owned()),
+        )
+        .set(&[4], &[], Prop::Chart, Got::Untrusted);
+    let laid = single_page(&design, 600.0, &fake);
+    assert_eq!(
+        chart_paints(&laid),
+        [
+            "svg",
+            "#TYPE!",
+            "#VALUE!",
+            "#PYERR!",
+            UNTRUSTED,
+            "Fill in the chart's values"
+        ]
+    );
+    let rect = laid
+        .paints
+        .iter()
+        .find_map(|p| match p {
+            Paint::Svg { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!((rect.w, rect.h), (200.0, 100.0));
+    // Why, on hovering: the message of the error.
+    assert!(laid.hovers.iter().any(|h| h.text == "#PYERR!: boom"));
+}
+
+#[test]
+fn svg_over_the_limit_is_a_value_error() {
+    struct Small(Fake);
+    impl Source for Small {
+        fn control(&self, at: &[usize], rows: &[usize], prop: Prop) -> Got {
+            self.0.control(at, rows, prop)
+        }
+        fn column(&self, a: &[usize], r: &[usize], c: &str, w: Option<usize>, p: Prop) -> Got {
+            self.0.column(a, r, c, w, p)
+        }
+        fn svg_limit(&self) -> usize {
+            10
+        }
+    }
+    let design = report(vec![chart(200, 100)]);
+    let fake = Small(Fake::default().value(&[0], &[], Prop::Chart, s(SVG)));
+    let laid = single_page(&design, 600.0, &fake);
+    assert_eq!(chart_paints(&laid), ["#VALUE!"]);
+    assert!(laid.hovers[0].text.contains("more than the limit of 10"));
+}

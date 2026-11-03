@@ -19,3 +19,6 @@ harfrust = "0.12.0"
 # Ubuntu Light and Hack, egui's own fonts, which follow the bundled ones for
 # characters they lack, as they do on screen. Only the font bytes; no egui.
 epaint_default_fonts = { version = "0.37.0", default-features = false }
+# Charts are SVG (DESIGN.md, Reports, "Chart functions"): parsed with usvg, at
+# the version krilla-svg uses for the PDF, with the bundled fonts for text.
+usvg = { version = "0.47.0", default-features = false, features = ["text"] }

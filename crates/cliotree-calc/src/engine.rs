@@ -159,6 +159,30 @@ pub struct ModuleInfo {
     pub import_at: Vec<(usize, usize)>,
     /// The functions defined at the top level, in order, private ones too.
     pub functions: Vec<String>,
+    /// The chart types: the top-level functions marked `@chart("Name")`.
+    pub charts: Vec<ChartInfo>,
+}
+
+/// A chart type, read from its function without running it (DESIGN.md,
+/// Reports, "Chart functions").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChartInfo {
+    /// The name `@chart` gives it, as the designer shows it.
+    pub name: String,
+    /// The function that draws it.
+    pub function: String,
+    /// The parameters of the function, less `width` and `height`, in order.
+    pub params: Vec<ChartParam>,
+    /// Where the decorator is: its line and column, 1-based.
+    pub at: (usize, usize),
+}
+
+/// A parameter of a chart function: a box on the chart's property page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChartParam {
+    pub name: String,
+    /// It has no default, so the chart cannot be drawn without it.
+    pub required: bool,
 }
 
 /// A module as the engine is asked to have it loaded.

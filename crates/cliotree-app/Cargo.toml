@@ -26,6 +26,8 @@ eframe = "0.37.0"
 # The date picker of a form's date fields needs `jiff`, which the lock file
 # already has.
 egui_extras = { version = "0.37.0", features = ["datepicker"] }
+# Draws the SVG of charts (DESIGN.md, Reports, "Chart functions").
+resvg = { version = "0.47.0", default-features = false, features = ["text"] }
 jiff = { version = "0.2.38", default-features = false, features = ["std"] }
 # Reads the clipboard for Paste values and the menu's Paste; egui hands the
 # clipboard over only with Ctrl+V. The same version egui-winit uses.

@@ -574,3 +574,91 @@ fn a_report_with_parameters() {
     }
     check(&mut harness, "report_params", &mut results);
 }
+
+/// Charts on a report: a bar chart of two series, a donut and a line, the
+/// bar chart selected in layout mode with its property page.
+#[test]
+fn a_report_with_charts() {
+    use cliotree_core::form::{Control, ControlKind};
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .create_report_tab(
+            "Charts",
+            cliotree_core::report::ReportKind::SinglePage,
+            None,
+        )
+        .unwrap();
+    let mut design = harness.state().calc().report("Charts").unwrap().clone();
+    let chart = |name: &str, args: &[(&str, &str)], x: u32, y: u32, w: u32, h: u32| {
+        let mut c = Control::new(ControlKind::Chart);
+        c.chart = Some(name.into());
+        for (k, v) in args {
+            c.chart_args.insert((*k).into(), (*v).into());
+        }
+        c.x = Some(x);
+        c.y = Some(y);
+        c.width = Some(w);
+        c.height = Some(h);
+        c
+    };
+    let skus = "[i.sku for i in Orders.items]";
+    design.canvas = true;
+    design.layout.controls = vec![
+        chart(
+            "Bar",
+            &[
+                ("labels", skus),
+                (
+                    "values",
+                    "[[i.qty * i.price for i in Orders.items], [10, 20, 5]]",
+                ),
+                ("series", "['Ordered', 'Budget']"),
+                ("title", "'Sales by product'"),
+            ],
+            0,
+            0,
+            290,
+            180,
+        ),
+        chart(
+            "Pie",
+            &[
+                ("labels", skus),
+                ("values", "[i.qty for i in Orders.items]"),
+            ],
+            300,
+            0,
+            200,
+            180,
+        ),
+        chart(
+            "Line",
+            &[
+                ("labels", "['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']"),
+                ("values", "[3, 5, 4, 8, 7, 11]"),
+                ("title", "'Orders per month'"),
+            ],
+            0,
+            200,
+            500,
+            150,
+        ),
+    ];
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Charts", design)
+        .unwrap();
+    harness.state_mut().set_layout(true);
+    harness.state_mut().select_control(Some(vec![0]));
+    for _ in 0..3 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_charts", &mut results);
+}

@@ -24,6 +24,9 @@ pub const DESIGN_VERSION: u32 = 1;
 /// then in the children of that control, and so on.
 pub type Address = Vec<usize>;
 
+/// The size of a chart with no width or height of its own, in points.
+pub const CHART_SIZE: (u32, u32) = (320, 200);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ControlKind {
@@ -39,16 +42,20 @@ pub enum ControlKind {
     /// Runs a procedure of a module (step 7c).
     Button,
     Separator,
+    /// An SVG image a chart function draws (DESIGN.md, Reports, "Chart
+    /// functions"). In reports only, for now.
+    Chart,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 6] = [
+    pub const ALL: [ControlKind; 7] = [
         ControlKind::Field,
         ControlKind::Group,
         ControlKind::Repeater,
         ControlKind::Label,
         ControlKind::Button,
         ControlKind::Separator,
+        ControlKind::Chart,
     ];
 
     pub fn label(self) -> &'static str {
@@ -59,6 +66,7 @@ impl ControlKind {
             ControlKind::Label => "Label",
             ControlKind::Button => "Button",
             ControlKind::Separator => "Separator",
+            ControlKind::Chart => "Chart",
         }
     }
 }
@@ -1037,6 +1045,14 @@ pub struct Control {
     /// ([`SEPARATOR_THICKNESS`]). Absent: the usual thin line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thickness: Option<u32>,
+    /// For a chart: the name of its chart type, as `@chart` gives it
+    /// ("Bar", "Funnel").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<String>,
+    /// For a chart: an expression for each parameter of its chart function
+    /// that is filled in, by the parameter's name.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub chart_args: std::collections::BTreeMap<String, String>,
     /// For a group: how it arranges its controls. Absent: flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<GroupLayout>,
@@ -1190,6 +1206,8 @@ impl Control {
             border_colour: None,
             vertical: false,
             thickness: None,
+            chart: None,
+            chart_args: std::collections::BTreeMap::new(),
             layout: None,
             base_width: None,
             base_height: None,
@@ -1490,7 +1508,7 @@ pub fn form_schema_source() -> &'static str {
     "Control": {
       "type": "object",
       "properties": {
-        "type": {"type": "string", "enum": ["field", "group", "repeater", "label", "button", "separator"]},
+        "type": {"type": "string", "enum": ["field", "group", "repeater", "label", "button", "separator", "chart"]},
         "path": {"type": "string"},
         "label": {"type": "string"},
         "help": {"type": "string"},
@@ -1543,6 +1561,8 @@ pub fn form_schema_source() -> &'static str {
         "border_colour": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
         "vertical": {"type": "boolean"},
         "thickness": {"type": "integer", "minimum": 1, "maximum": 12},
+        "chart": {"type": "string"},
+        "chart_args": {"type": "object", "additionalProperties": {"type": "string"}},
         "layout": {"type": "string", "enum": ["flow", "free", "grid"]},
         "grid_columns": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},
         "grid_rows": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},

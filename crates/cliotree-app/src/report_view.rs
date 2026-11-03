@@ -16,7 +16,7 @@
 use cliotree_calc::{Calc, ExprKind, ExprState, REPORT_FORM};
 use cliotree_core::Value;
 use cliotree_core::form::{Address, FormDesign};
-use cliotree_core::report::{DETAIL_LIMIT, ReportDesign};
+use cliotree_core::report::ReportDesign;
 use cliotree_layout::report::{self, Got, Ink, Laid, Paged, Paint, Prop, Source};
 use egui::{Color32, Sense, Stroke};
 
@@ -44,6 +44,7 @@ fn kind(prop: Prop) -> ExprKind {
         Prop::Value => ExprKind::Value,
         Prop::Template => ExprKind::Template,
         Prop::Items => ExprKind::Items,
+        Prop::Chart => ExprKind::Chart,
     }
 }
 
@@ -75,6 +76,10 @@ fn got(trusted: bool, state: Option<ExprState>, cached: Option<&Result<Value, St
 }
 
 impl Source for CalcSource<'_> {
+    fn svg_limit(&self) -> usize {
+        self.calc.svg_limit()
+    }
+
     fn control(&self, at: &[usize], rows: &[usize], prop: Prop) -> Got {
         got(
             self.calc.is_trusted(),
@@ -243,7 +248,7 @@ impl ClioApp {
                         calc,
                         report: &self.sheet,
                     },
-                    DETAIL_LIMIT,
+                    calc.detail_limit(),
                 ),
                 None => Paged::default(),
             };
@@ -656,6 +661,9 @@ pub fn paint(ui: &mut egui::Ui, laid: &Laid, origin: egui::Pos2, zoom: f32, hove
             }
             Paint::Pending { x, y } => {
                 painter.circle_filled(at(*x, *y) + egui::vec2(-5.0, 5.0), 3.0, palette.pending);
+            }
+            Paint::Svg { rect, svg } => {
+                crate::chart_view::paint_svg(ui, &painter, rect_of(rect), svg);
             }
         }
     }

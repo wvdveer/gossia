@@ -42,7 +42,7 @@
 //! [`cliotree_core::report::paginate`], as the layout's do.
 
 use cliotree_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template, truthy};
-use cliotree_core::report::{BandKind, DETAIL_LIMIT, ReportDesign, paginate};
+use cliotree_core::report::{BandKind, ReportDesign, paginate};
 use cliotree_core::{Kind, Node, Path, Value};
 use indexmap::IndexMap;
 
@@ -64,10 +64,13 @@ pub enum ExprKind {
     Template,
     /// The items of a repeater that come from an expression.
     Items,
+    /// The SVG of a chart: its chart function called with the expression of
+    /// each parameter (DESIGN.md, Reports, "Chart functions").
+    Chart,
 }
 
 impl ExprKind {
-    pub const ALL: [ExprKind; 8] = [
+    pub const ALL: [ExprKind; 9] = [
         ExprKind::Visible,
         ExprKind::Enabled,
         ExprKind::TextColour,
@@ -76,6 +79,7 @@ impl ExprKind {
         ExprKind::Value,
         ExprKind::Template,
         ExprKind::Items,
+        ExprKind::Chart,
     ];
 
     /// The expression of this kind on a control: its Python text, or why
@@ -109,10 +113,15 @@ impl ExprKind {
                 // A template with no expression in it is fixed text.
                 return match template::parts(text) {
                     Ok(parts) if parts.iter().all(|p| matches!(p, template::Part::Text(_))) => None,
-                    Ok(_) => Some(template::expression_of(text)),
-                    Err(e) => Some(Err(e)),
+                    Ok(_) => Some(
+                        template::expression_of(text)
+                            .map_err(|e| format!("the template cannot be read: {e}")),
+                    ),
+                    Err(e) => Some(Err(format!("the template cannot be read: {e}"))),
                 };
             }
+            // Made by `Calc::chart_text`, which knows the chart types.
+            ExprKind::Chart => None,
         };
         plain
             .map(str::trim)
@@ -134,7 +143,7 @@ impl ExprKind {
                 .filter(|t| fixed_colour(t).is_none()),
             ExprKind::Choices => column.choices.as_deref(),
             ExprKind::Value => column.value.as_deref(),
-            ExprKind::Template | ExprKind::Items => None,
+            ExprKind::Template | ExprKind::Items | ExprKind::Chart => None,
         }
         .map(str::trim)
         .filter(|t| !t.is_empty())
@@ -578,6 +587,7 @@ impl Calc {
                 let texts: Vec<(ExprKind, Result<String, String>)> = ExprKind::ALL
                     .into_iter()
                     .filter_map(|k| Some((k, k.text(control)?)))
+                    .chain(self.chart_text(control).map(|t| (ExprKind::Chart, t)))
                     .collect();
                 let own_path = (!control.shows_value() && !control.lists_items())
                     .then(|| control.bound_path())
@@ -696,7 +706,7 @@ impl Calc {
                         .syntax
                         .check(text)
                         .map_err(|e| format!("syntax error: {e}")),
-                    Err(problem) => Err(format!("the template cannot be read: {problem}")),
+                    Err(problem) => Err(problem.clone()),
                 };
                 match checked {
                     Ok(()) => ControlExpr {
@@ -766,7 +776,9 @@ impl Calc {
                 .copied()
                 .unwrap_or(0)
         };
-        let pages = paginate(report, &items, &visible, DETAIL_LIMIT).pages.len();
+        let pages = paginate(report, &items, &visible, self.detail_limit())
+            .pages
+            .len();
         for p in 0..pages {
             let instance = Instance {
                 rows: vec![p],
@@ -838,7 +850,7 @@ impl Calc {
         };
         let mut count = 0;
         for (i, item) in items.iter().enumerate() {
-            if walk.details >= DETAIL_LIMIT {
+            if walk.details >= self.detail_limit() {
                 break;
             }
             count += 1;

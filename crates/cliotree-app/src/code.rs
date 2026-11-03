@@ -60,7 +60,13 @@ pub enum CodeItem {
     },
     /// The design of a report tab, as its JSON text.
     Report(String),
+    /// The built-in chart types, read-only (DESIGN.md, Reports, "Chart
+    /// functions").
+    BuiltInCharts,
 }
+
+/// The name of the module of the built-in chart types in the explorer.
+pub const BUILT_IN_CHARTS: &str = "charts (built in)";
 
 impl CodeItem {
     /// The name on the tab.
@@ -69,19 +75,25 @@ impl CodeItem {
             CodeItem::Module(name) => name.clone(),
             CodeItem::Form { sheet, form } => format!("{sheet}: {form}"),
             CodeItem::Report(name) => name.clone(),
+            CodeItem::BuiltInCharts => BUILT_IN_CHARTS.to_owned(),
         }
     }
 
     pub fn module(&self) -> Option<&str> {
         match self {
             CodeItem::Module(name) => Some(name),
-            CodeItem::Form { .. } | CodeItem::Report(_) => None,
+            CodeItem::Form { .. } | CodeItem::Report(_) | CodeItem::BuiltInCharts => None,
         }
     }
 
     /// A design, whose text is JSON and not in the workbook's history.
     pub fn is_design(&self) -> bool {
-        !matches!(self, CodeItem::Module(_))
+        matches!(self, CodeItem::Form { .. } | CodeItem::Report(_))
+    }
+
+    /// Shown to be read and copied, never changed.
+    pub fn is_read_only(&self) -> bool {
+        matches!(self, CodeItem::BuiltInCharts)
     }
 }
 
@@ -229,6 +241,14 @@ impl ClioApp {
         self.open_item(CodeItem::Module(name.to_owned()), source);
     }
 
+    /// Opens the built-in chart types in a tab, read-only, or shows its tab.
+    pub fn open_built_in_charts(&mut self) {
+        self.open_item(
+            CodeItem::BuiltInCharts,
+            cliotree_calc::python::CHARTS.to_owned(),
+        );
+    }
+
     /// Opens the design of a customised form in a tab, as its JSON text, or
     /// shows its tab.
     pub fn open_form_design(&mut self, sheet: &str, form: &str) {
@@ -353,6 +373,7 @@ impl ClioApp {
                         tab.problem = problem;
                     }
                 }
+                CodeItem::BuiltInCharts => {}
             }
         }
     }
@@ -413,6 +434,7 @@ impl ClioApp {
                     CodeItem::Module(m) => calc.module_source(m).is_some(),
                     CodeItem::Form { sheet, form } => calc.forms().get(sheet, form).is_some(),
                     CodeItem::Report(name) => calc.report(name).is_some(),
+                    CodeItem::BuiltInCharts => true,
                 }
         });
         for tab in &mut self.code.tabs {
@@ -446,6 +468,7 @@ impl ClioApp {
                         tab.text = design.to_json();
                     }
                 }
+                CodeItem::BuiltInCharts => {}
             }
         }
         if let Some(module) = &self.code.compiled
@@ -757,6 +780,20 @@ impl ClioApp {
                 });
                 self.forms_branch(ui, shown.as_ref());
                 self.reports_branch(ui, shown.as_ref());
+                egui::CollapsingHeader::new("Built in")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        let item = CodeItem::BuiltInCharts;
+                        let response = ui
+                            .selectable_label(shown == Some(item), BUILT_IN_CHARTS)
+                            .on_hover_text(
+                                "The built-in chart types, Bar, Line, Pie and Scatter: read-only, \
+                                 to read and copy as the start of a chart type of your own.",
+                            );
+                        if response.clicked() || response.double_clicked() {
+                            self.open_built_in_charts();
+                        }
+                    });
             });
     }
 
@@ -960,9 +997,10 @@ impl ClioApp {
             return;
         };
         let (language, indent) = match tab.item {
-            CodeItem::Module(_) => ("py", prefs.indent as usize),
+            CodeItem::Module(_) | CodeItem::BuiltInCharts => ("py", prefs.indent as usize),
             CodeItem::Form { .. } | CodeItem::Report(_) => ("json", FORM_INDENT),
         };
+        let read_only = tab.item.is_read_only();
         let id = editor_id(&tab.item);
         let ctx = ui.ctx().clone();
         // The editor's own size of the monospace font, which the highlighter
@@ -975,7 +1013,8 @@ impl ClioApp {
 
         // Enter, Tab and Shift+Tab are the editor's, before the text box sees
         // them.
-        if ui.memory(|m| m.has_focus(id))
+        if !read_only
+            && ui.memory(|m| m.has_focus(id))
             && let Some(range) =
                 egui::TextEdit::load_state(&ctx, id).and_then(|s| s.cursor.char_range())
         {
@@ -1070,7 +1109,11 @@ impl ClioApp {
                         .show(ui);
                     named(&output.response, "Code");
                     if output.response.changed() {
-                        tab.typed_at = Some(now);
+                        if read_only {
+                            tab.text = cliotree_calc::python::CHARTS.to_owned();
+                        } else {
+                            tab.typed_at = Some(now);
+                        }
                     }
                     if let Some(numbers) = numbers {
                         paint_line_numbers(ui, numbers.right(), &output, &font);
@@ -1118,6 +1161,13 @@ impl ClioApp {
             };
             let module = match &tab.item {
                 CodeItem::Module(module) => module,
+                CodeItem::BuiltInCharts => {
+                    ui.label(
+                        "The built-in chart types: read-only. Copy a function into a module \
+                         of your own, with a new name in @chart, to start a chart type.",
+                    );
+                    return;
+                }
                 CodeItem::Form { .. } | CodeItem::Report(_) => {
                     let title = match &tab.item {
                         CodeItem::Form { sheet, form } => format!("Form {form} of {sheet}"),

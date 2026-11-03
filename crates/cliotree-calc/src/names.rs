@@ -215,6 +215,12 @@ const SPECIAL: &[&str] = &[
     "source",
     "sources",
     "SourceError",
+    // Charts (step 12e): the decorator and the built-in chart types.
+    "chart",
+    "bar_chart",
+    "line_chart",
+    "pie_chart",
+    "scatter_chart",
 ];
 
 fn reserved_set() -> &'static HashSet<&'static str> {

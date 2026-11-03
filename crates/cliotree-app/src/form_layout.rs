@@ -1066,6 +1066,10 @@ impl ClioApp {
                 if report && matches!(kind, ControlKind::Button | ControlKind::Repeater) {
                     continue;
                 }
+                // Charts are for reports only, for now.
+                if !report && kind == ControlKind::Chart {
+                    continue;
+                }
                 let label = format!("Add {}", kind.label().to_lowercase());
                 let button = ui
                     .add(egui::Button::new(label).sense(egui::Sense::click_and_drag()))
@@ -1578,6 +1582,11 @@ impl ClioApp {
                     merge = Some(key("thickness"));
                 }
             }
+            ControlKind::Chart => {
+                if let Some(property) = self.chart_properties(ui, at, &mut edited) {
+                    merge = Some(key(&property));
+                }
+            }
         }
         // On a report's canvas, the top level is placed as in a Free group.
         let canvas = report.then(|| {
@@ -2054,6 +2063,99 @@ impl ClioApp {
     /// the full message on hover. For one that runs for each row, the first
     /// row that failed. Nothing before it has run, when it worked, or in a
     /// workbook that is not trusted.
+    /// The chart section of a chart's property page: its chart type, and a
+    /// box for the expression of each parameter of its function (one with
+    /// no default marked as required). Returns the property that changed,
+    /// for merging the typing into one change.
+    fn chart_properties(
+        &self,
+        ui: &mut egui::Ui,
+        at: &Address,
+        edited: &mut Control,
+    ) -> Option<String> {
+        let mut changed = None;
+        let types = self.calc().chart_types();
+        let current = edited.chart.clone();
+        let mut chosen = current.clone();
+        ui.horizontal(|ui| {
+            ui.label("Chart type");
+            let response = egui::ComboBox::from_id_salt("property_chart")
+                .selected_text(current.as_deref().unwrap_or("(none)"))
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    for t in &types {
+                        let text = match &t.module {
+                            Some(module) => format!("{} ({module})", t.name),
+                            None => t.name.clone(),
+                        };
+                        ui.selectable_value(&mut chosen, Some(t.name.clone()), text);
+                    }
+                })
+                .response;
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Chart type")
+            });
+        });
+        if chosen != current {
+            edited.chart = chosen;
+            changed = Some("chart".to_owned());
+        }
+        let Some(name) = edited.chart.clone() else {
+            ui.weak(
+                "Bar, Line, Pie and Scatter are built in. A function of a module marked \
+                 @chart(\"Name\") is a chart type too.",
+            );
+            return changed;
+        };
+        let Some(chart) = types.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) else {
+            ui.label(
+                egui::RichText::new(format!(
+                    "There is no chart type named {name}: its module has changed or is gone."
+                ))
+                .small()
+                .color(error_color(ui)),
+            );
+            return changed;
+        };
+        for p in &chart.params {
+            let mut text = edited.chart_args.get(&p.name).cloned();
+            let label = if p.required {
+                format!("{} *", p.name)
+            } else {
+                p.name.clone()
+            };
+            let hint = if p.required {
+                "expression"
+            } else {
+                "expression (optional)"
+            };
+            if expr_text(
+                ui,
+                &label,
+                &mut text,
+                hint,
+                draft_id(at, Some(&p.name), ExprKind::Chart),
+            ) {
+                match text.filter(|t| !t.trim().is_empty()) {
+                    Some(t) => edited.chart_args.insert(p.name.clone(), t),
+                    None => edited.chart_args.remove(&p.name),
+                };
+                changed = Some(format!("chart_args.{}", p.name));
+            }
+        }
+        self.expression_error(ui, at, None, ExprKind::Chart);
+        let function = match &chart.module {
+            Some(module) => format!("{module}.{}", chart.function),
+            None => format!("{} (built in)", chart.function),
+        };
+        ui.weak(format!(
+            "Each box is a Python expression, passed to {function} as the parameter of \
+             its name; * marks one that has to be filled in. The chart is given its width \
+             and height in points."
+        ));
+        changed
+    }
+
     pub(crate) fn expression_error(
         &self,
         ui: &mut egui::Ui,
@@ -2876,6 +2978,7 @@ fn expr_label(kind: ExprKind) -> &'static str {
         ExprKind::Value => "Value",
         ExprKind::Template => "Text",
         ExprKind::Items => "Items",
+        ExprKind::Chart => "Chart",
     }
 }
 
@@ -2887,6 +2990,7 @@ fn expr_hint(kind: ExprKind) -> &'static str {
         ExprKind::Value => "expression",
         ExprKind::Template => "text with {expressions}",
         ExprKind::Items => "expression giving a list",
+        ExprKind::Chart => "expression",
     }
 }
 
@@ -2902,6 +3006,7 @@ fn expr_property(kind: ExprKind) -> &'static str {
         ExprKind::Value => "value",
         ExprKind::Template => "text",
         ExprKind::Items => "items",
+        ExprKind::Chart => "chart_args",
     }
 }
 

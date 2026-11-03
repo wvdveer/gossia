@@ -1,0 +1,308 @@
+//! Charts (DESIGN.md, Reports, "Chart functions"): chart types read from
+//! modules, the built-in ones, and a chart on a report as one expression.
+
+use std::sync::Arc;
+
+use cliotree_core::form::{Control, ControlKind};
+use cliotree_core::report::{ReportDesign, ReportKind};
+use cliotree_core::{Value, json, jsonschema};
+
+use crate::python::{PythonEngine, PythonSyntax};
+use crate::{Calc, ChartParam, ExprKind, ModuleStatus, Syntax};
+
+const SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "regions": {"type": "array", "items": {"type": "string"}},
+    "sales": {"type": "array", "items": {"type": "number"}}
+  }
+}"#;
+
+const FUNNEL: &str = r#"
+@chart("Funnel")
+def funnel(stages, counts, title=None, *, width, height):
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">%s %d</svg>' % (
+        width, height, title or '', len(stages))
+
+def helper():
+    return 1
+"#;
+
+struct Book {
+    calc: Calc,
+    engine: PythonEngine,
+}
+
+fn chart(name: &str, args: &[(&str, &str)]) -> Control {
+    let mut c = Control::new(ControlKind::Chart);
+    c.chart = Some(name.to_owned());
+    for (k, v) in args {
+        c.chart_args.insert((*k).to_owned(), (*v).to_owned());
+    }
+    c
+}
+
+fn book(modules: &[(&str, &str)], controls: Vec<Control>) -> Book {
+    let mut calc = Calc::new(Arc::new(PythonSyntax));
+    calc.add_sheet(
+        "Shop",
+        jsonschema::lower_str(SCHEMA).unwrap(),
+        json::parse(r#"{"regions": ["North", "South", "East"], "sales": [12, 30.5, 7]}"#)
+            .unwrap()
+            .node,
+    )
+    .unwrap();
+    for (name, source) in modules {
+        calc.add_module(name, source).unwrap();
+    }
+    let mut design = ReportDesign::new(ReportKind::SinglePage);
+    design.layout.controls = controls;
+    calc.create_report("Sales", design).unwrap();
+    let mut b = Book {
+        calc,
+        engine: PythonEngine::new(),
+    };
+    b.calc.show_report(Some("Sales"));
+    b.run();
+    b
+}
+
+impl Book {
+    fn run(&mut self) {
+        for _ in 0..3 {
+            self.calc.recalc(&self.engine);
+        }
+    }
+
+    fn svg(&self, at: usize) -> Option<Result<Value, String>> {
+        self.calc
+            .report_expression("Sales", &[at], &[], ExprKind::Chart)
+            .and_then(|s| s.result)
+    }
+
+    fn text(&self, at: usize) -> String {
+        match self.svg(at) {
+            Some(Ok(Value::Str(s))) => s,
+            other => panic!("not SVG: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_chart_type_is_read_from_its_decorator_without_running_the_module() {
+    let info = PythonSyntax.module_info(FUNNEL).unwrap();
+    assert_eq!(info.charts.len(), 1);
+    let c = &info.charts[0];
+    assert_eq!((c.name.as_str(), c.function.as_str()), ("Funnel", "funnel"));
+    assert_eq!(
+        c.params,
+        vec![
+            ChartParam {
+                name: "stages".into(),
+                required: true
+            },
+            ChartParam {
+                name: "counts".into(),
+                required: true
+            },
+            ChartParam {
+                name: "title".into(),
+                required: false
+            },
+        ]
+    );
+    assert_eq!(c.at, (2, 1));
+    // Only a literal name counts: the module is not run to find it.
+    let named = "N = 'X'\n@chart(N)\ndef f(a, *, width, height):\n    pass\n";
+    assert!(PythonSyntax.module_info(named).unwrap().charts.is_empty());
+}
+
+#[test]
+fn the_built_in_chart_types_come_first_then_those_of_the_modules() {
+    let b = book(&[("Shapes", FUNNEL)], Vec::new());
+    let names: Vec<String> = b.calc.chart_types().into_iter().map(|t| t.name).collect();
+    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Funnel"]);
+    let funnel = b.calc.chart_type("funnel").unwrap();
+    assert_eq!(funnel.module.as_deref(), Some("Shapes"));
+    let bar = b.calc.chart_type("Bar").unwrap();
+    assert_eq!(bar.module, None);
+    let required: Vec<&str> = bar
+        .params
+        .iter()
+        .filter(|p| p.required)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(required, ["labels", "values"]);
+}
+
+#[test]
+fn a_chart_calls_its_function_with_each_expression_and_its_size() {
+    let mut c = chart(
+        "Funnel",
+        &[("stages", "Shop.regions"), ("counts", "Shop.sales")],
+    );
+    c.width = Some(200);
+    c.height = Some(100);
+    let b = book(&[("Shapes", FUNNEL)], vec![c]);
+    let svg = b.text(0);
+    assert!(svg.contains(r#"width="200" height="100""#), "{svg}");
+    assert!(svg.contains(" 3</svg>"), "{svg}");
+}
+
+#[test]
+fn each_built_in_chart_draws_svg_that_parses() {
+    let controls = vec![
+        chart(
+            "Bar",
+            &[("labels", "Shop.regions"), ("values", "Shop.sales")],
+        ),
+        chart(
+            "Bar",
+            &[
+                ("labels", "Shop.regions"),
+                ("values", "[Shop.sales, [1, 2, 3]]"),
+                ("series", "['This year', 'Last year']"),
+                ("horizontal", "True"),
+                ("title", "'Sales & more'"),
+            ],
+        ),
+        chart(
+            "Line",
+            &[("labels", "Shop.regions"), ("values", "Shop.sales")],
+        ),
+        chart(
+            "Pie",
+            &[("labels", "Shop.regions"), ("values", "Shop.sales")],
+        ),
+        chart(
+            "Scatter",
+            &[
+                ("x", "[1, 2, 3]"),
+                ("y", "Shop.sales"),
+                ("labels", "Shop.regions"),
+            ],
+        ),
+        chart("Bar", &[("labels", "[]"), ("values", "[]")]),
+        chart("Line", &[("labels", "['a']"), ("values", "[-5]")]),
+    ];
+    let count = controls.len();
+    let b = book(&[], controls);
+    for at in 0..count {
+        let svg = b.text(at);
+        cliotree_layout_check(&svg);
+    }
+    assert!(b.text(1).contains("Sales &amp; more"));
+}
+
+/// The SVG is well formed XML with an svg root. (The layout crate parses it
+/// with usvg; calc does not depend on it.)
+fn cliotree_layout_check(svg: &str) {
+    let doc = cliotree_core::xmltree::parse(svg);
+    assert!(doc.is_ok(), "{svg}");
+    assert!(svg.starts_with("<svg "), "{svg}");
+}
+
+#[test]
+fn a_missing_required_parameter_is_said_and_nothing_runs() {
+    let b = book(
+        &[],
+        vec![
+            chart("Bar", &[("labels", "Shop.regions")]),
+            chart("Bar", &[]),
+            chart("Bar", &[("labels", "Shop.regions"), ("values", "1 +")]),
+            chart("Nope", &[("labels", "1")]),
+        ],
+    );
+    assert_eq!(b.svg(0), Some(Err("fill in values".to_owned())));
+    // Nothing filled in yet: no expression.
+    assert!(
+        b.calc
+            .report_expression("Sales", &[1], &[], ExprKind::Chart)
+            .is_none()
+    );
+    let Some(Err(e)) = b.svg(2) else { panic!() };
+    assert!(e.starts_with("syntax error in values"), "{e}");
+    assert_eq!(
+        b.svg(3),
+        Some(Err("there is no chart type named Nope".to_owned()))
+    );
+}
+
+#[test]
+fn what_is_not_svg_is_a_type_error_and_an_exception_its_error() {
+    let source = "@chart('Odd')\ndef odd(v, *, width, height):\n    return v\n";
+    let b = book(
+        &[("Odd", source)],
+        vec![
+            chart("Odd", &[("v", "42")]),
+            chart(
+                "Odd",
+                &[("v", "b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>'")],
+            ),
+            chart("Bar", &[("labels", "['a']"), ("values", "['x']")]),
+        ],
+    );
+    let Some(Err(e)) = b.svg(0) else {
+        panic!("{:?}", b.svg(0))
+    };
+    assert!(e.starts_with("#TYPE!"), "{e}");
+    assert!(b.text(1).starts_with("<svg"));
+    let Some(Err(e)) = b.svg(2) else {
+        panic!("{:?}", b.svg(2))
+    };
+    assert!(e.contains("values must be numbers"), "{e}");
+}
+
+#[test]
+fn a_module_whose_chart_type_name_is_taken_is_not_loaded() {
+    let other = "@chart('FUNNEL')\ndef wide(a, *, width, height):\n    return ''\n";
+    let builtin = "@chart('bar')\ndef mine(a, *, width, height):\n    return ''\n";
+    let b = book(
+        &[("Shapes", FUNNEL), ("Other", other), ("Mine", builtin)],
+        Vec::new(),
+    );
+    let names: Vec<String> = b.calc.chart_types().into_iter().map(|t| t.name).collect();
+    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Funnel"]);
+    assert!(matches!(
+        b.calc.module_status("Other"),
+        Some(ModuleStatus::Failed(_))
+    ));
+    let problems = b.calc.module_problems("Other").unwrap();
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].line, Some(1));
+    assert!(
+        problems[0].message.contains("funnel of module Shapes"),
+        "{problems:?}"
+    );
+    let problems = b.calc.module_problems("Mine").unwrap();
+    assert!(
+        problems[0].message.contains("a built-in chart type"),
+        "{problems:?}"
+    );
+    assert_eq!(b.calc.module_status("Shapes"), Some(&ModuleStatus::Loaded));
+}
+
+#[test]
+fn editing_the_module_draws_the_chart_again() {
+    let mut b = book(
+        &[("Shapes", FUNNEL)],
+        vec![chart(
+            "Funnel",
+            &[("stages", "Shop.regions"), ("counts", "Shop.sales")],
+        )],
+    );
+    assert!(b.text(0).contains(" 3</svg>"));
+    let changed = FUNNEL.replace("len(stages)", "len(stages) * 10");
+    b.calc.set_module_source("Shapes", &changed).unwrap();
+    b.run();
+    assert!(b.text(0).contains(" 30</svg>"), "{}", b.text(0));
+}
+
+#[test]
+fn the_detail_and_svg_limits_are_set_by_the_application() {
+    let mut b = book(&[], Vec::new());
+    assert_eq!(b.calc.detail_limit(), 100_000);
+    assert_eq!(b.calc.svg_limit(), 5 << 20);
+    b.calc.set_report_limits(10, 1000);
+    assert_eq!((b.calc.detail_limit(), b.calc.svg_limit()), (10, 1000));
+}

@@ -125,6 +125,13 @@ pub enum Paint {
         x: f32,
         y: f32,
     },
+    /// The SVG a chart function returned, checked by
+    /// [`crate::chart::parse_svg`], scaled into `rect` keeping its
+    /// proportions.
+    Svg {
+        rect: Rect,
+        svg: std::sync::Arc<str>,
+    },
 }
 
 /// Text shown on hover over a part of the report: why a value is an error.
@@ -204,6 +211,10 @@ impl Laid {
                     x: x + dx,
                     y: y + dy,
                 },
+                Paint::Svg { rect, svg } => Paint::Svg {
+                    rect: rect.moved(dx, dy),
+                    svg,
+                },
             });
         }
         self.hovers.extend(other.hovers.into_iter().map(|h| Hover {
@@ -244,6 +255,8 @@ pub enum Prop {
     Value,
     Template,
     Items,
+    /// The SVG of a chart.
+    Chart,
 }
 
 /// What an expression came to, as the report shows it.
@@ -281,6 +294,10 @@ pub trait Source {
         row: Option<usize>,
         prop: Prop,
     ) -> Got;
+    /// The largest SVG a chart may return, in bytes.
+    fn svg_limit(&self) -> usize {
+        crate::chart::SVG_LIMIT
+    }
 }
 
 /// The text shown for an expression that is not run in a workbook that is
@@ -348,6 +365,10 @@ fn first_rows(kind: BandKind, sections: usize) -> Vec<usize> {
 struct AllBands<'a>(&'a dyn Source);
 
 impl Source for AllBands<'_> {
+    fn svg_limit(&self) -> usize {
+        self.0.svg_limit()
+    }
+
     fn control(&self, at: &[usize], rows: &[usize], prop: Prop) -> Got {
         if at.len() == 1 && prop == Prop::Visible {
             return Got::None;
@@ -758,6 +779,7 @@ impl Placer<'_> {
             ControlKind::Separator if c.vertical => {
                 (c.thickness.map_or(RULE, |t| t as f32) + 4.0).max(9.0)
             }
+            ControlKind::Chart => crate::chart::CHART_SIZE.0,
             _ => room,
         };
         natural.min(room).max(1.0)
@@ -805,6 +827,7 @@ impl Placer<'_> {
             ControlKind::Label => self.label(c, at, rows, width, &style),
             ControlKind::Field => self.field(c, at, rows, width, &style),
             ControlKind::Separator => self.separator(c, width),
+            ControlKind::Chart => self.chart(c, at, rows, width),
             ControlKind::Group => self.group(c, at, rows, width, &style, fill),
             // A report has no repeaters or buttons (see
             // `ReportDesign::problems`): a list is the detail band of a
@@ -845,6 +868,91 @@ impl Placer<'_> {
             },
         );
         Some(laid)
+    }
+
+    /// A chart: the SVG its function returned, scaled into its box, or in
+    /// its place why there is none.
+    fn chart(&mut self, c: &Control, at: &[usize], rows: &[usize], width: f32) -> Laid {
+        let mut laid = Laid::default();
+        let height = c
+            .height
+            .map_or(crate::chart::CHART_SIZE.1, |h| h as f32)
+            .max(1.0);
+        laid.height = height;
+        let rect = Rect::new(0.0, 0.0, width, height);
+        let got = self.source.control(at, rows, Prop::Chart);
+        let problem: Option<(String, Ink, Option<String>)> = match &got {
+            Got::Value(Value::Str(svg), _) => {
+                match crate::chart::parse_svg(svg, self.source.svg_limit()) {
+                    Ok(_) => {
+                        laid.paints.push(Paint::Svg {
+                            rect,
+                            svg: std::sync::Arc::from(svg.as_str()),
+                        });
+                        None
+                    }
+                    Err(e) => Some(("#VALUE!".to_owned(), Ink::Error, Some(e))),
+                }
+            }
+            Got::Value(other, _) => Some((
+                "#TYPE!".to_owned(),
+                Ink::Error,
+                Some(format!(
+                    "#TYPE!: a chart function returns SVG as text, not a value of kind {}",
+                    other.kind_name()
+                )),
+            )),
+            Got::Error(e) => {
+                let code = e
+                    .split(':')
+                    .next()
+                    .filter(|c| c.starts_with('#'))
+                    .unwrap_or("#ERROR!")
+                    .to_owned();
+                Some((code, Ink::Error, Some(e.clone())))
+            }
+            Got::Untrusted => Some((
+                UNTRUSTED.to_owned(),
+                Ink::Error,
+                Some("The chart runs Python, so this workbook has to be trusted first.".to_owned()),
+            )),
+            Got::Waiting => Some((String::new(), Ink::Weak, None)),
+            Got::None => Some((
+                if c.chart.is_some() {
+                    "Fill in the chart's values".to_owned()
+                } else {
+                    "Choose a chart type".to_owned()
+                },
+                Ink::Weak,
+                None,
+            )),
+        };
+        if let Some((text, ink, why)) = problem {
+            laid.paints.push(Paint::Border {
+                rect,
+                width: RULE,
+                ink: Ink::Rule,
+            });
+            let style = Style::body().text_style();
+            let line = self.fonts.metrics(&style).row_height;
+            let y = ((height - line) / 2.0).max(0.0);
+            self.text(
+                &mut laid,
+                &text,
+                style,
+                ink,
+                (4.0, y, (width - 8.0).max(1.0)),
+                Alignment::Center,
+            );
+            laid.height = height;
+            if let Some(why) = why {
+                laid.hovers.push(Hover { rect, text: why });
+            }
+        }
+        if got.pending() {
+            laid.paints.push(Paint::Pending { x: width, y: 0.0 });
+        }
+        laid
     }
 
     fn label(
@@ -1242,6 +1350,14 @@ impl Placer<'_> {
                 Paint::Fill { rect, ink } => {
                     if let Some(rect) = clip(rect) {
                         kept.push(Paint::Fill { rect, ink });
+                    }
+                }
+                // A chart in a group cut short goes whole, or not at all.
+                Paint::Svg { rect, svg } => {
+                    if rect.y + rect.h <= limit {
+                        kept.push(Paint::Svg { rect, svg });
+                    } else {
+                        text_cut = true;
                     }
                 }
                 Paint::Border { rect, width, ink } => {

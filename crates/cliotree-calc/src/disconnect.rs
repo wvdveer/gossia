@@ -159,6 +159,7 @@ fn kind_text(kind: ExprKind) -> &'static str {
         ExprKind::Value => "value",
         ExprKind::Template => "label",
         ExprKind::Items => "items",
+        ExprKind::Chart => "chart",
     }
 }
 
@@ -679,7 +680,7 @@ fn control_text(control: &Control, kind: ExprKind) -> Option<&str> {
         ExprKind::Choices => control.choices.as_deref(),
         ExprKind::Value => control.value.as_deref(),
         ExprKind::Items => control.items.as_deref(),
-        ExprKind::Template => None,
+        ExprKind::Template | ExprKind::Chart => None,
     }
 }
 
@@ -693,6 +694,7 @@ fn control_slot(control: &mut Control, kind: ExprKind) -> Option<&mut Option<Str
         ExprKind::Value => &mut control.value,
         ExprKind::Items => &mut control.items,
         ExprKind::Template => &mut control.text,
+        ExprKind::Chart => return None,
     })
 }
 
@@ -704,7 +706,7 @@ fn column_text(column: &ColumnDesign, kind: ExprKind) -> Option<&str> {
         ExprKind::FillColour => column.fill_colour.as_deref(),
         ExprKind::Choices => column.choices.as_deref(),
         ExprKind::Value => column.value.as_deref(),
-        ExprKind::Template | ExprKind::Items => None,
+        ExprKind::Template | ExprKind::Items | ExprKind::Chart => None,
     }
 }
 
@@ -716,7 +718,7 @@ fn column_slot(column: &mut ColumnDesign, kind: ExprKind) -> Option<&mut Option<
         ExprKind::FillColour => &mut column.fill_colour,
         ExprKind::Choices => &mut column.choices,
         ExprKind::Value => &mut column.value,
-        ExprKind::Template | ExprKind::Items => return None,
+        ExprKind::Template | ExprKind::Items | ExprKind::Chart => return None,
     })
 }
 

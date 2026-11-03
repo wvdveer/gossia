@@ -5,6 +5,7 @@
 //! pages in the same places on screen and on paper. Forms are laid out by egui
 //! and do not use it.
 
+pub mod chart;
 pub mod fonts;
 pub mod report;
 #[cfg(test)]

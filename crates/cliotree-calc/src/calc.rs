@@ -105,6 +105,10 @@ pub use comments::comment_text_problem;
 
 #[path = "modules.rs"]
 mod modules;
+
+#[path = "charts.rs"]
+mod charts;
+pub use charts::ChartType;
 use modules::Module;
 pub use modules::{ModuleProblem, ModuleStatus};
 
@@ -286,6 +290,10 @@ pub struct Calc {
     forms_version: u64,
     /// The limits the workbook asks for (`settings.json`).
     settings: WorkbookSettings,
+    /// The limits of reports in force (the workbook's settings held down by
+    /// the user's ceilings, which the application knows): the most detail
+    /// rows, and the largest SVG of a chart.
+    report_limits: (usize, usize),
     /// The renames not yet taken by [`Calc::take_renames`].
     renames: Vec<(String, String)>,
     /// The module renames not yet taken by [`Calc::take_module_renames`].
@@ -326,6 +334,10 @@ impl Calc {
             forms: crate::forms::FormStore::default(),
             forms_version: 0,
             settings: WorkbookSettings::default(),
+            report_limits: (
+                Setting::MaxDetailRows.default_value() as usize,
+                Setting::MaxChartSvg.default_value() as usize,
+            ),
             renames: Vec::new(),
             module_renames: Vec::new(),
             removed: Vec::new(),

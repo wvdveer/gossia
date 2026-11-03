@@ -151,6 +151,7 @@ pub(crate) fn sized_control(kind: ControlKind) -> Control {
         ControlKind::Repeater => (400, 120),
         ControlKind::Separator => (240, 16),
         ControlKind::Button => (100, 24),
+        ControlKind::Chart => cliotree_core::form::CHART_SIZE,
     };
     if kind == ControlKind::Field {
         c.label = Some("Field".to_owned());

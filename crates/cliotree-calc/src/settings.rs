@@ -26,6 +26,10 @@ pub enum Setting {
     MaxRange,
     SourceTimeout,
     MaxResponse,
+    /// The most detail rows a multipage report shows.
+    MaxDetailRows,
+    /// The largest SVG a chart function may return.
+    MaxChartSvg,
 }
 
 /// What a setting's number counts.
@@ -38,7 +42,7 @@ pub enum Unit {
 
 impl Setting {
     /// Every setting, in the order the files and the dialog list them.
-    pub const ALL: [Setting; 8] = [
+    pub const ALL: [Setting; 10] = [
         Setting::FormulaTimeLimit,
         Setting::ProcedureTimeLimit,
         Setting::RecalcTimeLimit,
@@ -47,6 +51,8 @@ impl Setting {
         Setting::MaxRange,
         Setting::SourceTimeout,
         Setting::MaxResponse,
+        Setting::MaxDetailRows,
+        Setting::MaxChartSvg,
     ];
 
     /// The name in `settings.json` and in the ceilings of the preferences.
@@ -60,6 +66,8 @@ impl Setting {
             Setting::MaxRange => "max_range_length",
             Setting::SourceTimeout => "source_timeout_ms",
             Setting::MaxResponse => "max_response_bytes",
+            Setting::MaxDetailRows => "max_detail_rows",
+            Setting::MaxChartSvg => "max_chart_svg_bytes",
         }
     }
 
@@ -73,13 +81,15 @@ impl Setting {
             Setting::MaxRange => "Maximum range length",
             Setting::SourceTimeout => "Data source call timeout",
             Setting::MaxResponse => "Maximum response size",
+            Setting::MaxDetailRows => "Maximum detail rows",
+            Setting::MaxChartSvg => "Maximum chart SVG size",
         }
     }
 
     pub fn unit(self) -> Unit {
         match self {
-            Setting::MaxAbandoned | Setting::MaxRange => Unit::Count,
-            Setting::MaxResponse => Unit::Bytes,
+            Setting::MaxAbandoned | Setting::MaxRange | Setting::MaxDetailRows => Unit::Count,
+            Setting::MaxResponse | Setting::MaxChartSvg => Unit::Bytes,
             _ => Unit::Millis,
         }
     }
@@ -94,6 +104,8 @@ impl Setting {
             Setting::MaxRange => 1_000_000,
             Setting::SourceTimeout => 30_000,
             Setting::MaxResponse => 16 << 20,
+            Setting::MaxDetailRows => 100_000,
+            Setting::MaxChartSvg => 5 << 20,
         }
     }
 
@@ -108,6 +120,8 @@ impl Setting {
             Setting::MaxRange => 1_000_000,
             Setting::SourceTimeout => 300_000,
             Setting::MaxResponse => 256 << 20,
+            Setting::MaxDetailRows => 1_000_000,
+            Setting::MaxChartSvg => 64 << 20,
         }
     }
 

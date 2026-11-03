@@ -16,6 +16,8 @@ use serde_json::json;
 fn window() -> Harness<'static, ClioApp> {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 700.0))
+        // A drag across bands can take a few frames to settle.
+        .with_max_steps(8)
         .build_ui_state(|ui, app: &mut ClioApp| app.show(ui), ClioApp::sample());
     settle(&mut harness);
     harness
@@ -824,4 +826,129 @@ fn a_report_opened_untrusted_is_drawn_from_its_results_cache() {
     let params = harness.state().calc().report_params("Summary");
     assert_eq!(params[0].value, Value::Str("B-220".into()));
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+// ------------------------------------------------------------------ charts
+
+/// A report with a bar chart of the order lines.
+fn report_with_chart(harness: &mut Harness<'_, ClioApp>) {
+    new_report(harness, json!({"name": "Summary", "report": true}));
+    let mut design = ReportDesign::new(Default::default());
+    let mut chart = Control::new(ControlKind::Chart);
+    chart.chart = Some("Bar".into());
+    chart
+        .chart_args
+        .insert("labels".into(), "[i.sku for i in Orders.items]".into());
+    chart.chart_args.insert(
+        "values".into(),
+        "[i.qty * i.price for i in Orders.items]".into(),
+    );
+    chart.width = Some(320);
+    chart.height = Some(200);
+    design.layout.controls.push(chart);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(harness);
+}
+
+fn svg_painted(harness: &Harness<'_, ClioApp>) -> bool {
+    harness.state().report.laid.as_ref().is_some_and(|l| {
+        l.paints
+            .iter()
+            .any(|p| matches!(p, cliotree_layout::report::Paint::Svg { .. }))
+    })
+}
+
+#[test]
+fn a_chart_draws_the_svg_its_function_returns() {
+    let mut harness = window();
+    report_with_chart(&mut harness);
+    assert!(svg_painted(&harness), "{:?}", texts(&harness));
+    let state = harness
+        .state()
+        .calc()
+        .report_expression("Summary", &[0], &[], cliotree_calc::ExprKind::Chart)
+        .unwrap();
+    let Some(Ok(Value::Str(svg))) = state.result else {
+        panic!("{:?}", state.result)
+    };
+    // It renders.
+    let image = cliotree_app::chart_view::render(&svg, 320, 200).unwrap();
+    assert_eq!(image.size, [320, 200]);
+}
+
+#[test]
+fn an_untrusted_workbook_shows_the_mark_in_a_chart() {
+    let mut harness = window();
+    harness.state_mut().session.calc_mut().set_trusted(false);
+    report_with_chart(&mut harness);
+    assert!(!svg_painted(&harness));
+    assert_eq!(texts(&harness), ["#UNTRUSTED!"]);
+}
+
+#[test]
+fn a_chart_is_added_from_the_palette_and_its_page_has_a_box_for_each_parameter() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Add chart");
+    let chart = harness
+        .state()
+        .calc()
+        .report("Summary")
+        .unwrap()
+        .layout
+        .controls[1]
+        .clone();
+    assert_eq!(chart.kind, ControlKind::Chart);
+    assert_eq!((chart.width, chart.height), (Some(320), Some(200)));
+    harness.state_mut().select_control(Some(vec![1]));
+    settle(&mut harness);
+    assert_eq!(texts(&harness), ["Total", "62.92", "Choose a chart type"]);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Chart type")
+        .click();
+    harness.run();
+    click(&mut harness, "Pie");
+    settle(&mut harness);
+    for label in ["labels *", "values *", "title", "donut"] {
+        assert!(
+            harness.query_all_by_label(label).next().is_some(),
+            "{label} is not shown"
+        );
+    }
+    assert!(harness.query_all_by_label("width").next().is_none());
+    assert_eq!(
+        texts(&harness),
+        ["Total", "62.92", "Fill in the chart's values"]
+    );
+}
+
+#[test]
+fn a_form_has_no_chart_in_its_palette() {
+    let mut harness = window();
+    {
+        let app = harness.state_mut();
+        app.switch_to("Orders");
+        assert!(app.set_view(cliotree_app::form::View::Form("Default".to_owned())));
+        app.set_layout(true);
+    }
+    settle(&mut harness);
+    assert!(harness.query_by_label("Add field").is_some());
+    assert!(harness.query_by_label("Add chart").is_none());
+}
+
+#[test]
+fn the_code_editor_shows_the_built_in_charts_read_only() {
+    let mut harness = window();
+    harness.state_mut().open_code_editor();
+    harness.state_mut().open_built_in_charts();
+    harness.run();
+    let tab = harness.state().code.current_tab().unwrap();
+    assert!(tab.item.is_read_only());
+    assert!(tab.text.contains("@chart(\"Bar\")"));
 }

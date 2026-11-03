@@ -78,6 +78,7 @@ fn kind_name(kind: ExprKind) -> &'static str {
         ExprKind::Value => "value",
         ExprKind::Template => "template",
         ExprKind::Items => "items",
+        ExprKind::Chart => "chart",
     }
 }
 
