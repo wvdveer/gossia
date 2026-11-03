@@ -755,7 +755,9 @@ impl Placer<'_> {
                     _ => value,
                 }
             }
-            ControlKind::Separator if c.vertical => 9.0,
+            ControlKind::Separator if c.vertical => {
+                (c.thickness.map_or(RULE, |t| t as f32) + 4.0).max(9.0)
+            }
             _ => room,
         };
         natural.min(room).max(1.0)
@@ -975,26 +977,31 @@ impl Placer<'_> {
         laid
     }
 
+    /// A separator: a line of its thickness (thin when it has none), with
+    /// some room on each side.
     fn separator(&mut self, c: &Control, width: f32) -> Laid {
         let mut laid = Laid::default();
+        let thickness = c.thickness.map_or(RULE, |t| t as f32);
+        // Half the room it takes across its line.
+        let half = (thickness / 2.0 + 2.0).max(4.0);
         if c.vertical {
             let h = c.height.map_or(BODY_SIZE * 1.5, |h| h as f32);
-            let x = (width / 2.0).min(4.5);
+            let x = (width / 2.0).min(half + 0.5);
             laid.paints.push(Paint::Line {
                 from: (x, 0.0),
                 to: (x, h),
-                width: RULE,
+                width: thickness,
                 ink: Ink::Rule,
             });
             laid.height = h;
         } else {
             laid.paints.push(Paint::Line {
-                from: (0.0, 4.0),
-                to: (width, 4.0),
-                width: RULE,
+                from: (0.0, half),
+                to: (width, half),
+                width: thickness,
                 ink: Ink::Rule,
             });
-            laid.height = 8.0;
+            laid.height = 2.0 * half;
         }
         laid
     }

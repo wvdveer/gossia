@@ -12,8 +12,8 @@ use cliotree_calc::{ExprKind, REPORT_FORM, entry};
 use cliotree_core::form::{
     self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
     Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
-    LabelPosition, MAX_TRACKS, POSITIONS, RepeaterMode, SPACINGS, TRACK_POINTS, TRACK_SHARES,
-    TrackSize, flow_rows, free_place, grid_cells, rebase_free,
+    LabelPosition, MAX_TRACKS, POSITIONS, RepeaterMode, SEPARATOR_THICKNESS, SPACINGS,
+    TRACK_POINTS, TRACK_SHARES, TrackSize, flow_rows, free_place, grid_cells, rebase_free,
 };
 use cliotree_core::{Kind, Path, Value};
 
@@ -1565,6 +1565,18 @@ impl ClioApp {
             ControlKind::Separator => {
                 ui.checkbox(&mut edited.vertical, "Vertical")
                     .on_hover_text("A vertical line, as tall as its row or cell");
+                let before = edited.thickness;
+                optional_number(
+                    ui,
+                    "Thickness",
+                    &mut edited.thickness,
+                    &SEPARATOR_THICKNESS,
+                    2,
+                    "Thickness of the line in points",
+                );
+                if edited.thickness != before {
+                    merge = Some(key("thickness"));
+                }
             }
         }
         // On a report's canvas, the top level is placed as in a Free group.

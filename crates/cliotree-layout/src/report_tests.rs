@@ -468,3 +468,25 @@ fn an_old_multipage_design_becomes_its_bands() {
     assert_eq!(header.children.len(), 1);
     assert!(header.height.unwrap() > 0);
 }
+
+#[test]
+fn a_separator_is_drawn_at_its_thickness() {
+    let line = |laid: &Laid| {
+        laid.paints
+            .iter()
+            .find_map(|p| match p {
+                Paint::Line { width, from, .. } => Some((*width, from.1)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let mut thin = Control::new(ControlKind::Separator);
+    let laid = single_page(&report(vec![thin.clone()]), 300.0, &Fake::default());
+    assert_eq!(line(&laid), (0.75, 4.0));
+    assert_eq!(laid.height, 8.0);
+    // A thick one takes more room, with its line in the middle.
+    thin.thickness = Some(6);
+    let laid = single_page(&report(vec![thin]), 300.0, &Fake::default());
+    assert_eq!(line(&laid), (6.0, 5.0));
+    assert_eq!(laid.height, 10.0);
+}

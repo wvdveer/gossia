@@ -178,6 +178,9 @@ pub const COLUMN_WIDTHS: std::ops::RangeInclusive<u32> = 24..=800;
 /// The widths a control may be given, in points.
 pub const CONTROL_WIDTHS: std::ops::RangeInclusive<u32> = 24..=2000;
 
+/// The thicknesses a separator's line can be given, in points.
+pub const SEPARATOR_THICKNESS: std::ops::RangeInclusive<u32> = 1..=12;
+
 /// The heights a control may be given, in points.
 pub const CONTROL_HEIGHTS: std::ops::RangeInclusive<u32> = 16..=2000;
 
@@ -1030,6 +1033,10 @@ pub struct Control {
     /// For a separator: a vertical line instead of a horizontal one.
     #[serde(default, skip_serializing_if = "is_false")]
     pub vertical: bool,
+    /// For a separator: the thickness of its line in points
+    /// ([`SEPARATOR_THICKNESS`]). Absent: the usual thin line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<u32>,
     /// For a group: how it arranges its controls. Absent: flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<GroupLayout>,
@@ -1182,6 +1189,7 @@ impl Control {
             border_width: None,
             border_colour: None,
             vertical: false,
+            thickness: None,
             layout: None,
             base_width: None,
             base_height: None,
@@ -1534,6 +1542,7 @@ pub fn form_schema_source() -> &'static str {
         "border_width": {"type": "integer", "minimum": 0, "maximum": 8},
         "border_colour": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
         "vertical": {"type": "boolean"},
+        "thickness": {"type": "integer", "minimum": 1, "maximum": 12},
         "layout": {"type": "string", "enum": ["flow", "free", "grid"]},
         "grid_columns": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},
         "grid_rows": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/Track"}},

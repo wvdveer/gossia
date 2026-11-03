@@ -612,3 +612,38 @@ fn show_expressions_shows_each_field_s_expression() {
     click(&mut harness, "Show expressions");
     assert_eq!(texts(&harness), ["Total", "62.92"]);
 }
+
+#[test]
+fn a_separator_s_thickness_is_set_on_the_property_page() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Add separator");
+    let separator = |h: &Harness<'_, ClioApp>| {
+        h.state()
+            .calc()
+            .report("Summary")
+            .unwrap()
+            .layout
+            .controls
+            .last()
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(separator(&harness).thickness, None);
+    click(&mut harness, "Thickness");
+    settle(&mut harness);
+    assert_eq!(separator(&harness).thickness, Some(2));
+    let laid = harness.state().report.laid.clone().unwrap();
+    let widths: Vec<f32> = laid
+        .paints
+        .iter()
+        .filter_map(|p| match p {
+            cliotree_layout::report::Paint::Line { width, .. } => Some(*width),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(widths, [2.0]);
+    click(&mut harness, "Undo layout");
+    assert_eq!(separator(&harness).thickness, None);
+}

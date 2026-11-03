@@ -2209,13 +2209,30 @@ impl Painter<'_> {
             }
             ControlKind::Separator if c.vertical => {
                 let height = c.height.map_or(ROW_HEIGHT, |h| h as f32);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, height), Sense::hover());
-                let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                let mut stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                let across = match c.thickness {
+                    Some(t) => {
+                        stroke.width = t as f32;
+                        (t as f32 + 4.0).max(8.0)
+                    }
+                    None => 8.0,
+                };
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(across, height), Sense::hover());
                 ui.painter().vline(rect.center().x, rect.y_range(), stroke);
             }
-            ControlKind::Separator => {
-                ui.separator();
-            }
+            // A separator of its own thickness; the usual one otherwise.
+            ControlKind::Separator => match c.thickness {
+                Some(t) => {
+                    let mut stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                    stroke.width = t as f32;
+                    let size = egui::vec2(ui.available_width(), (t as f32 + 4.0).max(6.0));
+                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                    ui.painter().hline(rect.x_range(), rect.center().y, stroke);
+                }
+                None => {
+                    ui.separator();
+                }
+            },
             ControlKind::Button => {
                 let label = c.label.clone().unwrap_or_else(|| "Button".to_owned());
                 let running = self
