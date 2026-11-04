@@ -34,6 +34,7 @@ pub const DRIVE: &str = "\u{E29E}";
 pub const DRIVES: &str = "\u{E2A0}";
 pub const WARNING: &str = "\u{E4E0}";
 pub const CARET_UP: &str = "\u{E13C}";
+pub const CARET_DOWN: &str = "\u{E136}";
 pub const MENU: &str = "\u{E2F0}";
 pub const SEARCH: &str = "\u{E30C}";
 pub const CHECK: &str = "\u{E182}";

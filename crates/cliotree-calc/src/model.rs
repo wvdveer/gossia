@@ -68,6 +68,9 @@ pub(crate) struct Formula {
     pub traceback: Option<String>,
     /// The text did not parse. Such a formula is kept but never run.
     pub syntax_error: bool,
+    /// What it returned the last time, when its node's type refused it
+    /// (`#TYPE!`): kept for *Force object definition*.
+    pub rejected: Option<std::sync::Arc<cliotree_core::Value>>,
 }
 
 /// The formulas of one tab, by the path of the node they are attached to.
@@ -124,6 +127,7 @@ mod tests {
             error: None,
             traceback: None,
             syntax_error: false,
+            rejected: None,
         }
     }
 

@@ -154,8 +154,8 @@ const FUNCTIONS: &[Function] = &[
     f(
         "LOOKUP",
         "LOOKUP(",
-        "LOOKUP(key, items, key_field, result_field)",
-        "A field of the first item whose key field equals key; none gives #REF!.",
+        "LOOKUP(key, items, key_field, result_field=None)",
+        "A field of the first item whose key field equals key, or without          result_field the whole item; none gives #REF!.",
         Group::Lookup,
     ),
     f(

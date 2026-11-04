@@ -357,3 +357,34 @@ fn a_sankey_diagram_lays_out_its_flows_and_refuses_a_circle() {
     assert!(error(3).contains("2 sources, 1 targets"), "{}", error(3));
     assert!(error(4).contains("cannot be negative"), "{}", error(4));
 }
+
+#[test]
+fn a_pie_with_more_labels_than_colours_folds_the_smallest_into_other() {
+    let labels: Vec<String> = (1..=10).map(|i| format!("'S{i}'")).collect();
+    let values = "[5, 90, 4, 80, 70, 3, 60, 50, 40, 30]";
+    let b = book(
+        &[],
+        vec![chart(
+            "Pie",
+            &[
+                ("labels", &format!("[{}]", labels.join(", "))),
+                ("values", values),
+            ],
+        )],
+    );
+    let svg = b.text(0);
+    // The seven largest keep their place in the order given; the three
+    // smallest (5 + 4 + 3) are Other, in a grey of the text colour.
+    for kept in ["S2", "S4", "S5", "S7", "S8", "S9", "S10", "Other"] {
+        assert!(svg.contains(&format!(">{kept}<")), "{kept}: {svg}");
+    }
+    for folded in [">S1<", ">S3<", ">S6<"] {
+        assert!(!svg.contains(folded), "{folded}: {svg}");
+    }
+    assert!(
+        svg.contains(r#"fill="currentColor" fill-opacity="0.35""#),
+        "{svg}"
+    );
+    // 12 of 432 is 3%.
+    assert!(svg.contains(">3%<"), "{svg}");
+}

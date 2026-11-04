@@ -300,7 +300,7 @@ fn the_excel_named_functions_are_listed_by_group_and_found_by_search() {
     harness.run();
     harness.get_by_label("LOOKUP").click();
     harness.run();
-    harness.get_by_label("LOOKUP(key, items, key_field, result_field)");
+    harness.get_by_label("LOOKUP(key, items, key_field, result_field=None)");
 }
 
 #[test]
@@ -809,7 +809,14 @@ mod common;
 /// The scenario of the control protocol, run through the harness.
 #[test]
 fn the_control_commands_drive_the_window_in_process() {
-    let mut harness = window();
+    // The window starts as the application does, with a blank workbook.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut ClioApp| app.show(ui),
+            ClioApp::new(cliotree_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
     common::edit_and_recalculate(&mut |cmd, args| {
         let result = cliotree_app::control::run(harness.state_mut(), cmd, &args);
         harness.run();
@@ -1327,4 +1334,154 @@ fn a_report_is_made_from_new_tab_and_duplicated_and_deleted_from_its_menu() {
     settle(&mut harness);
     assert!(!harness.state().calc().is_report("Report_2"));
     assert_eq!(harness.state().sheet, "Report");
+}
+
+/// An array field added to a blank tab is not in the data until it has an
+/// item: Add item makes it, holding that item, as one thing to undo. The
+/// array's menu renames and deletes it but adds no field; its item's does.
+#[test]
+fn add_item_makes_an_array_just_added_and_the_array_adds_no_field() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut ClioApp| app.show(ui),
+            ClioApp::new(cliotree_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .add_field(
+            "Data",
+            &cliotree_core::Path::default(),
+            "inventory",
+            cliotree_calc::FieldKind::Array,
+            false,
+        )
+        .unwrap();
+    harness.state_mut().refresh_rows();
+    settle(&mut harness);
+
+    harness.get_by_label("inventory").click_secondary();
+    harness.run();
+    // Not Add field (the items have the fields), but the array is a field
+    // of Data, renamed and deleted like any other.
+    assert!(harness.query_by_label("Add field...").is_none());
+    assert!(harness.query_by_label("Rename field...").is_some());
+    assert!(harness.query_by_label("Delete field...").is_some());
+    click(&mut harness, "Add item");
+    settle(&mut harness);
+    assert_eq!(harness.state().notice, None);
+    assert_eq!(data_text(&harness), r#"{"inventory":[{}]}"#);
+
+    // The item is a record: its menu adds fields to the items.
+    harness.get_by_label("[0]").click_secondary();
+    harness.run();
+    assert!(harness.query_by_label("Add field...").is_some());
+    harness.key_press(Key::Escape);
+    harness.run();
+
+    harness.state_mut().session.calc_mut().undo().unwrap();
+    assert_eq!(data_text(&harness), "{}");
+}
+
+fn data_text(harness: &Harness<'_, ClioApp>) -> String {
+    let data = harness.state().calc().data("Data").unwrap();
+    cliotree_core::json::to_string(data, false).unwrap()
+}
+
+/// A field whose records have no fields yet, with a formula that returns
+/// records, is `#TYPE!`; *Force object definition* on its menu defines the
+/// fields from the result, which the node then holds.
+#[test]
+fn force_object_definition_defines_the_fields_from_the_formula_result() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut ClioApp| app.show(ui),
+            ClioApp::new(cliotree_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
+    let root = cliotree_core::Path::default();
+    let inventory: cliotree_core::Path = "inventory".parse().unwrap();
+    let calc = harness.state_mut().session.calc_mut();
+    calc.add_field(
+        "Data",
+        &root,
+        "inventory",
+        cliotree_calc::FieldKind::Array,
+        false,
+    )
+    .unwrap();
+    calc.set_formula(
+        "Data",
+        &inventory,
+        r#"[{"sku": "A1", "qty": 2}, {"sku": "B2", "qty": 5}]"#,
+    )
+    .unwrap();
+    harness.state_mut().refresh_rows();
+    settle(&mut harness);
+    assert!(has(&harness, "#TYPE!"));
+
+    harness.get_by_label("inventory").click_secondary();
+    harness.run();
+    click(&mut harness, "Force object definition");
+    settle(&mut harness);
+    assert_eq!(harness.state().notice, None);
+    assert!(!has(&harness, "#TYPE!"));
+    assert_eq!(
+        data_text(&harness),
+        r#"{"inventory":[{"sku":"A1","qty":2},{"sku":"B2","qty":5}]}"#
+    );
+    let fields = harness
+        .state()
+        .calc()
+        .field_places("Data", &"inventory[0]".parse().unwrap())
+        .unwrap()
+        .fields;
+    assert_eq!(fields, ["sku", "qty"]);
+    // Once the type fits, the item is not offered again.
+    harness.get_by_label("inventory").click_secondary();
+    harness.run();
+    assert!(harness.query_by_label("Force object definition").is_none());
+}
+
+/// The button at the end of the formula bar expands it, to show a formula of
+/// several lines whole, while it is shown and while it is edited; pressed
+/// again, it collapses the bar to one line.
+#[test]
+fn the_formula_bar_expands_to_show_several_lines_and_collapses_again() {
+    let mut harness = window();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula(
+            "Orders",
+            &"tax_rate".parse().unwrap(),
+            "min(\n    0.5,\n    0.25,\n    0.75,\n)",
+        )
+        .unwrap();
+    settle(&mut harness);
+    harness.get_by_label("tax_rate").click();
+    harness.run();
+    let one_line = harness.get_by_label("Formula bar").rect().height();
+
+    click(&mut harness, "Expand formula bar");
+    let expanded = harness.get_by_label("Formula bar").rect().height();
+    assert!(expanded > one_line * 3.0, "{one_line} {expanded}");
+    assert!(harness.state().formula_bar_height.is_some());
+
+    // Editing keeps the height.
+    click_bar(&mut harness);
+    assert!(harness.state().editing.is_some());
+    let editing = harness.get_by_label("Formula bar").rect().height();
+    assert!((editing - expanded).abs() < 2.0, "{expanded} {editing}");
+    press(&mut harness, Key::Escape);
+
+    click(&mut harness, "Collapse formula bar");
+    assert!(harness.state().formula_bar_height.is_none());
+    let collapsed = harness.get_by_label("Formula bar").rect().height();
+    assert!((collapsed - one_line).abs() < 2.0, "{one_line} {collapsed}");
 }

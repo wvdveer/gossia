@@ -526,3 +526,102 @@ fn undo_after_a_later_edit_of_the_schema_tab_must_undo_that_first() {
         Some("Rename field \"qty\" to \"quantity\"")
     );
 }
+
+#[test]
+fn an_object_or_an_array_field_is_added_and_takes_fields_of_its_own() {
+    let mut b = Book::new();
+    b.calc
+        .add_field("Order", &p(""), "contact", FieldKind::Object, true)
+        .unwrap();
+    b.calc
+        .add_field("Order", &p(""), "lines", FieldKind::Array, false)
+        .unwrap();
+    let schema = b.schema();
+    assert!(
+        schema.contains(r#""contact":{"type":"object","properties":{}}"#),
+        "{schema}"
+    );
+    assert!(
+        schema.contains(r#""lines":{"type":"array","items":{"type":"object","properties":{}}}"#),
+        "{schema}"
+    );
+    // An item of the array is an object, which takes fields.
+    b.calc
+        .set_value("Order", &p("lines"), Value::Array(Vec::new()))
+        .unwrap();
+    b.calc
+        .insert_item("Order", &p("lines"), 0, Value::Object(Default::default()))
+        .unwrap();
+    b.calc
+        .add_field("Order", &p("lines[0]"), "amount", FieldKind::Number, false)
+        .unwrap();
+    assert_eq!(b.fields("lines[0]"), ["amount"]);
+    b.calc
+        .set_value("Order", &p("lines[0].amount"), Value::Float(2.5))
+        .unwrap();
+    assert!(
+        b.data().contains(r#""lines":[{"amount":2.5}]"#),
+        "{}",
+        b.data()
+    );
+}
+
+#[test]
+fn force_object_definition_types_a_field_from_the_records_its_formula_returned() {
+    let mut b = Book::new();
+    b.calc
+        .add_field("Order", &p(""), "copy", FieldKind::Array, false)
+        .unwrap();
+    b.calc
+        .add_field("Order", &p(""), "first", FieldKind::Object, false)
+        .unwrap();
+    b.calc
+        .set_formula("Order", &p("copy"), "Order.items")
+        .unwrap();
+    b.calc
+        .set_formula("Order", &p("first"), "Order.billing")
+        .unwrap();
+    // A formula that fits is not offered it, nor is a field without one.
+    assert!(!b.calc.force_type_offered("Order", &p("items")));
+    b.run();
+    let cell = b.calc.cell("Order", &p("copy")).unwrap();
+    let kind = match cell.node.map(|n| n.value()) {
+        Some(Value::Error(e)) => Some(e.kind),
+        _ => None,
+    };
+    assert_eq!(
+        kind,
+        Some(cliotree_core::ErrorKind::Type),
+        "{:?}",
+        cell.node
+    );
+    assert!(b.calc.force_type_offered("Order", &p("copy")));
+    assert!(b.calc.force_type_offered("Order", &p("first")));
+
+    b.calc.force_type("Order", &p("copy")).unwrap();
+    b.calc.force_type("Order", &p("first")).unwrap();
+    b.run();
+    assert_eq!(
+        b.fields("copy[0]"),
+        names(&["sku", "qty", "price", "total"])
+    );
+    assert_eq!(b.fields("first"), names(&["city", "zip"]));
+    let copy = b.calc.cell("Order", &p("copy")).unwrap();
+    assert!(
+        matches!(copy.node.map(|n| n.value()), Some(Value::Array(items)) if items.len() == 2),
+        "{:?} pending {}",
+        copy.node,
+        b.calc.pending()
+    );
+    assert!(!b.calc.force_type_offered("Order", &p("copy")));
+
+    // One entry each in the history.
+    b.calc.undo().unwrap();
+    b.calc.undo().unwrap();
+    b.run();
+    assert!(b.calc.force_type_offered("Order", &p("copy")));
+    assert!(
+        !b.schema()
+            .contains(r#""copy":{"type":"array","items":{"type":"object","properties":{"sku""#)
+    );
+}

@@ -67,6 +67,8 @@ pub struct Outcome {
     pub traceback: Option<String>,
     /// Everything the formula read, found or not.
     pub deps: Vec<Dep>,
+    /// A result its node's type refused.
+    pub rejected: Option<std::sync::Arc<cliotree_core::Value>>,
 }
 
 /// The results of one evaluation, in the order they were finished: a formula
@@ -611,8 +613,13 @@ impl Run<'_> {
             }
             Err(failure) => Err(failure),
         };
-        let (computed, traceback) = finish(&spec, loc, result);
-        self.record(loc, computed, traceback, deps);
+        let finished = finish(&spec, loc, result);
+        self.record(loc, finished.computed, finished.traceback, deps);
+        if let Some(outcome) = self.outcomes.last_mut()
+            && outcome.loc == *loc
+        {
+            outcome.rejected = finished.rejected.map(std::sync::Arc::new);
+        }
         Attempt::Finished
     }
 
@@ -708,6 +715,7 @@ impl Run<'_> {
             computed,
             traceback,
             deps,
+            rejected: None,
         });
     }
 

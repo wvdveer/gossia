@@ -68,7 +68,7 @@ impl Running {
         }
     }
 
-    /// The first window shows the sample after its first evaluation.
+    /// The first window shows a blank workbook after its first evaluation.
     fn wait_until_started(&mut self) {
         self.send("wait_idle", json!({ "timeout_ms": 120000 }))
             .expect("the workbook settles");

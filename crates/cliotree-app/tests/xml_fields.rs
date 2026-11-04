@@ -8,7 +8,7 @@ use std::time::Duration;
 use cliotree_app::ClioApp;
 use cliotree_core::{Path, metaschema, xml, xsd};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 
 const XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
   <xs:element name="order"><xs:complexType><xs:sequence>
@@ -118,4 +118,49 @@ fn an_attribute_is_renamed_without_its_at_sign() {
     harness.run();
     settle(&mut harness);
     assert_eq!(fields(&harness), ["@number", "name", "city"]);
+}
+
+#[test]
+fn add_field_has_its_type_on_the_left_and_offers_an_object_and_an_array() {
+    let mut harness = window();
+    menu_item(&mut harness, "customer", "Add field...");
+    // The list of types has its label "Type" in front of it, on its row,
+    // so it starts to the right of the name box above it.
+    let list = harness
+        .query_all_by_label("Type")
+        .find(|n| n.accesskit_node().role() == egui::accesskit::Role::ComboBox)
+        .expect("the list of types, named Type")
+        .rect();
+    let name = harness.get_by_label("Field name").rect();
+    assert!(list.left() > name.left() + 20.0, "{list:?} {name:?}");
+    assert!(list.top() >= name.bottom(), "{list:?} {name:?}");
+    // The list names its choices, an object and an array among them.
+    harness
+        .query_all_by_label("Type")
+        .find(|n| n.accesskit_node().role() == egui::accesskit::Role::ComboBox)
+        .unwrap()
+        .click();
+    harness.run();
+    // (The tree's own type badges are labels; the choices are not.)
+    assert!(
+        harness
+            .query_all_by_label("object")
+            .any(|n| n.accesskit_node().role() != egui::accesskit::Role::Label)
+    );
+    // The last type is in sight: the list is not cut short.
+    harness.get_by_label("array").click();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label_contains("A list of objects with no fields yet")
+            .is_some()
+    );
+    harness.get_by_label("Field name").focus();
+    harness.run();
+    harness.get_by_label("Field name").type_text("phone");
+    harness.run();
+    harness.get_by_label("Add").click();
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(fields(&harness), ["@id", "name", "city", "phone"]);
 }

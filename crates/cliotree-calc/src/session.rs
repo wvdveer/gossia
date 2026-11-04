@@ -442,6 +442,7 @@ impl Evaluator {
                 computed: Computed::Error(error),
                 traceback: None,
                 deps: Vec::new(),
+                rejected: None,
             }],
             modules: Vec::new(),
             exprs: Vec::new(),

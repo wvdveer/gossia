@@ -310,15 +310,24 @@ def line_chart(labels, values, title=None, series=None, *, width, height):
 @chart("Pie")
 def pie_chart(labels, values, title=None, donut=True, *, width, height):
     """A slice for each label, as its share of the total, with a legend.
-    Values must not be negative."""
+    Values must not be negative. With more labels than there are colours,
+    the largest keep their slices and the rest are one slice, Other."""
     labels = [_label(l) for l in _list(labels, 'labels')]
     values = [_number(v, 'values') for v in _list(values, 'values')]
     if len(values) != len(labels):
         raise ValueError('there are %d values for %d labels' % (len(values), len(labels)))
     if any(v < 0 for v in values):
         raise ValueError('a pie cannot show a negative value')
+    fills = ['fill="%s"' % c for c in _SERIES[:len(values)]]
     if len(values) > len(_SERIES):
-        raise ValueError('a pie shows at most %d slices' % len(_SERIES))
+        kept = len(_SERIES) - 1
+        largest = sorted(range(len(values)), key=lambda i: -values[i])
+        shown = sorted(largest[:kept])
+        rest = sum(values[i] for i in largest[kept:])
+        labels = [labels[i] for i in shown] + ['Other']
+        values = [values[i] for i in shown] + [rest]
+        # Other is no series, so it has no series colour: a grey of the text.
+        fills = fills[:kept] + ['fill="currentColor" fill-opacity="0.35"']
     svg, (left, top, right, bottom) = _frame(width, height, title, [])
     total = sum(values)
     legend_w = max([_text_width('%s  %d%%' % (l, 100), 9) for l in labels] or [0]) + 20
@@ -330,14 +339,14 @@ def pie_chart(labels, values, title=None, donut=True, *, width, height):
             continue
         sweep = v / total * 2 * _math.pi
         if sweep >= 2 * _math.pi - 1e-9:
-            svg.add('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>' % (cx, cy, r, _SERIES[i]))
+            svg.add('<circle cx="%.1f" cy="%.1f" r="%.1f" %s/>' % (cx, cy, r, fills[i]))
         else:
             x0, y0 = cx + r * _math.cos(angle), cy + r * _math.sin(angle)
             x1, y1 = cx + r * _math.cos(angle + sweep), cy + r * _math.sin(angle + sweep)
-            svg.add('<path d="M%.1f %.1f L%.1f %.1f A%.1f %.1f 0 %d 1 %.1f %.1f Z" fill="%s" '
+            svg.add('<path d="M%.1f %.1f L%.1f %.1f A%.1f %.1f 0 %d 1 %.1f %.1f Z" %s '
                     '%s stroke-width="2" stroke-linejoin="round"/>'
                     % (cx, cy, x0, y0, r, r, 1 if sweep > _math.pi else 0, x1, y1,
-                       _SERIES[i], _RING))
+                       fills[i], _RING))
         angle += sweep
     if donut:
         svg.add('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" class="surface"/>'
@@ -348,8 +357,8 @@ def pie_chart(labels, values, title=None, donut=True, *, width, height):
     x = cx + r + 16
     for i, (label, v) in enumerate(zip(labels, values)):
         share = '%d%%' % round(v / total * 100) if total > 0 else ''
-        svg.add('<rect x="%.1f" y="%.1f" width="8" height="8" rx="2" fill="%s"/>'
-                % (x, y - 7, _SERIES[i]))
+        svg.add('<rect x="%.1f" y="%.1f" width="8" height="8" rx="2" %s/>'
+                % (x, y - 7, fills[i]))
         svg.text(x + 12, y, label, color=_TEXT)
         svg.text(x + 12 + _text_width(label, 9) + 6, y, share)
         y += 16

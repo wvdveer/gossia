@@ -10,12 +10,14 @@
 use cliotree_app::ClioApp;
 use cliotree_app::prefs::{Config, User};
 
-/// The sample, or the workbook named on the command line (as *Save and
-/// restart* starts it), with the user's preferences and trust record from
-/// disk. What could not be read is said in the notice line.
+/// A blank workbook, as *File > New* makes it, or the workbook named on the
+/// command line (as *Save and restart* starts it), with the user's
+/// preferences and trust record from disk. What could not be read is said
+/// in the notice line. The window driven by the end-to-end tests starts
+/// blank too: they drop a file on it to have data.
 fn start() -> ClioApp {
     let (user, mut warnings) = User::load(Config::standard());
-    let mut app = ClioApp::sample().with_user(user);
+    let mut app = ClioApp::new(cliotree_app::workbook_file::blank_workbook()).with_user(user);
     if let Some(path) = std::env::args_os().nth(1)
         && let Err(e) = app.open_path(std::path::Path::new(&path))
     {

@@ -104,6 +104,61 @@ impl ClioApp {
         }
     }
 
+    /// *Force object definition*, on a field whose type is a record with no
+    /// fields (or an array of them) and whose formula returned records with
+    /// fields. Unavailable, with the reason, when the schema cannot be
+    /// changed from here.
+    pub(crate) fn force_type_item(
+        &self,
+        ui: &mut egui::Ui,
+        path: &Path,
+        actions: &mut Vec<Action>,
+    ) {
+        if !self.calc().force_type_offered(&self.sheet, path) {
+            return;
+        }
+        let parent = path.parent().unwrap_or_default();
+        let reason = self.schema_edit_allowed(&parent).err().or_else(|| {
+            self.calc()
+                .field_places(&self.sheet, &parent)
+                .ok()
+                .filter(|p| p.xsd)
+                .map(|p| {
+                    format!(
+                        "the type of an XML element is defined on its XSD tab, {}",
+                        p.schema_sheet
+                    )
+                })
+        });
+        ui.separator();
+        let response = ui.add_enabled(
+            reason.is_none(),
+            egui::Button::new("Force object definition"),
+        );
+        let response = match &reason {
+            Some(why) => response.on_disabled_hover_text(why),
+            None => response
+                .on_hover_text("Defines the fields of this node from what its formula returned"),
+        };
+        if response.clicked() {
+            actions.push(Action::ForceType(path.clone()));
+            ui.close();
+        }
+    }
+
+    /// Does *Force object definition* on the node at `path`.
+    pub(crate) fn force_type(&mut self, path: &Path) {
+        let sheet = self.sheet.clone();
+        match self.session.calc_mut().force_type(&sheet, path) {
+            Ok(()) => {
+                self.notice = None;
+                self.session.tick();
+                self.refresh_rows();
+            }
+            Err(e) => self.notice = Some(e.to_string()),
+        }
+    }
+
     /// The dialog of a field command, when one is waiting.
     pub(crate) fn schema_window(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.schema_dialog.take() else {
@@ -146,13 +201,23 @@ impl ClioApp {
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             apply = true;
                         }
-                        egui::ComboBox::from_label("Type")
-                            .selected_text(kind.label())
-                            .show_ui(ui, |ui| {
-                                for k in FieldKind::ALL {
-                                    ui.selectable_value(kind, k, k.label());
-                                }
-                            });
+                        ui.horizontal(|ui| {
+                            let label = ui.label("Type");
+                            egui::ComboBox::from_id_salt("field type")
+                                .selected_text(kind.label())
+                                // Every type in sight, without scrolling.
+                                .height(f32::INFINITY)
+                                .show_ui(ui, |ui| {
+                                    for k in FieldKind::ALL {
+                                        ui.selectable_value(kind, k, k.label());
+                                    }
+                                })
+                                .response
+                                .labelled_by(label.id);
+                        });
+                        if let Some(hint) = kind.hint() {
+                            ui.weak(hint);
+                        }
                         ui.checkbox(required, "Required");
                     }
                     SchemaCommand::Rename { from, to } => {

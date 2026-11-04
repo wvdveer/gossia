@@ -147,6 +147,22 @@ fn lookup_finds_a_field_of_the_first_match_and_raises_when_there_is_none() {
 }
 
 #[test]
+fn lookup_without_a_result_field_gives_the_whole_item() {
+    assert_eq!(
+        eval("x", "LOOKUP(3, S.items, 'qty').price").get("x"),
+        Some(Value::Float(2.0))
+    );
+    assert_eq!(
+        eval("x", "LOOKUP(3, S.items, 'qty')['price']").get("x"),
+        Some(Value::Float(2.0))
+    );
+    assert_eq!(
+        eval("x", "LOOKUP(9, S.items, 'qty')").error("x"),
+        Some(ErrorKind::Ref)
+    );
+}
+
+#[test]
 fn filter_takes_a_function_or_a_list_of_flags() {
     assert_eq!(
         ints(

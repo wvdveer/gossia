@@ -1,8 +1,8 @@
 diff --git a/src/platform_impl/windows/window.rs b/src/platform_impl/windows/window.rs
-index 228c6f03..c972b3b1 100644
+index 228c6f0..042babd 100644
 --- a/src/platform_impl/windows/window.rs
 +++ b/src/platform_impl/windows/window.rs
-@@ -960,7 +960,12 @@ impl Window {
+@@ -960,7 +960,25 @@ impl Window {
  
      #[inline]
      pub fn set_theme(&self, theme: Option<Theme>) {
@@ -13,6 +13,19 @@ index 228c6f03..c972b3b1 100644
 +        let mut window_state = self.window_state_lock();
 +        window_state.preferred_theme = theme;
 +        window_state.current_theme = current_theme;
++        drop(window_state);
++        // Windows does not repaint the title bar of a window already shown
++        // until it loses or gains the focus: do as that does, so the new
++        // theme shows at once (a window given a dark theme on its first
++        // frame otherwise keeps a light title bar).
++        use windows_sys::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
++        let active = unsafe { GetActiveWindow() } == self.hwnd();
++        unsafe {
++            PostMessageW(self.hwnd(), WM_NCACTIVATE, 0, 0);
++            if active {
++                PostMessageW(self.hwnd(), WM_NCACTIVATE, 1, 0);
++            }
++        }
      }
  
      #[inline]

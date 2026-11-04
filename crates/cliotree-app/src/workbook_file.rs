@@ -157,6 +157,8 @@ pub enum Browsing {
     Import,
     /// The file a tab is exported to.
     Export,
+    /// The PDF a report is exported to.
+    ExportPdf,
 }
 
 /// What the file commands keep between frames.
@@ -593,6 +595,7 @@ impl ClioApp {
             Browsing::Open => self.open_path(&path),
             Browsing::Import => self.begin_import_path(&path),
             Browsing::Export => self.export_to(&path),
+            Browsing::ExportPdf => self.export_pdf_to(&path),
         };
         if let Err(e) = done {
             dialog.error = Some(e);
@@ -641,6 +644,7 @@ impl ClioApp {
                 Browsing::Open => "Open a workbook",
                 Browsing::Import => "Import a file",
                 Browsing::Export => "Export",
+                Browsing::ExportPdf => "Export as PDF",
             })
             .open(&mut open)
             .collapsible(false)
@@ -662,7 +666,7 @@ impl ClioApp {
                             Browsing::SaveAs => "Save",
                             Browsing::Open => "Open",
                             Browsing::Import => "Import",
-                            Browsing::Export => "Export",
+                            Browsing::Export | Browsing::ExportPdf => "Export",
                         })
                         .clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -730,6 +734,7 @@ impl ClioApp {
                 Browsing::SaveAs => self.save_as(&path),
                 Browsing::Import => self.begin_import_path(&path),
                 Browsing::Export => self.export_to(&path),
+                Browsing::ExportPdf => self.export_pdf_to(&path),
             };
             if let Err(error) = done {
                 self.files.dialog = Some(FileDialog {

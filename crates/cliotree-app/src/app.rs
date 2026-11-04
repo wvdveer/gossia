@@ -140,6 +140,11 @@ pub struct ClioApp {
     pub imports: crate::import::Imports,
     /// The export dialog, while it is open.
     pub export: Option<crate::export::ExportPlan>,
+    /// The PDF export of a report, while its dialog is open.
+    pub pdf_export: Option<crate::report_pdf::PdfExport>,
+    /// The height the formula bar was dragged or expanded to, in points;
+    /// None for one line, growing while a formula is typed.
+    pub formula_bar_height: Option<f32>,
     /// The Options dialog, while it is open, and the page it was last left on.
     pub options: Option<crate::options::OptionsDialog>,
     pub options_page: crate::options::Page,
@@ -237,6 +242,8 @@ impl ClioApp {
             tab_dialogs: crate::tab_commands::TabDialogs::default(),
             imports: crate::import::Imports::new(),
             export: None,
+            pdf_export: None,
+            formula_bar_height: None,
             options: None,
             options_page: crate::options::Page::General,
             appearance_applied: None,

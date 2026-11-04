@@ -699,7 +699,12 @@ impl ClioApp {
                                 panel.form = Some(SourceForm::edit(def.clone()));
                             }
                             ui.label(def.kind.label());
-                            ui.label(RichText::new(def.target()).monospace());
+                            let target = def.target();
+                            let shown = elide_middle(&target, WHERE_CHARS);
+                            let label = ui.label(RichText::new(&shown).monospace());
+                            if shown != target {
+                                label.on_hover_text(target);
+                            }
                             ui.label(if def.writes { "Allowed" } else { "Read only" });
                             ui.end_row();
                         }
@@ -865,3 +870,36 @@ fn form_ui(ui: &mut egui::Ui, form: &mut SourceForm, timeout: Duration) -> FormA
 #[cfg(test)]
 #[path = "sources_ui_tests.rs"]
 mod sources_ui_tests;
+
+/// The most characters the Where column shows of a data source's place.
+const WHERE_CHARS: usize = 56;
+
+/// `text` shortened to at most `max` characters by leaving out its middle,
+/// so that the start (the kind) and the end (a file name) both show.
+fn elide_middle(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_owned();
+    }
+    let tail = (max - 1) / 2;
+    let head = max - 1 - tail;
+    let start: String = text.chars().take(head).collect();
+    let end: String = text.chars().skip(count - tail).collect();
+    format!("{start}\u{2026}{end}")
+}
+
+#[cfg(test)]
+mod elide_tests {
+    use super::elide_middle;
+
+    #[test]
+    fn a_long_place_loses_its_middle_and_a_short_one_is_kept() {
+        assert_eq!(elide_middle("odbc:northwind", 56), "odbc:northwind");
+        let long = r"beancount:C:\Users\someone\AppData\Local\Temp\a\b\c\books\books.beancount";
+        let shown = elide_middle(long, 40);
+        assert_eq!(shown.chars().count(), 40);
+        assert!(shown.starts_with("beancount:C:"), "{shown}");
+        assert!(shown.ends_with("books.beancount"), "{shown}");
+        assert!(shown.contains('\u{2026}'));
+    }
+}

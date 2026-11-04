@@ -1108,6 +1108,7 @@ impl Calc {
             error: None,
             traceback: None,
             syntax_error: false,
+            rejected: None,
         };
         if let Err(e) = &syntax {
             formula.syntax_error = true;

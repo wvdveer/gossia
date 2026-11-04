@@ -94,8 +94,8 @@ impl ClioApp {
     }
 
     /// The menu of a report tab, in the Edit menu and the tab's context menu.
-    /// *Edit report*, *Export as PDF...* and *Copy batch command* come with
-    /// later steps of 0.2.0, and are shown greyed until then.
+    /// *Copy batch command* comes with a later step of 0.2.0 (12i), and is
+    /// shown greyed until then.
     pub(crate) fn report_menu_items(&mut self, ui: &mut egui::Ui, tab: &str) {
         let can_change = self.editing.is_none() && self.session.running_procedure().is_none();
         ui.add_enabled_ui(can_change, |ui| {
@@ -118,16 +118,12 @@ impl ClioApp {
                 self.set_layout(on);
                 ui.close();
             }
-            for (label, why) in [
-                ("Export as PDF...", "PDF export is not built yet"),
-                (
-                    "Copy batch command",
-                    "The command-line program, cliotree-cli, is not built yet",
-                ),
-            ] {
-                ui.add_enabled(false, egui::Button::new(label))
-                    .on_disabled_hover_text(why);
+            if ui.button("Export as PDF...").clicked() {
+                self.begin_export_pdf(tab);
+                ui.close();
             }
+            ui.add_enabled(false, egui::Button::new("Copy batch command"))
+                .on_disabled_hover_text("The command-line program, cliotree-cli, is not built yet");
             ui.separator();
             if ui.button("Rename tab...").clicked() {
                 self.begin_rename_tab(tab);

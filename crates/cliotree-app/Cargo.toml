@@ -20,6 +20,7 @@ cliotree-core.workspace = true
 cliotree-calc.workspace = true
 cliotree-std.workspace = true
 cliotree-layout.workspace = true
+cliotree-report.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"
@@ -48,6 +49,8 @@ test-control = ["dep:image"]
 
 [dev-dependencies]
 egui_kittest = { version = "0.37.0", features = ["wgpu", "snapshot"] }
+# Reads the text of exported PDFs back.
+pdf-extract = "0.12.1"
 
 [[test]]
 name = "e2e"

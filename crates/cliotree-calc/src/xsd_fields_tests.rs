@@ -226,3 +226,43 @@ fn a_named_type_changes_everywhere_it_is_used() {
         .unwrap();
     assert_eq!(fields(&calc, "item[1]"), ["@line", "@x", "sku", "qty"]);
 }
+
+#[test]
+fn an_object_or_an_array_element_has_a_complex_type_of_its_own() {
+    let mut calc = book();
+    calc.add_field("Order", &p(""), "contact", FieldKind::Object, false)
+        .unwrap();
+    calc.add_field("Order", &p(""), "line", FieldKind::Array, false)
+        .unwrap();
+    let schema = xsd_text(&calc);
+    assert!(
+        schema
+            .contains(r#"<xs:element name="contact" minOccurs="0"><xs:complexType/></xs:element>"#),
+        "{schema}"
+    );
+    assert!(
+        schema.contains(
+            r#"<xs:element name="line" minOccurs="0" maxOccurs="unbounded"><xs:complexType/></xs:element>"#
+        ),
+        "{schema}"
+    );
+    assert_eq!(
+        fields(&calc, ""),
+        ["@id", "customer", "item", "note", "contact", "line"]
+    );
+    // An attribute holds one value.
+    let why = error_text(calc.add_field("Order", &p(""), "@extra", FieldKind::Object, false));
+    assert!(why.contains("cannot be an object"), "{why}");
+    // An item of the array takes fields of its own.
+    calc.set_value("Order", &p("line"), Value::Array(Vec::new()))
+        .unwrap();
+    calc.insert_item("Order", &p("line"), 0, Value::Object(Default::default()))
+        .unwrap();
+    calc.add_field("Order", &p("line[0]"), "amount", FieldKind::Number, false)
+        .unwrap();
+    assert_eq!(fields(&calc, "line[0]"), ["amount"]);
+    calc.set_value("Order", &p("line[0].amount"), Value::Float(2.5))
+        .unwrap();
+    let data = data_text(&calc);
+    assert!(data.contains("<line><amount>2.5</amount></line>"), "{data}");
+}

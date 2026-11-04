@@ -18,6 +18,7 @@ cliotree-core = { path = "crates/cliotree-core" }
 cliotree-calc = { path = "crates/cliotree-calc" }
 cliotree-std = { path = "crates/cliotree-std" }
 cliotree-layout = { path = "crates/cliotree-layout" }
+cliotree-report = { path = "crates/cliotree-report" }
 
 [workspace.metadata.cliotree]
 # Vendor items (see vendor.lock) that the workspace needs. `cargo xtask` fetches

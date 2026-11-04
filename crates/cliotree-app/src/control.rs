@@ -131,6 +131,32 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
         // Imports a file with what the dialog starts with, or with `name`,
         // and `schema` (a schema tab, `"new"` for the inferred schema, or
         // `"self"` for a file that is a schema, as a schema tab).
+        // Drops files on the window, as dragging them from a file manager
+        // does, and presses Import in each import dialog that opens, with
+        // its choices as they are. Gives the tabs made.
+        "drop" => {
+            let paths: Vec<std::path::PathBuf> = args
+                .get("paths")
+                .and_then(Json::as_array)
+                .ok_or("drop needs paths")?
+                .iter()
+                .map(|p| p.as_str().map(std::path::PathBuf::from))
+                .collect::<Option<_>>()
+                .ok_or("drop needs paths as text")?;
+            app.imports.clear();
+            app.notice = None;
+            app.drop_files(paths);
+            if let Some(notice) = app.notice.take() {
+                return Err(notice);
+            }
+            let mut tabs = Vec::new();
+            while let Some(plan) = app.imports.pop_front() {
+                app.import(&plan)?;
+                tabs.push(plan.name.clone());
+            }
+            app.refresh_rows();
+            Ok(json!({ "tabs": tabs }))
+        }
         "import" => {
             let path = text_arg(args, "path")?;
             app.begin_import_path(std::path::Path::new(path))?;
@@ -223,6 +249,34 @@ pub fn run(app: &mut ClioApp, cmd: &str, args: &Json) -> Result<Json, String> {
             app.export = None;
             done?;
             Ok(json!({ "schema": schema }))
+        }
+        // Writes a report as PDF, as *Export as PDF...* does: `report` (the
+        // tab shown if left out) is shown and calculated, with the parameter
+        // values it has, and written to `path`.
+        "export_pdf" => {
+            let path = std::path::PathBuf::from(text_arg(args, "path")?);
+            let report = match args.get("report").and_then(Json::as_str) {
+                Some(report) => report.to_owned(),
+                None => app.sheet.clone(),
+            };
+            if app.calc().report(&report).is_none() {
+                return Err(format!("there is no report called {report}"));
+            }
+            app.begin_export_pdf(&report);
+            app.session.calc_mut().show_report(Some(&report));
+            if !app.session.wait_idle(std::time::Duration::from_secs(60)) {
+                app.pdf_export = None;
+                return Err(format!(
+                    "{report} was still being calculated after a minute"
+                ));
+            }
+            let done = app.export_pdf_to(&path);
+            let error = app.pdf_export.take().and_then(|e| e.error);
+            done?;
+            match error {
+                Some(error) => Err(error),
+                None => Ok(Json::Null),
+            }
         }
         "select" => {
             let path = path_arg(args, "path")?;

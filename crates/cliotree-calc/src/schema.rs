@@ -15,8 +15,10 @@ use indexmap::IndexMap;
 use super::xsd_fields::XsdChange;
 use super::*;
 
-/// The type of a field that a command adds. Only simple types: anything more
-/// involved is written on the schema tab.
+/// The type of a field that a command adds: a simple type, an object with
+/// no fields yet, or an array of such objects (whose fields are added the
+/// same way, on an item). Anything more involved is written on the schema
+/// tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
     Text,
@@ -25,17 +27,39 @@ pub enum FieldKind {
     Boolean,
     Date,
     DateTime,
+    Object,
+    Array,
 }
 
 impl FieldKind {
-    pub const ALL: [FieldKind; 6] = [
+    pub const ALL: [FieldKind; 8] = [
         FieldKind::Text,
         FieldKind::Integer,
         FieldKind::Number,
         FieldKind::Boolean,
         FieldKind::Date,
         FieldKind::DateTime,
+        FieldKind::Object,
+        FieldKind::Array,
     ];
+
+    /// An object or an array: it holds fields rather than a value.
+    pub fn is_structured(self) -> bool {
+        matches!(self, FieldKind::Object | FieldKind::Array)
+    }
+
+    /// What the dialog says about a type that needs saying.
+    pub fn hint(self) -> Option<&'static str> {
+        match self {
+            FieldKind::Object => {
+                Some("An object with no fields yet: add them to it in the same way.")
+            }
+            FieldKind::Array => {
+                Some("A list of objects with no fields yet: add an item, then add fields to it.")
+            }
+            _ => None,
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -45,11 +69,32 @@ impl FieldKind {
             FieldKind::Boolean => "yes or no",
             FieldKind::Date => "date",
             FieldKind::DateTime => "date and time",
+            FieldKind::Object => "object",
+            FieldKind::Array => "array",
         }
     }
 
     /// The schema of a field of this type, as it is written in the document.
     fn schema(self) -> Node {
+        let record = || {
+            let mut fields = IndexMap::new();
+            fields.insert("type".to_owned(), text("object"));
+            fields.insert(
+                "properties".to_owned(),
+                Node::new(Value::Object(IndexMap::new())),
+            );
+            Node::new(Value::Object(fields))
+        };
+        match self {
+            FieldKind::Object => return record(),
+            FieldKind::Array => {
+                let mut fields = IndexMap::new();
+                fields.insert("type".to_owned(), text("array"));
+                fields.insert("items".to_owned(), record());
+                return Node::new(Value::Object(fields));
+            }
+            _ => {}
+        }
         let (ty, format) = match self {
             FieldKind::Text => ("string", None),
             FieldKind::Integer => ("integer", None),
@@ -57,6 +102,7 @@ impl FieldKind {
             FieldKind::Boolean => ("boolean", None),
             FieldKind::Date => ("string", Some("date")),
             FieldKind::DateTime => ("string", Some("date-time")),
+            FieldKind::Object | FieldKind::Array => unreachable!("written above"),
         };
         let mut fields = IndexMap::new();
         fields.insert("type".to_owned(), text(ty));
@@ -427,6 +473,13 @@ impl Calc {
                 for (name, s) in self.sheets.iter_mut() {
                     if matches!(&s.schema, SchemaRole::Bound(b) if b == schema_sheet) {
                         s.spec = own.remove(name).unwrap_or_else(|| Arc::clone(&spec));
+                        // Their results were checked against the old type:
+                        // a #TYPE! may fit now, and a value may not.
+                        for (path, formula) in &s.formulas.by_path {
+                            if !formula.syntax_error {
+                                self.dirty.insert(Loc::new(name.clone(), path.clone()));
+                            }
+                        }
                     }
                 }
                 None
@@ -636,6 +689,80 @@ impl Calc {
                 })?;
             }
             Ok(())
+        })
+    }
+
+    /// Whether *Force object definition* is offered on the node at `path`:
+    /// it is a field whose type is a record with no fields, or an array of
+    /// such records, and its formula returned a record (or an array of
+    /// records) with fields, which the type refused.
+    pub fn force_type_offered(&self, sheet: &str, path: &Path) -> bool {
+        self.force_type_source(sheet, path).is_some()
+    }
+
+    /// The result *Force object definition* defines the type from.
+    fn force_type_source(&self, sheet: &str, path: &Path) -> Option<&Value> {
+        if !matches!(path.segments().last(), Some(Segment::Key(_))) {
+            return None;
+        }
+        let s = self.sheets.get(sheet)?;
+        let rejected = s.formulas.by_path.get(path)?.rejected.as_deref()?;
+        let ty = s.spec.resolve(path)?.ty;
+        let empty = |ty: TypeId| matches!(&s.spec.get(ty).kind, Kind::Object { fields } if fields.is_empty());
+        let has_fields = |v: &Value| matches!(v, Value::Object(map) if !map.is_empty());
+        let fits = match &s.spec.get(ty).kind {
+            Kind::Object { fields } if fields.is_empty() => has_fields(rejected),
+            Kind::Array { items, .. } if empty(*items) => match rejected {
+                Value::Array(items) => {
+                    items.iter().all(|i| matches!(i.value(), Value::Object(_)))
+                        && items.iter().any(|i| has_fields(i.value()))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        fits.then_some(rejected)
+    }
+
+    /// *Force object definition*: gives the field at `path` the type
+    /// inferred from what its formula returned, as an import infers one, in
+    /// place of its record with no fields. Whether it is required stays as
+    /// it was. One entry in the history.
+    pub fn force_type(&mut self, sheet: &str, path: &Path) -> Result<(), EditError> {
+        let value = self
+            .force_type_source(sheet, path)
+            .cloned()
+            .ok_or_else(|| {
+                EditError::Path(format!(
+                    "{} is not a record with no fields whose formula returned records",
+                    Loc::new(sheet, path.clone())
+                ))
+            })?;
+        let Some(Segment::Key(name)) = path.segments().last().cloned() else {
+            return Err(EditError::Path("only a field can be defined".to_owned()));
+        };
+        let parent = path.parent().unwrap_or_default();
+        let places = self.field_places(sheet, &parent)?;
+        if places.xsd {
+            return Err(EditError::Path(format!(
+                "the type of an XML element is defined on its XSD tab, {}",
+                places.schema_sheet
+            )));
+        }
+        let mut schema = cliotree_core::infer::infer_json(&Node::new(value)).schema;
+        if let Value::Object(map) = schema.value_mut() {
+            map.shift_remove("$schema");
+            map.shift_remove("title");
+        }
+        let what = format!(
+            "Force object definition of {}",
+            Loc::new(sheet, path.clone())
+        );
+        self.entry(&what, |calc| {
+            let document = calc.edited_type(&places, |props, _| {
+                props.insert(name.clone(), schema);
+            })?;
+            calc.put(&places.schema_sheet, &places.document_path, document)
         })
     }
 

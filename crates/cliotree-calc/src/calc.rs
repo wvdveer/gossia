@@ -707,6 +707,29 @@ impl Calc {
         value: Value,
     ) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, &array.index(index))?;
+        // An array the schema defines but the data does not have yet (an
+        // optional field just added) is made, holding its first item.
+        if self.data(sheet).is_some_and(|d| d.get(array).is_none()) {
+            let s = self.sheet_mut(sheet)?;
+            s.data
+                .set(array, Value::Array(vec![Node::new(value)]))
+                .map_err(|e| EditError::Path(e.to_string()))?;
+            let node = s.data.get(array).cloned().expect("it was just set");
+            let position = s.data.position_of(array).unwrap_or(0);
+            self.changed_by_structure(sheet, array);
+            let path = array.index(0);
+            let mut ops = vec![Op::Add {
+                sheet: sheet.to_owned(),
+                path: array.clone(),
+                position,
+                node,
+                moved: Vec::new(),
+            }];
+            ops.extend(self.sync_columns(sheet, &path));
+            self.history
+                .record(format!("Insert {}", Loc::new(sheet, path)), ops, None);
+            return Ok(());
+        }
         let node = Node::new(value);
         let s = self.sheet_mut(sheet)?;
         s.data
@@ -945,6 +968,7 @@ impl Calc {
             error: None,
             traceback: None,
             syntax_error: false,
+            rejected: None,
         };
         if let Err(e) = &syntax {
             let error = ErrorValue {
@@ -1566,6 +1590,7 @@ impl Calc {
                 _ => None,
             };
             formula.traceback = outcome.traceback;
+            formula.rejected = outcome.rejected;
             let old = std::mem::replace(&mut formula.deps, outcome.deps.clone());
             self.forget_deps(&loc, &old);
             self.remember_deps(&loc, &outcome.deps);

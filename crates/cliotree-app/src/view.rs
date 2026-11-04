@@ -86,6 +86,8 @@ pub(crate) enum Action {
     DismissRefusal,
     // Changing the schema from this tab.
     AddField(Path),
+    /// *Force object definition*: the field's type from its formula's result.
+    ForceType(Path),
     RenameField(Path, String),
     DeleteField(Path, String),
     ReorderFields(Path, String, String),
@@ -412,7 +414,7 @@ impl ClioApp {
                     self.begin_import();
                     ui.close();
                 }
-                // A report is exported as a PDF, from its own menu.
+                // A report is exported as a PDF, by the item after this one.
                 if ui
                     .add_enabled(
                         self.editing.is_none() && !self.in_report(),
@@ -422,6 +424,18 @@ impl ClioApp {
                 {
                     let tab = self.sheet.clone();
                     self.begin_export(&tab);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.editing.is_none() && self.in_report(),
+                        egui::Button::new("Export as PDF..."),
+                    )
+                    .on_disabled_hover_text("Show a report to export it as PDF")
+                    .clicked()
+                {
+                    let tab = self.sheet.clone();
+                    self.begin_export_pdf(&tab);
                     ui.close();
                 }
                 ui.separator();
@@ -663,15 +677,135 @@ impl ClioApp {
                 self.open_insert_function();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                self.expand_button(ui);
                 self.pick_button(ui);
                 self.bar_text(ui);
             });
         });
+        self.formula_bar_handle(ui);
         if self.picking() {
             ui.label(RichText::new(crate::pick::PICK_HINT).italics());
         } else if let Some(notice) = &self.notice {
             let color = error_color(ui);
             ui.colored_label(color, notice);
+        }
+    }
+
+    /// The text box of the formula bar: one line, or with `height` as tall
+    /// as that, scrolling inside. `add` is given the rows to show.
+    fn bar_box<R>(
+        ui: &mut egui::Ui,
+        height: Option<f32>,
+        add: impl FnOnce(&mut egui::Ui, Option<usize>) -> R,
+    ) -> R {
+        let Some(height) = height else {
+            return add(ui, None);
+        };
+        let line = Self::bar_line_height(ui);
+        let margin = 2.0 * ui.spacing().button_padding.y + 4.0;
+        let rows = ((height / line).floor() as usize).max(1);
+        egui::ScrollArea::vertical()
+            .id_salt("formula_bar_scroll")
+            .max_height(height + margin)
+            .min_scrolled_height(height + margin)
+            .auto_shrink([false, false])
+            .show(ui, |ui| add(ui, Some(rows)))
+            .inner
+    }
+
+    /// A text field of the formula bar: one line, or a box of `rows` lines.
+    fn bar_edit(text: &mut String, rows: Option<usize>) -> egui::TextEdit<'_> {
+        match rows {
+            None => egui::TextEdit::singleline(text).desired_width(f32::INFINITY),
+            Some(rows) => egui::TextEdit::multiline(text)
+                .desired_rows(rows)
+                .desired_width(f32::INFINITY),
+        }
+    }
+
+    /// The height of one line of the formula bar's text.
+    fn bar_line_height(ui: &egui::Ui) -> f32 {
+        ui.text_style_height(&egui::TextStyle::Monospace)
+    }
+
+    /// The tallest the formula bar can be made: half the window, and at
+    /// least the lines it grows to while typing.
+    fn bar_max_height(&self, ui: &egui::Ui) -> f32 {
+        let line = Self::bar_line_height(ui);
+        let lines = self.user.prefs.formula_bar_lines as f32 * line;
+        (ui.ctx().content_rect().height() * 0.5).max(lines)
+    }
+
+    /// Expanded: as tall as the lines the bar grows to while typing (Options).
+    /// Collapsed: one line.
+    pub fn toggle_formula_bar(&mut self, ui: &egui::Ui) {
+        self.formula_bar_height = match self.formula_bar_height {
+            Some(_) => None,
+            None => {
+                let line = Self::bar_line_height(ui);
+                Some(self.user.prefs.formula_bar_lines.max(2) as f32 * line)
+            }
+        };
+    }
+
+    /// The button at the right end of the formula bar that expands it to
+    /// show a long or multi-line formula, and collapses it again.
+    fn expand_button(&mut self, ui: &mut egui::Ui) {
+        let expanded = self.formula_bar_height.is_some();
+        let text = if crate::icons::ready(ui.ctx()) {
+            RichText::new(if expanded {
+                crate::icons::CARET_UP
+            } else {
+                crate::icons::CARET_DOWN
+            })
+            .family(egui::FontFamily::Name(crate::style::ICONS.into()))
+        } else {
+            RichText::new(if expanded { "^" } else { "v" })
+        };
+        let name = if expanded {
+            "Collapse formula bar"
+        } else {
+            "Expand formula bar"
+        };
+        let response = ui.button(text).on_hover_text(name);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+        if response.clicked() {
+            self.toggle_formula_bar(ui);
+        }
+    }
+
+    /// The edge under the formula bar: dragged, it makes the bar taller or
+    /// shorter; double-clicked, it expands or collapses the bar.
+    fn formula_bar_handle(&mut self, ui: &mut egui::Ui) {
+        let width = ui.available_width();
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, 5.0), egui::Sense::click_and_drag());
+        let response = response
+            .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+            .on_hover_text("Drag to make the formula bar taller or shorter");
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Splitter, true, "Formula bar height")
+        });
+        if response.hovered() || response.dragged() {
+            let palette = Palette::of_ui(ui);
+            ui.painter().hline(
+                rect.x_range(),
+                rect.center().y,
+                Stroke::new(2.0, palette.border),
+            );
+        }
+        let line = Self::bar_line_height(ui);
+        if response.dragged() {
+            let now = self.formula_bar_height.unwrap_or(line);
+            let height = (now + response.drag_delta().y).clamp(line, self.bar_max_height(ui));
+            self.formula_bar_height = Some(height);
+        }
+        if response.drag_stopped() && self.formula_bar_height.is_some_and(|h| h < line * 1.5) {
+            // Dragged back to about one line: collapsed.
+            self.formula_bar_height = None;
+        }
+        if response.double_clicked() {
+            self.toggle_formula_bar(ui);
         }
     }
 
@@ -710,13 +844,15 @@ impl ClioApp {
         if let Some(pick) = &self.pick {
             // The text set aside while a place is picked.
             let mut shown = pick.editing.text.clone();
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut shown)
-                    .id(id)
-                    .desired_width(f32::INFINITY)
-                    .code_editor()
-                    .interactive(false),
-            );
+            let height = self.formula_bar_height;
+            let response = Self::bar_box(ui, height, |ui, rows| {
+                ui.add(
+                    Self::bar_edit(&mut shown, rows)
+                        .id(id)
+                        .code_editor()
+                        .interactive(false),
+                )
+            });
             named(&response, "Formula bar");
             return;
         }
@@ -744,12 +880,14 @@ impl ClioApp {
                 Some(c) => (self.column_text(c), self.column_refusal(c).is_none()),
                 None => (self.cell_text(&path), self.can_edit(&path)),
             };
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut shown)
-                    .id(id)
-                    .desired_width(f32::INFINITY)
-                    .interactive(interactive),
-            );
+            let height = self.formula_bar_height;
+            let response = Self::bar_box(ui, height, |ui, rows| {
+                ui.add(
+                    Self::bar_edit(&mut shown, rows)
+                        .id(id)
+                        .interactive(interactive),
+                )
+            });
             named(&response, "Formula bar");
             if response.gained_focus() || response.clicked() {
                 if column.is_some() {
@@ -768,21 +906,32 @@ impl ClioApp {
         let lines = self.user.prefs.formula_bar_lines as f32;
         let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
         let margin = 2.0 * ui.spacing().button_padding.y + 4.0;
-        let output = egui::ScrollArea::vertical()
-            .id_salt("formula_bar_scroll")
-            .max_height(lines * line_height + margin)
-            // Only as tall as the text, up to the most lines.
-            .min_scrolled_height(0.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                egui::TextEdit::multiline(&mut editing.text)
+        let output = match self.formula_bar_height {
+            // Expanded or dragged: that tall, scrolling inside.
+            Some(height) => Self::bar_box(ui, Some(height), |ui, rows| {
+                Self::bar_edit(&mut editing.text, rows)
                     .id(id)
-                    .desired_rows(1)
-                    .desired_width(f32::INFINITY)
                     .code_editor()
                     .show(ui)
-            })
-            .inner;
+            }),
+            None => {
+                egui::ScrollArea::vertical()
+                    .id_salt("formula_bar_scroll")
+                    .max_height(lines * line_height + margin)
+                    // Only as tall as the text, up to the most lines.
+                    .min_scrolled_height(0.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        egui::TextEdit::multiline(&mut editing.text)
+                            .id(id)
+                            .desired_rows(1)
+                            .desired_width(f32::INFINITY)
+                            .code_editor()
+                            .show(ui)
+                    })
+                    .inner
+            }
+        };
         named(&output.response, "Formula bar");
         self.finish_text_widget(ui, id, &mut editing, &output);
         let rect = output.response.rect;
@@ -1039,6 +1188,7 @@ impl ClioApp {
                 self.begin_comment(&path, at);
             }
             Action::DeleteComment(path) => self.delete_comment(&path),
+            Action::ForceType(path) => self.force_type(&path),
             Action::AddField(..)
             | Action::RenameField(..)
             | Action::DeleteField(..)
@@ -1557,11 +1707,16 @@ impl ClioApp {
             }
             _ => {}
         }
+        // An array has no fields of its own: its items do, and their rows
+        // offer Add field. It is itself a field of its record, though, so it
+        // is renamed and deleted like any other.
         let add_to = match row.kind {
-            RowKind::Object | RowKind::Array => self.object_of_row(path),
+            RowKind::Object => self.object_of_row(path),
             _ => None,
         };
-        self.field_menu_items(ui, add_to.as_ref(), self.field_of(path).as_ref(), actions);
+        let field = self.field_of(path);
+        self.field_menu_items(ui, add_to.as_ref(), field.as_ref(), actions);
+        self.force_type_item(ui, path, actions);
         if row.node.is_some() {
             let at = ui.ctx().pointer_interact_pos().unwrap_or_default();
             self.comment_menu_items(ui, path, at, actions, true);

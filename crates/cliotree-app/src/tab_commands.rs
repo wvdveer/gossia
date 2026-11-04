@@ -1124,6 +1124,7 @@ impl ClioApp {
         self.bind_tab_window(ctx);
         self.import_window(ctx);
         self.export_window(ctx);
+        self.pdf_window(ctx);
     }
 
     /// The items for tabs, in the Edit menu and a sheet tab's context menu.

@@ -96,11 +96,14 @@ def IF(condition, then, otherwise=None):
     return then if condition else otherwise
 
 
-def LOOKUP(key, items, key_field, result_field):
-    """`result_field` of the first of `items` whose `key_field` equals `key`.
-    No such item raises `KeyError` (`#REF!`)."""
+def LOOKUP(key, items, key_field, result_field=None):
+    """`result_field` of the first of `items` whose `key_field` equals `key`,
+    or without `result_field` the whole item. No such item raises `KeyError`
+    (`#REF!`)."""
     for item in items:
         if _field(item, key_field) == key:
+            if result_field is None:
+                return item
             return _field(item, result_field)
     raise KeyError('no item has %s equal to %r' % (key_field, key))
 

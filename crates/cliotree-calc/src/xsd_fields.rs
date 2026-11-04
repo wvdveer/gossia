@@ -55,6 +55,8 @@ impl FieldKind {
             FieldKind::Boolean => "boolean",
             FieldKind::Date => "date",
             FieldKind::DateTime => "dateTime",
+            // Written as a complexType of their own, not a built-in type.
+            FieldKind::Object | FieldKind::Array => "anyType",
         }
     }
 }
@@ -255,6 +257,12 @@ impl Calc {
                 );
                 if let Some(attribute) = name.strip_prefix('@') {
                     check_xml_name(attribute)?;
+                    if kind.is_structured() {
+                        return Err(EditError::Path(format!(
+                            "an attribute holds one value, so it cannot be an {}; add an                              element instead",
+                            kind.label()
+                        )));
+                    }
                     let mut fields = vec![("@name", attribute.to_owned()), ("@type", ty)];
                     if *required {
                         fields.push(("@use", "required".to_owned()));
@@ -269,11 +277,31 @@ impl Calc {
                                 .to_owned(),
                         ));
                     }
-                    let mut fields = vec![("@name", (*name).to_owned()), ("@type", ty)];
-                    if !required {
-                        fields.push(("@minOccurs", "0".to_owned()));
+                    if kind.is_structured() {
+                        // An element with a complexType of its own, with no
+                        // fields yet; an array is one that repeats.
+                        let mut fields = vec![("@name", (*name).to_owned())];
+                        if !required {
+                            fields.push(("@minOccurs", "0".to_owned()));
+                        }
+                        if *kind == FieldKind::Array {
+                            fields.push(("@maxOccurs", "unbounded".to_owned()));
+                        }
+                        let mut element = declaration(&fields);
+                        if let Value::Object(map) = element.value_mut() {
+                            map.insert(
+                                "complexType".to_owned(),
+                                Node::new(Value::Object(IndexMap::new())),
+                            );
+                        }
+                        elements.push(element);
+                    } else {
+                        let mut fields = vec![("@name", (*name).to_owned()), ("@type", ty)];
+                        if !required {
+                            fields.push(("@minOccurs", "0".to_owned()));
+                        }
+                        elements.push(declaration(&fields));
                     }
-                    elements.push(declaration(&fields));
                 }
             }
             XsdChange::Rename { from, to } => {

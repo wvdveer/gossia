@@ -21,13 +21,30 @@ pub enum Computed {
     Error(ErrorValue),
 }
 
+/// What a formula came to: what its node holds, the Python traceback of a
+/// failure, and a result its node's type refused.
+pub(crate) struct Finished {
+    pub computed: Computed,
+    pub traceback: Option<String>,
+    pub rejected: Option<Value>,
+}
+
 /// Checks a formula's result. Conversion is strict: a result must already be
 /// the right kind, and nothing is coerced (DESIGN.md, "Scalar types").
-pub(crate) fn finish(
+pub(crate) fn finish(spec: &TypeSpec, loc: &Loc, result: Result<Value, Failure>) -> Finished {
+    let (computed, traceback, rejected) = check(spec, loc, result);
+    Finished {
+        computed,
+        traceback,
+        rejected,
+    }
+}
+
+fn check(
     spec: &TypeSpec,
     loc: &Loc,
     result: Result<Value, Failure>,
-) -> (Computed, Option<String>) {
+) -> (Computed, Option<String>, Option<Value>) {
     let fail = |kind: ErrorKind, message: String| {
         Computed::Error(ErrorValue {
             kind,
@@ -39,12 +56,12 @@ pub(crate) fn finish(
         Err(failure) => {
             let mut error = failure.error;
             error.origin.get_or_insert_with(|| loc.path.clone());
-            return (Computed::Error(error), failure.traceback);
+            return (Computed::Error(error), failure.traceback, None);
         }
         Ok(Value::Error(mut error)) => {
             // `=Orders.total` where the source has failed: the same error.
             error.origin.get_or_insert_with(|| loc.path.clone());
-            return (Computed::Error(error), None);
+            return (Computed::Error(error), None, None);
         }
         Ok(value) => value,
     };
@@ -54,6 +71,7 @@ pub(crate) fn finish(
                 ErrorKind::Ref,
                 format!("the schema defines no node at {loc}"),
             ),
+            None,
             None,
         );
     };
@@ -65,9 +83,10 @@ pub(crate) fn finish(
                     format!("the formula returned None, but {loc} is required"),
                 ),
                 None,
+                None,
             )
         } else {
-            (Computed::Absent, None)
+            (Computed::Absent, None, None)
         };
     }
     let issues = validate_at(spec, here.ty, &Node::new(value.clone()), &loc.path);
@@ -78,8 +97,9 @@ pub(crate) fn finish(
                 format!("{loc} does not accept this result: {}", issue.message),
             ),
             None,
+            Some(value),
         ),
-        None => (Computed::Value(value), None),
+        None => (Computed::Value(value), None, None),
     }
 }
 
