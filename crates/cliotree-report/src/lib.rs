@@ -15,8 +15,11 @@
 //! - The colours of the theme are those of the light theme, on white
 //!   paper ([`paper_colour`]).
 //!
-//! Nothing here depends on egui or the workbook: the application and
-//! `cliotree-cli` both write their PDFs with it.
+//! Nothing here depends on egui: the application and `cliotree-cli` both
+//! write their PDFs with it. [`workbook`] reads a report's values from a
+//! workbook; the rest takes only what was laid out.
+
+pub mod workbook;
 
 use std::collections::HashMap;
 

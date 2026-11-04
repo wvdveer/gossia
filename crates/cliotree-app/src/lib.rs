@@ -21,7 +21,6 @@ pub mod edit;
 #[cfg(test)]
 mod edit_tests;
 pub mod export;
-pub mod file;
 pub mod form;
 pub mod form_exprs;
 pub mod form_free;
@@ -36,7 +35,6 @@ pub mod inspector;
 pub mod map_keys;
 pub mod options;
 pub mod pick;
-pub mod prefs;
 pub mod raw;
 pub mod replace_inside;
 pub mod report_design;
@@ -71,6 +69,8 @@ pub mod view_state;
 pub mod workbook_file;
 
 pub use app::ClioApp;
+// The user's configuration and the .clio file, shared with cliotree-cli.
+pub use cliotree_user::{file, prefs};
 
 impl eframe::App for ClioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

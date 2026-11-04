@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 cliotree-core.workspace = true
 cliotree-layout.workspace = true
+cliotree-calc.workspace = true
 # The PDF writer (DESIGN.md, Reports, "PDF export"): krilla, and krilla-svg for
 # the charts, both MIT OR Apache-2.0. krilla's own text shaping is not used:
 # the glyphs come from cliotree-layout, which measured them.

@@ -457,6 +457,8 @@ pub struct Paged {
     /// What the report says about itself: bands cut at the end of a page,
     /// and the limit of detail bands.
     pub warnings: Vec<String>,
+    /// It stopped at the limit of detail bands.
+    pub limited: bool,
 }
 
 /// Lays out a multipage report page by page (DESIGN.md, Reports, "Breaking
@@ -536,6 +538,7 @@ pub fn pages(design: &ReportDesign, source: &dyn Source, limit: usize) -> Paged 
             design.band_name(*band)
         ));
     }
+    out.limited = paging.limited;
     if paging.limited {
         out.warnings.push(format!(
             "The report stops after {limit} detail rows, the limit for a report."

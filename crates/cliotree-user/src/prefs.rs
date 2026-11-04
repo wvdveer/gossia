@@ -240,15 +240,6 @@ impl ThemeChoice {
         }
     }
 
-    /// The theme for what the system draws around a window: its title bar.
-    pub fn window_theme(self) -> egui::SystemTheme {
-        match self {
-            ThemeChoice::System => egui::SystemTheme::SystemDefault,
-            ThemeChoice::Light => egui::SystemTheme::Light,
-            ThemeChoice::Dark => egui::SystemTheme::Dark,
-        }
-    }
-
     fn from_key(key: &str) -> Option<ThemeChoice> {
         ThemeChoice::ALL.into_iter().find(|t| t.key() == key)
     }
@@ -1097,7 +1088,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::workbook_file::new_workbook_id;
+    use crate::file::new_workbook_id;
 
     struct Folder(PathBuf);
 

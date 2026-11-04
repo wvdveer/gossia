@@ -223,3 +223,109 @@ fn the_control_channel_makes_and_duplicates_reports() {
         .is_err()
     );
 }
+
+#[test]
+fn copy_batch_command_names_the_program_the_file_the_values_chosen_and_the_saved_digest() {
+    use cliotree_core::Value;
+    use cliotree_core::report::{ParamKind, ReportParam};
+
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    let mut design = app.calc().report("Sales").unwrap().clone();
+    let mut units = ReportParam::new("units", ParamKind::Choices);
+    units.choices = Some("['North', 'South']".to_owned());
+    design.params = vec![
+        ReportParam::new("since", ParamKind::Date),
+        units,
+        ReportParam::new("note", ParamKind::Text),
+    ];
+    app.session.calc_mut().set_report("Sales", design).unwrap();
+    // Only what was saved can be run.
+    app.copy_batch_command("Sales");
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .starts_with("Save the workbook first")
+    );
+    assert!(app.tables.to_clipboard.is_none());
+
+    let dir = std::env::temp_dir().join(format!("cliotree-batch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("my book.clio");
+    app.save_as(&file).unwrap();
+    let calc = app.session.calc_mut();
+    calc.set_report_param(
+        "Sales",
+        "since",
+        Some(Value::Date(
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+        )),
+    );
+    calc.set_report_param(
+        "Sales",
+        "units",
+        Some(Value::Array(vec![
+            cliotree_core::Node::new(Value::Str("North".into())),
+            cliotree_core::Node::new(Value::Str("South".into())),
+        ])),
+    );
+    calc.set_report_param("Sales", "note", Some(Value::Str("it's \"q\"".into())));
+    let digest = app.calc().fingerprint().hash;
+
+    app.copy_batch_command("Sales");
+    let command = app.tables.to_clipboard.take().unwrap();
+    assert_eq!(
+        app.notice.as_deref(),
+        Some("Copied the command that writes Sales as a PDF.")
+    );
+    let program = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(crate::report_tab::CLI_PROGRAM);
+    let q = crate::report_tab::quote;
+    let expected = [
+        q(&program.display().to_string()),
+        "report".to_owned(),
+        q(&file.display().to_string()),
+        q("Sales"),
+        "--out".to_owned(),
+        q(&dir.join("Sales.pdf").display().to_string()),
+        "--param since=2026-10-01".to_owned(),
+        "--param units=North".to_owned(),
+        "--param units=South".to_owned(),
+        format!("--param {}", q("note=it's \"q\"")),
+        format!("--trust-digest {digest}"),
+    ]
+    .join(" ");
+    assert_eq!(command, expected);
+
+    // A change to a formula that is not saved is said: the file runs as saved.
+    app.session
+        .calc_mut()
+        .set_formula("Orders", &p("tax_rate"), "=0.25")
+        .unwrap();
+    app.copy_batch_command("Sales");
+    let command = app.tables.to_clipboard.take().unwrap();
+    assert!(command.ends_with(&format!("--trust-digest {digest}")));
+    assert!(app.notice.as_deref().unwrap().contains("unsaved changes"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_word_is_quoted_only_when_the_shell_needs_it() {
+    use crate::report_tab::quote;
+    assert_eq!(quote("--param"), "--param");
+    assert_eq!(quote("since=2026-10-01"), "since=2026-10-01");
+    assert_eq!(quote(""), if cfg!(windows) { "\"\"" } else { "''" });
+    if cfg!(windows) {
+        assert_eq!(quote(r"C:\My Files\a.clio"), r#""C:\My Files\a.clio""#);
+        assert_eq!(quote(r#"say "hi""#), r#""say \"hi\"""#);
+        assert_eq!(quote(r"C:\files\a.clio"), r"C:\files\a.clio");
+    } else {
+        assert_eq!(quote("/my files/a.clio"), "'/my files/a.clio'");
+        assert_eq!(quote("it's"), r"'it'\''s'");
+    }
+}

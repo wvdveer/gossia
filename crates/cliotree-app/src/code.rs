@@ -536,7 +536,9 @@ impl ClioApp {
         if self.code.title_theme != Some(theme) {
             self.code.title_theme = Some(theme);
             if class != ViewportClass::EmbeddedWindow {
-                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(theme.window_theme()));
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(crate::style::window_theme(
+                    theme,
+                )));
             }
         }
         self.code_keys(ui);

@@ -219,6 +219,11 @@ impl PeriodPreset {
         }
     }
 
+    /// Its name on the command line: `last-month`.
+    pub fn key(self) -> String {
+        self.label().to_lowercase().replace(' ', "-")
+    }
+
     /// The first and last day of the period, on `today`.
     pub fn dates(self, today: NaiveDate) -> (NaiveDate, NaiveDate) {
         let month_start = today.with_day(1).expect("every month has a first day");
@@ -294,4 +299,30 @@ pub fn choice_values(list: &Value) -> Result<Vec<(Value, Option<Value>)>, String
             }
         })
         .collect()
+}
+
+/// A parameter's value as it is written on the command line (DESIGN.md,
+/// "Batch export from the command line"): a date as `2026-10-31`, a period
+/// as `2026-10-01..2026-10-31`, yes or no, a number as Python writes it, and
+/// text as it is. A list is its values joined with commas, for showing; the
+/// command line gives each value of a list with its own `--param`.
+pub fn param_text(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Str(s) => s.clone(),
+        Value::Bool(true) => "yes".to_owned(),
+        Value::Bool(false) => "no".to_owned(),
+        Value::Int(_) | Value::Float(_) => crate::format::plain_number(value),
+        Value::Date(d) => d.format("%Y-%m-%d").to_string(),
+        Value::Array(items) => items
+            .iter()
+            .map(|n| param_text(n.value()))
+            .collect::<Vec<_>>()
+            .join(", "),
+        Value::Object(_) if period_dates(value).is_some() => {
+            let (start, end) = period_dates(value).expect("checked");
+            format!("{}..{}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"))
+        }
+        other => crate::json::to_string(&Node::new(other.clone()), false).unwrap_or_default(),
+    }
 }

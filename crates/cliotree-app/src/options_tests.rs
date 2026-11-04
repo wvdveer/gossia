@@ -517,10 +517,16 @@ fn the_display_page_sets_the_data_views_and_the_editing_page_the_formula_bar() {
 
 #[test]
 fn the_title_bar_takes_the_chosen_theme() {
-    assert_eq!(ThemeChoice::Dark.window_theme(), egui::SystemTheme::Dark);
-    assert_eq!(ThemeChoice::Light.window_theme(), egui::SystemTheme::Light);
     assert_eq!(
-        ThemeChoice::System.window_theme(),
+        crate::style::window_theme(ThemeChoice::Dark),
+        egui::SystemTheme::Dark
+    );
+    assert_eq!(
+        crate::style::window_theme(ThemeChoice::Light),
+        egui::SystemTheme::Light
+    );
+    assert_eq!(
+        crate::style::window_theme(ThemeChoice::System),
         egui::SystemTheme::SystemDefault
     );
 }

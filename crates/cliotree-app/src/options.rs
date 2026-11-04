@@ -613,7 +613,7 @@ impl ClioApp {
             // a dark window keeps a light title bar under a light system.
             ctx.send_viewport_cmd_to(
                 egui::ViewportId::ROOT,
-                egui::ViewportCommand::SetTheme(want.theme.window_theme()),
+                egui::ViewportCommand::SetTheme(crate::style::window_theme(want.theme)),
             );
         }
         if want.scale_percent != before.scale_percent {

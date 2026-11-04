@@ -1019,6 +1019,7 @@ dependencies = [
  "cliotree-layout",
  "cliotree-report",
  "cliotree-std",
+ "cliotree-user",
  "eframe",
  "egui",
  "egui-file-dialog",
@@ -1030,7 +1031,6 @@ dependencies = [
  "resvg",
  "serde_json",
  "skrifa 0.44.0",
- "zip",
 ]
 
 [[package]]
@@ -1065,6 +1065,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cliotree-cli"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "cliotree-calc",
+ "cliotree-core",
+ "cliotree-report",
+ "cliotree-user",
+ "pdf-extract",
+]
+
+[[package]]
 name = "cliotree-core"
 version = "0.2.0"
 dependencies = [
@@ -1096,6 +1108,7 @@ dependencies = [
 name = "cliotree-report"
 version = "0.2.0"
 dependencies = [
+ "cliotree-calc",
  "cliotree-core",
  "cliotree-layout",
  "krilla",
@@ -1109,6 +1122,16 @@ name = "cliotree-std"
 version = "0.2.0"
 dependencies = [
  "cliotree-core",
+]
+
+[[package]]
+name = "cliotree-user"
+version = "0.2.0"
+dependencies = [
+ "cliotree-calc",
+ "cliotree-core",
+ "serde_json",
+ "zip",
 ]
 
 [[package]]

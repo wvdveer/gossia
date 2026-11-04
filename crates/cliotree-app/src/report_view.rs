@@ -13,11 +13,12 @@
 //! (DESIGN.md, Reports, "On screen"), with page navigation and zoom; in
 //! layout mode it is its stack of bands.
 
-use cliotree_calc::{Calc, ExprKind, ExprState, REPORT_FORM};
+use cliotree_calc::{Calc, REPORT_FORM};
 use cliotree_core::Value;
 use cliotree_core::form::{Address, FormDesign};
 use cliotree_core::report::ReportDesign;
 use cliotree_layout::report::{self, Got, Ink, Laid, Paged, Paint, Prop, Source};
+pub use cliotree_report::workbook::CalcSource;
 use egui::{Color32, Sense, Stroke};
 
 use crate::app::ClioApp;
@@ -29,89 +30,6 @@ pub const MARGIN: f32 = 16.0;
 
 /// The zooms offered, besides fitting the width.
 pub const ZOOMS: [f32; 7] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-
-/// The values of a report's expressions, as the workbook has them.
-pub struct CalcSource<'a> {
-    pub calc: &'a Calc,
-    pub report: &'a str,
-}
-
-fn kind(prop: Prop) -> ExprKind {
-    match prop {
-        Prop::Visible => ExprKind::Visible,
-        Prop::TextColour => ExprKind::TextColour,
-        Prop::FillColour => ExprKind::FillColour,
-        Prop::Value => ExprKind::Value,
-        Prop::Template => ExprKind::Template,
-        Prop::Items => ExprKind::Items,
-        Prop::Chart => ExprKind::Chart,
-    }
-}
-
-/// What an expression came to, as the report shows it. Nothing runs in a
-/// workbook that is not trusted: it shows what the results cache has, and
-/// `#UNTRUSTED!` for what it has not. In a trusted one, an expression that
-/// has not run yet shows its cached result as pending until it has.
-fn got(trusted: bool, state: Option<ExprState>, cached: Option<&Result<Value, String>>) -> Got {
-    let from_cache = |pending: bool| match cached {
-        Some(Ok(value)) => Some(Got::Value(value.clone(), pending)),
-        Some(Err(error)) => Some(Got::Error(error.clone())),
-        None => None,
-    };
-    if !trusted {
-        return from_cache(false).unwrap_or(if state.is_some() {
-            Got::Untrusted
-        } else {
-            Got::None
-        });
-    }
-    let Some(state) = state else {
-        return from_cache(true).unwrap_or(Got::None);
-    };
-    match state.result {
-        Some(Ok(value)) => Got::Value(value, state.pending),
-        Some(Err(error)) => Got::Error(error),
-        None => from_cache(true).unwrap_or(Got::Waiting),
-    }
-}
-
-impl Source for CalcSource<'_> {
-    fn svg_limit(&self) -> usize {
-        self.calc.svg_limit()
-    }
-
-    fn control(&self, at: &[usize], rows: &[usize], prop: Prop) -> Got {
-        got(
-            self.calc.is_trusted(),
-            self.calc
-                .report_expression(self.report, at, rows, kind(prop)),
-            self.calc
-                .cached_expression(self.report, at, None, rows, kind(prop)),
-        )
-    }
-
-    fn column(
-        &self,
-        at: &[usize],
-        rows: &[usize],
-        column: &str,
-        row: Option<usize>,
-        prop: Prop,
-    ) -> Got {
-        let kind = kind(prop);
-        let mut cached_rows = rows.to_vec();
-        if kind.per_row() {
-            cached_rows.extend(row);
-        }
-        got(
-            self.calc.is_trusted(),
-            self.calc
-                .report_column_expression(self.report, at, rows, column, row, kind),
-            self.calc
-                .cached_expression(self.report, at, Some(column), &cached_rows, kind),
-        )
-    }
-}
 
 /// The expressions of a report in place of their values (*Show
 /// expressions*, as Crystal's design view): a field shows `[its value]`, and

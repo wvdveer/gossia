@@ -356,6 +356,15 @@ impl Calc {
         }
     }
 
+    /// Starts `report` afresh, as `cliotree-cli` runs it (DESIGN.md, "Batch
+    /// export from the command line"): its cache is gone, so nothing shown
+    /// comes from an earlier run, and no value is chosen for its parameters,
+    /// so each takes its default.
+    pub fn forget_report_run(&mut self, report: &str) {
+        self.caches.remove(report);
+        self.set_chosen_params(report, indexmap::IndexMap::new());
+    }
+
     /// What an expression of a report came to in the run its cache holds.
     pub fn cached_expression(
         &self,

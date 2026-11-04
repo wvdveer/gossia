@@ -1,0 +1,30 @@
+[package]
+name = "cliotree-cli"
+description = "ClioTree from the command line: runs a workbook's report to PDF, without a window."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cliotree-cli"
+path = "src/main.rs"
+
+[lib]
+name = "cliotree_cli"
+path = "src/lib.rs"
+
+[dependencies]
+cliotree-core.workspace = true
+cliotree-calc.workspace = true
+cliotree-report.workspace = true
+cliotree-user.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# Reads the text of the PDFs written back.
+pdf-extract = "0.12.1"
+
+[lints]
+workspace = true

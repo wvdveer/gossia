@@ -94,8 +94,6 @@ impl ClioApp {
     }
 
     /// The menu of a report tab, in the Edit menu and the tab's context menu.
-    /// *Copy batch command* comes with a later step of 0.2.0 (12i), and is
-    /// shown greyed until then.
     pub(crate) fn report_menu_items(&mut self, ui: &mut egui::Ui, tab: &str) {
         let can_change = self.editing.is_none() && self.session.running_procedure().is_none();
         ui.add_enabled_ui(can_change, |ui| {
@@ -122,8 +120,17 @@ impl ClioApp {
                 self.begin_export_pdf(tab);
                 ui.close();
             }
-            ui.add_enabled(false, egui::Button::new("Copy batch command"))
-                .on_disabled_hover_text("The command-line program, cliotree-cli, is not built yet");
+            let saved = self.doc.path.is_some();
+            let copy = ui
+                .add_enabled(saved, egui::Button::new("Copy batch command"))
+                .on_hover_text(
+                    "Copies a command line that writes this report as a PDF with cliotree-cli,                      with the parameter values chosen and the workbook's trust digest",
+                )
+                .on_disabled_hover_text("Save the workbook first: the command runs its file");
+            if copy.clicked() {
+                self.copy_batch_command(tab);
+                ui.close();
+            }
             ui.separator();
             if ui.button("Rename tab...").clicked() {
                 self.begin_rename_tab(tab);
@@ -140,5 +147,117 @@ impl ClioApp {
                 ui.close();
             }
         });
+    }
+
+    /// *Copy batch command*: puts the command line on the clipboard and
+    /// says so, or says why there is none.
+    pub fn copy_batch_command(&mut self, tab: &str) {
+        match self.batch_command(tab) {
+            Ok((command, note)) => {
+                self.tables.to_clipboard = Some(command);
+                self.notice = Some(format!(
+                    "Copied the command that writes {tab} as a PDF.{}",
+                    note.map(|n| format!(" {n}")).unwrap_or_default()
+                ));
+            }
+            Err(why) => self.notice = Some(why),
+        }
+    }
+
+    /// The command line that writes the report `tab` as a PDF beside the
+    /// workbook (DESIGN.md, "Batch export from the command line"): the
+    /// program next to this one, the workbook's file, each parameter value
+    /// chosen in the parameter bar (the others take their defaults when it
+    /// runs), and the trust digest of the file as it was saved. With it, a
+    /// note when the file is not as the window has it.
+    pub fn batch_command(&self, tab: &str) -> Result<(String, Option<String>), String> {
+        let calc = self.calc();
+        let design = calc
+            .report(tab)
+            .ok_or_else(|| format!("there is no report {tab}"))?;
+        let file = self
+            .doc
+            .path
+            .clone()
+            .ok_or("Save the workbook first: the command runs its file.")?;
+        let file = std::path::absolute(&file).unwrap_or(file);
+        let saved = saved_digest(&file, &self.user.prefs.limits)?;
+        let program = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|d| d.join(CLI_PROGRAM)))
+            .unwrap_or_else(|| std::path::PathBuf::from(CLI_PROGRAM));
+        let out = file.with_file_name(format!("{tab}.pdf"));
+        let mut words = vec![
+            program.display().to_string(),
+            "report".to_owned(),
+            file.display().to_string(),
+            tab.to_owned(),
+            "--out".to_owned(),
+            out.display().to_string(),
+        ];
+        let chosen = calc.chosen_params(tab);
+        for param in &design.params {
+            let Some(value) = chosen.and_then(|c| c.get(&param.name)) else {
+                continue;
+            };
+            let values: Vec<&cliotree_core::Value> = match value {
+                cliotree_core::Value::Array(items) => items.iter().map(|n| n.value()).collect(),
+                other => vec![other],
+            };
+            for value in values {
+                if !cliotree_core::report::param_is_empty(value) {
+                    words.push("--param".to_owned());
+                    words.push(format!(
+                        "{}={}",
+                        param.name,
+                        cliotree_core::report::param_text(value)
+                    ));
+                }
+            }
+        }
+        words.push("--trust-digest".to_owned());
+        words.push(saved.clone());
+        let note = (saved != calc.fingerprint().hash).then(|| {
+            "The workbook has unsaved changes to its formulas, modules or reports; the              command runs the file as it was saved."
+                .to_owned()
+        });
+        let command = words.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");
+        Ok((command, note))
+    }
+}
+
+/// The command-line program, installed next to the application.
+pub const CLI_PROGRAM: &str = if cfg!(windows) {
+    "cliotree-cli.exe"
+} else {
+    "cliotree-cli"
+};
+
+/// The trust digest of the workbook in `file`, as it was saved.
+fn saved_digest(file: &std::path::Path, limits: &crate::file::Limits) -> Result<String, String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let package = crate::file::read_zip(&bytes, limits)?;
+    let opened = cliotree_calc::Calc::from_package(
+        std::sync::Arc::new(cliotree_calc::python::PythonSyntax),
+        &package,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(opened.calc.fingerprint().hash)
+}
+
+/// A word of a command line, quoted for the shell of this system when it
+/// needs to be: in double quotes on Windows, in single quotes elsewhere.
+pub fn quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word.chars().all(|c| {
+            c.is_alphanumeric() || "-_./:=+,@".contains(c) || (cfg!(windows) && c == '\\')
+        });
+    if plain {
+        return word.to_owned();
+    }
+    if cfg!(windows) {
+        format!("\"{}\"", word.replace('"', "\\\""))
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
     }
 }

@@ -111,21 +111,7 @@ fn designs_version(calc: &cliotree_calc::Calc) -> (u64, u64) {
     (calc.forms_version(), calc.params_version())
 }
 
-/// A random id for a workbook. It is not a secret: the trust model needs the
-/// content to match as well.
-pub fn new_workbook_id() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let part = |salt: u128| {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u128(nanos ^ salt);
-        hasher.finish()
-    };
-    format!("{:016x}{:016x}", part(1), part(2))
-}
+pub use cliotree_user::file::new_workbook_id;
 
 /// What the user was doing when the unsaved changes came up.
 #[derive(Debug, Clone, PartialEq, Eq)]

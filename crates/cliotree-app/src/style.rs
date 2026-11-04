@@ -757,6 +757,16 @@ pub fn pending_marker(ui: &mut egui::Ui) -> Response {
     response
 }
 
+/// The theme for what the system draws around a window: its title bar.
+pub fn window_theme(choice: crate::prefs::ThemeChoice) -> egui::SystemTheme {
+    use crate::prefs::ThemeChoice;
+    match choice {
+        ThemeChoice::System => egui::SystemTheme::SystemDefault,
+        ThemeChoice::Light => egui::SystemTheme::Light,
+        ThemeChoice::Dark => egui::SystemTheme::Dark,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

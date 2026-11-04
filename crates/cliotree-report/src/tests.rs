@@ -100,6 +100,7 @@ fn a_multipage_report_has_each_page_on_its_paper() {
         width: 595.0,
         height: 842.0,
         warnings: Vec::new(),
+        limited: false,
     };
     let pdf = pages(&paged, "Report").unwrap();
     assert_eq!(count(&pdf, "/MediaBox[0 0 595 842]"), 3);

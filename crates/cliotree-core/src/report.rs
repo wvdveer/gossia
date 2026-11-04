@@ -22,8 +22,8 @@ mod params;
 
 pub use paging::{DETAIL_LIMIT, Paging, Placed, paginate};
 pub use params::{
-    ParamKind, PeriodPreset, ReportParam, choice_values, is_empty as param_is_empty, period,
-    period_dates,
+    ParamKind, PeriodPreset, ReportParam, choice_values, is_empty as param_is_empty, param_text,
+    period, period_dates,
 };
 
 use std::sync::OnceLock;

@@ -10,11 +10,9 @@
 
 use std::path::{Path, PathBuf};
 
-use cliotree_layout::report;
-
 use crate::app::ClioApp;
 use crate::file::save_atomic;
-use crate::report_view::{CalcSource, local_time};
+use crate::report_view::local_time;
 use crate::view::named;
 use crate::workbook_file::{Browsing, FileDialog};
 
@@ -130,22 +128,7 @@ impl ClioApp {
     /// The report as a PDF, laid out as its tab draws it: a multipage
     /// report page by page, a single page report as one page.
     pub fn pdf_bytes(&self, tab: &str) -> Result<Vec<u8>, String> {
-        let calc = self.calc();
-        let design = calc
-            .report(tab)
-            .ok_or_else(|| format!("there is no report {tab}"))?;
-        let source = CalcSource { calc, report: tab };
-        if design.bands().is_some() {
-            let paged = report::pages(design, &source, calc.detail_limit());
-            cliotree_report::pages(&paged, tab)
-        } else {
-            let laid = if design.canvas {
-                report::canvas(design, &source)
-            } else {
-                report::single_page(design, design.page.content_width(), &source)
-            };
-            cliotree_report::single_page(&laid, tab)
-        }
+        cliotree_report::workbook::pdf(self.calc(), tab)
     }
 
     /// The dialog of a PDF export, while it is open and not waiting for a
