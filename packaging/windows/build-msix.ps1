@@ -103,9 +103,14 @@ if ($Register) {
 
 if ($Publish) {
     $server = 'http://acer.patersonst:3000'
-    $query = "protocol=http`nhost=acer.patersonst:3000`nusername=ward`n`n"
+    # Give git the query as a file: piped from Windows PowerShell (or a .NET
+    # Process) git reports "credential missing protocol field", while a file
+    # redirect through cmd works. The file holds no secret.
     $env:GCM_INTERACTIVE = 'never'
-    $answer = $query | git credential fill
+    $queryFile = Join-Path $env:TEMP 'cliotree-credential-query.txt'
+    [IO.File]::WriteAllBytes($queryFile, [Text.Encoding]::ASCII.GetBytes("protocol=http`nhost=acer.patersonst:3000`nusername=ward`n`n"))
+    try { $answer = cmd /c "git credential fill < `"$queryFile`"" }
+    finally { Remove-Item $queryFile -ErrorAction SilentlyContinue }
     $password = ($answer | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
     if (-not $password) { throw 'Git Credential Manager has no login for ward at acer.patersonst:3000' }
     $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("ward:$password"))
