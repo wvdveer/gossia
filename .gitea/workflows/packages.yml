@@ -13,8 +13,9 @@ name: Linux packages
 #
 # Like nspawnmgr's workflow: these runners have no Node, so there is no
 # actions/checkout or upload-artifact, only shell. The checkout is kept in
-# ~/code/cliotree between runs with its target/ and vendor/, so that a run does
-# not rebuild everything. The repository is private: it is fetched with the
+# ~/ci/cliotree between runs with its target/ and vendor/, so that a run does
+# not rebuild everything (not ~/code: on the fedora and arch runners that
+# folder is not the runner user's to write in). The repository is private: it is fetched with the
 # job's own token. The jobs run one after another, since the runners share one
 # machine.
 
@@ -53,8 +54,9 @@ jobs:
           TOKEN: ${{ gitea.token }}
         run: |
           set -e
-          dir="$HOME/code/cliotree"
-          mkdir -p "$dir" && cd "$dir"
+          dir="$HOME/ci/cliotree"
+          mkdir -p "$dir"
+          cd "$dir"
           [ -d .git ] || git init -q .
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           export GIT_TERMINAL_PROMPT=0
@@ -64,12 +66,12 @@ jobs:
           git clean -ffdxq -e target -e vendor
           git log --oneline -1
       - name: Build
-        run: cd "$HOME/code/cliotree" && bash packaging/linux/build-package.sh deb
+        run: cd "$HOME/ci/cliotree" && bash packaging/linux/build-package.sh deb
       - name: Publish
         env:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: cd "$HOME/code/cliotree" && bash packaging/linux/publish-package.sh deb
+        run: cd "$HOME/ci/cliotree" && bash packaging/linux/publish-package.sh deb
 
   rpm:
     name: RPM package
@@ -87,8 +89,9 @@ jobs:
           TOKEN: ${{ gitea.token }}
         run: |
           set -e
-          dir="$HOME/code/cliotree"
-          mkdir -p "$dir" && cd "$dir"
+          dir="$HOME/ci/cliotree"
+          mkdir -p "$dir"
+          cd "$dir"
           [ -d .git ] || git init -q .
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           export GIT_TERMINAL_PROMPT=0
@@ -98,12 +101,12 @@ jobs:
           git clean -ffdxq -e target -e vendor
           git log --oneline -1
       - name: Build
-        run: cd "$HOME/code/cliotree" && bash packaging/linux/build-package.sh rpm
+        run: cd "$HOME/ci/cliotree" && bash packaging/linux/build-package.sh rpm
       - name: Publish
         env:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: cd "$HOME/code/cliotree" && bash packaging/linux/publish-package.sh rpm
+        run: cd "$HOME/ci/cliotree" && bash packaging/linux/publish-package.sh rpm
 
   arch:
     name: Arch package
@@ -122,8 +125,9 @@ jobs:
           TOKEN: ${{ gitea.token }}
         run: |
           set -e
-          dir="$HOME/code/cliotree"
-          mkdir -p "$dir" && cd "$dir"
+          dir="$HOME/ci/cliotree"
+          mkdir -p "$dir"
+          cd "$dir"
           [ -d .git ] || git init -q .
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           export GIT_TERMINAL_PROMPT=0
@@ -133,9 +137,9 @@ jobs:
           git clean -ffdxq -e target -e vendor
           git log --oneline -1
       - name: Build
-        run: cd "$HOME/code/cliotree" && bash packaging/linux/build-package.sh arch
+        run: cd "$HOME/ci/cliotree" && bash packaging/linux/build-package.sh arch
       - name: Publish
         env:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: cd "$HOME/code/cliotree" && bash packaging/linux/publish-package.sh arch
+        run: cd "$HOME/ci/cliotree" && bash packaging/linux/publish-package.sh arch
