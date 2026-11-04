@@ -1,7 +1,7 @@
 //! Disconnect from Data Sources (DESIGN.md, "Data sources", "Disconnect from
 //! Data Sources"): every read of a source written out in a formula or in an
-//! expression of a form is replaced by a literal of what it gives now, so the
-//! workbook can go to someone who does not have the sources.
+//! expression of a form or a report is replaced by a literal of what it gives
+//! now, so the workbook can go to someone who does not have the sources.
 //!
 //! It goes in three steps. [`Calc::plan_disconnect`] finds the reads and puts
 //! a probe for each in the queue of expressions: `_as_literal((read))`, run
@@ -11,6 +11,12 @@
 //! texts, and what cannot be replaced, without changing anything; and
 //! [`Calc::apply_disconnect`] makes the changes.
 //!
+//! A report's expressions run only while it is shown, so its reads are
+//! planned on their own ([`Calc::plan_disconnect_report`]) while it is.
+//! [`find_disconnect`] goes through the formulas and forms and then each
+//! report in turn, and [`apply_and_rerun`] makes the changes and calculates
+//! the results cache of each report that changed again.
+//!
 //! A read is replaced together with what is done to its result in the same
 //! chain, as far as that has a literal: `source('api').get('/x').json()`
 //! becomes the data, though the response alone has no literal. Writes are
@@ -18,8 +24,11 @@
 //! anything in a module.
 
 use cliotree_core::form::{ColumnDesign, Control, FormDesign, template};
+use cliotree_core::report::ReportDesign;
+use indexmap::IndexMap;
 
 use super::control_exprs::Bindings;
+use super::report_params::{mentions_params, param_key};
 use super::*;
 
 /// The most text one literal may have.
@@ -30,6 +39,8 @@ const MAX_LITERAL: usize = 1_000_000;
 #[derive(Debug, Clone)]
 pub struct DisconnectPlan {
     targets: Vec<Target>,
+    /// The formulas and forms, not a report: the modules are looked at too.
+    workbook: bool,
 }
 
 impl DisconnectPlan {
@@ -47,6 +58,9 @@ pub struct Disconnect {
     pub problems: Vec<String>,
     /// How many reads are replaced.
     pub replaced: usize,
+    /// The reports with a read replaced that uses their parameters, so is
+    /// replaced by what it gives with the values chosen now.
+    pub with_params: Vec<String>,
 }
 
 impl Disconnect {
@@ -60,7 +74,28 @@ impl Disconnect {
 
     /// How many expressions of forms change.
     pub fn expressions(&self) -> usize {
-        self.changes.len() - self.formulas()
+        self.changes.len() - self.formulas() - self.report_expressions()
+    }
+
+    /// How many expressions of reports change.
+    pub fn report_expressions(&self) -> usize {
+        self.changes
+            .iter()
+            .filter(|(p, _)| p.report().is_some())
+            .count()
+    }
+
+    /// The reports whose design changes, in the order found.
+    pub fn reports(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for (place, _) in &self.changes {
+            if let Some(report) = place.report()
+                && !out.iter().any(|r| r == report)
+            {
+                out.push(report.to_owned());
+            }
+        }
+        out
     }
 
     /// Whether nothing would change.
@@ -74,6 +109,18 @@ impl Disconnect {
             .iter()
             .map(|(p, text)| (p.to_string(), text.clone()))
             .collect()
+    }
+
+    /// Adds what another part of the workbook would change.
+    pub fn merge(&mut self, other: Disconnect) {
+        self.changes.extend(other.changes);
+        self.problems.extend(other.problems);
+        self.replaced += other.replaced;
+        for report in other.with_params {
+            if !self.with_params.contains(&report) {
+                self.with_params.push(report);
+            }
+        }
     }
 }
 
@@ -90,7 +137,8 @@ enum Place {
         array: Path,
         field: String,
     },
-    /// An expression of a control, or of a column of its table.
+    /// An expression of a control, or of a column of its table. For a
+    /// report, `tab` is the report and `form` is [`REPORT_FORM`].
     Control {
         tab: String,
         form: String,
@@ -104,6 +152,45 @@ enum Place {
         form: String,
         at: Vec<usize>,
     },
+    /// The expression of one parameter of a chart.
+    Chart {
+        tab: String,
+        form: String,
+        at: Vec<usize>,
+        param: String,
+    },
+    /// The default (`Value`) or list (`Choices`) of a report's parameter.
+    Param {
+        report: String,
+        name: String,
+        kind: ExprKind,
+    },
+}
+
+impl Place {
+    /// The report the text is in, if it is in one.
+    fn report(&self) -> Option<&str> {
+        match self {
+            Place::Control { tab, form, .. }
+            | Place::Template { tab, form, .. }
+            | Place::Chart { tab, form, .. }
+                if form == REPORT_FORM =>
+            {
+                Some(tab)
+            }
+            Place::Param { report, .. } => Some(report),
+            _ => None,
+        }
+    }
+}
+
+/// `form Main of Orders`, or `report Sales`.
+fn owner(tab: &str, form: &str) -> String {
+    if form == REPORT_FORM {
+        format!("report {tab}")
+    } else {
+        format!("form {form} of {tab}")
+    }
 }
 
 impl fmt::Display for Place {
@@ -129,15 +216,35 @@ impl fmt::Display for Place {
                 column,
                 kind,
             } => {
-                write!(f, "form {form} of {tab}, control {}", at_text(at))?;
+                write!(f, "{}, control {}", owner(tab, form), at_text(at))?;
                 if let Some(column) = column {
                     write!(f, ", column {column}")?;
                 }
                 write!(f, ", {}", kind_text(*kind))
             }
             Place::Template { tab, form, at } => {
-                write!(f, "form {form} of {tab}, control {}, label", at_text(at))
+                write!(f, "{}, control {}, label", owner(tab, form), at_text(at))
             }
+            Place::Chart {
+                tab,
+                form,
+                at,
+                param,
+            } => write!(
+                f,
+                "{}, control {}, chart {param}",
+                owner(tab, form),
+                at_text(at)
+            ),
+            Place::Param { report, name, kind } => write!(
+                f,
+                "report {report}, parameter {name}, {}",
+                if *kind == ExprKind::Choices {
+                    "choices"
+                } else {
+                    "default"
+                }
+            ),
         }
     }
 }
@@ -187,11 +294,83 @@ fn mentions_source(text: &str) -> bool {
     })
 }
 
+/// The texts of a design that use a source: each with where it goes, the
+/// part of a template, and the key its instances run under.
+fn design_texts(
+    tab: &str,
+    form: &str,
+    design: &FormDesign,
+) -> Vec<(Place, String, Option<usize>, ExprKey)> {
+    let mut texts = Vec::new();
+    each_control(&design.controls, &mut Vec::new(), &mut |at, control| {
+        let key = |kind, column: Option<&str>| ExprKey {
+            tab: tab.to_owned(),
+            form: form.to_owned(),
+            at: at.to_vec(),
+            column: column.map(str::to_owned),
+            rows: Vec::new(),
+            kind,
+        };
+        let place = |kind, column: Option<&str>| Place::Control {
+            tab: tab.to_owned(),
+            form: form.to_owned(),
+            at: at.to_vec(),
+            column: column.map(str::to_owned),
+            kind,
+        };
+        for kind in ExprKind::ALL {
+            if kind == ExprKind::Template {
+                if !control.is_template() {
+                    continue;
+                }
+                let text = control.text.as_deref().unwrap_or_default();
+                if let Ok(parts) = template::parts(text) {
+                    for (i, part) in parts.iter().enumerate() {
+                        if let template::Part::Expr { text, .. } = part
+                            && mentions_source(text)
+                        {
+                            let place = Place::Template {
+                                tab: tab.to_owned(),
+                                form: form.to_owned(),
+                                at: at.to_vec(),
+                            };
+                            texts.push((place, text.clone(), Some(i), key(kind, None)));
+                        }
+                    }
+                }
+                continue;
+            }
+            if let Some(text) = control_text(control, kind).filter(|t| mentions_source(t)) {
+                texts.push((place(kind, None), text.to_owned(), None, key(kind, None)));
+            }
+            for column in &control.table_columns {
+                if let Some(text) = column_text(column, kind).filter(|t| mentions_source(t)) {
+                    let name = Some(column.name.as_str());
+                    texts.push((place(kind, name), text.to_owned(), None, key(kind, name)));
+                }
+            }
+        }
+        for (param, text) in &control.chart_args {
+            if mentions_source(text) {
+                let place = Place::Chart {
+                    tab: tab.to_owned(),
+                    form: form.to_owned(),
+                    at: at.to_vec(),
+                    param: param.clone(),
+                };
+                texts.push((place, text.clone(), None, key(ExprKind::Chart, None)));
+            }
+        }
+    });
+    texts
+}
+
 impl Calc {
     /// Finds the reads of data sources in the formulas and the expressions of
     /// the forms and starts a probe of each. Run the evaluation until idle,
     /// then call [`Calc::finish_disconnect`]. The workbook must be trusted, and
-    /// should be idle, so that every row and item is known.
+    /// should be idle, so that every row and item is known. The reports are
+    /// planned one at a time, with [`Calc::plan_disconnect_report`].
     pub fn plan_disconnect(&mut self) -> Result<DisconnectPlan, String> {
         if !self.is_trusted() {
             return Err(
@@ -257,86 +436,74 @@ impl Calc {
 
         // The expressions of the forms.
         let groups = self.exprs.instance_groups();
+        let mut texts = Vec::new();
         for (tab, form, design) in self.forms.iter() {
-            let mut texts: Vec<(Place, String, Option<usize>)> = Vec::new();
-            each_control(&design.controls, &mut Vec::new(), &mut |at, control| {
-                let place = |kind, column: Option<&str>| Place::Control {
-                    tab: tab.to_owned(),
-                    form: form.to_owned(),
-                    at: at.to_vec(),
-                    column: column.map(str::to_owned),
-                    kind,
-                };
-                for kind in ExprKind::ALL {
-                    if kind == ExprKind::Template {
-                        if !control.is_template() {
-                            continue;
-                        }
-                        let text = control.text.as_deref().unwrap_or_default();
-                        if let Ok(parts) = template::parts(text) {
-                            for (i, part) in parts.iter().enumerate() {
-                                if let template::Part::Expr { text, .. } = part
-                                    && mentions_source(text)
-                                {
-                                    let place = Place::Template {
-                                        tab: tab.to_owned(),
-                                        form: form.to_owned(),
-                                        at: at.to_vec(),
-                                    };
-                                    texts.push((place, text.clone(), Some(i)));
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    if let Some(text) = control_text(control, kind).filter(|t| mentions_source(t)) {
-                        texts.push((place(kind, None), text.to_owned(), None));
-                    }
-                    for column in &control.table_columns {
-                        if let Some(text) = column_text(column, kind).filter(|t| mentions_source(t))
-                        {
-                            texts.push((place(kind, Some(&column.name)), text.to_owned(), None));
-                        }
-                    }
-                }
-            });
-            for (place, text, part) in texts {
-                let key = match &place {
-                    Place::Control {
-                        at, column, kind, ..
-                    } => ExprKey {
-                        tab: tab.to_owned(),
-                        form: form.to_owned(),
-                        at: at.clone(),
-                        column: column.clone(),
-                        rows: Vec::new(),
-                        kind: *kind,
-                    },
-                    Place::Template { at, .. } => ExprKey {
-                        tab: tab.to_owned(),
-                        form: form.to_owned(),
-                        at: at.clone(),
-                        column: None,
-                        rows: Vec::new(),
-                        kind: ExprKind::Template,
-                    },
-                    _ => continue,
-                };
-                let instances: Vec<(Loc, Bindings)> = groups
-                    .get(&key)
-                    .map(|found| {
-                        found
-                            .iter()
-                            .map(|(_, l, b)| (l.clone(), b.clone()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                targets.push(self.target(place, text, part, &instances, false, &mut probes));
-            }
+            texts.extend(design_texts(tab, form, design));
+        }
+        for (place, text, part, key) in texts {
+            let instances = instances_of(&groups, &key);
+            targets.push(self.target(place, text, part, &instances, false, &mut probes));
         }
 
         self.exprs.set_probes(probes);
-        Ok(DisconnectPlan { targets })
+        Ok(DisconnectPlan {
+            targets,
+            workbook: true,
+        })
+    }
+
+    /// Finds the reads of data sources in the expressions of the report
+    /// `report` and starts a probe of each, as [`Calc::plan_disconnect`] does
+    /// for the formulas and forms. The report must be shown, and the workbook
+    /// should be idle, so that its expressions have run with the parameter
+    /// values chosen now.
+    pub fn plan_disconnect_report(&mut self, report: &str) -> Result<DisconnectPlan, String> {
+        if !self.is_trusted() {
+            return Err(
+                "the workbook is not trusted, so what the sources give cannot be read".to_owned(),
+            );
+        }
+        if self.shown_report() != Some(report) {
+            return Err(format!("the report {report} is not shown"));
+        }
+        self.sync_expressions();
+        let Some(design) = self.reports.get(report) else {
+            return Err(format!("there is no report {report}"));
+        };
+        let groups = self.exprs.instance_groups();
+        let mut texts = design_texts(report, REPORT_FORM, &design.layout);
+        for p in &design.params {
+            let wants = [
+                (ExprKind::Value, p.default_expression()),
+                (ExprKind::Choices, p.choices_expression()),
+            ];
+            for (kind, text) in wants {
+                if let Some(text) = text.filter(|t| mentions_source(t)) {
+                    let place = Place::Param {
+                        report: report.to_owned(),
+                        name: p.name.clone(),
+                        kind,
+                    };
+                    texts.push((
+                        place,
+                        text.to_owned(),
+                        None,
+                        param_key(report, &p.name, kind),
+                    ));
+                }
+            }
+        }
+        let mut targets: Vec<Target> = Vec::new();
+        let mut probes: Vec<(String, Loc, Bindings, bool)> = Vec::new();
+        for (place, text, part, key) in texts {
+            let instances = instances_of(&groups, &key);
+            targets.push(self.target(place, text, part, &instances, false, &mut probes));
+        }
+        self.exprs.set_probes(probes);
+        Ok(DisconnectPlan {
+            targets,
+            workbook: false,
+        })
     }
 
     /// Finds the reads in one text and adds a probe for each chain of each
@@ -392,6 +559,16 @@ impl Calc {
         }
     }
 
+    /// The controls of a form, or of a report when `form` is
+    /// [`REPORT_FORM`].
+    fn layout_of(&self, tab: &str, form: &str) -> Option<&FormDesign> {
+        if form == REPORT_FORM {
+            self.reports.get(tab).map(|r| &r.layout)
+        } else {
+            self.forms.get(tab, form)
+        }
+    }
+
     /// Reads the probes back and works out the new texts: `None` if some
     /// have not run. Nothing is changed, and the probes are gone afterwards
     /// either way.
@@ -442,6 +619,10 @@ impl Calc {
                 }
             }
             let reads = kept.len();
+            let uses_params = target.place.report().is_some()
+                && kept
+                    .iter()
+                    .any(|(range, _)| mentions_params(&target.text[range.clone()]));
             kept.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
             let mut text = target.text.clone();
             for (range, literal) in &kept {
@@ -469,6 +650,12 @@ impl Calc {
                 continue;
             }
             out.replaced += reads;
+            if uses_params
+                && let Some(report) = target.place.report()
+                && !out.with_params.iter().any(|r| r == report)
+            {
+                out.with_params.push(report.to_owned());
+            }
             match target.part {
                 Some(part) => match templates.iter_mut().find(|(p, _)| *p == target.place) {
                     Some((_, parts)) => parts.push((part, text)),
@@ -482,8 +669,7 @@ impl Calc {
                 continue;
             };
             let Some(control) = self
-                .forms
-                .get(tab, form)
+                .layout_of(tab, form)
                 .and_then(|d| control_at(&d.controls, at))
             else {
                 continue;
@@ -507,21 +693,26 @@ impl Calc {
             }
             out.changes.push((place, rebuilt));
         }
-        for name in self.module_names() {
-            if self.module_source(name).is_some_and(mentions_source) {
-                out.problems.push(format!(
-                    "module {name}: it uses a data source; modules are not changed"
-                ));
+        if plan.workbook {
+            for name in self.module_names() {
+                if self.module_source(name).is_some_and(mentions_source) {
+                    out.problems.push(format!(
+                        "module {name}: it uses a data source; modules are not changed"
+                    ));
+                }
             }
         }
         Some(out)
     }
 
     /// Makes the changes: the formulas in one step of the history, the forms
-    /// (which have no history) in place.
+    /// and reports (which have no history) in place. The results caches of
+    /// the reports that change no longer fit; [`apply_and_rerun`] also
+    /// calculates them again.
     pub fn apply_disconnect(&mut self, disconnect: &Disconnect) {
         let mut ops: Vec<Op> = Vec::new();
-        let mut designs: Vec<(String, String, FormDesign)> = Vec::new();
+        let mut forms: Vec<(String, String, FormDesign)> = Vec::new();
+        let mut reports: Vec<(String, ReportDesign)> = Vec::new();
         for (place, text) in &disconnect.changes {
             match place {
                 Place::Formula { sheet, path } => {
@@ -549,51 +740,197 @@ impl Calc {
                         ops.push(self.formula_op(sheet, &path, text));
                     }
                 }
-                Place::Control { tab, form, at, .. } | Place::Template { tab, form, at } => {
-                    let kind = match place {
-                        Place::Control { kind, .. } => *kind,
-                        _ => ExprKind::Template,
-                    };
-                    let column = match place {
-                        Place::Control { column, .. } => column.as_deref(),
-                        _ => None,
-                    };
-                    let index = match designs.iter().position(|(t, f, _)| t == tab && f == form) {
-                        Some(i) => i,
-                        None => {
-                            let Some(design) = self.forms.get(tab, form).cloned() else {
-                                continue;
-                            };
-                            designs.push((tab.clone(), form.clone(), design));
-                            designs.len() - 1
-                        }
-                    };
-                    let Some(control) = control_at_mut(&mut designs[index].2.controls, at) else {
+                Place::Param { report, name, kind } => {
+                    let Some(design) = self.report_copy(&mut reports, report) else {
                         continue;
                     };
-                    let slot = match column {
-                        Some(name) => control
-                            .table_columns
-                            .iter_mut()
-                            .find(|c| c.name == name)
-                            .and_then(|c| column_slot(c, kind)),
-                        None => control_slot(control, kind),
+                    if let Some(p) = design.params.iter_mut().find(|p| &p.name == name) {
+                        match kind {
+                            ExprKind::Choices => p.choices = Some(text.clone()),
+                            _ => p.default = Some(text.clone()),
+                        }
+                    }
+                }
+                Place::Control { tab, form, at, .. }
+                | Place::Template { tab, form, at }
+                | Place::Chart { tab, form, at, .. } => {
+                    let layout = if form == REPORT_FORM {
+                        self.report_copy(&mut reports, tab).map(|r| &mut r.layout)
+                    } else {
+                        let index = match forms.iter().position(|(t, f, _)| t == tab && f == form) {
+                            Some(i) => Some(i),
+                            None => self.forms.get(tab, form).cloned().map(|design| {
+                                forms.push((tab.clone(), form.clone(), design));
+                                forms.len() - 1
+                            }),
+                        };
+                        index.map(|i| &mut forms[i].2)
                     };
-                    if let Some(slot) = slot {
-                        *slot = Some(text.clone());
+                    let Some(control) = layout.and_then(|l| control_at_mut(&mut l.controls, at))
+                    else {
+                        continue;
+                    };
+                    match place {
+                        Place::Chart { param, .. } => {
+                            control.chart_args.insert(param.clone(), text.clone());
+                        }
+                        Place::Template { .. } => control.text = Some(text.clone()),
+                        Place::Control { column, kind, .. } => {
+                            let slot = match column {
+                                Some(name) => control
+                                    .table_columns
+                                    .iter_mut()
+                                    .find(|c| &c.name == name)
+                                    .and_then(|c| column_slot(c, *kind)),
+                                None => control_slot(control, *kind),
+                            };
+                            if let Some(slot) = slot {
+                                *slot = Some(text.clone());
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
         }
         self.history
             .record("Disconnect from data sources".to_owned(), ops, None);
-        if !designs.is_empty() {
-            let forms = self.forms_mut();
-            for (tab, form, design) in designs {
-                forms.set(&tab, &form, design);
+        if !forms.is_empty() {
+            let store = self.forms_mut();
+            for (tab, form, design) in forms {
+                store.set(&tab, &form, design);
             }
         }
+        for (name, design) in reports {
+            let _ = self.set_report(&name, design);
+        }
     }
+
+    /// The copy of a report's design in `reports`, taken from the workbook
+    /// the first time.
+    fn report_copy<'a>(
+        &self,
+        reports: &'a mut Vec<(String, ReportDesign)>,
+        name: &str,
+    ) -> Option<&'a mut ReportDesign> {
+        let index = match reports.iter().position(|(n, _)| n == name) {
+            Some(i) => i,
+            None => {
+                let design = self.reports.get(name)?.clone();
+                reports.push((name.to_owned(), design));
+                reports.len() - 1
+            }
+        };
+        Some(&mut reports[index].1)
+    }
+}
+
+/// Every expression of a control, with where each instance of it runs.
+type InstanceGroups = IndexMap<ExprKey, Vec<(Vec<usize>, Loc, Bindings)>>;
+
+/// Where each instance of the expressions under `key` runs.
+fn instances_of(groups: &InstanceGroups, key: &ExprKey) -> Vec<(Loc, Bindings)> {
+    groups
+        .get(key)
+        .map(|found| {
+            found
+                .iter()
+                .map(|(_, l, b)| (l.clone(), b.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What runs the workbook while it is disconnected: the window's or the
+/// command line's session, or a test's.
+pub trait DisconnectRunner {
+    fn calc_mut(&mut self) -> &mut Calc;
+    /// Runs the evaluation until the workbook is idle. Returns false if the
+    /// time ran out first.
+    fn settle(&mut self) -> bool;
+}
+
+/// Why nothing can be disconnected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisconnectError {
+    /// The workbook is not trusted, or another reason, said.
+    Refused(String),
+    /// The sources did not answer in time.
+    Timeout,
+}
+
+/// Finds what Disconnect from Data Sources would change: the formulas and
+/// forms, then each report in turn, shown so that its expressions run with
+/// the parameter values chosen now. The report shown before is shown again
+/// afterwards. Nothing is changed.
+pub fn find_disconnect(runner: &mut impl DisconnectRunner) -> Result<Disconnect, DisconnectError> {
+    let shown = runner.calc_mut().shown_report().map(str::to_owned);
+    let found = find_each(runner);
+    runner.calc_mut().show_report(shown.as_deref());
+    found
+}
+
+fn find_each(runner: &mut impl DisconnectRunner) -> Result<Disconnect, DisconnectError> {
+    // Every row and item has to be known before the reads are found.
+    if !runner.settle() {
+        return Err(DisconnectError::Timeout);
+    }
+    let plan = runner
+        .calc_mut()
+        .plan_disconnect()
+        .map_err(DisconnectError::Refused)?;
+    let mut out = probe(runner, &plan)?;
+    for report in runner.calc_mut().report_names() {
+        runner.calc_mut().show_report(Some(&report));
+        if !runner.settle() {
+            return Err(DisconnectError::Timeout);
+        }
+        let plan = runner
+            .calc_mut()
+            .plan_disconnect_report(&report)
+            .map_err(DisconnectError::Refused)?;
+        out.merge(probe(runner, &plan)?);
+    }
+    Ok(out)
+}
+
+/// Runs the probes of `plan` and reads them back.
+fn probe(
+    runner: &mut impl DisconnectRunner,
+    plan: &DisconnectPlan,
+) -> Result<Disconnect, DisconnectError> {
+    let idle = runner.settle();
+    match runner.calc_mut().finish_disconnect(plan) {
+        Some(found) if idle => Ok(found),
+        _ => Err(DisconnectError::Timeout),
+    }
+}
+
+/// Makes the changes, then runs each report that changed (and `also`, if
+/// given) so that its results cache is this run with the values chosen now.
+/// The report shown before is shown again afterwards. Returns false if the
+/// time ran out before every report had run.
+pub fn apply_and_rerun(
+    runner: &mut impl DisconnectRunner,
+    disconnect: &Disconnect,
+    also: Option<&str>,
+) -> bool {
+    let calc = runner.calc_mut();
+    let shown = calc.shown_report().map(str::to_owned);
+    calc.apply_disconnect(disconnect);
+    let mut reports = disconnect.reports();
+    if let Some(also) = also
+        && !reports.iter().any(|r| r == also)
+    {
+        reports.push(also.to_owned());
+    }
+    let mut whole = true;
+    for report in reports {
+        runner.calc_mut().show_report(Some(&report));
+        whole &= runner.settle() && runner.calc_mut().take_report_run();
+    }
+    runner.calc_mut().show_report(shown.as_deref());
+    whole
 }
 
 /// The literal every instance gave, if they all gave the same one.

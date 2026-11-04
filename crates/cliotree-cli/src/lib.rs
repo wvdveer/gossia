@@ -2,7 +2,8 @@
 //! command line"): `cliotree-cli report` opens a workbook, runs one of its
 //! reports with the parameters given and writes it as a PDF, without a
 //! window, so that a script or a scheduled job can wait for it and read its
-//! exit code.
+//! exit code. `cliotree-cli disconnect` runs Disconnect from Data Sources and
+//! writes the result to a copy.
 //!
 //! The workbook is opened as the application opens it, with this user's
 //! preferences, trust record and data sources, and is never saved. The
@@ -15,14 +16,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cliotree_calc::python::{self, PythonSyntax};
-use cliotree_calc::{Calc, Decision, Evaluator, Session, Setting};
-use cliotree_user::file::{read_zip, save_atomic};
+use cliotree_calc::{
+    Calc, Decision, DisconnectError, Evaluator, Meta, Session, SessionRunner, Setting,
+};
+use cliotree_user::file::{
+    Limits, new_workbook_id, read_zip, save_atomic, saved_digest, write_zip,
+};
 use cliotree_user::prefs::{Config, User};
 
 pub mod args;
 pub mod params;
 
-use args::{Command, ReportArgs};
+use args::{Command, DisconnectArgs, ReportArgs};
 
 /// The exit codes (DESIGN.md, "Batch export from the command line").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +85,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             Ok(Exit::Written)
         }
         Command::Report(report) => run_report(&report, out, err),
+        Command::Disconnect(args) => run_disconnect(&args, out, err),
     };
     match result {
         Ok(exit) => exit as i32,
@@ -95,6 +101,10 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 pub struct Opened {
     pub session: Session,
     pub deadline: Instant,
+    /// What the file holds besides the workbook, written back to a copy.
+    pub meta: Meta,
+    /// This user's limits on reading a `.clio` file.
+    pub limits: Limits,
 }
 
 impl Opened {
@@ -179,6 +189,14 @@ pub fn open(
     Ok(Opened {
         session: Session::new(calc, evaluator),
         deadline,
+        meta: Meta {
+            workbook_id: opened.workbook_id,
+            app_version: env!("CARGO_PKG_VERSION").to_owned(),
+            views: opened.views,
+            workbook_view: opened.workbook_view,
+            unknown: opened.unknown,
+        },
+        limits: user.prefs.limits,
     })
 }
 
@@ -189,21 +207,11 @@ fn run_report(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let target = match &args.out {
-        Some(target) => Some(output_path(target, args.overwrite)?),
+        Some(target) => Some(output_path(target, "pdf", args.overwrite)?),
         None => None,
     };
     let mut opened = open(&args.workbook, args.digest.as_deref(), args.timeout, err)?;
-    if opened.calc().report(&args.report).is_none() {
-        return Err(Failure::new(
-            Exit::Workbook,
-            format!(
-                "{} has no report {}{}",
-                args.workbook.display(),
-                args.report,
-                list_reports(opened.calc())
-            ),
-        ));
-    }
+    has_report(&opened, &args.workbook, &args.report)?;
     params::start(&mut opened, &args.report)?;
     if args.list_params {
         let _ = write!(out, "{}", params::listing(opened.calc(), &args.report));
@@ -244,13 +252,164 @@ fn run_report(
     Ok(Exit::Errors)
 }
 
-/// The file to write: given `.pdf` if it has no extension, in a folder that
-/// exists, and not a file that is there already unless `overwrite`.
-fn output_path(given: &Path, overwrite: bool) -> Result<PathBuf, Failure> {
+/// An error if the workbook has no report `report`.
+fn has_report(opened: &Opened, workbook: &Path, report: &str) -> Result<(), Failure> {
+    if opened.calc().report(report).is_some() {
+        return Ok(());
+    }
+    Err(Failure::new(
+        Exit::Workbook,
+        format!(
+            "{} has no report {report}{}",
+            workbook.display(),
+            list_reports(opened.calc())
+        ),
+    ))
+}
+
+/// `cliotree-cli disconnect` (DESIGN.md, "Disconnecting from the command
+/// line"): the reads are replaced as the menu command replaces them, after
+/// running `--report` with its parameters if given, and the result is saved
+/// to a copy, which is not trusted: its trust digest is printed.
+fn run_disconnect(
+    args: &DisconnectArgs,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let target = output_path(
+        &args.out,
+        "clio",
+        args.overwrite || is_same_file(&args.out, &args.workbook),
+    )?;
+    if is_same_file(&target, &args.workbook) {
+        return Err(Failure::new(
+            Exit::Usage,
+            format!(
+                "{} is the workbook itself; --out must be another file",
+                target.display()
+            ),
+        ));
+    }
+    let mut opened = open(&args.workbook, args.digest.as_deref(), args.timeout, err)?;
+    if let Some(report) = &args.report {
+        has_report(&opened, &args.workbook, report)?;
+        params::start(&mut opened, report)?;
+        params::choose(&mut opened, report, &args.params)?;
+    }
+    let timeout = || {
+        Failure::new(
+            Exit::Timeout,
+            "the time ran out before the data sources had answered; nothing was written",
+        )
+    };
+    let mut runner = SessionRunner {
+        session: &mut opened.session,
+        deadline: opened.deadline,
+    };
+    let found = cliotree_calc::find_disconnect(&mut runner).map_err(|e| match e {
+        DisconnectError::Refused(why) => Failure::new(Exit::Workbook, why),
+        DisconnectError::Timeout => timeout(),
+    })?;
+    if !cliotree_calc::apply_and_rerun(&mut runner, &found, args.report.as_deref()) {
+        return Err(timeout());
+    }
+    opened.wait()?;
+    let mut errors = Vec::new();
+    if let Some(report) = &args.report {
+        let run = cliotree_report::workbook::run(opened.calc(), report)
+            .map_err(|e| Failure::new(Exit::Workbook, e))?;
+        if run.limited {
+            return Err(Failure::new(
+                Exit::Timeout,
+                format!(
+                    "the report reached the limit of {} detail rows; nothing was written",
+                    opened.calc().detail_limit()
+                ),
+            ));
+        }
+        errors = run.errors;
+    }
+    // A copy is another workbook, with an id of its own.
+    let meta = Meta {
+        workbook_id: new_workbook_id(),
+        ..opened.meta.clone()
+    };
+    let write = |e: String| Failure::new(Exit::Workbook, format!("{}: {e}", target.display()));
+    let package = opened
+        .calc()
+        .to_package(&meta)
+        .map_err(|e| write(e.to_string()))?;
+    let bytes = write_zip(&package).map_err(write)?;
+    save_atomic(&target, &bytes).map_err(|e| write(e.to_string()))?;
+    let digest = saved_digest(&target, &opened.limits).map_err(write)?;
+    let _ = writeln!(out, "{}", target.display());
+    let _ = writeln!(out, "{digest}");
+    let _ = writeln!(
+        err,
+        "cliotree-cli: replaced {} {} by what {} now",
+        found.replaced,
+        if found.replaced == 1 {
+            "read of a data source"
+        } else {
+            "reads of data sources"
+        },
+        if found.replaced == 1 {
+            "it gives"
+        } else {
+            "they give"
+        }
+    );
+    if found.problems.is_empty() && errors.is_empty() {
+        return Ok(Exit::Written);
+    }
+    if !found.problems.is_empty() {
+        let _ = writeln!(
+            err,
+            "cliotree-cli: the copy was written, but {} {} a data source:",
+            found.problems.len(),
+            if found.problems.len() == 1 {
+                "use still needs"
+            } else {
+                "uses still need"
+            }
+        );
+        for problem in &found.problems {
+            let _ = writeln!(err, "  {problem}");
+        }
+    }
+    if !errors.is_empty() {
+        let _ = writeln!(
+            err,
+            "cliotree-cli: the copy was written, but {} of the report {} error values:",
+            errors.len(),
+            if errors.len() == 1 {
+                "control shows"
+            } else {
+                "controls show"
+            }
+        );
+        for error in &errors {
+            let _ = writeln!(err, "  {error}");
+        }
+    }
+    Ok(Exit::Errors)
+}
+
+/// Whether `a` and `b` are the same file, both being there.
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// The file to write: given the extension `ext` if it has none, in a folder
+/// that exists, and not a file that is there already unless `overwrite`.
+fn output_path(given: &Path, ext: &str, overwrite: bool) -> Result<PathBuf, Failure> {
     let path = if given.extension().is_some() {
         given.to_path_buf()
     } else {
-        given.with_extension("pdf")
+        given.with_extension(ext)
     };
     let path = std::path::absolute(&path).unwrap_or(path);
     if path.exists() && !overwrite {

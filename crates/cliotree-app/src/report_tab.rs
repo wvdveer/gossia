@@ -181,7 +181,7 @@ impl ClioApp {
             .clone()
             .ok_or("Save the workbook first: the command runs its file.")?;
         let file = std::path::absolute(&file).unwrap_or(file);
-        let saved = saved_digest(&file, &self.user.prefs.limits)?;
+        let saved = crate::file::saved_digest(&file, &self.user.prefs.limits)?;
         let program = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(|d| d.join(CLI_PROGRAM)))
@@ -232,18 +232,6 @@ pub const CLI_PROGRAM: &str = if cfg!(windows) {
 } else {
     "cliotree-cli"
 };
-
-/// The trust digest of the workbook in `file`, as it was saved.
-fn saved_digest(file: &std::path::Path, limits: &crate::file::Limits) -> Result<String, String> {
-    let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let package = crate::file::read_zip(&bytes, limits)?;
-    let opened = cliotree_calc::Calc::from_package(
-        std::sync::Arc::new(cliotree_calc::python::PythonSyntax),
-        &package,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(opened.calc.fingerprint().hash)
-}
 
 /// A word of a command line, quoted for the shell of this system when it
 /// needs to be: in double quotes on Windows, in single quotes elsewhere.

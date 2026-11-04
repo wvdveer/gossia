@@ -150,7 +150,9 @@ pub(crate) use report_cache::{value_from_json, value_to_json};
 
 #[path = "disconnect.rs"]
 mod disconnect;
-pub use disconnect::{Disconnect, DisconnectPlan};
+pub use disconnect::{
+    Disconnect, DisconnectError, DisconnectPlan, DisconnectRunner, apply_and_rerun, find_disconnect,
+};
 
 #[path = "trust.rs"]
 mod trust;

@@ -11,12 +11,15 @@ Usage:
                [--overwrite] [--timeout <seconds>]
   cliotree-cli report <workbook.clio> <Report> --list-params
                [--trust-digest <sha256>] [--timeout <seconds>]
+  cliotree-cli disconnect <workbook.clio> --out <copy.clio>
+               [--report <Report> [--param <name>=<value>]...]
+               [--trust-digest <sha256>] [--overwrite] [--timeout <seconds>]
   cliotree-cli --help | --version
 
 Exit codes: 0 written, 1 wrong command line, 2 the workbook or report cannot
 be opened, 3 the workbook is not trusted, 4 a parameter is wrong, 5 written
-but some controls show error values, 6 the time ran out or the report reached
-its limit of detail rows.";
+but some controls show error values or some uses of a data source stay, 6 the
+time ran out or the report reached its limit of detail rows.";
 
 /// How long a run may take unless `--timeout` says otherwise.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
@@ -26,6 +29,7 @@ pub enum Command {
     Help,
     Version,
     Report(ReportArgs),
+    Disconnect(DisconnectArgs),
 }
 
 /// `cliotree-cli report`.
@@ -42,6 +46,32 @@ pub struct ReportArgs {
     pub list_params: bool,
 }
 
+/// `cliotree-cli disconnect`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisconnectArgs {
+    pub workbook: PathBuf,
+    pub out: PathBuf,
+    /// The report run first, with `params`, whose run the copy keeps.
+    pub report: Option<String>,
+    pub params: Vec<(String, String)>,
+    pub digest: Option<String>,
+    pub overwrite: bool,
+    pub timeout: Duration,
+}
+
+/// The options of a command, as given.
+#[derive(Debug, Default)]
+struct Options {
+    positional: Vec<String>,
+    out: Option<PathBuf>,
+    report: Option<String>,
+    params: Vec<(String, String)>,
+    digest: Option<String>,
+    overwrite: bool,
+    timeout: Option<Duration>,
+    list_params: bool,
+}
+
 /// Reads the command line, without the program name.
 pub fn parse(args: &[String]) -> Result<Command, String> {
     let Some(first) = args.first() else {
@@ -51,18 +81,15 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "--help" | "-h" | "help" => Ok(Command::Help),
         "--version" | "-V" => Ok(Command::Version),
         "report" => parse_report(&args[1..]).map(Command::Report),
+        "disconnect" => parse_disconnect(&args[1..]).map(Command::Disconnect),
         other => Err(format!("there is no command {other}")),
     }
 }
 
-fn parse_report(args: &[String]) -> Result<ReportArgs, String> {
-    let mut positional = Vec::new();
-    let mut out = None;
-    let mut params = Vec::new();
-    let mut digest = None;
-    let mut overwrite = false;
-    let mut timeout = None;
-    let mut list_params = false;
+/// Reads the options; `report` and `list_params` say which the command
+/// takes besides the common ones.
+fn options(args: &[String], report: bool, list_params: bool) -> Result<Options, String> {
+    let mut o = Options::default();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         // `--name=value` reads as `--name value`.
@@ -77,7 +104,8 @@ fn parse_report(args: &[String]) -> Result<ReportArgs, String> {
                 .ok_or_else(|| format!("{name} needs {what}"))
         };
         match name {
-            "--out" => set_once(&mut out, PathBuf::from(value("a file")?), name)?,
+            "--out" => set_once(&mut o.out, PathBuf::from(value("a file")?), name)?,
+            "--report" if report => set_once(&mut o.report, value("the name of a report")?, name)?,
             "--param" => {
                 let given = value("name=value")?;
                 let (n, v) = given
@@ -86,23 +114,37 @@ fn parse_report(args: &[String]) -> Result<ReportArgs, String> {
                 if n.trim().is_empty() {
                     return Err(format!("--param {given} has no name"));
                 }
-                params.push((n.trim().to_owned(), v.to_owned()));
+                o.params.push((n.trim().to_owned(), v.to_owned()));
             }
-            "--trust-digest" => set_once(&mut digest, value("a digest")?, name)?,
+            "--trust-digest" => set_once(&mut o.digest, value("a digest")?, name)?,
             "--timeout" => {
                 let text = value("a number of seconds")?;
                 let seconds: u64 =
                     text.trim().parse().ok().filter(|s| *s > 0).ok_or_else(|| {
                         format!("--timeout {text} is not a whole number of seconds")
                     })?;
-                set_once(&mut timeout, Duration::from_secs(seconds), name)?;
+                set_once(&mut o.timeout, Duration::from_secs(seconds), name)?;
             }
-            "--overwrite" if inline.is_none() => overwrite = true,
-            "--list-params" if inline.is_none() => list_params = true,
+            "--overwrite" if inline.is_none() => o.overwrite = true,
+            "--list-params" if inline.is_none() && list_params => o.list_params = true,
             _ if name.starts_with("--") => return Err(format!("there is no option {name}")),
-            _ => positional.push(arg.clone()),
+            _ => o.positional.push(arg.clone()),
         }
     }
+    Ok(o)
+}
+
+fn parse_report(args: &[String]) -> Result<ReportArgs, String> {
+    let Options {
+        positional,
+        out,
+        params,
+        digest,
+        overwrite,
+        timeout,
+        list_params,
+        ..
+    } = options(args, false, true)?;
     let [workbook, report] = positional.as_slice() else {
         return Err(if positional.len() < 2 {
             "report needs a workbook and the name of a report".to_owned()
@@ -129,6 +171,31 @@ fn parse_report(args: &[String]) -> Result<ReportArgs, String> {
         overwrite,
         timeout: timeout.unwrap_or(DEFAULT_TIMEOUT),
         list_params,
+    })
+}
+
+fn parse_disconnect(args: &[String]) -> Result<DisconnectArgs, String> {
+    let o = options(args, true, false)?;
+    let [workbook] = o.positional.as_slice() else {
+        return Err(match o.positional.get(1) {
+            None => "disconnect needs a workbook".to_owned(),
+            Some(extra) => format!("{extra} is one argument too many"),
+        });
+    };
+    let Some(out) = o.out else {
+        return Err("disconnect needs --out, the copy to write".to_owned());
+    };
+    if o.report.is_none() && !o.params.is_empty() {
+        return Err("--param needs --report, the report whose parameters they are".to_owned());
+    }
+    Ok(DisconnectArgs {
+        workbook: PathBuf::from(workbook),
+        out,
+        report: o.report,
+        params: o.params,
+        digest: o.digest,
+        overwrite: o.overwrite,
+        timeout: o.timeout.unwrap_or(DEFAULT_TIMEOUT),
     })
 }
 
@@ -226,6 +293,56 @@ mod tests {
         assert_eq!(
             error("report b.clio R extra --out a"),
             "extra is one argument too many"
+        );
+    }
+
+    fn disconnect(line: &str) -> DisconnectArgs {
+        match parsed(line) {
+            Ok(Command::Disconnect(d)) => d,
+            other => panic!("{line}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_disconnect_command_reads_its_options() {
+        let d = disconnect(
+            "disconnect book.clio --out copy.clio --report Sales --param from=2026-10-01 \
+             --overwrite --timeout=30",
+        );
+        assert_eq!(d.workbook, PathBuf::from("book.clio"));
+        assert_eq!(d.out, PathBuf::from("copy.clio"));
+        assert_eq!(d.report.as_deref(), Some("Sales"));
+        assert_eq!(d.params, [("from".to_owned(), "2026-10-01".to_owned())]);
+        assert!(d.overwrite);
+        assert_eq!(d.timeout, Duration::from_secs(30));
+        let plain = disconnect("disconnect book.clio --out copy.clio");
+        assert_eq!((plain.report, plain.params), (None, Vec::new()));
+        assert_eq!(plain.timeout, DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn a_wrong_disconnect_command_says_what_is_wrong() {
+        let error = |line| parsed(line).unwrap_err();
+        assert_eq!(error("disconnect"), "disconnect needs a workbook");
+        assert_eq!(
+            error("disconnect b.clio"),
+            "disconnect needs --out, the copy to write"
+        );
+        assert_eq!(
+            error("disconnect b.clio c.clio --out d.clio"),
+            "c.clio is one argument too many"
+        );
+        assert_eq!(
+            error("disconnect b.clio --out c.clio --param a=1"),
+            "--param needs --report, the report whose parameters they are"
+        );
+        assert_eq!(
+            error("disconnect b.clio --out c.clio --list-params"),
+            "there is no option --list-params"
+        );
+        assert_eq!(
+            error("report b.clio R --out r.pdf --report R"),
+            "there is no option --report"
         );
     }
 

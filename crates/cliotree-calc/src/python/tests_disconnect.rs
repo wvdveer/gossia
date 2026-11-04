@@ -223,3 +223,90 @@ fn literals_name_the_helpers_formulas_see() {
             .is_some_and(|v| matches!(v, Value::Str(t) if t.starts_with('{')))
     );
 }
+
+impl crate::DisconnectRunner for Book {
+    fn calc_mut(&mut self) -> &mut crate::Calc {
+        &mut self.calc
+    }
+
+    fn settle(&mut self) -> bool {
+        self.run();
+        true
+    }
+}
+
+#[test]
+fn reads_in_reports_are_replaced_with_the_parameters_chosen_now() {
+    use cliotree_core::report::{ParamKind, ReportDesign, ReportKind, ReportParam};
+
+    let (mut b, dir) = book("disconnect-reports");
+    let mut name = Control::new(ControlKind::Field);
+    name.value = Some(
+        "source('Shop').query('SELECT customer FROM orders WHERE id = ?', [params.id])[0]\
+         ['customer']"
+            .into(),
+    );
+    let mut chart = Control::new(ControlKind::Chart);
+    chart.chart = Some("Bar".into());
+    chart.chart_args.insert(
+        "labels".into(),
+        "[r['customer'] for r in source('Shop').query('SELECT customer FROM orders')]".into(),
+    );
+    chart.chart_args.insert(
+        "values".into(),
+        "[r['total'] for r in source('Shop').query('SELECT total FROM orders')]".into(),
+    );
+    let mut id = ReportParam::new("id", ParamKind::Number);
+    id.default = Some("1".into());
+    let mut who = ReportParam::new("who", ParamKind::Choice);
+    who.choices =
+        Some("[r['customer'] for r in source('Shop').query('SELECT customer FROM orders')]".into());
+    let mut design = ReportDesign::new(ReportKind::SinglePage);
+    design.layout.controls = vec![name, chart];
+    design.params = vec![id, who];
+    b.calc.create_report("Sales", design).unwrap();
+    b.calc.set_report_param("Sales", "id", Some(Value::Int(2)));
+    // Not shown: the report is shown while its reads are found, then not.
+    let out = crate::find_disconnect(&mut b).unwrap();
+    assert_eq!(b.calc.shown_report(), None);
+    assert_eq!(out.problems, Vec::<String>::new());
+    assert_eq!(out.replaced, 4);
+    assert_eq!((out.formulas(), out.expressions()), (0, 0));
+    assert_eq!(out.report_expressions(), 4);
+    assert_eq!(out.with_params, ["Sales"]);
+    assert_eq!(out.reports(), ["Sales"]);
+    assert!(crate::apply_and_rerun(&mut b, &out, None));
+    assert_eq!(b.calc.shown_report(), None);
+    let design = b.calc.report("Sales").unwrap();
+    assert_eq!(design.layout.controls[0].value.as_deref(), Some("'Bob'"));
+    for arg in ["labels", "values"] {
+        assert!(
+            design.layout.controls[1].chart_args[arg].starts_with("[r["),
+            "{arg}"
+        );
+        assert!(
+            !design.layout.controls[1].chart_args[arg].contains("source("),
+            "{arg}"
+        );
+    }
+    assert!(
+        !design.params[1]
+            .choices
+            .as_deref()
+            .unwrap()
+            .contains("source(")
+    );
+    // The results cache is the run with these values, for the new design.
+    let cache = b
+        .calc
+        .report_cache("Sales")
+        .expect("a cache for the new design");
+    assert_eq!(cache.chosen.get("id"), Some(&Value::Int(2)));
+    assert_eq!(
+        cache
+            .results
+            .get(&(vec![0], None, vec![], crate::ExprKind::Value)),
+        Some(&Ok(Value::Str("Bob".into())))
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1,11 +1,11 @@
 //! *Tools > Disconnect from Data Sources* (DESIGN.md, "Data sources",
 //! "Disconnect from Data Sources"): every read of a data source in the
-//! formulas and the forms is replaced by what it gives now, after a dialog
-//! that says what changes and what cannot.
+//! formulas, the forms and the reports is replaced by what it gives now,
+//! after a dialog that says what changes and what cannot.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use cliotree_calc::Disconnect;
+use cliotree_calc::{Disconnect, DisconnectError, SessionRunner};
 
 use crate::app::ClioApp;
 
@@ -21,8 +21,8 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 }
 
 impl ClioApp {
-    /// Reads every source the formulas and forms read, waiting for them,
-    /// and asks before replacing the reads.
+    /// Reads every source the formulas, forms and reports read, waiting for
+    /// them, and asks before replacing the reads.
     pub fn begin_disconnect(&mut self) {
         if !self.calc().is_trusted() {
             self.notice = Some(
@@ -32,22 +32,19 @@ impl ClioApp {
             );
             return;
         }
-        // Every row and item has to be known before the reads are found.
-        let _ = self.session.wait_idle(WAIT);
-        let plan = match self.session.calc_mut().plan_disconnect() {
-            Ok(plan) => plan,
-            Err(e) => {
-                self.notice = Some(format!("Cannot disconnect from the data sources: {e}."));
-                return;
-            }
+        let mut runner = SessionRunner {
+            session: &mut self.session,
+            deadline: Instant::now() + WAIT,
         };
-        let idle = self.session.wait_idle(WAIT);
-        match self.session.calc_mut().finish_disconnect(&plan) {
-            Some(found) if idle => {
+        match cliotree_calc::find_disconnect(&mut runner) {
+            Ok(found) => {
                 self.notice = None;
                 self.disconnect = Some(found);
             }
-            _ => {
+            Err(DisconnectError::Refused(e)) => {
+                self.notice = Some(format!("Cannot disconnect from the data sources: {e}."));
+            }
+            Err(DisconnectError::Timeout) => {
                 self.notice = Some(
                     "The data sources did not answer in time, so nothing was changed.".to_owned(),
                 );
@@ -55,12 +52,17 @@ impl ClioApp {
         }
     }
 
-    /// *Replace*: the reads go. Undo takes back the formulas.
+    /// *Replace*: the reads go. Undo takes back the formulas. The reports
+    /// that changed are calculated again for their results caches.
     pub fn disconnect_yes(&mut self) {
         let Some(found) = self.disconnect.take() else {
             return;
         };
-        self.session.calc_mut().apply_disconnect(&found);
+        let mut runner = SessionRunner {
+            session: &mut self.session,
+            deadline: Instant::now() + WAIT,
+        };
+        cliotree_calc::apply_and_rerun(&mut runner, &found, None);
         self.session.tick();
         let mut notice = format!(
             "Replaced {} by what they give now.",
@@ -134,7 +136,8 @@ impl ClioApp {
 fn question(found: &Disconnect) -> String {
     if found.is_empty() {
         return if found.problems.is_empty() {
-            "No formula or form reads a data source, so there is nothing to replace.".to_owned()
+            "No formula, form or report reads a data source, so there is nothing to replace."
+                .to_owned()
         } else {
             "Nothing can be replaced.".to_owned()
         };
@@ -150,6 +153,13 @@ fn question(found: &Disconnect) -> String {
             "expressions of forms",
         ));
     }
+    if found.report_expressions() > 0 {
+        changed.push(plural(
+            found.report_expressions(),
+            "expression of a report",
+            "expressions of reports",
+        ));
+    }
     let mut text = format!(
         "{} will be replaced by what they give now, as fixed values, so the workbook no longer \
          needs the sources. This changes {}.",
@@ -158,16 +168,44 @@ fn question(found: &Disconnect) -> String {
             "read of a data source",
             "reads of data sources"
         ),
-        changed.join(" and ")
+        and_list(&changed)
     );
+    if !found.with_params.is_empty() {
+        let reports: Vec<String> = found
+            .with_params
+            .iter()
+            .map(|r| format!("the report {r}"))
+            .collect();
+        text.push_str(&format!(
+            "\n\nReads that use the parameters of {} are replaced by what they give with the \
+             values chosen now.",
+            and_list(&reports)
+        ));
+    }
     if found.formulas() > 0 {
         text.push_str("\n\nEdit > Undo takes back the changes to the formulas.");
     }
-    if found.expressions() > 0 {
-        text.push_str(
-            "\n\nThe changes to the forms cannot be undone: save a copy of the workbook first \
-             if you may want them back.",
-        );
+    let forms = found.expressions() > 0;
+    let reports = found.report_expressions() > 0;
+    if forms || reports {
+        text.push_str(&format!(
+            "\n\nThe changes to the {} cannot be undone: save a copy of the workbook first if \
+             you may want them back.",
+            match (forms, reports) {
+                (true, true) => "forms and reports",
+                (true, false) => "forms",
+                _ => "reports",
+            }
+        ));
     }
     text
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }

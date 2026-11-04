@@ -138,6 +138,18 @@ pub fn save_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     written
 }
 
+/// The trust digest of the workbook in `file`, as it was saved.
+pub fn saved_digest(file: &Path, limits: &Limits) -> Result<String, String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let package = read_zip(&bytes, limits)?;
+    let opened = cliotree_calc::Calc::from_package(
+        std::sync::Arc::new(cliotree_calc::python::PythonSyntax),
+        &package,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(opened.calc.fingerprint().hash)
+}
+
 /// A random id for a workbook. It is not a secret: the trust model needs the
 /// content to match as well.
 pub fn new_workbook_id() -> String {

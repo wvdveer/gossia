@@ -9,11 +9,12 @@ use std::process::{Command, Output};
 use std::sync::Arc;
 
 use cliotree_calc::python::PythonSyntax;
+use cliotree_calc::sources::{SOURCES_FILE, SourceDef, SourceKind, SourceStore};
 use cliotree_calc::{Calc, Meta, Setting};
 use cliotree_core::form::{Control, ControlKind};
 use cliotree_core::report::{ParamKind, ReportDesign, ReportKind, ReportParam};
 use cliotree_core::{Value, json, jsonschema};
-use cliotree_user::file::{new_workbook_id, write_zip};
+use cliotree_user::file::{new_workbook_id, read_zip, write_zip};
 use cliotree_user::prefs::{Config, User};
 
 const SCHEMA: &str = r#"{
@@ -521,4 +522,206 @@ fn help_and_version_answer_on_stdout() {
     assert!(stdout(&help).contains("cliotree-cli report <workbook.clio> <Report>"));
     let version = b.run(&["--version"]);
     assert_eq!(stdout(&version).trim(), "cliotree-cli 0.2.0");
+}
+
+// `cliotree-cli disconnect` (DESIGN.md, "Disconnecting from the command
+// line"), with a Beancount journal as the data source.
+
+const JOURNAL: &str = r#"option "operating_currency" "AUD"
+
+2026-01-01 open Assets:Bank AUD
+2026-01-01 open Revenue:Sales AUD
+
+2026-01-05 * "Sale"
+  Assets:Bank   100.00 AUD
+  Revenue:Sales
+
+2026-02-05 * "Sale"
+  Assets:Bank    50.00 AUD
+  Revenue:Sales
+"#;
+
+/// The balance of the bank, until the date chosen if there is one.
+const UNTIL: &str = "str(source('Books').balance('Assets:Bank', until=params.until)['AUD'])";
+
+/// A workbook whose customer is a formula reading the journal, and whose
+/// Summary report shows the balance until a date parameter; the journal is
+/// a data source of this user. `formula` is the customer's formula.
+fn journal_book(tag: &str, formula: &str) -> Book {
+    let formula = formula.to_owned();
+    let b = book(
+        tag,
+        vec![field("Bank", UNTIL)],
+        vec![ReportParam::new("until", ParamKind::Date)],
+        move |calc| {
+            calc.set_formula("Orders", &"customer".parse().unwrap(), &formula)
+                .unwrap();
+        },
+    );
+    let journal = b.dir.join("books.beancount");
+    std::fs::write(&journal, JOURNAL).unwrap();
+    SourceStore::at(b.config.join(SOURCES_FILE))
+        .save(
+            SourceDef {
+                path: Some(journal.display().to_string()),
+                ..SourceDef::new("Books", SourceKind::Beancount)
+            },
+            None,
+            false,
+        )
+        .unwrap();
+    b
+}
+
+const BALANCE: &str = "str(source('Books').balance('Assets:Bank')['AUD'])";
+
+impl Book {
+    fn copy(&self) -> PathBuf {
+        self.dir.join("copy.clio")
+    }
+
+    /// Runs `disconnect` to `copy.clio`, trusted by its digest.
+    fn disconnect(&self, more: &[&str]) -> Output {
+        let copy = self.copy().display().to_string();
+        let mut args = vec![
+            "disconnect",
+            "{book}",
+            "--out",
+            copy.as_str(),
+            "--trust-digest",
+            "{digest}",
+        ];
+        args.extend_from_slice(more);
+        self.run(&args)
+    }
+}
+
+/// The workbook in `file`, as it was saved, and its workbook id.
+fn read_back(file: &std::path::Path) -> (Calc, String) {
+    let package = read_zip(&std::fs::read(file).unwrap(), &Default::default()).unwrap();
+    let opened = Calc::from_package(Arc::new(PythonSyntax), &package).unwrap();
+    (opened.calc, opened.workbook_id)
+}
+
+#[test]
+fn disconnect_writes_a_copy_without_the_reads_that_runs_without_the_source() {
+    let b = journal_book("disconnect", BALANCE);
+    let before = std::fs::read(&b.file).unwrap();
+    let output = b.disconnect(&["--report", "Summary", "--param", "until=2026-01-31"]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let (copy, id) = read_back(&b.copy());
+    // The path of the copy, then its trust digest, which is new.
+    let lines: Vec<String> = stdout(&output).lines().map(str::to_owned).collect();
+    assert_eq!(
+        lines,
+        [b.copy().display().to_string(), copy.fingerprint().hash]
+    );
+    assert_ne!(lines[1], b.digest);
+    assert_ne!(id, b.id);
+    assert!(stderr(&output).contains("replaced 2 reads of data sources"));
+    // The input is never changed.
+    assert_eq!(std::fs::read(&b.file).unwrap(), before);
+    assert_eq!(
+        copy.formula_text("Orders", &"customer".parse().unwrap())
+            .as_deref(),
+        Some("str(_decimal('150.00'))")
+    );
+    // The report's read became what it gave with the value given, and its
+    // run with that value is in the copy's results cache.
+    let design = copy.report("Summary").unwrap();
+    assert_eq!(
+        design.layout.controls[0].value.as_deref(),
+        Some("str(_decimal('100.00'))")
+    );
+    let cache = copy
+        .report_cache("Summary")
+        .expect("a cache for the new design");
+    assert_eq!(
+        cache.chosen.get("until"),
+        Some(&Value::Date(
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 31).unwrap()
+        ))
+    );
+    // Without the source, and trusted by the digest printed, the copy runs.
+    std::fs::remove_file(b.config.join(SOURCES_FILE)).unwrap();
+    let pdf = b.pdf().display().to_string();
+    let copy_path = b.copy().display().to_string();
+    let output = b.run(&[
+        "report",
+        &copy_path,
+        "Summary",
+        "--out",
+        &pdf,
+        "--trust-digest",
+        &lines[1],
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(squeezed(&b.text()).contains("100.00"), "{}", b.text());
+}
+
+#[test]
+fn without_a_report_the_reads_take_the_values_chosen_in_the_workbook() {
+    let b = journal_book("disconnect-plain", BALANCE);
+    let output = b.disconnect(&[]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let (copy, _) = read_back(&b.copy());
+    // No value is chosen for `until`, so the balance is the whole journal's.
+    let design = copy.report("Summary").unwrap();
+    assert_eq!(
+        design.layout.controls[0].value.as_deref(),
+        Some("str(_decimal('150.00'))")
+    );
+}
+
+#[test]
+fn a_use_of_a_source_that_stays_is_listed_with_code_5_and_the_copy_is_written() {
+    let b = journal_book(
+        "disconnect-stays",
+        "str(source('Bo' + 'oks').balance('Assets:Bank')['AUD'])",
+    );
+    let output = b.disconnect(&[]);
+    assert_eq!(code(&output), 5, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("1 use still needs a data source:"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("Orders.customer"),
+        "{}",
+        stderr(&output)
+    );
+    let (copy, _) = read_back(&b.copy());
+    assert!(
+        copy.formula_text("Orders", &"customer".parse().unwrap())
+            .unwrap()
+            .contains("source(")
+    );
+}
+
+#[test]
+fn disconnect_refuses_the_workbook_itself_an_existing_copy_and_an_untrusted_workbook() {
+    let b = journal_book("disconnect-refused", BALANCE);
+    let book = b.file.display().to_string();
+    let same = b.run(&["disconnect", "{book}", "--out", &book, "--overwrite"]);
+    assert_eq!(code(&same), 1, "{}", stderr(&same));
+    assert!(
+        stderr(&same).contains("the workbook itself"),
+        "{}",
+        stderr(&same)
+    );
+    std::fs::write(b.copy(), b"there").unwrap();
+    let there = b.disconnect(&[]);
+    assert_eq!(code(&there), 1, "{}", stderr(&there));
+    assert!(stderr(&there).contains("--overwrite"), "{}", stderr(&there));
+    std::fs::remove_file(b.copy()).unwrap();
+    let copy = b.copy().display().to_string();
+    let untrusted = b.run(&["disconnect", "{book}", "--out", &copy]);
+    assert_eq!(code(&untrusted), 3, "{}", stderr(&untrusted));
+    assert!(!b.copy().exists());
+    let missing = b.disconnect(&["--report", "Nope"]);
+    assert_eq!(code(&missing), 2, "{}", stderr(&missing));
+    let param = b.disconnect(&["--report", "Summary", "--param", "until=soon"]);
+    assert_eq!(code(&param), 4, "{}", stderr(&param));
+    assert!(!b.copy().exists());
 }

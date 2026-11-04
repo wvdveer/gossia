@@ -769,3 +769,20 @@ impl Session {
         (self.calc, self.evaluator)
     }
 }
+
+/// A session run until a deadline, for Disconnect from Data Sources.
+pub struct SessionRunner<'a> {
+    pub session: &'a mut Session,
+    pub deadline: Instant,
+}
+
+impl crate::DisconnectRunner for SessionRunner<'_> {
+    fn calc_mut(&mut self) -> &mut Calc {
+        self.session.calc_mut()
+    }
+
+    fn settle(&mut self) -> bool {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        self.session.wait_idle(left)
+    }
+}

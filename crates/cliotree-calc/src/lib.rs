@@ -28,11 +28,11 @@ mod trie;
 
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ChartType, ColumnFormula, Decision, Detail,
-    Disconnect, DisconnectPlan, EditError, Effective, ExportFormat, ExprKey, ExprKind, ExprState,
-    FieldKind, FieldPlaces, Fingerprint, KEEP_REPORT_RESULTS, Mentions, ModuleProblem,
-    ModuleStatus, ParamState, REPORT_FORM, RedefineGroup, ReportCache, SchemaFormat, Setting,
-    TabKind, TrustStore, Unit, WorkbookSettings, cell_of, comment_text_problem, design_digest,
-    today,
+    Disconnect, DisconnectError, DisconnectPlan, DisconnectRunner, EditError, Effective,
+    ExportFormat, ExprKey, ExprKind, ExprState, FieldKind, FieldPlaces, Fingerprint,
+    KEEP_REPORT_RESULTS, Mentions, ModuleProblem, ModuleStatus, ParamState, REPORT_FORM,
+    RedefineGroup, ReportCache, SchemaFormat, Setting, TabKind, TrustStore, Unit, WorkbookSettings,
+    apply_and_rerun, cell_of, comment_text_problem, design_digest, find_disconnect, today,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
@@ -48,7 +48,9 @@ pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
 pub use history::{DEFAULT_MAX_ENTRIES, DEFAULT_MAX_WEIGHT};
 pub use model::{Dep, Loc};
-pub use session::{EngineFactory, EvalSettings, Evaluator, Finished, Session, Status};
+pub use session::{
+    EngineFactory, EvalSettings, Evaluator, Finished, Session, SessionRunner, Status,
+};
 
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
