@@ -1,8 +1,9 @@
 #!/bin/bash
 # Builds the Windows installer (an x64 MSI) on Linux: cross-compiles the release
-# application for x86_64-pc-windows-msvc with cargo-xwin, then packages it with wixl
-# (msitools). Nothing is installed system-wide: the tools it needs and does not find
-# are put under $CLIOTREE_MSI_TOOLS (default ~/.cache/cliotree-msi) and reused.
+# application and cliotree-cli for x86_64-pc-windows-msvc with cargo-xwin, then
+# packages them with wixl (msitools). Nothing is installed system-wide: the tools
+# it needs and does not find are put under $CLIOTREE_MSI_TOOLS (default
+# ~/.cache/cliotree-msi) and reused.
 #
 # The first run downloads the Microsoft CRT and Windows SDK (cargo-xwin, accepting
 # their licence terms: XWIN_ACCEPT_LICENSE) and takes several minutes; later runs
@@ -38,13 +39,14 @@ rustup target add "$target"
 
 export XWIN_ACCEPT_LICENSE=1 XWIN_CACHE_DIR=$tools/xwin-cache
 cd "$root"
-cargo xwin build --release -p cliotree-app --bin cliotree --target "$target"
+cargo xwin build --release -p cliotree-app -p cliotree-cli --bin cliotree --bin cliotree-cli --target "$target"
 
 out=$root/target/msi
 mkdir -p "$out"
 "$wixl" -a x64 -o "$out/ClioTree-$version-x64.msi" \
     -D "Version=$version" \
     -D "Exe=$root/target/$target/release/cliotree.exe" \
+    -D "CliExe=$root/target/$target/release/cliotree-cli.exe" \
     -D "License=$root/LICENSE" \
     "$root/packaging/windows/cliotree.wxs"
 ls -la "$out"

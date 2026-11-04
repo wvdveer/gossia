@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Project helper commands: cargo xtask <clean|vendor|lint|test|e2e|ci>."
+description = "Project helper commands: cargo xtask <clean|vendor|lint|test|e2e|snapshots|icons|ci>."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

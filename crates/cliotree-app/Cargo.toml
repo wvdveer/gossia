@@ -46,6 +46,68 @@ image = { version = "0.25.10", default-features = false, features = ["png"], opt
 # "The test-control protocol"). Release builds never enable it.
 test-control = ["dep:image"]
 
+# The Linux packages (DESIGN.md, Testing and CI; packaging/linux/build-package.sh,
+# which builds both programs and the icons into target/release first). The
+# window and the command line go in one package. OpenGL, X11 and Wayland are
+# loaded while running, not linked, so they are named here; what is linked
+# (glibc, OpenSSL, fontconfig) is found by the tools themselves.
+[package.metadata.deb]
+name = "cliotree"
+maintainer = "Ward van der Veer <ward@novumglobal.com>"
+copyright = "Ward van der Veer"
+license-file = ["../../LICENSE", "0"]
+extended-description = "Workbooks of JSON and XML: each tab is a tree defined by a JSON Schema or an XML Schema, and cells can hold Python formulas whose results must match the schema. With forms, reports with charts, PDF export, and cliotree-cli to run reports from scripts."
+section = "utils"
+priority = "optional"
+depends = "$auto, libgl1, libegl1, libxkbcommon0, libwayland-client0, libx11-6, libxcursor1, libxrandr2, libxi6"
+assets = [
+    ["target/release/cliotree", "usr/bin/", "755"],
+    ["target/release/cliotree-cli", "usr/bin/", "755"],
+    ["../../packaging/linux/cliotree.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/cliotree.xml", "usr/share/mime/packages/", "644"],
+    ["target/release/icons/16.png", "usr/share/icons/hicolor/16x16/apps/cliotree.png", "644"],
+    ["target/release/icons/24.png", "usr/share/icons/hicolor/24x24/apps/cliotree.png", "644"],
+    ["target/release/icons/32.png", "usr/share/icons/hicolor/32x32/apps/cliotree.png", "644"],
+    ["target/release/icons/48.png", "usr/share/icons/hicolor/48x48/apps/cliotree.png", "644"],
+    ["target/release/icons/64.png", "usr/share/icons/hicolor/64x64/apps/cliotree.png", "644"],
+    ["target/release/icons/128.png", "usr/share/icons/hicolor/128x128/apps/cliotree.png", "644"],
+    ["target/release/icons/256.png", "usr/share/icons/hicolor/256x256/apps/cliotree.png", "644"],
+    ["target/release/icons/512.png", "usr/share/icons/hicolor/512x512/apps/cliotree.png", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "cliotree"
+summary = "Workbooks of JSON and XML with Python formulas, forms and reports"
+license = "Apache-2.0"
+url = "https://github.com/wvdveer/cliotree"
+assets = [
+    { source = "target/release/cliotree", dest = "/usr/bin/cliotree", mode = "755" },
+    { source = "target/release/cliotree-cli", dest = "/usr/bin/cliotree-cli", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/cliotree/LICENSE", mode = "644", doc = true },
+    { source = "../../packaging/linux/cliotree.desktop", dest = "/usr/share/applications/cliotree.desktop", mode = "644" },
+    { source = "../../packaging/linux/cliotree.xml", dest = "/usr/share/mime/packages/cliotree.xml", mode = "644" },
+    { source = "target/release/icons/16.png", dest = "/usr/share/icons/hicolor/16x16/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/24.png", dest = "/usr/share/icons/hicolor/24x24/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/32.png", dest = "/usr/share/icons/hicolor/32x32/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/48.png", dest = "/usr/share/icons/hicolor/48x48/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/64.png", dest = "/usr/share/icons/hicolor/64x64/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/128.png", dest = "/usr/share/icons/hicolor/128x128/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/256.png", dest = "/usr/share/icons/hicolor/256x256/apps/cliotree.png", mode = "644" },
+    { source = "target/release/icons/512.png", dest = "/usr/share/icons/hicolor/512x512/apps/cliotree.png", mode = "644" },
+]
+
+# By the libraries' names, so that the same package suits Fedora and openSUSE,
+# whose package names differ.
+[package.metadata.generate-rpm.requires]
+"libGL.so.1()(64bit)" = "*"
+"libEGL.so.1()(64bit)" = "*"
+"libxkbcommon.so.0()(64bit)" = "*"
+"libwayland-client.so.0()(64bit)" = "*"
+"libX11.so.6()(64bit)" = "*"
+"libXcursor.so.1()(64bit)" = "*"
+"libXrandr.so.2()(64bit)" = "*"
+"libXi.so.6()(64bit)" = "*"
+
 [dev-dependencies]
 egui_kittest = { version = "0.37.0", features = ["wgpu", "snapshot"] }
 # Reads the text of exported PDFs back.

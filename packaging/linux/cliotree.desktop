@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ClioTree
+GenericName=Workbook of JSON and XML
+Comment=Workbooks of JSON and XML with Python formulas, forms and reports
+Exec=cliotree %f
+Icon=cliotree
+Terminal=false
+Categories=Office;Spreadsheet;Development;
+MimeType=application/x-cliotree-workbook;
+Keywords=JSON;XML;YAML;TOML;schema;formula;Python;report;
+StartupWMClass=cliotree

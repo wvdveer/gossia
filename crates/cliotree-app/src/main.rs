@@ -39,6 +39,9 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ClioTree")
+            // On Linux the desktop matches the window to cliotree.desktop
+            // (packaging/linux) by this name, for its icon and launcher.
+            .with_app_id("cliotree")
             .with_icon(std::sync::Arc::new(icon))
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([640.0, 400.0]),

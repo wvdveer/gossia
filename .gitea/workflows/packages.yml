@@ -1,0 +1,141 @@
+name: Linux packages
+
+# The Linux packages of ClioTree (DESIGN.md, Testing and CI), on the Gitea
+# mirror's runners on acer, one for each family of distributions, so that each
+# package links against its family's libraries:
+#   selfhosted  Debian (the gitslave host, no root)   .deb
+#   fedora      the fedora-runner container           .rpm
+#   arch        the arch-runner container             .pkg.tar.zst
+# Each is then published to the Gitea package registry of ward
+# (packaging/linux/publish-package.sh), once the repository has the Actions
+# secret PACKAGE_REGISTRY_TOKEN (an access token of ward with the package write
+# permission); without it the packages are built but not published.
+#
+# Like nspawnmgr's workflow: these runners have no Node, so there is no
+# actions/checkout or upload-artifact, only shell. The checkout is kept in
+# ~/code/cliotree between runs with its target/ and vendor/, so that a run does
+# not rebuild everything. The repository is private: it is fetched with the
+# job's own token. The jobs run one after another, since the runners share one
+# machine.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  deb:
+    name: Debian package
+    runs-on: selfhosted
+    steps:
+      # Before the long build: a token that cannot read ward's packages
+      # cannot publish them either. Without the secret, nothing is checked.
+      - name: Check the registry token
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$PACKAGE_REGISTRY_TOKEN" ]; then
+            echo "PACKAGE_REGISTRY_TOKEN is not set: the packages will not be published."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' --user "ward:$PACKAGE_REGISTRY_TOKEN" \
+            "$GITEA_URL/api/v1/packages/ward?limit=1")
+          echo "The token reading ward's packages: HTTP $code"
+          [ "$code" = 200 ] || { echo "PACKAGE_REGISTRY_TOKEN is refused (needs the package permission)" >&2; exit 1; }
+      - name: Checkout
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          set -e
+          dir="$HOME/code/cliotree"
+          mkdir -p "$dir" && cd "$dir"
+          [ -d .git ] || git init -q .
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          export GIT_TERMINAL_PROMPT=0
+          timeout 300 git -c http.extraHeader="Authorization: Basic $auth" \
+            fetch -q --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git checkout -q -f FETCH_HEAD
+          git clean -ffdxq -e target -e vendor
+          git log --oneline -1
+      - name: Build
+        run: cd "$HOME/code/cliotree" && bash packaging/linux/build-package.sh deb
+      - name: Publish
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: cd "$HOME/code/cliotree" && bash packaging/linux/publish-package.sh deb
+
+  rpm:
+    name: RPM package
+    needs: deb
+    if: always()
+    runs-on: fedora
+    steps:
+      - name: Install the build tools
+        run: |
+          pkgs="rustup gcc pkgconf-pkg-config openssl-devel fontconfig-devel rpm"
+          rpm -q $pkgs >/dev/null 2>&1 || sudo -n dnf --assumeyes install $pkgs
+          [ -x "$HOME/.cargo/bin/rustup" ] || rustup-init -y --default-toolchain none --no-modify-path
+      - name: Checkout
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          set -e
+          dir="$HOME/code/cliotree"
+          mkdir -p "$dir" && cd "$dir"
+          [ -d .git ] || git init -q .
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          export GIT_TERMINAL_PROMPT=0
+          timeout 300 git -c http.extraHeader="Authorization: Basic $auth" \
+            fetch -q --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git checkout -q -f FETCH_HEAD
+          git clean -ffdxq -e target -e vendor
+          git log --oneline -1
+      - name: Build
+        run: cd "$HOME/code/cliotree" && bash packaging/linux/build-package.sh rpm
+      - name: Publish
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: cd "$HOME/code/cliotree" && bash packaging/linux/publish-package.sh rpm
+
+  arch:
+    name: Arch package
+    needs: rpm
+    if: always()
+    runs-on: arch
+    steps:
+      # The PKGBUILD's depends, which makepkg checks are installed, and the
+      # tools to build with.
+      - name: Install the build tools
+        run: |
+          pkgs="rustup base-devel git openssl fontconfig libglvnd libxkbcommon wayland libx11 libxcursor libxrandr libxi"
+          pacman -Qi $pkgs >/dev/null 2>&1 || sudo -n pacman -Sy --noconfirm --needed $pkgs
+      - name: Checkout
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          set -e
+          dir="$HOME/code/cliotree"
+          mkdir -p "$dir" && cd "$dir"
+          [ -d .git ] || git init -q .
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          export GIT_TERMINAL_PROMPT=0
+          timeout 300 git -c http.extraHeader="Authorization: Basic $auth" \
+            fetch -q --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git checkout -q -f FETCH_HEAD
+          git clean -ffdxq -e target -e vendor
+          git log --oneline -1
+      - name: Build
+        run: cd "$HOME/code/cliotree" && bash packaging/linux/build-package.sh arch
+      - name: Publish
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: cd "$HOME/code/cliotree" && bash packaging/linux/publish-package.sh arch

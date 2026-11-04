@@ -1,0 +1,38 @@
+# The Arch package of ClioTree, built from this checkout (no sources are
+# downloaded) by packaging/linux/build-package.sh arch, which gives the
+# version in CLIOTREE_VERSION.
+pkgname=cliotree
+pkgver=${CLIOTREE_VERSION:?run this through packaging/linux/build-package.sh arch}
+pkgrel=1
+pkgdesc="Workbooks of JSON and XML with Python formulas, forms and reports"
+arch=(x86_64)
+url="https://github.com/wvdveer/cliotree"
+license=(Apache-2.0)
+# OpenGL, X11 and Wayland are loaded while running, not linked.
+depends=(gcc-libs glibc openssl fontconfig libglvnd libxkbcommon wayland libx11 libxcursor libxrandr libxi)
+# Cargo comes from rustup (rust-toolchain.toml pins the toolchain).
+makedepends=()
+# Rust does its own optimisation; makepkg's LTO flags and debug package do not
+# suit it.
+options=(!lto !debug)
+
+_root=$(realpath "$startdir/../../..")
+
+build() {
+  cd "$_root"
+  cargo build --release --locked -p cliotree-app -p cliotree-cli --bin cliotree --bin cliotree-cli
+  cargo xtask icons target/release/icons
+}
+
+package() {
+  cd "$_root"
+  install -Dm755 target/release/cliotree "$pkgdir/usr/bin/cliotree"
+  install -Dm755 target/release/cliotree-cli "$pkgdir/usr/bin/cliotree-cli"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 packaging/linux/cliotree.desktop "$pkgdir/usr/share/applications/cliotree.desktop"
+  install -Dm644 packaging/linux/cliotree.xml "$pkgdir/usr/share/mime/packages/cliotree.xml"
+  for size in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "target/release/icons/$size.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/cliotree.png"
+  done
+}

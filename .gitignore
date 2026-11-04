@@ -35,3 +35,8 @@ rustc-ice-*.txt
 crates/cliotree-app/tests/snapshots/**/*.new.png
 crates/cliotree-app/tests/snapshots/**/*.diff.png
 crates/cliotree-app/tests/snapshots/**/*.old.png
+
+# What makepkg leaves beside the PKGBUILD (packaging/linux/build-package.sh arch)
+packaging/linux/arch/src/
+packaging/linux/arch/pkg/
+packaging/linux/arch/*.pkg.tar.zst

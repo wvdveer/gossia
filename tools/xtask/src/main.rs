@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod icons;
+
 const HELP: &str = "\
 cargo xtask <command>
 
@@ -18,6 +20,7 @@ cargo xtask <command>
   test                           the default test levels
   e2e                            end-to-end tests on the running application (under xvfb-run on Linux without a display)
   snapshots                      visual snapshot tests (needs a graphics adapter)
+  icons <dir>                    the icon as PNG files for the packages (16 to 512 pixels)
   ci                             everything the blocking CI jobs run: lint, test, e2e
 ";
 
@@ -50,6 +53,10 @@ fn run(args: &[String]) -> Result<(), String> {
             fetch_vendor::ensure_required(&root)?;
             snapshots(&root)
         }
+        Some("icons") => match args.get(1) {
+            Some(dir) => icons::write(Path::new(dir)),
+            None => Err("icons needs the folder to write to".to_owned()),
+        },
         Some("ci") => {
             fetch_vendor::ensure_required(&root)?;
             lint(&root)?;

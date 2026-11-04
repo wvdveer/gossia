@@ -2,7 +2,9 @@
 <!--
   The Windows installer of ClioTree, in the WiX 3 dialect that wixl (msitools)
   reads, so that it can be built on Linux by build-msi.sh. Variables: Version,
-  Exe and License, given with -D.
+  Exe, CliExe and License, given with -D.
+  cliotree-cli.exe is installed next to cliotree.exe, not on the PATH: scripts
+  name it by its full path.
   The UpgradeCode never changes: it is what lets a newer MSI replace an older one.
   The icon is in the executable (build.rs); .clio files open with it.
 -->
@@ -22,6 +24,9 @@
               <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="ClioTree"
                         WorkingDirectory="INSTALLDIR" Advertise="yes"/>
             </File>
+          </Component>
+          <Component Id="CliExecutable" Guid="e5a8c1f3-6b2d-4e97-8a40-3f9d7c2b1e86" Win64="yes">
+            <File Id="CliotreeCliExe" Name="cliotree-cli.exe" Source="$(var.CliExe)" KeyPath="yes"/>
           </Component>
           <!-- A workbook (.clio) opens in ClioTree, with its icon. -->
           <Component Id="WorkbookFiles" Guid="4d2f9a61-7c3e-4b85-9e10-b6a8d5c3f217" Win64="yes">
@@ -44,6 +49,7 @@
 
     <Feature Id="Everything" Title="ClioTree" Level="1">
       <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="CliExecutable"/>
       <ComponentRef Id="WorkbookFiles"/>
       <ComponentRef Id="LicenseFile"/>
     </Feature>
