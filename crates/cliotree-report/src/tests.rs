@@ -72,7 +72,8 @@ fn a_single_page_report_is_one_page_as_big_as_the_report() {
         count(&pdf, r#"<rdf:li xml:lang="x-default">Sales</rdf:li>"#),
         1
     );
-    assert!(count(&pdf, "ClioTree 0.2.0") >= 1);
+    let producer = format!("ClioTree {}", env!("CARGO_PKG_VERSION"));
+    assert!(count(&pdf, &producer) >= 1);
 }
 
 #[test]

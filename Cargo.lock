@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-calc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "beancount-parser",
  "bytes",
@@ -1066,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "cliotree-calc",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1095,7 +1095,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-layout"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cliotree-core",
  "epaint_default_fonts",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "cliotree-report"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cliotree-calc",
  "cliotree-core",
@@ -1119,14 +1119,14 @@ dependencies = [
 
 [[package]]
 name = "cliotree-std"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cliotree-core",
 ]
 
 [[package]]
 name = "cliotree-user"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cliotree-calc",
  "cliotree-core",

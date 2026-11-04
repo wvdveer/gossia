@@ -2,7 +2,7 @@
 
 A spreadsheet-like desktop application (Rust + egui, later wasm) in which each sheet is a **tree defined by a schema** (JSON Schema or XSD) rather than a 2D grid. Cells at any node can hold a **Python expression** whose result must match the node's schema type.
 
-**Scope.** Version 1 (0.1.0) is the desktop application, and is closed. **Reports** are version 0.2.0, closed on 2026-11-05 (tag `v0.2.0`). The **web (wasm) port** (0.3.0) and **Excel and ODS files** (0.4.0) are deferred; their designs are kept in this document for planning and are marked as such (see Later versions).
+**Scope.** Version 1 (0.1.0) is the desktop application, and is closed. **Reports** are version 0.2.0, closed on 2026-11-05 (tag `v0.2.0`). The version is now **0.3.0**: the **web (wasm) port**, with export of reports as HTML and printing, the work now in progress. **Excel and ODS files** (0.4.0) are deferred; their designs are kept in this document for planning and are marked as such (see Later versions).
 
 **Status.** The design for v1 is complete. Every question raised during design review has been decided, and the decisions are in the sections below. What remains is implementation, in the order given under Build order, plus the risks listed at the end that can only be settled by building and measuring.
 
@@ -1529,7 +1529,7 @@ The rest are **not planned**: cut (Ctrl+X), dragging out a range with the mouse,
 
 ## Later versions
 
-Deferred features, with what v1 does to keep them possible. Version 1 is release **0.1.0**; **Reports are 0.2.0**, **the web port is 0.3.0**, and **Excel and ODS files are 0.4.0** (owner, 2026-10-31). Version 1 was closed on 2026-11-01, and the version is now **0.2.0**: the work on Reports (owner, 2026-11-01). 0.2.0 was closed and tagged `v0.2.0` on 2026-11-05, without the optional form additions (charts on forms, totals rows), which are kept for a later version.
+Deferred features, with what v1 does to keep them possible. Version 1 is release **0.1.0**; **Reports are 0.2.0**, **the web port is 0.3.0**, and **Excel and ODS files are 0.4.0** (owner, 2026-10-31). Version 1 was closed on 2026-11-01, and the version is now **0.2.0**: the work on Reports (owner, 2026-11-01). 0.2.0 was closed and tagged `v0.2.0` on 2026-11-05, without the optional form additions (charts on forms, totals rows), which are kept for a later version. The version is now **0.3.0** (owner, 2026-11-05).
 
 - **Reports, 0.2.0** (see Reports): the report layout calculation (`cliotree-layout`; forms stay on egui); the form designer additions shared with reports (see Forms); the `builtin:report` schema, from the definitions of `builtin:form`; report tabs and single page reports, edited in layout mode; charts (chart functions returning SVG, user-defined with `@chart`, and the built-in bar, line, pie and scatter); report parameters and the parameter bar; multipage reports (bands, nested sections, page setup, page view); export as PDF; batch export with `cliotree-cli`, in the MSI and the Linux packages (.deb, .rpm, Arch); then the optional form additions (charts on forms, totals rows).
   - The manifest's tab `kind` and the `reports/` directory name are reserved.

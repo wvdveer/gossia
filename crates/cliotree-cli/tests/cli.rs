@@ -521,7 +521,10 @@ fn help_and_version_answer_on_stdout() {
     assert_eq!(code(&help), 0);
     assert!(stdout(&help).contains("cliotree-cli report <workbook.clio> <Report>"));
     let version = b.run(&["--version"]);
-    assert_eq!(stdout(&version).trim(), "cliotree-cli 0.2.0");
+    assert_eq!(
+        stdout(&version).trim(),
+        format!("cliotree-cli {}", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 // `cliotree-cli disconnect` (DESIGN.md, "Disconnecting from the command
