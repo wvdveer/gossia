@@ -441,6 +441,8 @@ The design is stored as a JSON document validated against a built-in schema (`bu
 - Reports are read-only for the data they show. They cannot write to any sheet.
 - A report's name is a Python identifier like any tab, but no other formula can reference it.
 - Export as PDF is in 0.2.0 (above). **Export as HTML and printing are in 0.3.0** (owner, 2026-11-05); export as an image is a later feature.
+  - **Export as HTML** writes one self-contained `.html` file: the report as it is shown, with the parameters at their current values, the charts as inline SVG and the bundled fonts embedded, so it needs no other file. A multipage report is laid out in pages, broken for printing by CSS (`@page` with the report's paper, and a page break after each page). It is a picture of the report, with no scripts. `cliotree-cli` does not export HTML.
+  - **Printing** is of reports only (not tabs or forms). On the desktop, *Print...* makes the PDF of the report, as Export as PDF does, in a temporary file and hands it to the system's print command (on Windows the file's *print* action, which needs a PDF reader that offers one; on Linux `lp`). The printer and its settings are those of that command. The web version cannot print: *Print...* is not there, and the PDF or HTML opened in a new tab is printed from the browser.
 
 ### Chart functions
 
@@ -605,7 +607,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - **Another user or machine sets up the same names.** A workbook used elsewhere needs its data sources defined there under the names it uses; until then each missing one fails with `#SOURCE!` saying no data source of that name is defined on this computer, and the rest of the workbook works.
 - **The same name may point at a different instance.** A definition on another machine can name another server or database (a test copy, a local replica); the workbook works as long as the definition and the formulas that use it fit it. This is intended, not a fault.
 - **Definitions cannot be exported** or imported. Each machine has its own, set up by hand or by a module (see Defining sources from Python).
-- **The kinds available depend on the target.** The desktop application has SQLite, PostgreSQL, MariaDB and HTTP/HTTPS, and on Windows ODBC too; the web port has HTTP/HTTPS only. A workbook that names a source of a kind its target lacks opens and works; calls to that source fail with `#SOURCE!` saying the kind is not available here.
+- **The kinds available depend on the target.** The desktop application has SQLite, PostgreSQL, MariaDB and HTTP/HTTPS, and on Windows ODBC too; the web port has HTTP/HTTPS only, and only to servers that allow requests from a web page (CORS; see Web port, 0.3.0). A workbook that names a source of a kind its target lacks opens and works; calls to that source fail with `#SOURCE!` saying the kind is not available here.
 - Another window may change the file while this one runs, so every read goes to the file and every change reads it again first. What a newer version wrote and this one does not know is kept, in the file and in each definition. A file that cannot be read is never overwritten (it holds passwords the user may still want); the panel says why and changes are refused until it is fixed or removed.
 
 **No grants.** **A workbook may use any data source defined on the machine** (settled with the owner on 2026-10-29). There is no per-workbook grant and no allow step. What still guards a source:
@@ -695,7 +697,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - **Reports** *(0.2.0; owner, 2026-11-02)*. The expressions of reports are rewritten too, as those of forms are, including the arguments of charts. A read that uses a parameter is replaced by what it gives **with the report's current parameter values** (in the window, those in the parameter bar), and the dialog says so. The report's results cache is calculated again afterwards.
 - **From the command line**, `cliotree-cli disconnect` does the same and writes a separate copy, optionally after running a named report with given parameters (see Batch export from the command line).
 
-**Web port** *(later version)*. Browsers cannot open raw database connections or files, so SQLite, PostgreSQL, MariaDB and Beancount sources will be unavailable on the web. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
+**Web port** *(0.3.0; see Web port, 0.3.0)*. Browsers cannot open raw database connections or files, so SQLite, PostgreSQL, MariaDB and Beancount sources will be unavailable on the web. HTTP/HTTPS works through the browser's `fetch` and is subject to CORS.
 
 ## Trust model
 
@@ -738,7 +740,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - The mechanism works: a watchdog thread sends a closure through `user_signal_channel`, and the VM raises it inside the running code. A `while True: pass` loop and a loop of builtin calls were both stopped about 300 ms after a 300 ms deadline, with the exception surfacing as an ordinary Python error. The interpreter was **reusable afterwards**.
 - **A single long builtin call cannot be interrupted.** `sum(range(10**10))` ignored the signal for as long as the test ran (it was killed externally after 20 seconds), because the signal is only checked between bytecode instructions. So the budget cannot catch everything.
 - Mitigation: when a cancellation does not take effect within a grace period, abandon the evaluation thread and start a fresh interpreter, accepting that the old thread runs until the call finishes. Also guard the obvious cases (for example `range` above a size limit). The abandon path is the real backstop on desktop, and the number of abandoned threads is limited by a setting (default 20); see Settings and limits.
-- On **wasm32** there is no second thread, so the Web Worker termination described earlier remains the only mechanism.
+- On **wasm32** there is no second thread, so terminating the Web Worker is the only mechanism (see Web port, 0.3.0).
 
 **What the sandbox really is**
 - With `host_env` left out, the interpreter has **no file, socket, subprocess, or OS modules at all**: `os`, `posix`, `nt`, `socket`, `subprocess`, `ctypes`, `sqlite3`, `threading`, `pathlib`, `shutil`, `urllib`, and `http` all fail to import. `_io` imports but cannot open files ("Couldn't get FileIO").
@@ -779,7 +781,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 - **The first calculation** is slower than a recalculation because each different formula is compiled once (the engine keeps the compiled code by text). The spike measured 15 microseconds for this; it is 25 here, with the parser and the checks on top.
 - **What the first measurements found.** A proxy that remembers the node it read keeps that node shared with the data, so the next edit to the data copies the node first. With a tab's proxy remembering its root, writing 10,000 results into an array copied the array 10,000 times and took 1.4 seconds. The proxies that live as long as the engine now remember nothing; only the proxies made during one evaluation do, and they are not used after it.
 
-**Web (wasm32)** *(later version; recorded for planning)*
+**Web (wasm32)** *(spike results, for 0.3.0; see Web port, 0.3.0)*
 - RustPython's own `rustpython_wasm` crate **builds** for `wasm32-unknown-unknown`, which needs the `getrandom` `wasm_js` feature (the crate sets it).
 - The unoptimised output was **54.6 MB**. That build includes features we would not use (`ssl`, documentation strings) and was not passed through `wasm-opt` or compression. The achievable size is not yet known and must be measured with a minimal feature set.
 - Python was not run in a browser, so Web Worker termination remains untested.
@@ -788,7 +790,7 @@ Data sources are the only way Python code reaches outside the workbook. The sand
 
 ## Evaluation and scheduling
 
-All Python evaluation (formulas, form button procedures, report expressions) runs on a **background evaluation thread**, never on the egui UI thread. On the later web port the same role would be played by a Web Worker, using the same message protocol.
+All Python evaluation (formulas, form button procedures, report expressions) runs on a **background evaluation thread**, never on the egui UI thread. On the web port (0.3.0) the same role is played by a Web Worker, using the same message protocol.
 
 **The UI never waits.** Every cell is drawn from its **last calculated value**, the one stored in the tree (see Stored values). A cell whose evaluation is outstanding keeps showing that value, with a subtle pending marker, until a new result arrives. A cell that has a formula but has never been calculated shows empty with the pending marker. The same applies to reports: they render the last values and refresh as results arrive.
 
@@ -1534,10 +1536,42 @@ Deferred features, with what v1 does to keep them possible. Version 1 is release
 - **Reports, 0.2.0** (see Reports): the report layout calculation (`cliotree-layout`; forms stay on egui); the form designer additions shared with reports (see Forms); the `builtin:report` schema, from the definitions of `builtin:form`; report tabs and single page reports, edited in layout mode; charts (chart functions returning SVG, user-defined with `@chart`, and the built-in bar, line, pie and scatter); report parameters and the parameter bar; multipage reports (bands, nested sections, page setup, page view); export as PDF; batch export with `cliotree-cli`, in the MSI and the Linux packages (.deb, .rpm, Arch); then the optional form additions (charts on forms, totals rows).
   - The manifest's tab `kind` and the `reports/` directory name are reserved.
   - A v1 build that opens a file containing reports keeps those entries unchanged on save (the unknown-entries rule in File format) and shows no report tabs.
-- **Web (wasm) port, 0.3.0**: the same core in a browser, together with **export of reports as HTML** and **printing** (owner, 2026-11-05; see Reports, Export). In the browser, printing is the browser's own, of the report drawn as HTML.
+- **Web (wasm) port, 0.3.0**: the same core in a browser, together with **export of reports as HTML** and **printing** on the desktop (owner, 2026-11-05; see Web port, 0.3.0, below, and Reports, Export).
   - `cliotree-core` and `cliotree-calc` stay free of UI and filesystem code.
-  - Open points recorded for it: the binary size (54.6 MB unoptimised in the spike), running Python and terminating a Web Worker in a browser, file access, persistence of trust, credential storage, and database data sources being unavailable.
 - **Excel and ODS files, 0.4.0**: importing `.xlsx`, `.xls` and `.ods` (each sheet a tab with an array of rows, as CSV) and exporting `.xlsx`.
+
+### Web port, 0.3.0
+
+*(Requirements settled with the owner on 2026-11-05; they replace the open points recorded before.)*
+
+**What it is.** The application compiled to wasm and run in a browser page: the same tabs, formulas, forms and reports, drawn by egui on a canvas. It has none of what `cliotree-cli` does (no batch report runs, no `disconnect`), and no printing.
+
+**Windows become browser tabs.**
+- **The code editor opens in a separate browser tab**, as it opens in a separate OS window on the desktop. The two tabs are the same origin and talk through a `BroadcastChannel`; the workbook, its modules and the evaluation stay in the workbook's tab, and the editor tab sends edits and Immediate window lines there and draws what comes back. Closing the workbook's tab leaves the editor tab saying it has lost its workbook. The tab is opened from a click, so the browser does not treat it as a pop-up.
+- Dialogs (Options, data sources, import, the property page) stay inside the page, as egui windows.
+
+**Python runs in a Web Worker.** The evaluation thread of the desktop becomes a Web Worker running RustPython, with the same message protocol. The page itself never runs Python.
+- **HTTP data sources** make their requests from the worker with **synchronous** requests (`XMLHttpRequest`, allowed in a worker though not on the page), because the engine needs the answer before the formula goes on; the browser's asynchronous `fetch` cannot be waited for there.
+- **A formula that overruns its budget** and does not stop at the signal is ended by **terminating the worker** and starting a fresh one, which loads the modules again and recalculates what was outstanding. This takes the place of abandoning the thread on the desktop, so the *abandoned threads* limit and *Save and restart* do not exist on the web (the Evaluation page leaves them out).
+- **CORS is accepted.** A request to a server that does not allow other sites fails as the browser fails it, with `#SOURCE!`. The browser does not say why, so the message and the data source's **Test** say that the server may not allow requests from a web page (CORS) and that the desktop application does not have this limit. There is no proxy.
+- The other kinds (SQLite, PostgreSQL, MariaDB, ODBC, Beancount) are not available, as under Data sources.
+
+**Files.**
+- **Open and Save use the File System Access API where the browser has it** (Chrome and Edge): a real file, saved in place. **Elsewhere, Open uploads a file and Save downloads one** (`<Workbook>.clio`). Import works the same way, and dropping files on the page imports them as on the desktop.
+- Recent files are kept only where the API exists, as file handles in browser storage, and the browser asks again for permission when one is reopened. There is no autosave. *(Defaults chosen with the owner's acceptance of the recommendation; to be confirmed when built.)*
+- Export as PDF and as HTML open the result in a **new browser tab** (a `blob:` address), from which the user saves or prints it with the browser.
+
+**Storage.** The preferences, the trust record and the data source definitions (passwords, tokens and keys included) are kept in the browser's storage (IndexedDB) for the site's origin. As with `data-sources.json` on the desktop, they are not encrypted: anything running as the user in that browser profile, and anyone with the profile, can read them. Clearing the site's data forgets them all.
+
+**Browsers.** A range of current browsers is tried (Chrome, Edge, Firefox, Safari), and the supported list is cut down as technical problems are met; each cut is recorded here with its reason. Phones and tablets are not a target.
+
+**Keyboard.** The application does not take over the browser's shortcuts (Ctrl+S, Ctrl+O, Ctrl+P, Ctrl+W, F5 and so on keep doing what the browser does); the menus and the toolbar do these things on the web. Shortcuts the browser does not use work as on the desktop.
+
+**Download size and caching.** A large download is accepted; it is not trimmed at the cost of features. It must be cached: the wasm and script files have a content hash in their names and are served with a long, immutable cache lifetime, and only the small `index.html` is checked each time, so a visit after the first loads from the cache until a new version is published.
+
+**Where it is hosted for testing.** Under the owner's `vanderveer.id` domain, on acer.patersonst: a path of an existing site, such as `https://testapp.vanderveer.id/cliotree/` (the site there keeps its other content). The exact place is the owner's choice when it is set up.
+
+**Testing.** As in the owner's other web projects (keyscarf's `tools/web-test-harness`): a plain HTML and JavaScript **harness page**, with no npm and no build step, served from the same origin, opens the application in another tab with `window.open` and runs tests against it, logging `ok` and `FAIL` lines and a summary; a small Playwright script runs it headless for CI. The application draws on a canvas and has no page elements to query, so a **test build** (the `test-control` feature, as on the desktop) gives the window a JavaScript function that calls `control::run` (see the end-to-end tests): the harness drives the application with the same commands as the desktop end-to-end tests and checks their answers. Release builds do not have it.
 
 ## Decisions for implementation, and risks
 
