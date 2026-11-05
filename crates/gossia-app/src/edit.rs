@@ -253,7 +253,7 @@ impl GossiaApp {
     /// choice of an enumeration, the lower bound of a range.
     pub fn default_value(spec: &TypeSpec, ty: TypeId) -> Value {
         match &spec.get(ty).kind {
-            Kind::String(_) => Value::Str(String::new()),
+            Kind::String(_) | Kind::Any => Value::Str(String::new()),
             Kind::Enum { values, .. } => Value::Str(values.first().cloned().unwrap_or_default()),
             Kind::Integer(range) => match range.min {
                 Some(Num::Int(n)) => Value::Int(n),
@@ -296,8 +296,10 @@ impl GossiaApp {
         let Some(spec) = calc.spec(&sheet) else {
             return;
         };
-        let item_type = match spec.resolve(array).map(|r| &spec.get(r.ty).kind) {
-            Some(Kind::Array { items, .. }) => *items,
+        let item_type = match spec.resolve(array).map(|r| (r.ty, &spec.get(r.ty).kind)) {
+            Some((_, Kind::Array { items, .. })) => *items,
+            // A list held by an `any`: its items are `any` too.
+            Some((ty, Kind::Any)) => ty,
             _ => return,
         };
         let value = GossiaApp::default_value(spec, item_type);

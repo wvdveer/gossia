@@ -587,12 +587,14 @@ fn force_object_definition_types_a_field_from_the_records_its_formula_returned()
     // A formula that fits is not offered it, nor is a field without one.
     assert!(!b.calc.force_type_offered("Order", &p("items")));
     b.run();
+    // The records' fields are not defined, so each item is an empty record
+    // that did not fit, and the formula ends in #TYPE!.
     let cell = b.calc.cell("Order", &p("copy")).unwrap();
-    let kind = match cell.node.map(|n| n.value()) {
-        Some(Value::Error(e)) => Some(e.kind),
-        _ => None,
-    };
+    let kind = cell.error.map(|e| e.kind);
     assert_eq!(kind, Some(gossia_core::ErrorKind::Type), "{:?}", cell.node);
+    assert!(cell.misfit.is_some(), "the tree shows #TYPE! on copy");
+    let item = b.calc.cell("Order", &p("copy[0]")).unwrap();
+    assert!(item.misfit.is_some(), "and on its items");
     assert!(b.calc.force_type_offered("Order", &p("copy")));
     assert!(b.calc.force_type_offered("Order", &p("first")));
 
@@ -646,7 +648,8 @@ fn force_object_definition_on_the_root_takes_nested_records_and_arrays() {
     // The response, in a tab of its own with the schema inferred from it.
     let response = json::parse(
         r#"{"results": [{"gender": "female", "name": {"title": "Ms", "first": "Ann"},
-             "id": {"name": "", "value": null}, "dob": {"age": 41}}],
+             "id": {"name": "", "value": null}, "dob": {"age": 41},
+             "location": {"city": "Natal", "postcode": 73568}}],
             "info": {"seed": "abc", "results": 1, "page": 1, "version": "1.4"}}"#,
     )
     .unwrap()
@@ -673,7 +676,84 @@ fn force_object_definition_on_the_root_takes_nested_records_and_arrays() {
             .field_places("Data", &p("results[0]"))
             .unwrap()
             .fields,
-        names(&["gender", "name", "id", "dob"])
+        names(&["gender", "name", "id", "dob", "location"])
+    );
+
+    // The next answer is another person, without `dob`, with an `id.value`,
+    // and without `info`: every field found was made optional, so it fits.
+    let next = json::parse(
+        r#"{"results": [{"gender": "male", "name": {"title": "Mr", "first": "Bo"},
+             "id": {"name": "DNI", "value": "07247621-R"}}]}"#,
+    )
+    .unwrap()
+    .node;
+    let inferred = gossia_core::infer::infer_json(&next).schema;
+    let inferred = json::to_string(&inferred, false).unwrap();
+    b.calc
+        .add_sheet("Next", jsonschema::lower_str(&inferred).unwrap(), next)
+        .unwrap();
+    b.calc.set_formula("Data", &p(""), "Next").unwrap();
+    b.run();
+    let cell = b.calc.cell("Data", &p("")).map(|c| format!("{:?}", c.node));
+    assert!(!format!("{cell:?}").contains("Error"), "{cell:?}");
+    let data = json::to_string(b.calc.data("Data").unwrap(), false).unwrap();
+    assert!(data.contains(r#""value":"07247621-R""#), "{data}");
+    let schema = json::to_string(b.calc.data("Data schema").unwrap(), false).unwrap();
+    assert!(!schema.contains("required"), "{schema}");
+
+    // A postcode that is text where it was a number: the formula ends in
+    // #TYPE!, the tree shows it on the way down to the postcode, and every
+    // other field keeps its value.
+    let third = json::parse(
+        r#"{"results": [{"gender": "female", "name": {"title": "Ms", "first": "Cy"},
+             "location": {"city": "Leeds", "postcode": "Z26 7XT"}}]}"#,
+    )
+    .unwrap()
+    .node;
+    let inferred = gossia_core::infer::infer_json(&third).schema;
+    let inferred = json::to_string(&inferred, false).unwrap();
+    b.calc
+        .add_sheet("Third", jsonschema::lower_str(&inferred).unwrap(), third)
+        .unwrap();
+    b.calc.set_formula("Data", &p(""), "Third").unwrap();
+    b.run();
+    let root = b.calc.cell("Data", &p("")).unwrap();
+    let message = root.error.map(|e| e.message.clone()).unwrap_or_default();
+    assert!(
+        message.contains("results[0].location.postcode"),
+        "{message}"
+    );
+    for path in [
+        "",
+        "results",
+        "results[0]",
+        "results[0].location",
+        "results[0].location.postcode",
+    ] {
+        let cell = b.calc.cell("Data", &p(path)).unwrap();
+        let shown =
+            cell.misfit.is_some() || matches!(cell.node.map(|n| n.value()), Some(Value::Error(_)));
+        assert!(shown, "#TYPE! at {path:?}");
+    }
+    for (path, value) in [
+        ("results[0].name.first", "Cy"),
+        ("results[0].location.city", "Leeds"),
+        ("results[0].gender", "female"),
+    ] {
+        let cell = b.calc.cell("Data", &p(path)).unwrap();
+        assert!(cell.misfit.is_none(), "no #TYPE! at {path}");
+        assert_eq!(
+            cell.node.map(|n| n.value().clone()),
+            Some(Value::Str(value.into())),
+            "{path}"
+        );
+    }
+    assert!(
+        b.calc
+            .cell("Data", &p("results[0].name"))
+            .unwrap()
+            .misfit
+            .is_none()
     );
 }
 
@@ -713,4 +793,33 @@ fn force_object_definition_on_the_root_gives_its_record_the_fields_returned() {
             .fields
             .is_empty()
     );
+}
+
+/// *Go to schema definition*: a field is its entry under its record's
+/// `properties`, in the record's own place (the `$defs` of a shared type);
+/// a node the schema does not define goes to its record.
+#[test]
+fn a_field_is_defined_by_its_entry_in_the_schema_tab() {
+    let b = Book::new();
+    let at = |path: &str| b.calc.definition_of("Order", &p(path));
+    // `$defs` is not a name a path can be written with, so the keys are
+    // given one by one.
+    let place = |text: &str| {
+        let path = text
+            .split('.')
+            .filter(|k| !k.is_empty())
+            .fold(Path::root(), |path, key| path.key(key));
+        Some(("Order schema".to_owned(), path))
+    };
+    assert_eq!(at(""), place(""));
+    assert_eq!(at("items"), place("properties.items"));
+    assert_eq!(at("items[1]"), place("properties.items.items"));
+    assert_eq!(
+        at("items[1].qty"),
+        place("properties.items.items.properties.qty")
+    );
+    assert_eq!(at("billing"), place("properties.billing"));
+    assert_eq!(at("billing.city"), place("$defs.Address.properties.city"));
+    assert_eq!(at("billing.nothing"), place("properties.billing"));
+    assert_eq!(b.calc.definition_of("Order schema", &p("")), None);
 }

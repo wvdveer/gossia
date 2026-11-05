@@ -86,7 +86,7 @@ skip_test = [
 
 # Why a group or case is skipped, by short name.
 [reasons]
-no-type = """The schema has no `type`. The subset requires one (except on a `$ref` or an `enum`), because a keyword such as `minimum` without a type applies to some instances and not to others, and a typed tree cannot express that."""
+no-type = """The schema has no `type` but has keywords of a type. A schema with no `type` is any value (owner, 2026-11-06) and takes no keyword of a type, because a keyword such as `minimum` without a type applies to some instances and not to others, and a typed tree cannot express that; it is refused naming that keyword, before anything inside it."""
 ref-pointer = """`$ref` to a JSON pointer other than `#` or `#/$defs/Name`, to a URL, or to an anchor is not supported (DESIGN.md, Schema subsets: references are local and to `$defs`)."""
 empty-enum = """An `enum` with no values is refused: nothing could ever match it."""
 object-without-properties = """`{"type": "object"}` with no `properties` would be open content in JSON Schema; objects are closed, so a schema must list the properties (or give a schema-valued `additionalProperties`)."""

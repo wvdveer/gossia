@@ -146,6 +146,33 @@ impl GossiaApp {
         }
     }
 
+    /// *Go to schema definition*, on the menu of a node of a tab bound to a
+    /// schema tab (not on a schema tab itself).
+    pub(crate) fn definition_item(
+        &self,
+        ui: &mut egui::Ui,
+        path: &Path,
+        actions: &mut Vec<Action>,
+    ) {
+        if self.calc().is_schema_sheet(&self.sheet) || self.calc().schema_of(&self.sheet).is_none()
+        {
+            return;
+        }
+        if ui.button("Go to schema definition").clicked() {
+            actions.push(Action::GoToDefinition(path.clone()));
+            ui.close();
+        }
+    }
+
+    /// Shows the schema tab at where the node at `path` is defined.
+    pub(crate) fn go_to_definition(&mut self, path: &Path) {
+        let Some((tab, place)) = self.calc().definition_of(&self.sheet, path) else {
+            return;
+        };
+        self.switch_to(&tab);
+        self.reveal(&place);
+    }
+
     /// Does *Force object definition* on the node at `path`.
     pub(crate) fn force_type(&mut self, path: &Path) {
         let sheet = self.sheet.clone();

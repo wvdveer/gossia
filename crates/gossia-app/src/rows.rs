@@ -150,6 +150,12 @@ fn walk(
         Kind::Object { .. } => RowKind::Object,
         Kind::Array { .. } => RowKind::Array,
         Kind::Map { .. } => RowKind::Map,
+        // Any value: shown as what it holds, a record as a map of its keys.
+        Kind::Any => match node.map(Node::value) {
+            Some(Value::Object(_)) => RowKind::Map,
+            Some(Value::Array(_)) => RowKind::Array,
+            _ => RowKind::Scalar,
+        },
         _ => RowKind::Scalar,
     };
     let tabular = kind == RowKind::Array && open_state.tabular.contains(&path);
@@ -254,6 +260,62 @@ fn walk(
                         format!("[{i}]"),
                         Some(child),
                         true,
+                        depth + 1,
+                        open_state,
+                        out,
+                    );
+                    key.pop();
+                }
+            }
+        }
+        // Inside an `any`, everything is `any` (`ty` again).
+        Kind::Any if kind == RowKind::Array => {
+            if let Some(Value::Array(present)) = node.map(Node::value) {
+                for (i, child) in present.iter().enumerate() {
+                    if tabular && !drilled.contains(&i) {
+                        continue;
+                    }
+                    key.push(Step::Item(child.id()));
+                    if skipped.hidden(open_state, key, out) {
+                        key.pop();
+                        continue;
+                    }
+                    let name = format!("[{i}]");
+                    let at = path.index(i);
+                    walk(
+                        spec,
+                        ty,
+                        at,
+                        key,
+                        name,
+                        Some(child),
+                        true,
+                        depth + 1,
+                        open_state,
+                        out,
+                    );
+                    key.pop();
+                }
+            }
+        }
+        Kind::Any => {
+            if let Some(Value::Object(present)) = node.map(Node::value) {
+                for (name, child) in present {
+                    key.push(Step::Key(name.clone()));
+                    if skipped.hidden(open_state, key, out) {
+                        key.pop();
+                        continue;
+                    }
+                    let at = path.key(name.as_str());
+                    let name = name.clone();
+                    walk(
+                        spec,
+                        ty,
+                        at,
+                        key,
+                        name,
+                        Some(child),
+                        false,
                         depth + 1,
                         open_state,
                         out,
@@ -539,6 +601,55 @@ mod tests {
     }
 
     /// Values are shown in Python's canonical form.
+    /// A field with no `type` is `any`: shown as what it holds, a record as
+    /// its keys and a list as its items, all `any` too.
+    #[test]
+    fn a_field_of_any_type_is_shown_as_what_it_holds() {
+        let spec =
+            jsonschema::lower_str(r#"{"type": "object", "properties": {"free": {}, "n": {}}}"#)
+                .unwrap();
+        let root = json::parse(r#"{"free": {"a": [1, "x"], "b": true}, "n": 7}"#)
+            .unwrap()
+            .node;
+        let open: HashSet<Path> = ["", "free", "free.a"]
+            .iter()
+            .map(|p| {
+                if p.is_empty() {
+                    Path::root()
+                } else {
+                    p.parse().unwrap()
+                }
+            })
+            .collect();
+        let rows = build(&spec, "T", &root, &open, &HashSet::new(), &HashSet::new());
+        assert_eq!(
+            names(&rows),
+            [
+                "T",
+                "  free",
+                "    a",
+                "      [0]",
+                "      [1]",
+                "    b",
+                "  n"
+            ]
+        );
+        let labels: Vec<&str> = rows[1..].iter().map(|r| r.type_label.as_str()).collect();
+        assert!(labels.iter().all(|l| *l == "any"), "{labels:?}");
+        let kinds: Vec<RowKind> = rows[1..].iter().map(|r| r.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                RowKind::Map,
+                RowKind::Array,
+                RowKind::Scalar,
+                RowKind::Scalar,
+                RowKind::Scalar,
+                RowKind::Scalar
+            ]
+        );
+    }
+
     #[test]
     fn values_are_displayed_as_python_writes_them() {
         use chrono::NaiveDate;

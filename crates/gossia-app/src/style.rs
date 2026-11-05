@@ -95,6 +95,8 @@ pub struct Palette {
     pub boolean: Badge,
     pub object: Badge,
     pub array: Badge,
+    /// A type with no `type`: any value. Neutral, as it says nothing.
+    pub any: Badge,
     pub date: Badge,
 }
 
@@ -140,6 +142,7 @@ pub const DARK: Palette = Palette {
     boolean: badge(0x4A3520, 0xFFC46B),
     object: badge(0x243D34, 0x86D9A7),
     array: badge(0x3B2F55, 0xC7A7FF),
+    any: badge(0x33363B, 0xC9CDD3),
     date: badge(0x4A2938, 0xFF9FC0),
 };
 
@@ -178,6 +181,7 @@ pub const LIGHT: Palette = Palette {
     boolean: badge(0xFFF0D7, 0x945A00),
     object: badge(0xE3F4E9, 0x267347),
     array: badge(0xEEE8FC, 0x6240A0),
+    any: badge(0xECEEF1, 0x4A5058),
     date: badge(0xFBE7EF, 0xA33F68),
 };
 
@@ -209,6 +213,7 @@ impl Palette {
             Kind::Date | Kind::DateTime => self.date,
             Kind::Array { .. } => self.array,
             Kind::Object { .. } | Kind::Map { .. } => self.object,
+            Kind::Any => self.any,
         }
     }
 }

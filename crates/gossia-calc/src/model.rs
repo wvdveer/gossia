@@ -71,6 +71,10 @@ pub(crate) struct Formula {
     /// What it returned the last time, when its node's type refused it
     /// (`#TYPE!`): kept for *Force object definition*.
     pub rejected: Option<std::sync::Arc<gossia_core::Value>>,
+    /// The nodes of its result that did not fit their type, when the rest
+    /// did (`Computed::Partial`): the tree shows `#TYPE!` on the way to them.
+    #[serde(default)]
+    pub misfits: Vec<Path>,
 }
 
 /// The formulas of one tab, by the path of the node they are attached to.
@@ -128,6 +132,7 @@ mod tests {
             traceback: None,
             syntax_error: false,
             rejected: None,
+            misfits: Vec::new(),
         }
     }
 

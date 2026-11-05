@@ -266,3 +266,25 @@ fn an_object_or_an_array_element_has_a_complex_type_of_its_own() {
     let data = data_text(&calc);
     assert!(data.contains("<line><amount>2.5</amount></line>"), "{data}");
 }
+
+/// *Go to schema definition*: a field is its own `element` or `attribute`
+/// in the XSD tab, also when its type is a named type of its own.
+#[test]
+fn a_field_is_defined_by_its_element_in_the_xsd() {
+    let calc = book();
+    let name_at = |path: &str| {
+        let (tab, place) = calc.definition_of("Order", &p(path)).unwrap();
+        assert_eq!(tab, "Order schema");
+        let node = calc.data(&tab).unwrap().get(&place).unwrap();
+        node.get(&Path::root().key("@name"))
+            .and_then(|n| n.value().as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
+    assert_eq!(name_at("customer"), "customer");
+    assert_eq!(name_at("note"), "note", "the element, not the type Note");
+    assert_eq!(name_at("item[1].qty"), "qty");
+    assert_eq!(
+        calc.definition_of("Order", &p("")).unwrap().1,
+        p("element.complexType")
+    );
+}

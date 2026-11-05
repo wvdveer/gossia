@@ -96,17 +96,23 @@ impl Book {
             .map(|n| n.value().clone())
     }
 
+    /// The error the node holds, or else the one its formula ended in (a
+    /// result of which only parts fit keeps those parts).
     pub(super) fn error(&self, path: &str) -> Option<ErrorKind> {
         match self.get(path) {
             Some(Value::Error(e)) => Some(e.kind),
-            _ => None,
+            _ => self.formula_error(path).map(|e| e.kind),
         }
     }
 
+    fn formula_error(&self, path: &str) -> Option<gossia_core::ErrorValue> {
+        self.calc.cell("S", &p(path)).and_then(|c| c.error.cloned())
+    }
+
     pub(super) fn message(&self, path: &str) -> String {
-        match self.get(path) {
-            Some(Value::Error(e)) => e.message,
-            other => panic!("no error at {path}: {other:?}"),
+        match (self.get(path), self.formula_error(path)) {
+            (Some(Value::Error(e)), _) | (_, Some(e)) => e.message,
+            (other, None) => panic!("no error at {path}: {other:?}"),
         }
     }
 }

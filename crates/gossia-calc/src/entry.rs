@@ -81,7 +81,11 @@ pub fn classify(spec: &TypeSpec, path: &Path, text: &str) -> Result<Entered, Ent
     } else {
         text
     };
-    let value = parse_literal(kind, literal)?;
+    // On an `any` node the apostrophe also keeps what follows text (`'12`).
+    let value = match (kind, text.strip_prefix('\'')) {
+        (Kind::Any, Some(rest)) => Value::Str(rest.to_owned()),
+        _ => parse_literal(kind, literal)?,
+    };
     let issues = validate_at(spec, here.ty, &Node::new(value.clone()), path);
     if let Some(issue) = issues.first() {
         return Err(EntryError::Invalid(issue.message.clone()));
@@ -125,6 +129,24 @@ pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
             NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
                 .map(|n| Value::DateTime(DateTimeValue::Naive(n)))
                 .map_err(|_| invalid("a date and time such as 2026-10-23T14:30:00"))
+        }
+        // Any value: a whole number, a number, true or false, or else text.
+        Kind::Any => {
+            let t = text.trim();
+            if let Ok(n) = t.parse::<i64>() {
+                return Ok(Value::Int(n));
+            }
+            if let Ok(x) = t.parse::<f64>()
+                && x.is_finite()
+                && !t.chars().any(|c| c.is_alphabetic() && c != 'e' && c != 'E')
+            {
+                return Ok(Value::Float(x));
+            }
+            Ok(match t.to_ascii_lowercase().as_str() {
+                "true" => Value::Bool(true),
+                "false" => Value::Bool(false),
+                _ => Value::Str(text.to_owned()),
+            })
         }
         Kind::Array { .. } | Kind::Object { .. } | Kind::Map { .. } => Err(EntryError::Invalid(
             "this holds other values: edit them, or enter a formula that gives the whole value"
@@ -285,7 +307,8 @@ mod tests {
         "kind": {"type": "string", "enum": ["a", "b"]},
         "note": {"type": "string"},
         "items": {"type": "array", "items": {"type": "string"}},
-        "nums": {"type": "array", "items": {"type": "integer"}}
+        "nums": {"type": "array", "items": {"type": "integer"}},
+        "anything": {}
       },
       "required": ["n", "x", "flag", "name", "items", "nums"]
     }"#;
@@ -300,6 +323,23 @@ mod tests {
 
     fn classify_at(path: &str, text: &str) -> Result<Entered, EntryError> {
         classify(&spec(), &p(path), text)
+    }
+
+    /// A field with no `type` takes a whole number, a number, true or false,
+    /// or else text; an apostrophe keeps what follows text.
+    #[test]
+    fn a_field_of_any_type_reads_what_was_typed_as_what_it_looks_like() {
+        let read = |text: &str| match classify_at("anything", text) {
+            Ok(Entered::Literal(v)) => v,
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(read("12"), Value::Int(12));
+        assert_eq!(read("1.5"), Value::Float(1.5));
+        assert_eq!(read("2e3"), Value::Float(2000.0));
+        assert_eq!(read("TRUE"), Value::Bool(true));
+        assert_eq!(read("Z26 7XT"), Value::Str("Z26 7XT".into()));
+        assert_eq!(read("inf"), Value::Str("inf".into()));
+        assert_eq!(read("'12"), Value::Str("12".into()));
     }
 
     #[test]

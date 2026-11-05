@@ -427,14 +427,14 @@ fn null_and_type_lists_are_refused() {
     rejects(r#"{"type": 3}"#, "type", "#");
 }
 
+/// A schema with no `type` is any value (owner, 2026-11-06), so a keyword
+/// of one type alone is refused, and a description alone is fine.
 #[test]
-fn a_schema_must_say_its_type() {
-    rejects(r#"{"minimum": 1}"#, "type", "#");
-    rejects(
-        r#"{"type": "object", "properties": {"a": {"description": "no type"}}}"#,
-        "type",
-        "#/properties/a",
-    );
+fn a_schema_without_a_type_takes_no_keywords_of_a_type() {
+    rejects(r#"{"minimum": 1}"#, "minimum", "#");
+    let spec = lower_ok(r#"{"type": "object", "properties": {"a": {"description": "no type"}}}"#);
+    let a = spec.resolve(&"a".parse().unwrap()).unwrap();
+    assert!(matches!(spec.get(a.ty).kind, Kind::Any));
 }
 
 #[test]
@@ -645,5 +645,35 @@ fn errors_read_as_location_keyword_and_reason() {
     assert_eq!(
         e.to_string(),
         "#: `oneOf`: unions and combinators are not supported in version 1"
+    );
+}
+
+/// A schema with no `type` is any value, and what is inside it is too; its
+/// type is described as `any`. Keywords of a type do not apply to it.
+#[test]
+fn a_schema_with_no_type_is_any_value() {
+    let spec = lower_ok(
+        r#"{"type": "object", "properties": {"postcode": {}, "extra": {"title": "Extra"}}}"#,
+    );
+    let postcode = spec.resolve(&"postcode".parse().unwrap()).unwrap();
+    assert!(matches!(spec.get(postcode.ty).kind, Kind::Any));
+    assert_eq!(spec.describe(postcode.ty), "any");
+    let inside = spec.resolve(&"postcode.a[2].b".parse().unwrap()).unwrap();
+    assert_eq!(inside.ty, postcode.ty, "inside an any is any");
+    for value in [
+        r#"{"postcode": 73568}"#,
+        r#"{"postcode": "Z26 7XT"}"#,
+        r#"{"postcode": {"a": [1, "x", true]}}"#,
+    ] {
+        let data = crate::json::parse(value).unwrap().node;
+        assert!(
+            crate::validate::validate(&spec, &data).is_empty(),
+            "{value}"
+        );
+    }
+    rejects(
+        r#"{"type": "object", "properties": {"n": {"minimum": 1}}}"#,
+        "minimum",
+        "#/properties/n",
     );
 }

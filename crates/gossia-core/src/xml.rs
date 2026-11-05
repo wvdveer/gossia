@@ -396,7 +396,7 @@ fn with_inner(mut node: Node, (start, end): Inner) -> Node {
 fn scalar_of(kind: &Kind, text: &str) -> Value {
     let trimmed = text.trim();
     match kind {
-        Kind::String(_) | Kind::Enum { .. } => Value::Str(text.to_string()),
+        Kind::String(_) | Kind::Enum { .. } | Kind::Any => Value::Str(text.to_string()),
         Kind::Bool => match trimmed {
             "true" | "1" => Value::Bool(true),
             "false" | "0" => Value::Bool(false),

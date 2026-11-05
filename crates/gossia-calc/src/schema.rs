@@ -320,6 +320,30 @@ impl Calc {
         }
     }
 
+    /// Where the node at `path` of `sheet` is defined: the schema tab the
+    /// tab is bound to, and the place in that tab's tree (*Go to schema
+    /// definition*). A field is its own entry in its record (JSON Schema's
+    /// `properties`, an XSD `element` or `attribute`, a copybook item); a node
+    /// whose place cannot be told is its nearest container that can, and then
+    /// the top of the schema tab. None for a tab not bound to a schema tab.
+    pub fn definition_of(&self, sheet: &str, path: &Path) -> Option<(String, Path)> {
+        let s = self.sheets.get(sheet)?;
+        let SchemaRole::Bound(schema_sheet) = &s.schema else {
+            return None;
+        };
+        let document = &self.sheets.get(schema_sheet)?.data;
+        let format = self.schema_format(schema_sheet)?;
+        let mut at = path.clone();
+        loop {
+            if let Some(place) = place_in_schema(format, document, &s.spec, &at) {
+                return Some((schema_sheet.clone(), place));
+            }
+            if at.pop().is_none() {
+                return Some((schema_sheet.clone(), Path::root()));
+            }
+        }
+    }
+
     /// The tabs bound to a schema tab, in tab order.
     pub fn schema_users(&self, schema_sheet: &str) -> Vec<String> {
         self.sheets
@@ -764,6 +788,9 @@ impl Calc {
             map.shift_remove("$schema");
             map.shift_remove("title");
         }
+        // One result does not show which fields every result has (a source
+        // may answer differently each time), so every field found is optional.
+        all_optional(&mut schema);
         let what = format!(
             "Force object definition of {}",
             Loc::new(sheet, path.clone())
@@ -783,14 +810,7 @@ impl Calc {
                     {
                         *props = fields.clone();
                     }
-                    if let Some(Value::Array(names)) = schema
-                        .value()
-                        .as_object()
-                        .and_then(|m| m.get("required"))
-                        .map(Node::value)
-                    {
-                        *required = names.clone();
-                    }
+                    required.clear();
                 }
             })?;
             calc.put(&places.schema_sheet, &places.document_path, document)
@@ -1202,4 +1222,161 @@ fn collect_locations(
         _ => {}
     }
     stack.pop();
+}
+
+/// A JSON Schema with no `required` list left in any of its records, at any
+/// depth (for *Force object definition*). Only schema keywords are followed,
+/// so a field that happens to be called `required` stays.
+fn all_optional(schema: &mut Node) {
+    let Value::Object(map) = schema.value_mut() else {
+        return;
+    };
+    map.shift_remove("required");
+    for (key, node) in map.iter_mut() {
+        match key.as_str() {
+            "properties" | "patternProperties" | "$defs" | "definitions" => {
+                if let Value::Object(fields) = node.value_mut() {
+                    fields.values_mut().for_each(all_optional);
+                }
+            }
+            "items" | "additionalProperties" => all_optional(node),
+            "anyOf" | "oneOf" | "allOf" | "prefixItems" => {
+                if let Value::Array(items) = node.value_mut() {
+                    items.iter_mut().for_each(all_optional);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Where the node at `path` is written in a schema tab's tree, if that can
+/// be told.
+fn place_in_schema(
+    format: SchemaFormat,
+    document: &Node,
+    spec: &TypeSpec,
+    path: &Path,
+) -> Option<Path> {
+    let here = spec.resolve(path)?;
+    let source = &spec.get(here.ty).source;
+    let place = match format {
+        SchemaFormat::Xsd => {
+            // A field: its `element` or `attribute` in its record's type,
+            // rather than the type it refers to.
+            let field = match (path.segments().last(), path.parent()) {
+                (Some(Segment::Key(name)), Some(parent)) => spec
+                    .resolve(&parent)
+                    .filter(|p| matches!(spec.get(p.ty).kind, Kind::Object { .. }))
+                    .and_then(|p| xsd_fields::xsd_type_path(document, &spec.get(p.ty).source))
+                    .and_then(|record| xsd_declaration(document, &record, name)),
+                _ => None,
+            };
+            field.or_else(|| xsd_fields::xsd_type_path(document, source))
+        }
+        SchemaFormat::Copybook => copybook_item_path(document, source),
+        SchemaFormat::Json => {
+            // A field: its entry under its record's `properties`, rather than
+            // the type it refers to.
+            let field = match (path.segments().last(), path.parent()) {
+                (Some(Segment::Key(name)), Some(parent)) => spec
+                    .resolve(&parent)
+                    .filter(|p| matches!(spec.get(p.ty).kind, Kind::Object { .. }))
+                    .and_then(|p| pointer_to_path(&spec.get(p.ty).source))
+                    .map(|record| record.key("properties").key(name.clone()))
+                    .filter(|place| document.get(place).is_some()),
+                _ => None,
+            };
+            field.or_else(|| pointer_to_path(source))
+        }
+    };
+    place.filter(|place| document.get(place).is_some())
+}
+
+/// The declaration of the field `name` (`@name` for an attribute) inside the
+/// XSD type at `record`: the nearest `element` or `attribute` with that name,
+/// looked for level by level.
+fn xsd_declaration(document: &Node, record: &Path, name: &str) -> Option<Path> {
+    let (key, name) = match name.strip_prefix('@') {
+        Some(attribute) => ("attribute", attribute),
+        None => ("element", name),
+    };
+    let named = |node: &Node| {
+        node.get(&Path::root().key("@name"))
+            .and_then(|n| n.value().as_str())
+            == Some(name)
+    };
+    let mut level = vec![record.clone()];
+    while !level.is_empty() {
+        let mut next = Vec::new();
+        for at in level {
+            let Some(Value::Object(map)) = document.get(&at).map(Node::value) else {
+                continue;
+            };
+            for (k, child) in map {
+                let here = at.key(k.clone());
+                match child.value() {
+                    Value::Array(items) => {
+                        for (i, item) in items.iter().enumerate() {
+                            if k == key && named(item) {
+                                return Some(here.index(i));
+                            }
+                            next.push(here.index(i));
+                        }
+                    }
+                    Value::Object(_) => {
+                        if k == key && named(child) {
+                            return Some(here);
+                        }
+                        next.push(here);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        level = next;
+    }
+    None
+}
+
+/// The item of a copybook schema tab that a type's `source` names
+/// (`RECORD.CUSTOMER.NAME`): each name is looked for among the items below
+/// the last one found, at any depth (a group without a name of its own is
+/// not in the source). A leading name that is no item, the record's, is
+/// passed over.
+fn copybook_item_path(document: &Node, source: &str) -> Option<Path> {
+    fn find(node: &Node, at: &Path, name: &str) -> Option<Path> {
+        let Value::Array(items) = node.get(&Path::root().key("items"))?.value() else {
+            return None;
+        };
+        let list = at.key("items");
+        for (i, item) in items.iter().enumerate() {
+            let here = list.index(i);
+            let named = item
+                .get(&Path::root().key("name"))
+                .and_then(|n| n.value().as_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case(name));
+            if named {
+                return Some(here);
+            }
+            if let Some(found) = find(item, &here, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let mut at = Path::root();
+    let mut found = false;
+    for name in source.split('.').filter(|n| !n.is_empty()) {
+        let node = document.get(&at)?;
+        match find(node, &at, name) {
+            Some(place) => {
+                at = place;
+                found = true;
+            }
+            None if !found => {}
+            None => return None,
+        }
+    }
+    found.then_some(at)
 }

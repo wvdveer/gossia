@@ -269,3 +269,23 @@ fn a_renames_is_shown_as_another_layout() {
     assert_eq!(at(&calc, "CUST_ID"), Value::Int(3));
     assert_eq!(at(&calc, "CUST_NAME"), Value::Str("Al      ".into()));
 }
+
+/// *Go to schema definition*: a field is its item of the copybook.
+#[test]
+fn a_field_is_defined_by_its_item_of_the_copybook() {
+    let calc = book();
+    let name_at = |path: &str| {
+        let (tab, place) = calc.definition_of("People", &p(path)).unwrap();
+        assert_eq!(tab, "Customer");
+        let node = calc.data(&tab).unwrap().get(&place).unwrap();
+        node.get(&p("name"))
+            .and_then(|n| n.value().as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
+    assert_eq!(name_at("CUST_NAME"), "CUST-NAME");
+    assert_eq!(name_at("AREA_NUMBER"), "AREA-NUMBER");
+    assert!(
+        calc.definition_of("Customer", &Path::root()).is_none(),
+        "not on the schema tab"
+    );
+}

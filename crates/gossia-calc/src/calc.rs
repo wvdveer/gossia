@@ -254,6 +254,10 @@ pub struct Cell<'a> {
     pub stale: bool,
     /// The formula whose result contains this node, so the node is read-only.
     pub computed_by: Option<Path>,
+    /// The node is on the way to a part of its formula's result that did not
+    /// fit its type (or is that part): the formula's error, which the tree
+    /// shows here although the node holds what did fit.
+    pub misfit: Option<&'a ErrorValue>,
 }
 
 pub struct Calc {
@@ -469,6 +473,16 @@ impl Calc {
             pending: waiting && self.trusted,
             untrusted: !self.trusted && (formula.is_some() || computed_by.is_some()),
             stale: waiting && !self.trusted,
+            misfit: s
+                .formulas
+                .by_path
+                .get(computed_by.as_ref().unwrap_or(path))
+                .filter(|f| {
+                    f.misfits
+                        .iter()
+                        .any(|m| m.segments().starts_with(path.segments()))
+                })
+                .and_then(|f| f.error.as_ref()),
             computed_by,
         })
     }
@@ -971,6 +985,7 @@ impl Calc {
             traceback: None,
             syntax_error: false,
             rejected: None,
+            misfits: Vec::new(),
         };
         if let Err(e) = &syntax {
             let error = ErrorValue {
@@ -1587,9 +1602,10 @@ impl Calc {
             let _ = store(&sheet.spec, &mut sheet.data, &loc.path, &outcome.computed);
             let formulas = Arc::make_mut(&mut sheet.formulas);
             let formula = formulas.by_path.get_mut(&loc.path).expect("checked above");
-            formula.error = match outcome.computed {
-                Computed::Error(e) => Some(e),
-                _ => None,
+            formula.error = outcome.computed.error().cloned();
+            formula.misfits = match outcome.computed {
+                Computed::Partial { misfits, .. } => misfits,
+                _ => Vec::new(),
             };
             formula.traceback = outcome.traceback;
             formula.rejected = outcome.rejected;

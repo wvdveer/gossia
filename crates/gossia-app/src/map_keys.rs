@@ -24,13 +24,24 @@ pub struct KeyDialog {
 }
 
 impl GossiaApp {
-    /// Whether the node at `path` of the tab shown is a map.
+    /// Whether the node at `path` of the tab shown is a map, or a record
+    /// held by an `any`, whose keys are its own.
     pub fn is_map(&self, path: &Path) -> bool {
         let Some(spec) = self.calc().spec(&self.sheet) else {
             return false;
         };
+        let record = || {
+            self.calc()
+                .data(&self.sheet)
+                .and_then(|d| d.get(path))
+                .is_some_and(|n| matches!(n.value(), gossia_core::Value::Object(_)))
+        };
         spec.resolve(path)
-            .is_some_and(|r| matches!(spec.get(r.ty).kind, Kind::Map { .. }))
+            .is_some_and(|r| match spec.get(r.ty).kind {
+                Kind::Map { .. } => true,
+                Kind::Any => record(),
+                _ => false,
+            })
     }
 
     /// Opens *Add entry...* for the map at `map`.
@@ -84,8 +95,10 @@ impl GossiaApp {
             return Err(why);
         }
         let value = self.calc().spec(&self.sheet).and_then(|spec| {
-            match &spec.get(spec.resolve(map)?.ty).kind {
+            let ty = spec.resolve(map)?.ty;
+            match &spec.get(ty).kind {
                 Kind::Map { value } => Some(GossiaApp::default_value(spec, *value)),
+                Kind::Any => Some(GossiaApp::default_value(spec, ty)),
                 _ => None,
             }
         });

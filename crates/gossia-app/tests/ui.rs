@@ -1424,6 +1424,50 @@ fn data_text(harness: &Harness<'_, GossiaApp>) -> String {
     gossia_core::json::to_string(data, false).unwrap()
 }
 
+/// *Go to schema definition* on a node's menu shows the schema tab, with the
+/// field's entry selected; a schema tab's own nodes do not offer it.
+#[test]
+fn go_to_schema_definition_shows_the_field_on_its_schema_tab() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut GossiaApp| app.show(ui),
+            GossiaApp::new(gossia_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
+    let root = gossia_core::Path::default();
+    let schema = harness.state().calc().schema_of("Data").unwrap().to_owned();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .add_field(
+            "Data",
+            &root,
+            "price",
+            gossia_calc::FieldKind::Number,
+            false,
+        )
+        .unwrap();
+    harness.state_mut().refresh_rows();
+    settle(&mut harness);
+
+    harness.get_by_label("price").click_secondary();
+    harness.run();
+    click(&mut harness, "Go to schema definition");
+    settle(&mut harness);
+    assert_eq!(harness.state().sheet, schema);
+    assert_eq!(
+        harness.state().selection.as_ref().map(ToString::to_string),
+        Some("properties.price".to_owned())
+    );
+
+    // On the schema tab itself it is not offered.
+    harness.get_by_label("price").click_secondary();
+    harness.run();
+    assert!(harness.query_by_label("Go to schema definition").is_none());
+}
+
 /// A field whose records have no fields yet, with a formula that returns
 /// records, is `#TYPE!`; *Force object definition* on its menu defines the
 /// fields from the result, which the node then holds.

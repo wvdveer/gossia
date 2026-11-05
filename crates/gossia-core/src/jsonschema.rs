@@ -223,6 +223,8 @@ enum Ty {
     Boolean,
     Array,
     Object,
+    /// No `type`: any value.
+    Any,
 }
 
 impl Ty {
@@ -234,6 +236,7 @@ impl Ty {
             Ty::Boolean => "boolean",
             Ty::Array => "array",
             Ty::Object => "object",
+            Ty::Any => "any",
         }
     }
 
@@ -245,6 +248,7 @@ impl Ty {
             Ty::Boolean => &[],
             Ty::Array => &["items", "minItems", "maxItems"],
             Ty::Object => &["properties", "required", "additionalProperties"],
+            Ty::Any => &[],
         }
     }
 }
@@ -450,7 +454,12 @@ impl<'a> Lowerer<'a> {
                 return err(
                     key,
                     ptr,
-                    format!("does not apply to a schema of type `{}`", ty.name()),
+                    match ty {
+                        Ty::Any => {
+                            "does not apply to a schema with no `type` (any value)".to_owned()
+                        }
+                        _ => format!("does not apply to a schema of type `{}`", ty.name()),
+                    },
                 );
             }
         }
@@ -468,6 +477,7 @@ impl<'a> Lowerer<'a> {
             Ty::Integer => Kind::Integer(range(obj, ptr)?),
             Ty::Number => Kind::Number(range(obj, ptr)?),
             Ty::Boolean => Kind::Bool,
+            Ty::Any => Kind::Any,
             Ty::Array => {
                 let Some(items) = obj.get("items") else {
                     return err(
@@ -648,7 +658,8 @@ fn declared_type(obj: &IndexMap<String, Node>, ptr: &str) -> Res<Ty> {
         ),
         Some(_) => err("type", ptr, "`type` must be a type name"),
         None if obj.contains_key("enum") => Ok(Ty::String),
-        None => err("type", ptr, "every schema needs a `type`"),
+        // No `type` is any value, as in JSON Schema.
+        None => Ok(Ty::Any),
     }
 }
 

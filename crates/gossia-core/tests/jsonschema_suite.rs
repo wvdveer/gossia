@@ -236,7 +236,14 @@ fn json_schema_test_suite_selection() {
                     }
                     Err(LoadError::Schema(e)) => {
                         let named = |k: &&str| k.split(" (").next() == Some(e.keyword.as_str());
-                        if !outside.iter().any(named) && !outside.contains(BOOLEAN_SCHEMA) {
+                        // A keyword of a type on a schema with no `type` is
+                        // refused by a rule of its own, wherever it is, so the
+                        // keyword outside may be further in.
+                        let typeless = e.message.contains("with no `type`");
+                        if !outside.iter().any(named)
+                            && !outside.contains(BOOLEAN_SCHEMA)
+                            && !typeless
+                        {
                             failures.push(format!(
                                 "{id}: refused, but the error names `{}` and not one of {outside:?}: {e}",
                                 e.keyword

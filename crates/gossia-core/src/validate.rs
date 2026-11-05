@@ -63,6 +63,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Object { .. } => "object",
         Kind::Map { .. } => "map",
         Kind::Enum { .. } => "string",
+        Kind::Any => "any",
     }
 }
 
@@ -90,6 +91,8 @@ fn check(spec: &TypeSpec, ty: TypeId, node: &Node, path: &Path, issues: &mut Vec
         );
     };
     match (&def.kind, value) {
+        // Anything goes, at any depth (an error value was skipped above).
+        (Kind::Any, _) => {}
         (Kind::String(c), Value::Str(s)) => check_string(c, s, &mut push),
         (Kind::Enum { values, strings }, Value::Str(s)) => {
             if !values.iter().any(|v| v == s) {

@@ -1109,6 +1109,7 @@ impl Calc {
             traceback: None,
             syntax_error: false,
             rejected: None,
+            misfits: Vec::new(),
         };
         if let Err(e) = &syntax {
             formula.syntax_error = true;

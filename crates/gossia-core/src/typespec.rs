@@ -125,6 +125,11 @@ impl TypeSpec {
                     ty: *items,
                     required: true,
                 },
+                // Inside an `any`, everything is `any`.
+                (Kind::Any, segment) => Resolved {
+                    ty: here.ty,
+                    required: matches!(segment, Segment::Index(_)),
+                },
                 _ => return None,
             };
         }
@@ -166,6 +171,7 @@ impl TypeSpec {
             Kind::Object { .. } => "object".to_owned(),
             Kind::Array { items, .. } => format!("array of {}", self.describe(*items)),
             Kind::Map { value } => format!("map of {}", self.describe(*value)),
+            Kind::Any => "any".to_owned(),
         }
     }
 
@@ -226,6 +232,10 @@ pub enum Kind {
         values: Vec<String>,
         strings: StringConstraints,
     },
+    /// Any value at all: text, a number, a boolean, a record or a list, with
+    /// anything inside. A JSON Schema with no `type` (owner, 2026-11-06); the
+    /// Type column calls it `any`. What is inside an `any` is `any` too.
+    Any,
 }
 
 /// A field of an object type.

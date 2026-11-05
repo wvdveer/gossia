@@ -88,6 +88,8 @@ pub(crate) enum Action {
     AddField(Path),
     /// *Force object definition*: the field's type from its formula's result.
     ForceType(Path),
+    /// *Go to schema definition*: the schema tab, at where the node is defined.
+    GoToDefinition(Path),
     RenameField(Path, String),
     DeleteField(Path, String),
     ReorderFields(Path, String, String),
@@ -1205,6 +1207,7 @@ impl GossiaApp {
             }
             Action::DeleteComment(path) => self.delete_comment(&path),
             Action::ForceType(path) => self.force_type(&path),
+            Action::GoToDefinition(path) => self.go_to_definition(&path),
             Action::AddField(..)
             | Action::RenameField(..)
             | Action::DeleteField(..)
@@ -1378,7 +1381,18 @@ impl GossiaApp {
         let untrusted = cell.as_ref().is_some_and(|c| c.untrusted);
         let stale = cell.as_ref().is_some_and(|c| c.stale);
         let computed_by = cell.as_ref().and_then(|c| c.computed_by.clone());
-        let value = row.node.as_ref().map(|n| n.value());
+        // On the way to a part of a result that did not fit: the formula's
+        // error, in place of what the node holds of the parts that did.
+        let misfit = cell
+            .as_ref()
+            .and_then(|c| c.misfit)
+            .filter(|_| {
+                row.node
+                    .as_ref()
+                    .is_some_and(|n| !matches!(n.value(), Value::Error(_)))
+            })
+            .map(|e| Value::Error(e.clone()));
+        let value = misfit.as_ref().or(row.node.as_ref().map(|n| n.value()));
         let is_error = matches!(value, Some(Value::Error(_)));
         let editable = !row.unrecognised && computed_by.is_none();
 
@@ -1756,6 +1770,7 @@ impl GossiaApp {
         let field = self.field_of(path);
         self.field_menu_items(ui, add_to.as_ref(), field.as_ref(), actions);
         self.force_type_item(ui, path, actions);
+        self.definition_item(ui, path, actions);
         if row.node.is_some() {
             let at = ui.ctx().pointer_interact_pos().unwrap_or_default();
             self.comment_menu_items(ui, path, at, actions, true);
