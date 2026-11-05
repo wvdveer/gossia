@@ -25,6 +25,12 @@ pub fn write(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Writes the icon at one size to `file`.
+pub fn write_one(size: u32, file: &Path) -> Result<(), String> {
+    std::fs::write(file, png(size, &app_icon::pixels(size)))
+        .map_err(|e| format!("{}: {e}", file.display()))
+}
+
 /// An RGBA image as a PNG file. The image data is zlib with stored
 /// (uncompressed) blocks: the icons are small, and nothing more is needed
 /// than the standard library.

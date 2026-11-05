@@ -27,6 +27,8 @@ cargo xtask <command>
                                  headless Chromium (needs Playwright for Python)
   vscode [--test-control]        the wasm version copied into the VS Code extension (vscode/media/pkg)
   vscode-test                    the extension's tests in a downloaded VS Code (needs Node.js)
+  vsix                           the extension packed as target/vsix/gossia-<version>.vsix, with the
+                                 release build of the wasm version (needs Node.js)
   ci                             everything the blocking CI jobs run: lint, test, e2e
 ";
 
@@ -82,6 +84,10 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("vscode-test") => {
             fetch_vendor::ensure_required(&root)?;
             vscode_test(&root)
+        }
+        Some("vsix") => {
+            fetch_vendor::ensure_required(&root)?;
+            vsix(&root).map(|_| ())
         }
         Some("icons") => match args.get(1) {
             Some(dir) => icons::write(Path::new(dir)),
@@ -334,16 +340,63 @@ fn vscode(root: &Path, test_control: bool) -> Result<(), String> {
 fn vscode_test(root: &Path) -> Result<(), String> {
     vscode(root, true)?;
     let dir = root.join("vscode");
-    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-    if !dir.join("node_modules").is_dir() {
-        let install = if dir.join("package-lock.json").is_file() {
-            "ci"
-        } else {
-            "install"
-        };
-        run_in(&dir, npm, &[install])?;
-    }
+    npm_packages(&dir)?;
     run_in(&dir, "node", &["test/run.js"])
+}
+
+/// Installs the extension's Node.js packages when they are missing.
+fn npm_packages(dir: &Path) -> Result<(), String> {
+    if dir.join("node_modules").is_dir() {
+        return Ok(());
+    }
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let install = if dir.join("package-lock.json").is_file() {
+        "ci"
+    } else {
+        "install"
+    };
+    run_in(dir, npm, &[install])
+}
+
+/// Packs the extension with `vsce` (DESIGN.md, Web port, 0.3.0, In VS Code):
+/// the release build of the wasm version copied in, the licence and the icon
+/// (drawn as the window's is) put beside `package.json`, and the result in
+/// `target/vsix`. The extension's version must be the workspace's. Gives the
+/// file.
+fn vsix(root: &Path) -> Result<PathBuf, String> {
+    let dir = root.join("vscode");
+    let manifest = std::fs::read_to_string(dir.join("package.json"))
+        .map_err(|e| format!("cannot read vscode/package.json: {e}"))?;
+    let version = locked_version(root, "gossia-app")?;
+    if !manifest.contains(&format!("\"version\": \"{version}\"")) {
+        return Err(format!(
+            "vscode/package.json must have the workspace's version, {version}"
+        ));
+    }
+    vscode(root, false)?;
+    std::fs::copy(root.join("LICENSE"), dir.join("LICENSE"))
+        .map_err(|e| format!("cannot copy LICENSE: {e}"))?;
+    icons::write_one(128, &dir.join("media").join("icon.png"))?;
+    npm_packages(&dir)?;
+    let out = root.join("target").join("vsix");
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let file = out.join(format!("gossia-{version}.vsix"));
+    let file_arg = file.to_string_lossy().into_owned();
+    // The extension needs none of its Node.js packages at run time: they are
+    // the tools to test and pack it, left out by .vscodeignore.
+    run_in(
+        &dir,
+        "node",
+        &[
+            "node_modules/@vscode/vsce/vsce",
+            "package",
+            "--no-dependencies",
+            "--out",
+            &file_arg,
+        ],
+    )?;
+    println!("packed {}", file.display());
+    Ok(file)
 }
 
 /// Runs a program in a folder, failing when it fails.

@@ -129,6 +129,45 @@ jobs:
           name: web-screenshots
           path: target/web-test/screenshots/
 
+  # The VS Code extension (DESIGN.md, Web port, 0.3.0, In VS Code): its tests
+  # in a downloaded VS Code under a virtual display, then, for pushes to main,
+  # the .vsix packed with the release build and put in the Gitea package
+  # registry. Node.js comes from actions/setup-node, into the runner's tool
+  # cache. Advisory until the runner is known to have the libraries VS Code
+  # needs (as Chromium's for the web job) and xvfb-run.
+  vscode:
+    name: VS Code
+    runs-on: [self-hosted, gossia]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      # Stable VS Code, which the downloader keeps in target/vscode-test; no
+      # other VS Code runs on the runner.
+      - run: GOSSIA_VSCODE_VERSION=stable xvfb-run -a cargo xtask vscode-test
+      - name: Pack the .vsix
+        if: github.event_name == 'push'
+        run: cargo xtask vsix
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: vscode-extension
+          path: target/vsix/*.vsix
+      # Without the secrets the .vsix is packed but not published; the runner
+      # must reach the Gitea server.
+      - name: Publish the .vsix
+        if: github.event_name == 'push'
+        env:
+          GITEA_URL: ${{ secrets.GITEA_URL }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: bash packaging/vscode/publish-vsix.sh
+
   # The Windows installer, cross-built on Linux (packaging/windows/build-msi.sh:
   # cargo-xwin and wixl). Advisory, and only for pushes to main: a first run
   # downloads the Windows SDK and every run compiles the release application.
@@ -158,7 +197,7 @@ jobs:
   sweep:
     name: Sweep target
     runs-on: [self-hosted, gossia]
-    needs: [lint, test, vendor, e2e, snapshots, web, windows-installer]
+    needs: [lint, test, vendor, e2e, snapshots, web, vscode, windows-installer]
     if: always()
     steps:
       - name: Delete stale build files
