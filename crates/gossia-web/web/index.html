@@ -15,12 +15,13 @@
 <body>
 <!-- The application in the plain browser page, with the test host behind the
      host interface (DESIGN.md, Web port, 0.3.0). Add ?open=<file> to open a
-     workbook served beside this page, or ?sample for the sample workbook. -->
+     workbook served beside this page, or ?sample for the sample workbook. The
+     test build is driven by harness.html beside it. -->
 <canvas id="app"></canvas>
 <div id="loading">Loading Gossia...</div>
 <script type="module">
-import init, { start_app, worker_message, file_picked, fetch_answered, fetch_failed, last_panic }
-  from './pkg/gossia_web.js';
+import init, * as gossia from './pkg/gossia_web.js';
+const { start_app, worker_message, file_picked, fetch_answered, fetch_failed, last_panic } = gossia;
 
 // What the test host did, for the tests to look at.
 const record = { workers: 0, saves: [], files: [], picks: [], dirty: false, opened: [],
@@ -160,6 +161,13 @@ const host = {
     }
     await start_app(document.getElementById('app'), host, name, bytes, query.has('sample'));
     document.getElementById('loading').remove();
+    // The test build's commands (the test control protocol), for the
+    // harness page: gossiaControl(cmd, args) gives the result, or fails with
+    // the error. A release build has no control().
+    if (gossia.control) {
+      window.gossiaControl = async (cmd, args = null) =>
+        JSON.parse(await gossia.control(cmd, JSON.stringify(args)));
+    }
     window.appStarted = true;
   } catch (err) {
     let panic = null;

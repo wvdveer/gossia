@@ -2517,6 +2517,7 @@ dependencies = [
  "gossia-calc",
  "gossia-core",
  "js-sys",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

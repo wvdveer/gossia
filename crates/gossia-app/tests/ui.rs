@@ -825,6 +825,39 @@ fn the_control_commands_drive_the_window_in_process() {
     assert!(has(&harness, "Ready"));
 }
 
+/// `drop` with `files` drops them as the browser does: given by name and
+/// text, imported as dropped files are, and a workbook refused.
+#[test]
+fn the_drop_command_takes_files_as_text_as_the_page_drops_them() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut GossiaApp| app.show(ui),
+            GossiaApp::new(gossia_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
+    let mut send = |cmd: &str, args: serde_json::Value| {
+        let result = gossia_app::control::run(harness.state_mut(), cmd, &args);
+        harness.run();
+        result
+    };
+    let dropped = send(
+        "drop",
+        serde_json::json!({ "files": [{ "name": "Prices.json", "text": "{\"a\": 1.5}" }] }),
+    )
+    .unwrap();
+    assert_eq!(dropped["tabs"], serde_json::json!(["Prices"]));
+    send("tab", serde_json::json!({ "name": "Prices" })).unwrap();
+    let cell = send("cell", serde_json::json!({ "path": "a" })).unwrap();
+    assert_eq!(cell["value"], serde_json::json!(1.5));
+    let refused = send(
+        "drop",
+        serde_json::json!({ "files": [{ "name": "Book.gossia", "text": "" }] }),
+    )
+    .unwrap_err();
+    assert!(refused.contains("is a workbook"), "{refused}");
+}
+
 #[test]
 fn a_module_that_failed_is_counted_in_the_status_bar_and_listed_in_the_issues_panel() {
     let mut harness = window();

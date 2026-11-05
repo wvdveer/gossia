@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gossia web test harness</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  p.note { color: #555; font-size: 0.9rem; }
+  button { padding: 0.5rem 1rem; margin: 0.25rem 0.5rem 0.25rem 0; cursor: pointer; }
+  pre#log { background: #111; color: #ddd; padding: 1rem; height: 460px; overflow-y: auto;
+            white-space: pre-wrap; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<h1>Gossia web test harness</h1>
+<p class="note">
+  Drives the test build of the application (<code>cargo xtask web --test-control</code>)
+  in other tabs of this browser, through its <code>gossiaControl</code> function: the
+  commands of the desktop's end-to-end tests (DESIGN.md, Web port, 0.3.0, Testing).
+  This page and the application must be served from the same origin, and popups must
+  be allowed for it. Each run clears Gossia's storage for this origin first.
+  Add <code>?auto</code> to run everything on load, as the Playwright script does.
+</p>
+
+<div>
+  <button id="runEdit">Edit and recalculate</button>
+  <button id="runHost">The test host</button>
+  <button id="runAll">Run all</button>
+</div>
+
+<pre id="log"></pre>
+
+<script src="harness.js"></script>
+<script src="tests-edit.js"></script>
+<script src="tests-host.js"></script>
+<script>
+  const h = window.harness;
+  h.attachLog(document.getElementById('log'));
+
+  // Runs suites one after another; a suite that throws ends itself, not the
+  // others. Leaves the result in window.harnessDone for the Playwright script.
+  async function run(suites) {
+    window.harnessDone = null;
+    h.resetResults();
+    for (const suite of suites) {
+      try {
+        await suite();
+      } catch (e) {
+        h.logLine(`  (suite ended: ${h.message(e)})`);
+      } finally {
+        h.closeApps();
+      }
+    }
+    h.summary();
+    window.harnessDone = { ...h.results, log: h.logText() };
+  }
+
+  const all = [runEditTests, runHostTests];
+  document.getElementById('runEdit').addEventListener('click', () => run([runEditTests]));
+  document.getElementById('runHost').addEventListener('click', () => run([runHostTests]));
+  document.getElementById('runAll').addEventListener('click', () => run(all));
+  if (new URLSearchParams(location.search).has('auto')) run(all);
+</script>
+
+</body>
+</html>

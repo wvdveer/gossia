@@ -85,7 +85,7 @@ pub fn fetch_failed(id: f64, message: String) {
     repaint();
 }
 
-fn repaint() {
+pub(crate) fn repaint() {
     CONTEXT.with(|ctx| {
         if let Some(ctx) = &*ctx.borrow() {
             ctx.request_repaint();
@@ -274,6 +274,8 @@ pub async fn start_app(
             eframe::WebOptions::default(),
             Box::new(move |cc| {
                 CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(cc.egui_ctx.clone()));
+                #[cfg(feature = "test-control")]
+                let app = crate::control::Controlled::new(app);
                 Ok(Box::new(app))
             }),
         )

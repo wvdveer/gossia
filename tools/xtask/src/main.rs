@@ -21,7 +21,10 @@ cargo xtask <command>
   e2e                            end-to-end tests on the running application (under xvfb-run on Linux without a display)
   snapshots                      visual snapshot tests (needs a graphics adapter)
   icons <dir>                    the icon as PNG files for the packages (16 to 512 pixels)
-  web                            the wasm worker and its probe page, in target/web (serve that folder)
+  web [--test-control]           the wasm version and its pages, in target/web (serve that folder);
+                                 with --test-control the test build and the harness, in target/web-test
+  web-test                       the test build of the wasm version, driven by the harness page in
+                                 headless Chromium (needs Playwright for Python)
   ci                             everything the blocking CI jobs run: lint, test, e2e
 ";
 
@@ -56,7 +59,15 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         Some("web") => {
             fetch_vendor::ensure_required(&root)?;
-            web(&root)
+            match args.get(1).map(String::as_str) {
+                None => web(&root, false).map(|_| ()),
+                Some("--test-control") => web(&root, true).map(|_| ()),
+                Some(other) => Err(format!("web takes --test-control, not {other}")),
+            }
+        }
+        Some("web-test") => {
+            fetch_vendor::ensure_required(&root)?;
+            web_test(&root)
         }
         Some("icons") => match args.get(1) {
             Some(dir) => icons::write(Path::new(dir)),
@@ -155,6 +166,9 @@ fn lint(root: &Path) -> Result<(), String> {
             "--lib",
             "--target",
             WASM_TARGET,
+            // The test build's control() too.
+            "--features",
+            "gossia-web/test-control",
             "--",
             "-D",
             "warnings",
@@ -189,21 +203,32 @@ fn lint(root: &Path) -> Result<(), String> {
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 /// Builds the wasm version (`gossia-web`) in release, makes its JavaScript
-/// glue with `wasm-bindgen`, and puts it beside its pages in `target/web`. The `wasm-bindgen` command-line tool must be the version the
-/// lock file has, so that version is installed into `target/wasm-tools` the
-/// first time.
-fn web(root: &Path) -> Result<(), String> {
-    cargo(
-        root,
-        &[
-            "build",
-            "-p",
-            "gossia-web",
-            "--release",
-            "--target",
-            WASM_TARGET,
-        ],
-    )?;
+/// glue with `wasm-bindgen`, and puts it beside its pages in `target/web`.
+/// The `wasm-bindgen` command-line tool must be the version the lock file
+/// has, so that version is installed into `target/wasm-tools` the first time.
+///
+/// `test_control` builds the test build instead (the `test-control`
+/// feature, with `control()` on the page), with the harness page beside it,
+/// in `target/web-test`. Gives the folder.
+fn web(root: &Path, test_control: bool) -> Result<PathBuf, String> {
+    let mut build = vec![
+        "build",
+        "-p",
+        "gossia-web",
+        "--release",
+        "--target",
+        WASM_TARGET,
+    ];
+    if test_control {
+        // Its own target folder, so the two builds do not replace each other.
+        build.extend([
+            "--features",
+            "test-control",
+            "--target-dir",
+            "target/web-test-build",
+        ]);
+    }
+    cargo(root, &build)?;
     let version = locked_version(root, "wasm-bindgen")?;
     let tools = root.join("target").join("wasm-tools");
     let bindgen = tools
@@ -229,9 +254,12 @@ fn web(root: &Path) -> Result<(), String> {
             ],
         )?;
     }
-    let out = root.join("target").join("web");
+    let out = root
+        .join("target")
+        .join(if test_control { "web-test" } else { "web" });
     let wasm = root
         .join("target")
+        .join(if test_control { "web-test-build" } else { "" })
         .join(WASM_TARGET)
         .join("release")
         .join("gossia_web.wasm");
@@ -247,18 +275,54 @@ fn web(root: &Path) -> Result<(), String> {
     }
     // The pages and scripts beside the glue: the application's page with its
     // test host, the worker, and the worker protocol's probe.
-    let page = root.join("crates").join("gossia-web").join("web");
-    let entries = std::fs::read_dir(&page).map_err(|e| format!("{}: {e}", page.display()))?;
+    let web = root.join("crates").join("gossia-web");
+    copy_files(&web.join("web"), &out)?;
+    if test_control {
+        // The harness page and its scripts; the Playwright script stays.
+        copy_files(&web.join("harness"), &out)?;
+        let _ = std::fs::remove_file(out.join("run.py"));
+    }
+    println!("built {}", out.display());
+    Ok(out)
+}
+
+/// Copies the files (not the folders) of `from` into `to`.
+fn copy_files(from: &Path, to: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.path().is_file() {
             let name = entry.file_name();
-            std::fs::copy(entry.path(), out.join(&name))
+            std::fs::copy(entry.path(), to.join(&name))
                 .map_err(|e| format!("cannot copy {}: {e}", name.to_string_lossy()))?;
         }
     }
-    println!("built {}", out.display());
     Ok(())
+}
+
+/// Builds the test build of the wasm version and runs the harness page in
+/// headless Chromium with the Playwright script (DESIGN.md, Web port, 0.3.0,
+/// Testing). `GOSSIA_PYTHON` names the Python to use.
+fn web_test(root: &Path) -> Result<(), String> {
+    let out = web(root, true)?;
+    let python = std::env::var("GOSSIA_PYTHON")
+        .unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.to_owned());
+    let script = root
+        .join("crates")
+        .join("gossia-web")
+        .join("harness")
+        .join("run.py");
+    println!("+ {python} {} {}", script.display(), out.display());
+    let status = Command::new(&python)
+        .arg(&script)
+        .arg(&out)
+        .status()
+        .map_err(|e| format!("cannot run {python}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("the web harness failed".to_owned())
+    }
 }
 
 /// The version of a package in the workspace's `Cargo.lock`.

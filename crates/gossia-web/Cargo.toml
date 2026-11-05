@@ -23,6 +23,12 @@ wasm-bindgen-futures = "0.4.79"
 # that makes the JavaScript glue (`cargo xtask web` installs that version).
 wasm-bindgen = "0.2.129"
 js-sys = "0.3.106"
+serde_json = "1.0.154"
+
+# The test build: `control(cmd, args)` on the page, for the harness page
+# (DESIGN.md, Web port, 0.3.0, Testing). Release builds never enable it.
+[features]
+test-control = []
 
 [lints]
 workspace = true

@@ -12,6 +12,8 @@
 
 #![cfg(target_family = "wasm")]
 
+#[cfg(feature = "test-control")]
+pub mod control;
 pub mod page;
 
 use std::cell::RefCell;

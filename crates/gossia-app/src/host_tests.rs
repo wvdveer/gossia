@@ -163,9 +163,13 @@ fn save_gives_the_host_the_workbook_file() {
     assert_eq!(app.notice, None);
     let calls = fake.0.borrow();
     assert_eq!(calls.workbooks.len(), 1);
-    assert_eq!(calls.workbooks[0].0, "Untitled");
+    assert_eq!(calls.workbooks[0].0, "Untitled.gossia");
     assert!(calls.workbooks[0].1.starts_with(b"PK"), "a zip");
     assert!(!app.is_dirty());
+    drop(calls);
+    // The next save keeps that name.
+    app.begin_save();
+    assert_eq!(fake.0.borrow().workbooks[1].0, "Untitled.gossia");
 }
 
 #[test]

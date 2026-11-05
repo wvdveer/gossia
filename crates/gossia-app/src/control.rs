@@ -132,18 +132,33 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
         // Drops files on the window, as dragging them from a file manager
         // does, and presses Import in each import dialog that opens, with
         // its choices as they are. Gives the tabs made.
+        // In place of `paths`, `files` gives each file as `name` and `text`,
+        // dropped as the browser drops them (the page has no files of its own).
         "drop" => {
-            let paths: Vec<std::path::PathBuf> = args
-                .get("paths")
-                .and_then(Json::as_array)
-                .ok_or("drop needs paths")?
-                .iter()
-                .map(|p| p.as_str().map(std::path::PathBuf::from))
-                .collect::<Option<_>>()
-                .ok_or("drop needs paths as text")?;
             app.imports.clear();
             app.notice = None;
-            app.drop_files(paths);
+            if let Some(files) = args.get("files").and_then(Json::as_array) {
+                for file in files {
+                    let name = text_arg(file, "name")?;
+                    let text = text_arg(file, "text")?;
+                    crate::host::picked(crate::host::Picked {
+                        purpose: crate::host::purpose::DROP.to_owned(),
+                        name: name.to_owned(),
+                        bytes: text.as_bytes().to_vec(),
+                    });
+                }
+                app.receive_picked();
+            } else {
+                let paths: Vec<std::path::PathBuf> = args
+                    .get("paths")
+                    .and_then(Json::as_array)
+                    .ok_or("drop needs paths or files")?
+                    .iter()
+                    .map(|p| p.as_str().map(std::path::PathBuf::from))
+                    .collect::<Option<_>>()
+                    .ok_or("drop needs paths as text")?;
+                app.drop_files(paths);
+            }
             if let Some(notice) = app.notice.take() {
                 return Err(notice);
             }
@@ -496,8 +511,12 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             app.refresh_rows();
             Ok(json!({ "tabs": app.calc().tab_names() }))
         }
+        // In a host the bytes go to the host, as Ctrl+S gives them.
         "save" => {
-            app.save()?;
+            match crate::host::current() {
+                Some(host) => app.save_to_host(&*host)?,
+                None => app.save()?,
+            }
             Ok(Json::Null)
         }
         "save_as" => {

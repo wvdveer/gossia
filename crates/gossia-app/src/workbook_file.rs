@@ -383,7 +383,11 @@ impl GossiaApp {
     /// (or asks where, for a new one).
     pub(crate) fn save_to_host(&mut self, host: &dyn crate::host::Host) -> Result<(), String> {
         let (bytes, meta) = self.workbook_bytes()?;
-        let name = self.file_name();
+        // A new workbook is offered under the name Save As would suggest.
+        let name = match self.doc.path {
+            Some(_) => self.file_name(),
+            None => format!("Untitled.{EXTENSION}"),
+        };
         host.save_workbook(&name, bytes);
         self.saved(meta, Path::new(&name));
         Ok(())
