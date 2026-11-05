@@ -3,7 +3,7 @@
 //! tree.
 
 use gossia_core::validate::validate_at;
-use gossia_core::{ErrorKind, ErrorValue, Kind, Node, Path, Segment, TypeSpec, Value};
+use gossia_core::{ErrorKind, ErrorValue, Kind, Node, Path, Segment, TypeId, TypeSpec, Value};
 use indexmap::IndexMap;
 
 use crate::engine::Failure;
@@ -89,6 +89,13 @@ fn check(
             (Computed::Absent, None, None)
         };
     }
+    // A null in an optional field is that field left absent, as `None` at the
+    // node itself is, and as a null is taken on import.
+    let value = if has_null(&value) {
+        without_optional_nulls(spec, here.ty, &value)
+    } else {
+        value
+    };
     let issues = validate_at(spec, here.ty, &Node::new(value.clone()), &loc.path);
     match issues.first() {
         Some(issue) => (
@@ -100,6 +107,54 @@ fn check(
             Some(value),
         ),
         None => (Computed::Value(value), None, None),
+    }
+}
+
+/// Whether a result holds a null anywhere (below its top).
+fn has_null(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Array(items) => items.iter().any(|i| has_null(i.value())),
+        Value::Object(map) => map.values().any(|v| has_null(v.value())),
+        _ => false,
+    }
+}
+
+/// A result with the nulls in its optional fields taken out, following the
+/// type. A null in a required field or as an item stays, for the check to
+/// refuse.
+fn without_optional_nulls(spec: &TypeSpec, ty: TypeId, value: &Value) -> Value {
+    match (&spec.get(ty).kind, value) {
+        (Kind::Object { fields }, Value::Object(map)) => Value::Object(
+            map.iter()
+                .filter_map(
+                    |(name, node)| match fields.iter().find(|f| &f.name == name) {
+                        Some(f) if !f.required && matches!(node.value(), Value::Null) => None,
+                        Some(f) => Some((
+                            name.clone(),
+                            Node::new(without_optional_nulls(spec, f.ty, node.value())),
+                        )),
+                        None => Some((name.clone(), node.clone())),
+                    },
+                )
+                .collect(),
+        ),
+        (Kind::Array { items, .. }, Value::Array(list)) => Value::Array(
+            list.iter()
+                .map(|i| Node::new(without_optional_nulls(spec, *items, i.value())))
+                .collect(),
+        ),
+        (Kind::Map { value: of }, Value::Object(map)) => Value::Object(
+            map.iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        Node::new(without_optional_nulls(spec, *of, v.value())),
+                    )
+                })
+                .collect(),
+        ),
+        (_, other) => other.clone(),
     }
 }
 
@@ -147,4 +202,53 @@ pub(crate) fn store(
         data.set(&prefix, empty).map_err(|e| e.to_string())?;
     }
     data.set(path, value).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use gossia_core::{ErrorKind, Path, Value, json, jsonschema};
+
+    use super::{Computed, finish};
+    use crate::model::Loc;
+
+    const SCHEMA: &str = r#"{"type": "object", "properties": {
+        "a": {"type": "string"},
+        "b": {"type": "string"},
+        "inner": {"type": "object", "properties": {"c": {"type": "integer"}}},
+        "list": {"type": "array", "items": {"type": "string"}}
+    }, "required": ["a"]}"#;
+
+    fn checked(result: &str) -> Computed {
+        let spec = jsonschema::lower_str(SCHEMA).unwrap();
+        let value = json::parse(result).unwrap().node.value().clone();
+        finish(&spec, &Loc::new("T", Path::root()), Ok(value)).computed
+    }
+
+    fn kind(computed: &Computed) -> Option<ErrorKind> {
+        match computed {
+            Computed::Error(e) => Some(e.kind),
+            _ => None,
+        }
+    }
+
+    /// A null in an optional field, at any depth, is the field left absent.
+    #[test]
+    fn a_null_in_an_optional_field_is_that_field_absent() {
+        let computed = checked(r#"{"a": "x", "b": null, "inner": {"c": null}}"#);
+        let Computed::Value(Value::Object(map)) = &computed else {
+            panic!("{computed:?}");
+        };
+        assert!(!map.contains_key("b"));
+        assert!(matches!(map["inner"].value(), Value::Object(inner) if inner.is_empty()));
+    }
+
+    /// A null in a required field, or as an item, is still refused.
+    #[test]
+    fn a_null_in_a_required_field_or_as_an_item_is_refused() {
+        assert_eq!(kind(&checked(r#"{"a": null}"#)), Some(ErrorKind::Type));
+        assert_eq!(
+            kind(&checked(r#"{"a": "x", "list": ["y", null]}"#)),
+            Some(ErrorKind::Type)
+        );
+    }
 }

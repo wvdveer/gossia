@@ -624,6 +624,59 @@ fn force_object_definition_types_a_field_from_the_records_its_formula_returned()
     );
 }
 
+/// A response shaped as randomuser.me's: an array of nested records, with a
+/// null among them, and a record beside it. Defined from the root, the
+/// result fits and is kept.
+#[test]
+fn force_object_definition_on_the_root_takes_nested_records_and_arrays() {
+    let mut b = Book::new();
+    let empty = r#"{"type": "object", "properties": {}}"#;
+    b.calc
+        .add_sheet(
+            "Data",
+            jsonschema::lower_str(empty).unwrap(),
+            json::parse("{}").unwrap().node,
+        )
+        .unwrap();
+    b.calc
+        .add_schema_sheet("Data schema", json::parse(empty).unwrap().node)
+        .unwrap();
+    b.calc.bind_schema("Data", "Data schema").unwrap();
+    b.calc.set_auto_update("Data schema", true).unwrap();
+    // The response, in a tab of its own with the schema inferred from it.
+    let response = json::parse(
+        r#"{"results": [{"gender": "female", "name": {"title": "Ms", "first": "Ann"},
+             "id": {"name": "", "value": null}, "dob": {"age": 41}}],
+            "info": {"seed": "abc", "results": 1, "page": 1, "version": "1.4"}}"#,
+    )
+    .unwrap()
+    .node;
+    let inferred = gossia_core::infer::infer_json(&response).schema;
+    let inferred = json::to_string(&inferred, false).unwrap();
+    b.calc
+        .add_sheet("Api", jsonschema::lower_str(&inferred).unwrap(), response)
+        .unwrap();
+    b.calc.set_formula("Data", &p(""), "Api").unwrap();
+    b.run();
+    assert!(b.calc.force_type_offered("Data", &p("")));
+    b.calc.force_type("Data", &p("")).unwrap();
+    b.run();
+    // id.value is null: the inferred type makes it optional, and the null in
+    // the result is that field left absent, so the result fits.
+    let cell = b.calc.cell("Data", &p("")).map(|c| format!("{:?}", c.node));
+    assert!(!format!("{cell:?}").contains("Error"), "{cell:?}");
+    let data = json::to_string(b.calc.data("Data").unwrap(), false).unwrap();
+    assert!(data.contains(r#""id":{"name":""}"#), "{data}");
+    assert!(data.contains(r#""version":"1.4""#), "{data}");
+    assert_eq!(
+        b.calc
+            .field_places("Data", &p("results[0]"))
+            .unwrap()
+            .fields,
+        names(&["gender", "name", "id", "dob"])
+    );
+}
+
 #[test]
 fn force_object_definition_on_the_root_gives_its_record_the_fields_returned() {
     let mut b = Book::new();
