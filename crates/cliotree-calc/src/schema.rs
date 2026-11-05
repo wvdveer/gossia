@@ -693,16 +693,17 @@ impl Calc {
     }
 
     /// Whether *Force object definition* is offered on the node at `path`:
-    /// it is a field whose type is a record with no fields, or an array of
-    /// such records, and its formula returned a record (or an array of
-    /// records) with fields, which the type refused.
+    /// it is a field (or the root) whose type is a record with no fields, or
+    /// a field that is an array of such records, and its formula returned a
+    /// record (or an array of records) with fields, which the type refused.
     pub fn force_type_offered(&self, sheet: &str, path: &Path) -> bool {
         self.force_type_source(sheet, path).is_some()
     }
 
     /// The result *Force object definition* defines the type from.
     fn force_type_source(&self, sheet: &str, path: &Path) -> Option<&Value> {
-        if !matches!(path.segments().last(), Some(Segment::Key(_))) {
+        let root = path.is_root();
+        if !root && !matches!(path.segments().last(), Some(Segment::Key(_))) {
             return None;
         }
         let s = self.sheets.get(sheet)?;
@@ -712,7 +713,7 @@ impl Calc {
         let has_fields = |v: &Value| matches!(v, Value::Object(map) if !map.is_empty());
         let fits = match &s.spec.get(ty).kind {
             Kind::Object { fields } if fields.is_empty() => has_fields(rejected),
-            Kind::Array { items, .. } if empty(*items) => match rejected {
+            Kind::Array { items, .. } if !root && empty(*items) => match rejected {
                 Value::Array(items) => {
                     items.iter().all(|i| matches!(i.value(), Value::Object(_)))
                         && items.iter().any(|i| has_fields(i.value()))
@@ -727,7 +728,8 @@ impl Calc {
     /// *Force object definition*: gives the field at `path` the type
     /// inferred from what its formula returned, as an import infers one, in
     /// place of its record with no fields. Whether it is required stays as
-    /// it was. One entry in the history.
+    /// it was. On the root, the root's record takes the inferred fields. One
+    /// entry in the history.
     pub fn force_type(&mut self, sheet: &str, path: &Path) -> Result<(), EditError> {
         let value = self
             .force_type_source(sheet, path)
@@ -738,10 +740,18 @@ impl Calc {
                     Loc::new(sheet, path.clone())
                 ))
             })?;
-        let Some(Segment::Key(name)) = path.segments().last().cloned() else {
-            return Err(EditError::Path("only a field can be defined".to_owned()));
+        let name = match path.segments().last().cloned() {
+            Some(Segment::Key(name)) => Some(name),
+            None => None,
+            Some(_) => {
+                return Err(EditError::Path("only a field can be defined".to_owned()));
+            }
         };
-        let parent = path.parent().unwrap_or_default();
+        let parent = if name.is_some() {
+            path.parent().unwrap_or_default()
+        } else {
+            path.clone()
+        };
         let places = self.field_places(sheet, &parent)?;
         if places.xsd {
             return Err(EditError::Path(format!(
@@ -759,8 +769,29 @@ impl Calc {
             Loc::new(sheet, path.clone())
         );
         self.entry(&what, |calc| {
-            let document = calc.edited_type(&places, |props, _| {
-                props.insert(name.clone(), schema);
+            let document = calc.edited_type(&places, |props, required| match &name {
+                Some(name) => {
+                    props.insert(name.clone(), schema);
+                }
+                // The root: its own record takes the inferred fields.
+                None => {
+                    if let Some(Value::Object(fields)) = schema
+                        .value()
+                        .as_object()
+                        .and_then(|m| m.get("properties"))
+                        .map(Node::value)
+                    {
+                        *props = fields.clone();
+                    }
+                    if let Some(Value::Array(names)) = schema
+                        .value()
+                        .as_object()
+                        .and_then(|m| m.get("required"))
+                        .map(Node::value)
+                    {
+                        *required = names.clone();
+                    }
+                }
             })?;
             calc.put(&places.schema_sheet, &places.document_path, document)
         })
@@ -896,11 +927,6 @@ impl Calc {
         let places = self.field_places(sheet, object)?;
         if !places.fields.iter().any(|f| f == name) {
             return Err(EditError::Path(format!("there is no field called {name}")));
-        }
-        if places.fields.len() == 1 {
-            return Err(EditError::Path(
-                "a record must keep at least one field".to_owned(),
-            ));
         }
         let xsd_document = if places.xsd {
             Some(self.xsd_edited_type(&places, &XsdChange::Delete { name })?)

@@ -1259,12 +1259,13 @@ impl ClioApp {
         });
 
         // The type, as a badge in the colour of its kind.
+        let mut menu_on = Vec::new();
         if display.type_column {
-            self.type_cell(table_row, row, actions);
+            menu_on.push(self.type_cell(table_row, row, actions));
         }
 
         // The value.
-        table_row.col(|ui| self.value_column(ui, row, selected, editing, actions));
+        table_row.col(|ui| self.value_column(ui, row, selected, editing, actions, true));
 
         // The formula.
         if display.formula_column {
@@ -1278,9 +1279,15 @@ impl ClioApp {
                     if response.clicked() {
                         actions.push(Action::Select(row.path.clone()));
                     }
-                    if let Some(error) = formula_error {
-                        response.on_hover_text(format!("{} {}", error.kind.code(), error.message));
-                    }
+                    let response = match formula_error {
+                        Some(error) => response.on_hover_text(format!(
+                            "{} {}",
+                            error.kind.code(),
+                            error.message
+                        )),
+                        None => response,
+                    };
+                    menu_on.push(response);
                 } else if let Some(by) = &computed_by {
                     ui.label(
                         RichText::new(format!("computed by {}", self.name_of(by)))
@@ -1291,10 +1298,13 @@ impl ClioApp {
             });
         }
 
-        // Right click.
-        if let Some(response) = name_response {
-            response.context_menu(|ui| self.row_menu(ui, row, actions));
-        }
+        // A right click anywhere on the row opens its menu, but on the value,
+        // whose menu has the cell's commands as well.
+        let response = menu_on
+            .into_iter()
+            .chain(name_response)
+            .fold(table_row.response(), |all, r| all.union(r));
+        response.context_menu(|ui| self.row_menu(ui, row, actions));
     }
 
     /// The Type column's cell: a badge in the colour of the kind.
@@ -1303,9 +1313,10 @@ impl ClioApp {
         table_row: &mut egui_extras::TableRow<'_, '_>,
         row: &Row,
         actions: &mut Vec<Action>,
-    ) {
+    ) -> egui::Response {
         let calc = self.calc();
-        table_row.col(|ui| {
+        let mut badge = None;
+        let (_, cell) = table_row.col(|ui| {
             let kind = row
                 .ty
                 .zip(calc.spec(&self.sheet))
@@ -1324,12 +1335,16 @@ impl ClioApp {
             if response.clicked() {
                 actions.push(Action::Select(row.path.clone()));
             }
+            badge = Some(response);
         });
+        badge.unwrap_or(cell)
     }
 
     /// The value of a node, with the marks a cell can have: the tint of a
     /// computed value, the outline of invalid data, the editor while it is
     /// being typed into, and the marker of a calculation that is waiting.
+    /// With `row_items`, the cell's menu also has the commands of its row,
+    /// as the tree's rows do.
     pub(crate) fn value_column(
         &self,
         ui: &mut egui::Ui,
@@ -1337,6 +1352,7 @@ impl ClioApp {
         selected: bool,
         editing: &mut Option<Editing>,
         actions: &mut Vec<Action>,
+        row_items: bool,
     ) {
         let calc = self.calc();
         let cell = calc.cell(&self.sheet, &row.path);
@@ -1373,7 +1389,11 @@ impl ClioApp {
                 actions.push(Action::Select(row.path.clone()));
             }
             background.context_menu(|ui| {
-                self.comment_menu_items(ui, &row.path, cell.right_top(), actions, true);
+                if row_items {
+                    self.row_menu(ui, row, actions);
+                } else {
+                    self.comment_menu_items(ui, &row.path, cell.right_top(), actions, true);
+                }
             });
         }
 
@@ -1415,6 +1435,7 @@ impl ClioApp {
                 editable,
                 selected,
                 actions,
+                row_items,
             );
         });
         if untrusted && formula.is_some() {
@@ -1436,6 +1457,7 @@ impl ClioApp {
         editable: bool,
         selected: bool,
         actions: &mut Vec<Action>,
+        row_items: bool,
     ) {
         let spec = self.calc().spec(&self.sheet);
         let kind = row.ty.zip(spec).map(|(ty, spec)| &spec.get(ty).kind);
@@ -1493,7 +1515,8 @@ impl ClioApp {
                     actions.push(Action::Reveal(row.path.clone()));
                 }
                 let at = ui.max_rect().right_top();
-                let response = self.cell_menu(response, &row.path, at, actions);
+                let response =
+                    self.cell_menu(response, &row.path, at, row_items.then_some(row), actions);
                 if let Value::Error(error) = value {
                     let trace = self
                         .calc()
@@ -1530,7 +1553,7 @@ impl ClioApp {
                     actions.push(Action::BeginEdit(row.path.clone()));
                 }
                 let at = ui.max_rect().right_top();
-                self.cell_menu(response, &row.path, at, actions);
+                self.cell_menu(response, &row.path, at, row_items.then_some(row), actions);
             }
         }
     }
@@ -2032,6 +2055,7 @@ impl ClioApp {
         response: egui::Response,
         path: &Path,
         at: egui::Pos2,
+        row: Option<&Row>,
         actions: &mut Vec<Action>,
     ) -> egui::Response {
         if response.secondary_clicked() && !self.is_in_selection(path) {
@@ -2062,9 +2086,17 @@ impl ClioApp {
                 "Ctrl+Shift+V",
                 Action::Paste(PasteMode::Values),
             );
-            if comments {
-                ui.separator();
-                self.comment_menu_items(ui, path, at, actions, true);
+            match row {
+                // The row's commands, which take in its comments.
+                Some(row) => {
+                    ui.separator();
+                    self.row_menu(ui, row, actions);
+                }
+                None if comments => {
+                    ui.separator();
+                    self.comment_menu_items(ui, path, at, actions, true);
+                }
+                None => {}
             }
         });
         response

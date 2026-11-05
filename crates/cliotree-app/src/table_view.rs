@@ -259,7 +259,7 @@ impl ClioApp {
                                             StrokeKind::Inside,
                                         );
                                     }
-                                    self.value_column(ui, &cell, selected, editing, actions);
+                                    self.value_column(ui, &cell, selected, editing, actions, false);
                                 });
                             }
                         });

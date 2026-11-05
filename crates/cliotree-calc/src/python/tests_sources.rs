@@ -199,6 +199,36 @@ fn a_formula_reads_an_http_source_and_a_failure_is_source() {
 }
 
 #[test]
+fn a_response_gives_its_body_as_bytes_and_as_xml() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("name", "HEXENCODE(source('Api').get('bytes').raw())");
+    b.formula("note", "HEXENCODE(source('Api').get('page').raw())");
+    b.formula(
+        "a",
+        "sum(l['qty'] for l in source('Api').get('xml').xml()['line'])",
+    );
+    b.formula(
+        "text",
+        "str(source('Api').get('xml').xml()['@id']) + source('Api').get('xml').xml()['line'][1]['sku']",
+    );
+    b.formula("sum", "source('Api').get('json').xml()");
+    b.run();
+    assert_eq!(b.get("name"), Some(Value::Str("FF0041".into())));
+    assert_eq!(b.get("note"), Some(Value::Str("6F6B".into())));
+    assert_eq!(b.get("a"), Some(Value::Int(7)));
+    assert_eq!(b.get("text"), Some(Value::Str("7B2".into())));
+    assert_eq!(b.error("sum"), Some(ErrorKind::Source));
+    let why = b.message("sum");
+    assert!(why.contains("did not read as XML"), "{why}");
+}
+
+#[test]
 fn a_read_is_made_once_per_pass_and_again_on_the_next() {
     let server = crate::http::http_tests::Server::start();
     let store = SourceStore::in_memory();

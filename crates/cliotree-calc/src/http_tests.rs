@@ -98,11 +98,32 @@ fn serve(mut stream: std::net::TcpStream, log: &Mutex<Vec<Received>>) {
     // Below the base URL of `api`.
     let path = target.split('?').next().unwrap_or("");
     let path = path.strip_prefix("/v1").unwrap_or(path);
+    if path == "/bytes" {
+        // Not UTF-8: only `raw()` gives these back as they are.
+        let body = [0xFFu8, 0x00, 0x41];
+        let head = format!(
+            "HTTP/1.1 200 OK
+Content-Length: {}
+Connection: close
+
+",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes());
+        let _ = stream.write_all(&body);
+        return;
+    }
     let (status, extra, text) = match path {
         "/json" => (
             "200 OK",
             "Content-Type: application/json\r\n",
             r#"{"total": 42, "items": [1, 2]}"#.to_owned(),
+        ),
+        "/xml" => (
+            "200 OK",
+            "Content-Type: application/xml
+",
+            r#"<order id="7"><line><sku>A1</sku><qty>2</qty></line><line><sku>B2</sku><qty>5</qty></line></order>"#.to_owned(),
         ),
         "/missing" => ("404 Not Found", "", "not here".to_owned()),
         "/denied" => ("401 Unauthorized", "", String::new()),

@@ -6,6 +6,7 @@
 import json as _json
 
 from _cliotree import Node, jsonpath as _jsonpath, xmlpath as _xmlpath
+from _cliotree import base64decode as _base64decode
 
 
 class FormulaTimeout(BaseException):
@@ -507,8 +508,9 @@ def _pairs(mapping):
 
 class Response:
     """What an HTTP source answered: `status`, `reason`, `headers` (a dict
-    with lower-case names), `text`, and `json()`. A status of 400 or more is
-    not a response but a `SourceError`, which is `#SOURCE!` in a formula."""
+    with lower-case names), `text`, `json()`, `xml()` and `raw()`. A status
+    of 400 or more is not a response but a `SourceError`, which is
+    `#SOURCE!` in a formula."""
 
     def __init__(self, reply, what=''):
         self._what = what
@@ -516,6 +518,22 @@ class Response:
         self.reason = reply['reason']
         self.headers = reply['headers']
         self.text = reply['text']
+        self._body = reply.get('body', '')
+
+    def raw(self):
+        """The body as it came, as bytes, like `RAW` gives."""
+        return _base64decode(self._body)
+
+    def xml(self):
+        """The body read as XML, as importing an XML file reads it: the root
+        element as a dict, its child elements by name, attributes as
+        `@name`, and the text of an element with attributes as `#text`."""
+        try:
+            return _json.loads(_source_call('xml', {'text': self.text}))
+        except SourceError as e:
+            kind = self.headers.get('content-type', 'no content type')
+            raise SourceError('%s answered %s %s with %s, which did not read as XML: %s' % (
+                self._what, self.status, self.reason, kind, e)) from None
 
     def json(self):
         try:

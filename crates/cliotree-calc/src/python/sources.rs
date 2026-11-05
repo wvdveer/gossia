@@ -106,6 +106,7 @@ fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         "http" => call_http(shared, payload),
         "query" | "execute" => call_sql(shared, op, payload),
         "journal" => call_journal(shared, payload),
+        "xml" => read_xml(payload["text"].as_str().unwrap_or_default()),
         _ => Err(format!("{op} is not a request the data sources know")),
     }
 }
@@ -223,7 +224,21 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
         "reason": response.reason,
         "headers": headers,
         "text": text,
+        "body": cliotree_core::binary::to_base64(&response.body),
     }))
+}
+
+/// `response.xml()`: the body read as an XML file is imported, with the type
+/// inferred from it, as JSON text. Elements are keys, attributes `@name`,
+/// and the text of an element that has attributes too is `#text`.
+fn read_xml(text: &str) -> Result<Json, String> {
+    use cliotree_core::{infer, xml, xmltree, xsd};
+    let doc = xmltree::parse(text).map_err(|e| format!("the body is not well-formed XML: {e}"))?;
+    let inference = infer::infer_xsd(&doc)?;
+    let spec = xsd::lower_str(&inference.text).map_err(|e| e.to_string())?;
+    let parsed = xml::parse(text, &spec).map_err(|e| e.to_string())?;
+    let json = cliotree_core::json::to_string(&parsed.node, false).map_err(|e| e.to_string())?;
+    Ok(Json::String(json))
 }
 
 /// `source(name).query(sql, params)` and `.execute(sql, params)`.

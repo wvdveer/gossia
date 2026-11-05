@@ -463,11 +463,14 @@ fn deleting_a_field_removes_its_values_and_formulas_and_undo_brings_them_back() 
 }
 
 #[test]
-fn a_record_keeps_at_least_one_field() {
+fn the_last_field_of_a_record_can_be_deleted() {
     let mut b = Book::new();
     b.calc.delete_field("Order", &p("billing"), "zip").unwrap();
-    let why = error_text(b.calc.delete_field("Order", &p("billing"), "city"));
-    assert!(why.contains("at least one"), "{why}");
+    b.calc.delete_field("Order", &p("billing"), "city").unwrap();
+    assert!(b.fields("billing").is_empty());
+    assert!(!b.data().contains("Utrecht"));
+    b.calc.undo().unwrap();
+    assert_eq!(b.fields("billing"), ["city"]);
 }
 
 #[test]
@@ -623,5 +626,43 @@ fn force_object_definition_types_a_field_from_the_records_its_formula_returned()
     assert!(
         !b.schema()
             .contains(r#""copy":{"type":"array","items":{"type":"object","properties":{"sku""#)
+    );
+}
+
+#[test]
+fn force_object_definition_on_the_root_gives_its_record_the_fields_returned() {
+    let mut b = Book::new();
+    let empty = r#"{"type": "object", "properties": {}}"#;
+    b.calc
+        .add_sheet(
+            "Copy",
+            jsonschema::lower_str(empty).unwrap(),
+            json::parse("{}").unwrap().node,
+        )
+        .unwrap();
+    b.calc
+        .add_schema_sheet("Copy schema", json::parse(empty).unwrap().node)
+        .unwrap();
+    b.calc.bind_schema("Copy", "Copy schema").unwrap();
+    b.calc.set_auto_update("Copy schema", true).unwrap();
+    b.calc.set_formula("Copy", &p(""), "Order.billing").unwrap();
+    b.run();
+    assert!(b.calc.force_type_offered("Copy", &p("")));
+
+    b.calc.force_type("Copy", &p("")).unwrap();
+    b.run();
+    let fields = b.calc.field_places("Copy", &p("")).unwrap().fields;
+    assert_eq!(fields, names(&["city", "zip"]));
+    let data = json::to_string(b.calc.data("Copy").unwrap(), false).unwrap();
+    assert!(data.contains("Utrecht"), "{data}");
+    assert!(!b.calc.force_type_offered("Copy", &p("")));
+
+    b.calc.undo().unwrap();
+    assert!(
+        b.calc
+            .field_places("Copy", &p(""))
+            .unwrap()
+            .fields
+            .is_empty()
     );
 }

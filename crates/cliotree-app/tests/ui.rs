@@ -1485,3 +1485,42 @@ fn the_formula_bar_expands_to_show_several_lines_and_collapses_again() {
     let collapsed = harness.get_by_label("Formula bar").rect().height();
     assert!((collapsed - one_line).abs() < 2.0, "{one_line} {collapsed}");
 }
+
+/// On the root, with no fields yet, a formula that returns a record is
+/// `#TYPE!`; *Force object definition* on the root's menu gives the root
+/// those fields. The menu opens from anywhere on the row: here its type.
+#[test]
+fn force_object_definition_on_the_root_from_a_right_click_on_its_type() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut ClioApp| app.show(ui),
+            ClioApp::new(cliotree_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
+    let root = cliotree_core::Path::default();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula("Data", &root, r#"{"sku": "A1", "qty": 2}"#)
+        .unwrap();
+    harness.state_mut().refresh_rows();
+    settle(&mut harness);
+    assert!(has(&harness, "#TYPE!"));
+
+    let ty = harness.state().rows[0].type_label.clone();
+    harness.get_by_label(&ty).click_secondary();
+    harness.run();
+    click(&mut harness, "Force object definition");
+    settle(&mut harness);
+    assert_eq!(harness.state().notice, None);
+    assert_eq!(data_text(&harness), r#"{"sku":"A1","qty":2}"#);
+    let fields = harness
+        .state()
+        .calc()
+        .field_places("Data", &root)
+        .unwrap()
+        .fields;
+    assert_eq!(fields, ["sku", "qty"]);
+}
