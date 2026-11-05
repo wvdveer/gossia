@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The MSIX package of ClioTree, for the Microsoft Store (DESIGN.md, Testing and
+  The MSIX package of Gossia, for the Microsoft Store (DESIGN.md, Testing and
   CI): the Store signs it, so no code signing certificate of our own is needed.
   build-msix.ps1 puts the version in place of @VERSION@ (major.minor.patch.0;
   the Store wants the last part 0) and packs it with MakeAppx.
 
-  The identity is the one reserved in Partner Center on 2026-11-04 and must
-  not change: Store ID 9NTKSK6K6NSC, package family name
-  WardvanderVeer.ClioTree_bd1w97kxbkr6y.
+  The identity is the one reserved in Partner Center on 2026-11-05 and must
+  not change: Store ID 9P505WS779KW, package family name
+  WardvanderVeer.Gossia_bd1w97kxbkr6y.
 
-  Two applications: the window, with the .clio files, and cliotree-cli, a
+  Two applications: the window, with the .gossia files, and bidwillii, a
   console program kept off the Start menu, which scripts run by the alias
-  cliotree-cli.exe.
+  bidwillii.exe.
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -21,13 +21,13 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap uap5 desktop4 rescap">
 
-  <Identity Name="WardvanderVeer.ClioTree"
+  <Identity Name="WardvanderVeer.Gossia"
             Publisher="CN=929EF93A-E527-4C5D-8EB5-DF06E90F115A"
             Version="@VERSION@"
             ProcessorArchitecture="x64"/>
 
   <Properties>
-    <DisplayName>ClioTree</DisplayName>
+    <DisplayName>Gossia</DisplayName>
     <PublisherDisplayName>Ward van der Veer</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -41,38 +41,38 @@
   </Resources>
 
   <Applications>
-    <Application Id="ClioTree" Executable="cliotree.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="ClioTree"
+    <Application Id="Gossia" Executable="gossia.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Gossia"
                           Description="Workbooks of JSON and XML with Python formulas, forms and reports."
                           BackgroundColor="transparent"
                           Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png"/>
       <Extensions>
         <uap:Extension Category="windows.fileTypeAssociation">
-          <uap:FileTypeAssociation Name="clio">
-            <uap:DisplayName>ClioTree workbook</uap:DisplayName>
+          <uap:FileTypeAssociation Name="gossia">
+            <uap:DisplayName>Gossia workbook</uap:DisplayName>
             <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
             <uap:SupportedFileTypes>
-              <uap:FileType>.clio</uap:FileType>
+              <uap:FileType>.gossia</uap:FileType>
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
       </Extensions>
     </Application>
 
-    <Application Id="ClioTreeCli" Executable="cliotree-cli.exe" EntryPoint="Windows.FullTrustApplication"
+    <Application Id="GossiaCli" Executable="bidwillii.exe" EntryPoint="Windows.FullTrustApplication"
                  desktop4:Subsystem="console" desktop4:SupportsMultipleInstances="true">
-      <uap:VisualElements DisplayName="ClioTree command line"
+      <uap:VisualElements DisplayName="Gossia command line"
                           Description="Runs a workbook's report to PDF, without a window."
                           BackgroundColor="transparent"
                           Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png"
                           AppListEntry="none"/>
       <Extensions>
-        <uap5:Extension Category="windows.appExecutionAlias" Executable="cliotree-cli.exe"
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="bidwillii.exe"
                         EntryPoint="Windows.FullTrustApplication">
           <uap5:AppExecutionAlias desktop4:Subsystem="console">
-            <uap5:ExecutionAlias Alias="cliotree-cli.exe"/>
+            <uap5:ExecutionAlias Alias="bidwillii.exe"/>
           </uap5:AppExecutionAlias>
         </uap5:Extension>
       </Extensions>

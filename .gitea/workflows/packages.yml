@@ -1,6 +1,6 @@
 name: Linux packages
 
-# The Linux packages of ClioTree (DESIGN.md, Testing and CI), on the Gitea
+# The Linux packages of Gossia (DESIGN.md, Testing and CI), on the Gitea
 # mirror's runners on acer, one for each family of distributions, so that each
 # package links against its family's libraries:
 #   selfhosted  Debian (the gitslave host, no root)   .deb
@@ -13,7 +13,7 @@ name: Linux packages
 #
 # Like nspawnmgr's workflow: these runners have no Node, so there is no
 # actions/checkout or upload-artifact, only shell. The checkout is kept in
-# ~/ci/cliotree between runs with its target/ and vendor/, so that a run does
+# ~/ci/gossia between runs with its target/ and vendor/, so that a run does
 # not rebuild everything (not ~/code: on the fedora and arch runners that
 # folder is not the runner user's to write in). The repository is private: it is fetched with the
 # job's own token. The jobs run one after another, since the runners share one
@@ -54,7 +54,7 @@ jobs:
           TOKEN: ${{ gitea.token }}
         run: |
           set -e
-          dir="$HOME/ci/cliotree"
+          dir="$HOME/ci/gossia"
           mkdir -p "$dir"
           cd "$dir"
           [ -d .git ] || git init -q .
@@ -66,12 +66,12 @@ jobs:
           git clean -ffdxq -e target -e vendor
           git log --oneline -1
       - name: Build
-        run: cd "$HOME/ci/cliotree" && bash packaging/linux/build-package.sh deb
+        run: cd "$HOME/ci/gossia" && bash packaging/linux/build-package.sh deb
       - name: Publish
         env:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: cd "$HOME/ci/cliotree" && bash packaging/linux/publish-package.sh deb
+        run: cd "$HOME/ci/gossia" && bash packaging/linux/publish-package.sh deb
 
   rpm:
     name: RPM package
@@ -89,7 +89,7 @@ jobs:
           TOKEN: ${{ gitea.token }}
         run: |
           set -e
-          dir="$HOME/ci/cliotree"
+          dir="$HOME/ci/gossia"
           mkdir -p "$dir"
           cd "$dir"
           [ -d .git ] || git init -q .
@@ -101,12 +101,12 @@ jobs:
           git clean -ffdxq -e target -e vendor
           git log --oneline -1
       - name: Build
-        run: cd "$HOME/ci/cliotree" && bash packaging/linux/build-package.sh rpm
+        run: cd "$HOME/ci/gossia" && bash packaging/linux/build-package.sh rpm
       - name: Publish
         env:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: cd "$HOME/ci/cliotree" && bash packaging/linux/publish-package.sh rpm
+        run: cd "$HOME/ci/gossia" && bash packaging/linux/publish-package.sh rpm
 
   arch:
     name: Arch package
@@ -125,7 +125,7 @@ jobs:
           TOKEN: ${{ gitea.token }}
         run: |
           set -e
-          dir="$HOME/ci/cliotree"
+          dir="$HOME/ci/gossia"
           mkdir -p "$dir"
           cd "$dir"
           [ -d .git ] || git init -q .
@@ -137,9 +137,9 @@ jobs:
           git clean -ffdxq -e target -e vendor
           git log --oneline -1
       - name: Build
-        run: cd "$HOME/ci/cliotree" && bash packaging/linux/build-package.sh arch
+        run: cd "$HOME/ci/gossia" && bash packaging/linux/build-package.sh arch
       - name: Publish
         env:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: cd "$HOME/ci/cliotree" && bash packaging/linux/publish-package.sh arch
+        run: cd "$HOME/ci/gossia" && bash packaging/linux/publish-package.sh arch

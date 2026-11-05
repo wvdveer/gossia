@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Gossia
+GenericName=Workbook of JSON and XML
+Comment=Workbooks of JSON and XML with Python formulas, forms and reports
+Exec=gossia %f
+Icon=gossia
+Terminal=false
+Categories=Office;Spreadsheet;Development;
+MimeType=application/x-gossia-workbook;
+Keywords=JSON;XML;YAML;TOML;schema;formula;Python;report;
+StartupWMClass=gossia

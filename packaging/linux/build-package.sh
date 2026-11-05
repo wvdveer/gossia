@@ -1,21 +1,21 @@
 #!/bin/bash
-# Builds a Linux package of ClioTree on a machine of that family, so that it
+# Builds a Linux package of Gossia on a machine of that family, so that it
 # links against that family's libraries (DESIGN.md, Testing and CI):
 #
 #   build-package.sh deb    Debian and Ubuntu, with cargo-deb
 #   build-package.sh rpm    Fedora and openSUSE, with cargo-generate-rpm
 #   build-package.sh arch   Arch, with makepkg (packaging/linux/arch/PKGBUILD)
 #
-# Each holds cliotree and cliotree-cli in /usr/bin, the licence, a .desktop
-# file, the icon and the MIME type of .clio files. The package is left in
+# Each holds gossia and bidwillii in /usr/bin, the licence, a .desktop
+# file, the icon and the MIME type of .gossia files. The package is left in
 # target/packages/. The packaging tools are installed under
-# $CLIOTREE_PACKAGE_TOOLS (default ~/.cache/cliotree-packages), pinned, and
+# $GOSSIA_PACKAGE_TOOLS (default ~/.cache/gossia-packages), pinned, and
 # reused; nothing is installed system-wide.
 set -euo pipefail
 
 kind=${1:?usage: build-package.sh deb|rpm|arch}
 root=$(cd "$(dirname "$0")/../.." && pwd)
-tools=${CLIOTREE_PACKAGE_TOOLS:-$HOME/.cache/cliotree-packages}
+tools=${GOSSIA_PACKAGE_TOOLS:-$HOME/.cache/gossia-packages}
 cd "$root"
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -31,7 +31,7 @@ mkdir -p "$out"
 rm -f "$out"/*.deb "$out"/*.rpm "$out"/*.pkg.tar.zst
 
 build() {
-    cargo build --release --locked -p cliotree-app -p cliotree-cli --bin cliotree --bin cliotree-cli
+    cargo build --release --locked -p gossia-app -p gossia-cli --bin gossia --bin bidwillii
     cargo xtask icons target/release/icons
 }
 
@@ -47,16 +47,16 @@ case $kind in
     deb)
         build
         tool cargo-deb 3.8.0
-        cargo deb -p cliotree-app --no-build --output "$out/"
+        cargo deb -p gossia-app --no-build --output "$out/"
         ;;
     rpm)
         build
         tool cargo-generate-rpm 0.21.1
-        cargo generate-rpm -p crates/cliotree-app -o "$out/"
+        cargo generate-rpm -p crates/gossia-app -o "$out/"
         ;;
     arch)
         rm -f packaging/linux/arch/*.pkg.tar.zst
-        (cd packaging/linux/arch && CLIOTREE_VERSION=$version makepkg -f --noconfirm)
+        (cd packaging/linux/arch && GOSSIA_VERSION=$version makepkg -f --noconfirm)
         mv packaging/linux/arch/*.pkg.tar.zst "$out/"
         rm -rf packaging/linux/arch/src packaging/linux/arch/pkg
         ;;

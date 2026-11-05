@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The MIME type of Gossia workbooks, for shared-mime-info: a .gossia file
+     is a zip archive, told apart by its extension. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-gossia-workbook">
+    <comment>Gossia workbook</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.gossia"/>
+    <icon name="gossia"/>
+  </mime-type>
+</mime-info>

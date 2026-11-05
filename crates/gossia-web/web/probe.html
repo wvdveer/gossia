@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gossia worker probe</title>
+<style>
+  body { font: 14px/1.4 ui-monospace, monospace; margin: 16px; }
+  .ok { color: #1a7f37; } .fail { color: #cf222e; }
+</style>
+</head>
+<body>
+<h1>Gossia worker probe</h1>
+<p>Build step 13b-1: a workbook in the page, its formulas evaluated by Python in a Web Worker through the worker protocol.</p>
+<pre id="log"></pre>
+<script type="module">
+import init, { PageProbe, last_panic } from './pkg/gossia_web.js';
+
+const logEl = document.getElementById('log');
+const results = { ok: 0, fail: 0, lines: [] };
+function line(cls, text) {
+  results.lines.push(text);
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = text + '\n';
+  logEl.appendChild(span);
+}
+function check(name, cond, detail) {
+  if (cond) { results.ok++; line('ok', `ok   ${name}${detail ? '  (' + detail + ')' : ''}`); }
+  else { results.fail++; line('fail', `FAIL ${name}${detail ? '  (' + detail + ')' : ''}`); }
+}
+
+let worker = null;
+let starts = 0;
+let probe = null;
+const workerErrors = [];
+
+// The link the page's evaluator reaches the worker through.
+function start() {
+  if (worker) worker.terminate();
+  worker = new Worker('./worker.js', { type: 'module' });
+  worker.onmessage = (e) => {
+    if (e.data instanceof Uint8Array) probe.receive(e.data);
+    else workerErrors.push(e.data);
+  };
+  starts++;
+}
+function post(bytes) { worker.postMessage(bytes, [bytes.buffer]); }
+
+// Ticks the session as the window does each frame, until it is idle.
+async function settle(timeoutMs = 60000) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeoutMs) {
+    if (probe.tick()) return Math.round(performance.now() - t0);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return null;
+}
+
+(async () => {
+  try {
+    const t0 = performance.now();
+    await init();
+    const loaded = Math.round(performance.now() - t0);
+    probe = new PageProbe(start, post, 1000);
+    probe.set_formula('total', 'gross(sum(i.qty * i.price for i in S.items))');
+    probe.set_formula('label', "f'{S.name}: {len(S.items)} lines'");
+    probe.set_formula('bad', '1 / 0');
+
+    let ms = await settle();
+    check('the workbook settles through the worker', ms !== null, `page loaded the wasm in ${loaded} ms, first pass ${ms} ms incl. starting the worker`);
+    check('a formula with a module and another tab', probe.cell('total') === '10.89', probe.cell('total'));
+    check('a text formula', probe.cell('label') === '"a: 2 lines"', probe.cell('label'));
+    check('an error', probe.cell('bad').startsWith('DivZero'), probe.cell('bad'));
+
+    probe.set_vat(0.09);
+    ms = await settle();
+    check('an edit runs what depends on it again', probe.cell('total') === '9.81', `${probe.cell('total')}, ${ms} ms`);
+
+    // A formula that never stops: given up after its limit and the grace,
+    // with a fresh worker.
+    probe.set_formula('spin', 'next(x for x in iter(int, 1) if x)');
+    ms = await settle();
+    check('a stuck formula times out', probe.cell('spin').startsWith('Timeout'), `${probe.cell('spin')}, after ${ms} ms`);
+    check('the stuck worker was replaced', starts === 2, `${starts} workers started`);
+
+    probe.set_vat(0.21);
+    ms = await settle();
+    check('the fresh worker loads the modules and calculates', probe.cell('total') === '10.89', `${probe.cell('total')}, ${ms} ms`);
+    check('no worker errors', workerErrors.length === 0, JSON.stringify(workerErrors));
+  } catch (err) {
+    let panic = null;
+    try { panic = last_panic(); } catch (_) { /* unusable */ }
+    check('the probe runs', false, `${err} ${panic || ''}`);
+  }
+  line(results.fail ? 'fail' : 'ok', `${results.ok} ok, ${results.fail} failed`);
+  window.probeResults = results;
+  document.title = 'DONE ' + (results.fail ? 'FAIL' : 'OK');
+})();
+</script>
+</body>
+</html>

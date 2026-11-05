@@ -14,13 +14,13 @@ env:
   CARGO_INCREMENTAL: 0
 
 # Jobs run on a self-hosted GitHub Actions runner, registered
-# for this repository with the label `cliotree` (see README, "CI runner").
+# for this repository with the label `gossia` (see README, "CI runner").
 # There is no rust-cache or vendor cache: the workspace persists between runs, and
 # rust-cache's cleanup would delete rustup from ~/.cargo/bin on a shared machine.
 jobs:
   lint:
     name: Lint
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +33,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,14 +45,14 @@ jobs:
         env:
           # The live PostgreSQL and MariaDB tests (see database_tests.rs), against
           # test servers the runner reaches; skipped while a secret is not set.
-          CLIOTREE_TEST_POSTGRES: ${{ secrets.CLIOTREE_TEST_POSTGRES }}
-          CLIOTREE_TEST_MARIADB: ${{ secrets.CLIOTREE_TEST_MARIADB }}
+          GOSSIA_TEST_POSTGRES: ${{ secrets.CLIOTREE_TEST_POSTGRES }}
+          GOSSIA_TEST_MARIADB: ${{ secrets.CLIOTREE_TEST_MARIADB }}
 
   # Exercises the fetch script itself on Linux: every pinned item is fetched and
   # checked against vendor.lock, whether or not the workspace uses it yet.
   vendor:
     name: Vendor
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,7 +68,7 @@ jobs:
   # an OpenGL driver (Mesa); then it becomes a required check.
   e2e:
     name: E2E
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -83,7 +83,7 @@ jobs:
   # artifact it uploads when they differ or are missing.
   snapshots:
     name: Snapshots
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: snapshot-differences
-          path: crates/cliotree-app/tests/snapshots/linux/
+          path: crates/gossia-app/tests/snapshots/linux/
 
 
   # The Windows installer, cross-built on Linux (packaging/windows/build-msi.sh:
@@ -106,7 +106,7 @@ jobs:
   # The MSI is unsigned.
   windows-installer:
     name: Windows installer
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     continue-on-error: true
     if: github.event_name == 'push'
     steps:
@@ -128,7 +128,7 @@ jobs:
   # if target/ is still over 60 GB. Cargo rebuilds what is missing.
   sweep:
     name: Sweep target
-    runs-on: [self-hosted, cliotree]
+    runs-on: [self-hosted, gossia]
     needs: [lint, test, vendor, e2e, snapshots, windows-installer]
     if: always()
     steps:

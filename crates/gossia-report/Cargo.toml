@@ -1,0 +1,27 @@
+[package]
+name = "gossia-report"
+description = "Writes laid-out reports as PDF, for the application and bidwillii. No egui."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gossia-core.workspace = true
+gossia-layout.workspace = true
+gossia-calc.workspace = true
+# The PDF writer (DESIGN.md, Reports, "PDF export"): krilla, and krilla-svg for
+# the charts, both MIT OR Apache-2.0. krilla's own text shaping is not used:
+# the glyphs come from gossia-layout, which measured them.
+krilla = { version = "0.8.2", default-features = false }
+krilla-svg = "0.8.1"
+# The version krilla-svg uses, and gossia-layout parses charts with.
+usvg = { version = "0.47.0", default-features = false, features = ["text"] }
+
+[dev-dependencies]
+# Reads the text of each page back from the PDF in the tests.
+pdf-extract = "0.12.1"

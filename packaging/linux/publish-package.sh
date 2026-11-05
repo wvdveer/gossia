@@ -11,14 +11,14 @@
 #
 # Where they go: the Debian registry under the distribution of the machine
 # that built it (its codename) and component main; the RPM registry in group
-# cliotree; the Arch registry in repository cliotree.
+# gossia; the Arch registry in repository gossia.
 set -euo pipefail
 
 kind=${1:?usage: publish-package.sh deb|rpm|arch}
 root=$(cd "$(dirname "$0")/../.." && pwd)
 server=${GITEA_URL:?GITEA_URL is not set}
 owner=ward
-group=cliotree
+group=gossia
 
 if [ -z "${PACKAGE_REGISTRY_TOKEN:-}" ]; then
     echo "PACKAGE_REGISTRY_TOKEN is not set: the package is built but not published."
@@ -65,9 +65,9 @@ esac
 auth="$owner:$PACKAGE_REGISTRY_TOKEN"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE --user "$auth" "$remove")
 echo "Removed $name $version $arch, if it was there: HTTP $code"
-code=$(curl -s -o /tmp/cliotree-upload.txt -w '%{http_code}' -X PUT --user "$auth" \
+code=$(curl -s -o /tmp/gossia-upload.txt -w '%{http_code}' -X PUT --user "$auth" \
     --upload-file "$file" "$upload")
 echo "Upload: HTTP $code"
-cat /tmp/cliotree-upload.txt
+cat /tmp/gossia-upload.txt
 echo
 [ "$code" = 201 ] || { echo "publishing failed" >&2; exit 1; }

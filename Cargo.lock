@@ -1010,146 +1010,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cliotree-app"
-version = "0.3.0"
-dependencies = [
- "arboard",
- "chrono",
- "cliotree-calc",
- "cliotree-core",
- "cliotree-layout",
- "cliotree-report",
- "cliotree-std",
- "cliotree-user",
- "eframe",
- "egui",
- "egui-file-dialog",
- "egui_extras",
- "egui_kittest",
- "image",
- "jiff",
- "pdf-extract",
- "resvg",
- "serde_json",
- "skrifa 0.44.0",
-]
-
-[[package]]
-name = "cliotree-calc"
-version = "0.3.0"
-dependencies = [
- "beancount-parser",
- "bytes",
- "chrono",
- "cliotree-core",
- "cliotree-std",
- "getrandom 0.2.17",
- "getrandom 0.4.3",
- "indexmap",
- "jiff",
- "mysql",
- "native-tls",
- "odbc-api",
- "postgres",
- "postgres-native-tls",
- "proptest",
- "rmp-serde",
- "rusqlite",
- "rust_decimal",
- "rustpython",
- "rustpython-ruff_python_ast",
- "rustpython-ruff_python_parser",
- "rustpython-ruff_source_file",
- "rustpython-ruff_text_size",
- "rustpython-vm",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "ureq",
- "web-time",
-]
-
-[[package]]
-name = "cliotree-cli"
-version = "0.3.0"
-dependencies = [
- "chrono",
- "cliotree-calc",
- "cliotree-core",
- "cliotree-report",
- "cliotree-user",
- "pdf-extract",
-]
-
-[[package]]
-name = "cliotree-core"
-version = "0.3.0"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "indexmap",
- "proptest",
- "quick-xml 0.42.0",
- "regex",
- "saphyr-parser",
- "serde",
- "serde_json",
- "toml",
- "toml_edit",
-]
-
-[[package]]
-name = "cliotree-layout"
-version = "0.3.0"
-dependencies = [
- "cliotree-core",
- "epaint_default_fonts",
- "harfrust",
- "skrifa 0.44.0",
- "usvg",
-]
-
-[[package]]
-name = "cliotree-report"
-version = "0.3.0"
-dependencies = [
- "cliotree-calc",
- "cliotree-core",
- "cliotree-layout",
- "krilla",
- "krilla-svg",
- "pdf-extract",
- "usvg",
-]
-
-[[package]]
-name = "cliotree-std"
-version = "0.3.0"
-dependencies = [
- "cliotree-core",
-]
-
-[[package]]
-name = "cliotree-user"
-version = "0.3.0"
-dependencies = [
- "cliotree-calc",
- "cliotree-core",
- "serde_json",
- "zip",
-]
-
-[[package]]
-name = "cliotree-worker"
-version = "0.3.0"
-dependencies = [
- "cliotree-calc",
- "cliotree-core",
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2511,6 +2371,155 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
+]
+
+[[package]]
+name = "gossia-app"
+version = "0.3.0"
+dependencies = [
+ "arboard",
+ "chrono",
+ "eframe",
+ "egui",
+ "egui-file-dialog",
+ "egui_extras",
+ "egui_kittest",
+ "gossia-calc",
+ "gossia-core",
+ "gossia-layout",
+ "gossia-report",
+ "gossia-std",
+ "gossia-user",
+ "image",
+ "jiff",
+ "pdf-extract",
+ "resvg",
+ "serde_json",
+ "skrifa 0.44.0",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "gossia-calc"
+version = "0.3.0"
+dependencies = [
+ "beancount-parser",
+ "bytes",
+ "chrono",
+ "getrandom 0.2.17",
+ "getrandom 0.4.3",
+ "gossia-core",
+ "gossia-std",
+ "indexmap",
+ "jiff",
+ "mysql",
+ "native-tls",
+ "odbc-api",
+ "postgres",
+ "postgres-native-tls",
+ "proptest",
+ "rmp-serde",
+ "rusqlite",
+ "rust_decimal",
+ "rustpython",
+ "rustpython-ruff_python_ast",
+ "rustpython-ruff_python_parser",
+ "rustpython-ruff_source_file",
+ "rustpython-ruff_text_size",
+ "rustpython-vm",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "ureq",
+ "web-time",
+]
+
+[[package]]
+name = "gossia-cli"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "gossia-calc",
+ "gossia-core",
+ "gossia-report",
+ "gossia-user",
+ "pdf-extract",
+]
+
+[[package]]
+name = "gossia-core"
+version = "0.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "indexmap",
+ "proptest",
+ "quick-xml 0.42.0",
+ "regex",
+ "saphyr-parser",
+ "serde",
+ "serde_json",
+ "toml",
+ "toml_edit",
+]
+
+[[package]]
+name = "gossia-layout"
+version = "0.3.0"
+dependencies = [
+ "epaint_default_fonts",
+ "gossia-core",
+ "harfrust",
+ "skrifa 0.44.0",
+ "usvg",
+]
+
+[[package]]
+name = "gossia-report"
+version = "0.3.0"
+dependencies = [
+ "gossia-calc",
+ "gossia-core",
+ "gossia-layout",
+ "krilla",
+ "krilla-svg",
+ "pdf-extract",
+ "usvg",
+]
+
+[[package]]
+name = "gossia-std"
+version = "0.3.0"
+dependencies = [
+ "gossia-core",
+]
+
+[[package]]
+name = "gossia-user"
+version = "0.3.0"
+dependencies = [
+ "gossia-calc",
+ "gossia-core",
+ "serde_json",
+ "web-time",
+ "zip",
+]
+
+[[package]]
+name = "gossia-web"
+version = "0.3.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "gossia-app",
+ "gossia-calc",
+ "gossia-core",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

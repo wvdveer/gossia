@@ -11,17 +11,17 @@ edition = "2024"
 # Required by RustPython and its ruff fork; see DESIGN.md, Build and dependencies.
 rust-version = "1.97"
 license = "Apache-2.0"
-repository = "https://github.com/wvdveer/cliotree"
+repository = "https://github.com/wvdveer/gossia"
 
 [workspace.dependencies]
-cliotree-core = { path = "crates/cliotree-core" }
-cliotree-calc = { path = "crates/cliotree-calc" }
-cliotree-std = { path = "crates/cliotree-std" }
-cliotree-layout = { path = "crates/cliotree-layout" }
-cliotree-report = { path = "crates/cliotree-report" }
-cliotree-user = { path = "crates/cliotree-user" }
+gossia-core = { path = "crates/gossia-core" }
+gossia-calc = { path = "crates/gossia-calc" }
+gossia-std = { path = "crates/gossia-std" }
+gossia-layout = { path = "crates/gossia-layout" }
+gossia-report = { path = "crates/gossia-report" }
+gossia-user = { path = "crates/gossia-user" }
 
-[workspace.metadata.cliotree]
+[workspace.metadata.gossia]
 # Vendor items (see vendor.lock) that the workspace needs. `cargo xtask` fetches
 # these before it starts Cargo, because Cargo needs every path dependency to
 # exist before any build script can run. RustPython and ruff are added here by

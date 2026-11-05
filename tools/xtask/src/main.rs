@@ -103,8 +103,8 @@ fn clean(root: &Path) -> Result<(), String> {
         fetch_vendor::remove_dir_all_force(&vendor)?;
         println!("removed {}", vendor.display());
     }
-    if std::env::var_os("CLIOTREE_VENDOR_DIR").is_some_and(|v| !v.is_empty()) {
-        println!("CLIOTREE_VENDOR_DIR is set; that directory was left alone");
+    if std::env::var_os("GOSSIA_VENDOR_DIR").is_some_and(|v| !v.is_empty()) {
+        println!("GOSSIA_VENDOR_DIR is set; that directory was left alone");
     }
     Ok(())
 }
@@ -129,7 +129,7 @@ fn lint(root: &Path) -> Result<(), String> {
         &[
             "clippy",
             "-p",
-            "cliotree-app",
+            "gossia-app",
             "--all-targets",
             "--features",
             "test-control",
@@ -145,9 +145,13 @@ fn lint(root: &Path) -> Result<(), String> {
         &[
             "clippy",
             "-p",
-            "cliotree-calc",
+            "gossia-calc",
             "-p",
-            "cliotree-worker",
+            "gossia-user",
+            "-p",
+            "gossia-app",
+            "-p",
+            "gossia-web",
             "--lib",
             "--target",
             WASM_TARGET,
@@ -184,9 +188,8 @@ fn lint(root: &Path) -> Result<(), String> {
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-/// Builds the wasm worker (`cliotree-worker`) in release, makes its JavaScript
-/// glue with `wasm-bindgen`, and puts it beside the probe page in
-/// `target/web`. The `wasm-bindgen` command-line tool must be the version the
+/// Builds the wasm version (`gossia-web`) in release, makes its JavaScript
+/// glue with `wasm-bindgen`, and puts it beside its pages in `target/web`. The `wasm-bindgen` command-line tool must be the version the
 /// lock file has, so that version is installed into `target/wasm-tools` the
 /// first time.
 fn web(root: &Path) -> Result<(), String> {
@@ -195,7 +198,7 @@ fn web(root: &Path) -> Result<(), String> {
         &[
             "build",
             "-p",
-            "cliotree-worker",
+            "gossia-web",
             "--release",
             "--target",
             WASM_TARGET,
@@ -231,7 +234,7 @@ fn web(root: &Path) -> Result<(), String> {
         .join("target")
         .join(WASM_TARGET)
         .join("release")
-        .join("cliotree_worker.wasm");
+        .join("gossia_web.wasm");
     println!("+ wasm-bindgen {}", wasm.display());
     let status = Command::new(&bindgen)
         .args(["--target", "web", "--no-typescript", "--out-dir"])
@@ -242,10 +245,17 @@ fn web(root: &Path) -> Result<(), String> {
     if !status.success() {
         return Err("wasm-bindgen failed".to_owned());
     }
-    let page = root.join("crates").join("cliotree-worker").join("web");
-    for name in ["index.html", "worker.js"] {
-        std::fs::copy(page.join(name), out.join(name))
-            .map_err(|e| format!("cannot copy {name}: {e}"))?;
+    // The pages and scripts beside the glue: the application's page with its
+    // test host, the worker, and the worker protocol's probe.
+    let page = root.join("crates").join("gossia-web").join("web");
+    let entries = std::fs::read_dir(&page).map_err(|e| format!("{}: {e}", page.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.path().is_file() {
+            let name = entry.file_name();
+            std::fs::copy(entry.path(), out.join(&name))
+                .map_err(|e| format!("cannot copy {}: {e}", name.to_string_lossy()))?;
+        }
     }
     println!("built {}", out.display());
     Ok(())
@@ -283,7 +293,7 @@ fn e2e(root: &Path) -> Result<(), String> {
     let args = [
         "test",
         "-p",
-        "cliotree-app",
+        "gossia-app",
         "--features",
         "test-control",
         "--test",
@@ -302,7 +312,7 @@ fn e2e(root: &Path) -> Result<(), String> {
             "test",
             "--no-run",
             "-p",
-            "cliotree-app",
+            "gossia-app",
             "--features",
             "test-control",
         ],
@@ -327,11 +337,11 @@ fn e2e(root: &Path) -> Result<(), String> {
 /// adapter (on Linux CI, Mesa's software Vulkan driver, lavapipe).
 fn snapshots(root: &Path) -> Result<(), String> {
     let program = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let args = ["test", "-p", "cliotree-app", "--test", "snapshots"];
-    println!("+ CLIOTREE_SNAPSHOTS=1 cargo {}", args.join(" "));
+    let args = ["test", "-p", "gossia-app", "--test", "snapshots"];
+    println!("+ GOSSIA_SNAPSHOTS=1 cargo {}", args.join(" "));
     let status = Command::new(program)
         .args(args)
-        .env("CLIOTREE_SNAPSHOTS", "1")
+        .env("GOSSIA_SNAPSHOTS", "1")
         .current_dir(root)
         .status()
         .map_err(|e| format!("cannot run cargo: {e}"))?;

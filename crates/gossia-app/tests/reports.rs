@@ -1,0 +1,987 @@
+//! Reports in the window (DESIGN.md, "Reports"): a report tab draws its
+//! controls from the results of its expressions, which run while it is
+//! shown and follow the data.
+
+use std::time::Duration;
+
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
+use gossia_app::GossiaApp;
+use gossia_app::control;
+use gossia_core::form::{Control, ControlKind};
+use gossia_core::report::{BandKind, ReportDesign, ReportKind};
+use gossia_core::{Path, Value};
+use serde_json::json;
+
+fn window() -> Harness<'static, GossiaApp> {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        // A drag across bands can take a few frames to settle.
+        .with_max_steps(8)
+        .build_ui_state(|ui, app: &mut GossiaApp| app.show(ui), GossiaApp::sample());
+    settle(&mut harness);
+    harness
+}
+
+/// Draws until nothing is waiting: a frame shows the report, the evaluation
+/// runs its expressions, and the next frame draws what they came to.
+fn settle(harness: &mut Harness<'_, GossiaApp>) {
+    for _ in 0..3 {
+        harness.run();
+        assert!(
+            harness
+                .state_mut()
+                .session
+                .wait_idle(Duration::from_secs(60)),
+            "the workbook did not settle"
+        );
+    }
+    harness.run();
+}
+
+/// The text the report tab drew.
+fn texts(harness: &Harness<'_, GossiaApp>) -> Vec<String> {
+    harness
+        .state()
+        .report
+        .laid
+        .as_ref()
+        .map(|l| l.texts().into_iter().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+fn new_report(harness: &mut Harness<'_, GossiaApp>, args: serde_json::Value) {
+    control::run(harness.state_mut(), "new_tab", &args).unwrap();
+    settle(harness);
+}
+
+fn p(text: &str) -> Path {
+    text.parse().unwrap()
+}
+
+#[test]
+fn a_report_follows_the_data() {
+    let mut harness = window();
+    report_with_field(&mut harness, "First", "Orders.items[0].sku");
+    assert_eq!(texts(&harness), ["First", "A-100"]);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_value("Orders", &p("items[0].sku"), Value::Str("Z-999".into()))
+        .unwrap();
+    settle(&mut harness);
+    assert_eq!(texts(&harness), ["First", "Z-999"]);
+}
+
+#[test]
+fn the_palette_of_a_report_has_no_repeater_and_a_repeater_is_a_problem() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    assert!(harness.query_by_label("Add repeater").is_none());
+    let mut design = harness.state().calc().report("Summary").unwrap().clone();
+    design
+        .layout
+        .controls
+        .push(Control::new(ControlKind::Repeater));
+    let problems = design.problems();
+    assert!(problems[0].1.contains("detail band"), "{problems:?}");
+}
+
+// ------------------------------------------------------- multipage
+
+/// A multipage report of the items of Orders, started from the array.
+fn lines_report(harness: &mut Harness<'_, GossiaApp>) {
+    new_report(
+        harness,
+        json!({"name": "Lines", "report": true, "start_tab": "Orders", "start_path": "items"}),
+    );
+    settle(harness);
+}
+
+/// The text of the page of a multipage report being shown.
+fn page_texts(harness: &Harness<'_, GossiaApp>) -> Vec<String> {
+    let app = harness.state();
+    app.report
+        .paged
+        .as_ref()
+        .and_then(|p| p.pages.get(app.report.page))
+        .map(|l| l.texts().into_iter().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+fn lines(harness: &Harness<'_, GossiaApp>) -> ReportDesign {
+    harness.state().calc().report("Lines").unwrap().clone()
+}
+
+fn set_lines(harness: &mut Harness<'_, GossiaApp>, design: ReportDesign) {
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Lines", design)
+        .unwrap();
+    settle(harness);
+}
+
+#[test]
+fn a_report_started_from_an_array_shows_each_item_page_by_page() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    let design = lines(&harness);
+    assert_eq!(design.kind, ReportKind::Multipage);
+    assert_eq!(design.bands(), Some(0));
+    let texts = page_texts(&harness);
+    for expected in [
+        "sku",
+        "qty",
+        "A-100",
+        "B-220",
+        "C-310",
+        "gift wrap",
+        "Page 1 of 1",
+    ] {
+        assert!(texts.iter().any(|t| t == expected), "{expected}: {texts:?}");
+    }
+    assert!(harness.query_by_label("Page 1 of 1").is_some());
+}
+
+#[test]
+fn the_pages_turn_with_the_buttons_and_the_page_keys() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    // Two rows of 300 points to a page: the third item is on page 2.
+    let mut design = lines(&harness);
+    design.layout.controls[BandKind::Detail.index(0)].height = Some(300);
+    set_lines(&mut harness, design);
+    assert!(harness.query_by_label("Page 1 of 2").is_some());
+    assert!(!page_texts(&harness).iter().any(|t| t == "C-310"));
+    click(&mut harness, "Next page");
+    harness.run();
+    assert_eq!(harness.state().report.page, 1);
+    let texts = page_texts(&harness);
+    assert!(texts.iter().any(|t| t == "C-310"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Page 2 of 2"), "{texts:?}");
+    harness.key_press(egui::Key::PageUp);
+    harness.run();
+    assert_eq!(harness.state().report.page, 0);
+}
+
+#[test]
+fn edit_report_shows_the_stack_of_bands_and_a_band_is_resized_by_its_line() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.run();
+    let laid = harness.state().report.laid.clone().unwrap();
+    assert_eq!(laid.bands.len(), 5);
+    // The detail band shows the first item.
+    assert!(laid.texts().contains(&"A-100"), "{:?}", laid.texts());
+    let detail = BandKind::Detail.index(0);
+    let band = laid.bands[detail].1;
+    let before = lines(&harness).layout.controls[detail].height.unwrap();
+    let from = on_screen(&harness, 300.0, band.y + band.h + 1.0);
+    let to = on_screen(&harness, 300.0, band.y + band.h + 41.0);
+    drag(&mut harness, from, to);
+    let after = lines(&harness).layout.controls[detail].height.unwrap();
+    // Forty points down, snapped to the 4-point grid.
+    assert_eq!(after, (before + 40).div_ceil(4) * 4);
+    click(&mut harness, "Undo layout");
+    assert_eq!(
+        lines(&harness).layout.controls[detail].height.unwrap(),
+        before
+    );
+}
+
+#[test]
+fn the_palette_adds_to_the_detail_band_and_a_band_is_not_deleted() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    let detail = BandKind::Detail.index(0);
+    let before = lines(&harness).layout.controls[detail].clone();
+    click(&mut harness, "Add label");
+    let after = lines(&harness).layout.controls[detail].clone();
+    assert_eq!(after.children.len(), before.children.len() + 1);
+    // The band grew to hold it.
+    let added = after.children.last().unwrap();
+    assert!(after.height.unwrap() >= added.y.unwrap() + added.height.unwrap());
+    assert_eq!(
+        harness.state().selected_control(),
+        Some(vec![detail, after.children.len() - 1])
+    );
+    // A band selected is not deleted.
+    harness.state_mut().select_control(Some(vec![detail]));
+    harness.run();
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    assert_eq!(lines(&harness).bands(), Some(0));
+}
+
+#[test]
+fn a_control_is_dragged_from_one_band_to_another() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.run();
+    let laid = harness.state().report.laid.clone().unwrap();
+    let detail = BandKind::Detail.index(0);
+    let header = BandKind::PageHeader.index(0);
+    let (from_band, to_band) = (laid.bands[detail].1, laid.bands[header].1);
+    let headings = lines(&harness).layout.controls[header].children.len();
+    let from = on_screen(&harness, 10.0, from_band.y + 6.0);
+    let to = on_screen(&harness, 210.0, to_band.y + 2.0);
+    drag(&mut harness, from, to);
+    let design = lines(&harness);
+    assert_eq!(design.layout.controls[header].children.len(), headings + 1);
+    let moved = design.layout.controls[header].children.last().unwrap();
+    assert_eq!(moved.value.as_deref(), Some("order.sku"));
+    assert!(moved.x.unwrap() >= 196);
+}
+
+#[test]
+fn the_property_page_sets_up_the_page_and_adds_sections() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    click(&mut harness, "Edit report");
+    harness.state_mut().select_control(None);
+    harness.run();
+    assert!(harness.query_by_label("Top margin").is_some());
+    click(&mut harness, "Add section");
+    settle(&mut harness);
+    let design = lines(&harness);
+    assert_eq!(design.bands(), Some(1));
+    // Its header band is selected, and says it needs items.
+    assert_eq!(harness.state().selected_control(), Some(vec![2]));
+    assert!(design.problems()[0].1.contains("items"));
+    click(&mut harness, "Undo layout");
+    assert_eq!(lines(&harness).bands(), Some(0));
+}
+
+#[test]
+fn a_section_groups_the_detail_bands_and_its_footer_totals_them() {
+    let mut harness = window();
+    lines_report(&mut harness);
+    let mut design = lines(&harness);
+    gossia_core::report::add_section(&mut design.layout);
+    // A section for the item with a note (B-220) and those without.
+    let header = &mut design.layout.controls[2];
+    header.items = Some("[True, False]".into());
+    header.item_name = Some("noted".into());
+    let mut name = Control::new(ControlKind::Field);
+    name.value = Some("'With a note' if noted else 'Without'".into());
+    name.width = Some(200);
+    name.height = Some(20);
+    header.children.push(name);
+    let detail = &mut design.layout.controls[3];
+    detail.items = Some("[o for o in Orders.items if (o.sku == 'B-220') == noted]".into());
+    detail.list_name = Some("rows".into());
+    let mut total = Control::new(ControlKind::Field);
+    total.value = Some("f'{len(rows)} lines'".into());
+    total.width = Some(200);
+    total.height = Some(20);
+    let footer = &mut design.layout.controls[4];
+    footer.height = Some(24);
+    footer.children.push(total);
+    set_lines(&mut harness, design);
+    settle(&mut harness);
+    let texts = page_texts(&harness);
+    let at = |t: &str| {
+        texts
+            .iter()
+            .position(|x| x == t)
+            .unwrap_or_else(|| panic!("{t}: {texts:?}"))
+    };
+    assert!(at("With a note") < at("B-220"));
+    assert!(at("B-220") < at("1 lines"));
+    assert!(at("1 lines") < at("Without"));
+    assert!(at("Without") < at("A-100"));
+    assert!(at("C-310") < at("2 lines"));
+}
+
+/// A report with one field showing `expression`, labelled `label`.
+fn report_with_field(harness: &mut Harness<'_, GossiaApp>, label: &str, expression: &str) {
+    new_report(harness, json!({"name": "Summary", "report": true}));
+    let mut design = ReportDesign::new(Default::default());
+    let mut field = Control::new(ControlKind::Field);
+    field.label = Some(label.to_owned());
+    field.value = Some(expression.to_owned());
+    design.layout.controls.push(field);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(harness);
+}
+
+#[test]
+fn a_field_shows_what_its_expression_comes_to() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    assert_eq!(texts(&harness), ["Total", "62.92"]);
+}
+
+#[test]
+fn a_report_runs_only_while_its_tab_is_shown() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    assert_eq!(harness.state().calc().shown_report(), Some("Summary"));
+    harness.state_mut().switch_to("Orders");
+    settle(&mut harness);
+    assert_eq!(harness.state().calc().shown_report(), None);
+}
+
+#[test]
+fn an_untrusted_workbook_shows_the_mark_instead_of_running_the_report() {
+    let mut harness = window();
+    harness.state_mut().session.calc_mut().set_trusted(false);
+    report_with_field(&mut harness, "Total", "Orders.total");
+    assert_eq!(texts(&harness), ["Total", "#UNTRUSTED!"]);
+}
+
+#[test]
+fn an_error_in_an_expression_shows_in_its_control_and_the_others_still_show() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Broken", "1 / 0");
+    let mut design = harness.state().calc().report("Summary").unwrap().clone();
+    let mut fine = Control::new(ControlKind::Field);
+    fine.label = Some("Fine".into());
+    fine.value = Some("2 + 2".into());
+    design.layout.controls.push(fine);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(&mut harness);
+    assert_eq!(texts(&harness), ["Broken", "#ERROR!", "Fine", "4"]);
+    let laid = harness.state().report.laid.clone().unwrap();
+    assert!(laid.hovers.iter().any(|h| h.text.contains("ZeroDivision")));
+}
+
+fn click(harness: &mut Harness<'_, GossiaApp>, label: &str) {
+    harness.get_by_label(label).click();
+    harness.run();
+}
+
+#[test]
+fn edit_report_is_layout_mode_with_a_palette_without_buttons() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    assert!(harness.state().layout_active());
+    assert!(harness.query_by_label("Add field").is_some());
+    assert!(harness.query_by_label("Add button").is_none());
+    // The canvas is drawn as the report is, with its value.
+    assert_eq!(texts(&harness), ["Total", "62.92"]);
+    assert!(harness.state().report.canvas_at.is_some());
+    click(&mut harness, "Edit report");
+    assert!(!harness.state().layout_active());
+    assert_eq!(texts(&harness), ["Total", "62.92"]);
+}
+
+#[test]
+fn a_control_added_in_layout_mode_is_in_the_report_and_undo_layout_takes_it_back() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    let undo_before = harness.state().calc().undo_label().map(str::to_owned);
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Add label");
+    let controls = |h: &Harness<'_, GossiaApp>| {
+        h.state()
+            .calc()
+            .report("Summary")
+            .unwrap()
+            .layout
+            .controls
+            .len()
+    };
+    assert_eq!(controls(&harness), 2);
+    // Not an edit of the workbook.
+    assert_eq!(
+        harness.state().calc().undo_label().map(str::to_owned),
+        undo_before
+    );
+    click(&mut harness, "Undo layout");
+    assert_eq!(controls(&harness), 1);
+    click(&mut harness, "Redo layout");
+    assert_eq!(controls(&harness), 2);
+}
+
+#[test]
+fn the_property_page_of_a_report_field_has_its_value_and_nothing_for_editing() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    harness.state_mut().select_control(Some(vec![0]));
+    settle(&mut harness);
+    assert!(harness.query_all_by_label("Value").next().is_some());
+    assert!(harness.query_all_by_label("Prefix").next().is_some());
+    for gone in [
+        "Source of the field",
+        "Editor of the field",
+        "Write procedure of the field",
+        "Help",
+        "Enabled when",
+        "Choices",
+    ] {
+        assert!(
+            harness.query_all_by_label(gone).next().is_none(),
+            "{gone} is shown"
+        );
+    }
+}
+
+#[test]
+fn edit_report_on_the_tab_menu_shows_the_report_in_layout_mode() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    harness.state_mut().switch_to("Orders");
+    settle(&mut harness);
+    harness.get_by_label("Summary").click_secondary();
+    harness.run();
+    click(&mut harness, "Edit report");
+    assert_eq!(harness.state().sheet, "Summary");
+    assert!(harness.state().layout_active());
+}
+
+// ------------------------------------------------------------ the canvas
+
+fn drag(harness: &mut Harness<'_, GossiaApp>, from: egui::Pos2, to: egui::Pos2) {
+    harness.hover_at(from);
+    harness.run();
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=5 {
+        harness.hover_at(from.lerp(to, step as f32 / 5.0));
+        harness.run();
+    }
+    harness.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    harness.remove_cursor();
+    harness.run();
+}
+
+fn click_at(harness: &mut Harness<'_, GossiaApp>, pos: egui::Pos2) {
+    harness.hover_at(pos);
+    harness.run();
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+}
+
+/// Where a point of the canvas, in report points, is on the screen.
+fn on_screen(harness: &Harness<'_, GossiaApp>, x: f32, y: f32) -> egui::Pos2 {
+    let (origin, zoom) = harness.state().report.canvas_at.unwrap();
+    origin + egui::vec2(x * zoom, y * zoom)
+}
+
+fn first_control(harness: &Harness<'_, GossiaApp>) -> Control {
+    harness
+        .state()
+        .calc()
+        .report("Summary")
+        .unwrap()
+        .layout
+        .controls[0]
+        .clone()
+}
+
+#[test]
+fn a_report_made_before_the_canvas_is_turned_into_one_when_shown() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    let design = harness.state().calc().report("Summary").unwrap().clone();
+    assert!(design.canvas);
+    let field = &design.layout.controls[0];
+    assert_eq!((field.x, field.y), (Some(0), Some(0)));
+    assert!(field.width.is_some() && field.height.is_some());
+    assert_eq!(texts(&harness), ["Total", "62.92"]);
+}
+
+#[test]
+fn a_control_is_moved_by_dragging_it_on_the_canvas_and_undo_layout_puts_it_back() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.run();
+    let from = on_screen(&harness, 20.0, 8.0);
+    let to = on_screen(&harness, 120.0, 88.0);
+    drag(&mut harness, from, to);
+    let moved = first_control(&harness);
+    assert_eq!((moved.x, moved.y), (Some(100), Some(80)));
+    assert_eq!(harness.state().selected_control(), Some(vec![0]));
+    click(&mut harness, "Undo layout");
+    let back = first_control(&harness);
+    assert_eq!((back.x, back.y), (Some(0), Some(0)));
+}
+
+#[test]
+fn a_handle_resizes_the_selected_control_to_the_grid() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.state_mut().select_control(Some(vec![0]));
+    harness.run();
+    let c = first_control(&harness);
+    let (w, h) = (c.width.unwrap() as f32, c.height.unwrap() as f32);
+    // The corner at the bottom right, dragged 41 points right and 30 down.
+    let from = on_screen(&harness, w, h);
+    let to = on_screen(&harness, w + 41.0, h + 30.0);
+    drag(&mut harness, from, to);
+    let resized = first_control(&harness);
+    assert_eq!(resized.width.unwrap() % 4, 0);
+    assert!(resized.width.unwrap() as f32 >= w + 38.0);
+    assert!(resized.height.unwrap() as f32 >= h + 28.0);
+}
+
+#[test]
+fn the_palette_adds_a_control_with_a_box_under_the_lowest_one() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Add label");
+    let design = harness.state().calc().report("Summary").unwrap().clone();
+    let (first, added) = (&design.layout.controls[0], &design.layout.controls[1]);
+    assert!(added.y.unwrap() >= first.y.unwrap() + first.height.unwrap());
+    assert!(added.width.is_some() && added.height.is_some());
+    assert_eq!(harness.state().selected_control(), Some(vec![1]));
+    // Delete takes the selected control away.
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    let count = harness
+        .state()
+        .calc()
+        .report("Summary")
+        .unwrap()
+        .layout
+        .controls
+        .len();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn a_click_on_the_canvas_selects_and_on_the_empty_page_selects_nothing() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    harness.state_mut().report.zoom = Some(1.0);
+    harness.run();
+    let on = on_screen(&harness, 10.0, 8.0);
+    click_at(&mut harness, on);
+    harness.run();
+    assert_eq!(harness.state().selected_control(), Some(vec![0]));
+    let off = on_screen(&harness, 300.0, 400.0);
+    let mut design = harness.state().calc().report("Summary").unwrap().clone();
+    design.height = Some(600);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    harness.run();
+    click_at(&mut harness, off);
+    harness.run();
+    assert_eq!(harness.state().selected_control(), None);
+}
+
+#[test]
+fn show_expressions_shows_each_field_s_expression() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Show expressions");
+    assert_eq!(texts(&harness), ["Total", "[Orders.total]"]);
+    click(&mut harness, "Show expressions");
+    assert_eq!(texts(&harness), ["Total", "62.92"]);
+}
+
+#[test]
+fn a_separator_s_thickness_is_set_on_the_property_page() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Add separator");
+    let separator = |h: &Harness<'_, GossiaApp>| {
+        h.state()
+            .calc()
+            .report("Summary")
+            .unwrap()
+            .layout
+            .controls
+            .last()
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(separator(&harness).thickness, None);
+    click(&mut harness, "Thickness");
+    settle(&mut harness);
+    assert_eq!(separator(&harness).thickness, Some(2));
+    let laid = harness.state().report.laid.clone().unwrap();
+    let widths: Vec<f32> = laid
+        .paints
+        .iter()
+        .filter_map(|p| match p {
+            gossia_layout::report::Paint::Line { width, .. } => Some(*width),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(widths, [2.0]);
+    click(&mut harness, "Undo layout");
+    assert_eq!(separator(&harness).thickness, None);
+}
+
+// ------------------------------------------------------- parameters
+
+/// A report with a field per expression and the given parameters.
+fn report_with_params(
+    harness: &mut Harness<'_, GossiaApp>,
+    values: &[&str],
+    params: Vec<gossia_core::report::ReportParam>,
+) {
+    new_report(harness, json!({"name": "Summary", "report": true}));
+    let mut design = ReportDesign::new(Default::default());
+    for (i, value) in values.iter().enumerate() {
+        let mut field = Control::new(ControlKind::Field);
+        field.value = Some((*value).to_owned());
+        field.x = Some(0);
+        field.y = Some(i as u32 * 24);
+        field.width = Some(300);
+        field.height = Some(20);
+        design.layout.controls.push(field);
+    }
+    design.canvas = true;
+    design.params = params;
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(harness);
+}
+
+fn sku_param() -> gossia_core::report::ReportParam {
+    use gossia_core::report::{ParamKind, ReportParam};
+    let mut p = ReportParam::new("sku", ParamKind::Choice);
+    p.label = Some("Product".into());
+    p.choices = Some("[i.sku for i in Orders.items]".into());
+    p.default = Some("'A-100'".into());
+    p
+}
+
+#[test]
+fn the_parameter_bar_chooses_a_value_and_the_report_follows() {
+    let mut harness = window();
+    report_with_params(
+        &mut harness,
+        &["[i.qty for i in Orders.items if i.sku == params.sku][0]"],
+        vec![sku_param()],
+    );
+    let before = texts(&harness);
+    // Open the list and pick another product.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Product")
+        .click();
+    harness.run();
+    harness.get_by_label("B-220").click();
+    settle(&mut harness);
+    let chosen = harness.state().calc().chosen_params("Summary").cloned();
+    assert_eq!(
+        chosen.and_then(|m| m.get("sku").cloned()),
+        Some(Value::Str("B-220".into()))
+    );
+    assert_ne!(texts(&harness), before);
+    // Defaults puts it back, and it is not an edit Undo takes back.
+    click(&mut harness, "Defaults");
+    settle(&mut harness);
+    assert_eq!(texts(&harness), before);
+    assert!(harness.state().calc().chosen_params("Summary").is_none());
+}
+
+#[test]
+fn a_required_parameter_that_is_empty_stops_the_report() {
+    use gossia_core::report::{ParamKind, ReportParam};
+    let mut harness = window();
+    let mut customer = ReportParam::new("customer", ParamKind::Text);
+    customer.label = Some("Customer".into());
+    customer.required = true;
+    report_with_params(&mut harness, &["params.customer.upper()"], vec![customer]);
+    assert!(
+        harness
+            .query_by_label("Fill in Customer to see the report.")
+            .is_some()
+    );
+    control::run(
+        harness.state_mut(),
+        "report_param",
+        &json!({"report": "Summary", "name": "customer", "value": "acme"}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    assert!(
+        harness
+            .query_by_label("Fill in Customer to see the report.")
+            .is_none()
+    );
+    assert_eq!(texts(&harness), ["ACME"]);
+}
+
+#[test]
+fn a_period_parameter_and_parameters_on_the_property_page() {
+    use gossia_core::report::{ParamKind, PeriodPreset, ReportParam};
+    let mut harness = window();
+    let mut when = ReportParam::new("when", ParamKind::Period);
+    when.preset = Some(PeriodPreset::ThisYear);
+    report_with_params(&mut harness, &["str(params.when.start)"], vec![when]);
+    let year = gossia_calc::today().format("%Y").to_string();
+    assert_eq!(texts(&harness), [format!("{year}-01-01")]);
+    control::run(
+        harness.state_mut(),
+        "report_param",
+        &json!({"report": "Summary", "name": "when",
+                "value": {"start": "2025-03-01", "end": "2025-03-31"}}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    assert_eq!(texts(&harness), ["2025-03-01"]);
+
+    // On the property page, with nothing selected.
+    click(&mut harness, "Edit report");
+    harness.state_mut().select_control(None);
+    harness.run();
+    click(&mut harness, "Add parameter");
+    settle(&mut harness);
+    let design = harness.state().calc().report("Summary").unwrap().clone();
+    assert_eq!(design.params.len(), 2);
+    assert_eq!(design.params[1].name, "param1");
+    assert_eq!(design.params[1].kind, ParamKind::Date);
+}
+
+// ------------------------------------------------------- results cache
+
+#[test]
+fn a_report_opened_untrusted_is_drawn_from_its_results_cache() {
+    let folder = std::env::temp_dir().join(format!(
+        "gossia-report-cache-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("cache.gossia");
+    let mut harness = window();
+    report_with_params(
+        &mut harness,
+        &["[i.qty for i in Orders.items if i.sku == params.sku][0]"],
+        vec![sku_param()],
+    );
+    control::run(
+        harness.state_mut(),
+        "report_param",
+        &json!({"report": "Summary", "name": "sku", "value": "B-220"}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    let shown = texts(&harness);
+    assert!(harness.state().is_dirty(), "a parameter chosen is unsaved");
+    harness.state_mut().save_as(&path).unwrap();
+    assert!(!harness.state().is_dirty());
+
+    harness.state_mut().open_path(&path).unwrap();
+    harness.state_mut().withhold_trust(Vec::new());
+    harness.state_mut().switch_to("Summary");
+    settle(&mut harness);
+    assert_eq!(texts(&harness), shown);
+    let note = harness
+        .state()
+        .calc()
+        .report_cache("Summary")
+        .map(|c| gossia_app::report_view::local_time(&c.calculated))
+        .unwrap();
+    assert!(
+        harness
+            .query_by_label_contains(&format!("calculated on {note}"))
+            .is_some()
+    );
+    // Its parameter is as it was, and cannot be changed.
+    let params = harness.state().calc().report_params("Summary");
+    assert_eq!(params[0].value, Value::Str("B-220".into()));
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+// ------------------------------------------------------------------ charts
+
+/// A report with a bar chart of the order lines.
+fn report_with_chart(harness: &mut Harness<'_, GossiaApp>) {
+    new_report(harness, json!({"name": "Summary", "report": true}));
+    let mut design = ReportDesign::new(Default::default());
+    let mut chart = Control::new(ControlKind::Chart);
+    chart.chart = Some("Bar".into());
+    chart
+        .chart_args
+        .insert("labels".into(), "[i.sku for i in Orders.items]".into());
+    chart.chart_args.insert(
+        "values".into(),
+        "[i.qty * i.price for i in Orders.items]".into(),
+    );
+    chart.width = Some(320);
+    chart.height = Some(200);
+    design.layout.controls.push(chart);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(harness);
+}
+
+fn svg_painted(harness: &Harness<'_, GossiaApp>) -> bool {
+    harness.state().report.laid.as_ref().is_some_and(|l| {
+        l.paints
+            .iter()
+            .any(|p| matches!(p, gossia_layout::report::Paint::Svg { .. }))
+    })
+}
+
+#[test]
+fn a_chart_draws_the_svg_its_function_returns() {
+    let mut harness = window();
+    report_with_chart(&mut harness);
+    assert!(svg_painted(&harness), "{:?}", texts(&harness));
+    let state = harness
+        .state()
+        .calc()
+        .report_expression("Summary", &[0], &[], gossia_calc::ExprKind::Chart)
+        .unwrap();
+    let Some(Ok(Value::Str(svg))) = state.result else {
+        panic!("{:?}", state.result)
+    };
+    // It renders.
+    let image = gossia_app::chart_view::render(&svg, None, 320, 200).unwrap();
+    assert_eq!(image.size, [320, 200]);
+}
+
+#[test]
+fn a_chart_takes_its_fill_and_text_colour() {
+    let mut harness = window();
+    report_with_chart(&mut harness);
+    let mut design = harness.state().calc().report("Summary").unwrap().clone();
+    design.layout.controls[0].fill_colour = Some("#003366".into());
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(&mut harness);
+    let laid = harness.state().report.laid.clone().unwrap();
+    let (svg, style) = laid
+        .paints
+        .iter()
+        .find_map(|p| match p {
+            gossia_layout::report::Paint::Svg { svg, style, .. } => {
+                Some((svg.clone(), style.clone()))
+            }
+            _ => None,
+        })
+        .unwrap();
+    // The fill shows through the chart, and its text is white on it.
+    let style = style.expect("a style sheet");
+    assert!(style.contains("color: rgba(255, 255, 255"), "{style}");
+    let image = gossia_app::chart_view::render(&svg, Some(&style), 320, 200).unwrap();
+    assert_eq!(image.pixels[0].a(), 0, "the background is left to the fill");
+    let plain = gossia_app::chart_view::render(&svg, None, 320, 200).unwrap();
+    assert_eq!(plain.pixels[0].a(), 255);
+}
+
+#[test]
+fn an_untrusted_workbook_shows_the_mark_in_a_chart() {
+    let mut harness = window();
+    harness.state_mut().session.calc_mut().set_trusted(false);
+    report_with_chart(&mut harness);
+    assert!(!svg_painted(&harness));
+    assert_eq!(texts(&harness), ["#UNTRUSTED!"]);
+}
+
+#[test]
+fn a_chart_is_added_from_the_palette_and_its_page_has_a_box_for_each_parameter() {
+    let mut harness = window();
+    report_with_field(&mut harness, "Total", "Orders.total");
+    click(&mut harness, "Edit report");
+    click(&mut harness, "Add chart");
+    let chart = harness
+        .state()
+        .calc()
+        .report("Summary")
+        .unwrap()
+        .layout
+        .controls[1]
+        .clone();
+    assert_eq!(chart.kind, ControlKind::Chart);
+    assert_eq!((chart.width, chart.height), (Some(320), Some(200)));
+    harness.state_mut().select_control(Some(vec![1]));
+    settle(&mut harness);
+    assert_eq!(texts(&harness), ["Total", "62.92", "Choose a chart type"]);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Chart type")
+        .click();
+    harness.run();
+    click(&mut harness, "Pie");
+    settle(&mut harness);
+    for label in ["labels *", "values *", "title", "donut"] {
+        assert!(
+            harness.query_all_by_label(label).next().is_some(),
+            "{label} is not shown"
+        );
+    }
+    assert!(harness.query_all_by_label("width").next().is_none());
+    assert_eq!(
+        texts(&harness),
+        ["Total", "62.92", "Fill in the chart's values"]
+    );
+}
+
+#[test]
+fn a_form_has_no_chart_in_its_palette() {
+    let mut harness = window();
+    {
+        let app = harness.state_mut();
+        app.switch_to("Orders");
+        assert!(app.set_view(gossia_app::form::View::Form("Default".to_owned())));
+        app.set_layout(true);
+    }
+    settle(&mut harness);
+    assert!(harness.query_by_label("Add field").is_some());
+    assert!(harness.query_by_label("Add chart").is_none());
+}
+
+#[test]
+fn the_code_editor_shows_the_built_in_charts_read_only() {
+    let mut harness = window();
+    harness.state_mut().open_code_editor();
+    harness.state_mut().open_built_in_charts();
+    harness.run();
+    let tab = harness.state().code.current_tab().unwrap();
+    assert!(tab.item.is_read_only());
+    assert!(tab.text.contains("@chart(\"Bar\")"));
+}

@@ -1,17 +1,17 @@
 #!/bin/bash
 # Builds the Windows installer (an x64 MSI) on Linux: cross-compiles the release
-# application and cliotree-cli for x86_64-pc-windows-msvc with cargo-xwin, then
+# application and bidwillii for x86_64-pc-windows-msvc with cargo-xwin, then
 # packages them with wixl (msitools). Nothing is installed system-wide: the tools
-# it needs and does not find are put under $CLIOTREE_MSI_TOOLS (default
-# ~/.cache/cliotree-msi) and reused.
+# it needs and does not find are put under $GOSSIA_MSI_TOOLS (default
+# ~/.cache/gossia-msi) and reused.
 #
 # The first run downloads the Microsoft CRT and Windows SDK (cargo-xwin, accepting
 # their licence terms: XWIN_ACCEPT_LICENSE) and takes several minutes; later runs
-# reuse the cache. The result is target/msi/ClioTree-<version>-x64.msi.
+# reuse the cache. The result is target/msi/Gossia-<version>-x64.msi.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-tools=${CLIOTREE_MSI_TOOLS:-$HOME/.cache/cliotree-msi}
+tools=${GOSSIA_MSI_TOOLS:-$HOME/.cache/gossia-msi}
 target=x86_64-pc-windows-msvc
 mkdir -p "$tools"
 
@@ -39,14 +39,14 @@ rustup target add "$target"
 
 export XWIN_ACCEPT_LICENSE=1 XWIN_CACHE_DIR=$tools/xwin-cache
 cd "$root"
-cargo xwin build --release -p cliotree-app -p cliotree-cli --bin cliotree --bin cliotree-cli --target "$target"
+cargo xwin build --release -p gossia-app -p gossia-cli --bin gossia --bin bidwillii --target "$target"
 
 out=$root/target/msi
 mkdir -p "$out"
-"$wixl" -a x64 -o "$out/ClioTree-$version-x64.msi" \
+"$wixl" -a x64 -o "$out/Gossia-$version-x64.msi" \
     -D "Version=$version" \
-    -D "Exe=$root/target/$target/release/cliotree.exe" \
-    -D "CliExe=$root/target/$target/release/cliotree-cli.exe" \
+    -D "Exe=$root/target/$target/release/gossia.exe" \
+    -D "CliExe=$root/target/$target/release/bidwillii.exe" \
     -D "License=$root/LICENSE" \
-    "$root/packaging/windows/cliotree.wxs"
+    "$root/packaging/windows/gossia.wxs"
 ls -la "$out"

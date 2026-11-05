@@ -1,0 +1,28 @@
+[package]
+name = "gossia-core"
+description = "Value, TypeSpec, schema lowering, validation, and format adapters. No UI and no Python."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
+quick-xml = "0.42.0"
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
+# Also encodes the jobs and results of the evaluation for the Web Worker of the
+# wasm version (DESIGN.md, Web port, 0.3.0); `rc` for the shared trees.
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
+saphyr-parser = "0.3.3"
+base64 = "0.22.1"
+
+[dev-dependencies]
+proptest = "1.12.0"
+toml = "1.1.8"

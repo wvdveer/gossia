@@ -120,10 +120,10 @@ pub fn find_root(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The directory holding the vendored items: `$CLIOTREE_VENDOR_DIR` if set,
+/// The directory holding the vendored items: `$GOSSIA_VENDOR_DIR` if set,
 /// otherwise `vendor/` under the repository root.
 pub fn vendor_dir(root: &Path) -> PathBuf {
-    match std::env::var_os("CLIOTREE_VENDOR_DIR") {
+    match std::env::var_os("GOSSIA_VENDOR_DIR") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => root.join("vendor"),
     }
@@ -289,14 +289,14 @@ pub fn verify_item(item: &Item, vendor: &Path, root: &Path) -> Result<(), String
 }
 
 /// The vendor items the workspace declares it needs, from
-/// `[workspace.metadata.cliotree] vendor = [...]` in the root `Cargo.toml`.
+/// `[workspace.metadata.gossia] vendor = [...]` in the root `Cargo.toml`.
 pub fn required_from_manifest(manifest_text: &str) -> Result<Vec<String>, String> {
     let value: toml::Value =
         toml::from_str(manifest_text).map_err(|e| format!("Cargo.toml: {e}"))?;
     let list = value
         .get("workspace")
         .and_then(|w| w.get("metadata"))
-        .and_then(|m| m.get("cliotree"))
+        .and_then(|m| m.get("gossia"))
         .and_then(|c| c.get("vendor"));
     match list {
         None => Ok(Vec::new()),
@@ -304,13 +304,13 @@ pub fn required_from_manifest(manifest_text: &str) -> Result<Vec<String>, String
             .iter()
             .map(|v| {
                 v.as_str().map(str::to_owned).ok_or_else(|| {
-                    "Cargo.toml: workspace.metadata.cliotree.vendor must be a list of names"
+                    "Cargo.toml: workspace.metadata.gossia.vendor must be a list of names"
                         .to_owned()
                 })
             })
             .collect(),
         Some(_) => {
-            Err("Cargo.toml: workspace.metadata.cliotree.vendor must be a list of names".to_owned())
+            Err("Cargo.toml: workspace.metadata.gossia.vendor must be a list of names".to_owned())
         }
     }
 }
@@ -759,14 +759,14 @@ members = []
         assert!(required_from_manifest(none).unwrap().is_empty());
         let some = "[workspace]
 members = []
-[workspace.metadata.cliotree]
+[workspace.metadata.gossia]
 vendor = [\"rustpython\", \"ruff\"]
 ";
         assert_eq!(
             required_from_manifest(some).unwrap(),
             ["rustpython", "ruff"]
         );
-        let bad = "[workspace.metadata.cliotree]
+        let bad = "[workspace.metadata.gossia]
 vendor = \"rustpython\"
 ";
         assert!(required_from_manifest(bad).is_err());

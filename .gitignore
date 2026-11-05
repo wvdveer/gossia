@@ -32,9 +32,9 @@ rustc-ice-*.txt
 /vendor/
 
 # What a failing snapshot test leaves beside the stored image
-crates/cliotree-app/tests/snapshots/**/*.new.png
-crates/cliotree-app/tests/snapshots/**/*.diff.png
-crates/cliotree-app/tests/snapshots/**/*.old.png
+crates/gossia-app/tests/snapshots/**/*.new.png
+crates/gossia-app/tests/snapshots/**/*.diff.png
+crates/gossia-app/tests/snapshots/**/*.old.png
 
 # What makepkg leaves beside the PKGBUILD (packaging/linux/build-package.sh arch)
 packaging/linux/arch/src/

@@ -1,0 +1,28 @@
+[package]
+name = "gossia-web"
+description = "The wasm version: the application in the page, and Python in a Web Worker (DESIGN.md, Web port, 0.3.0)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Everything is for wasm; on other targets the crate is empty.
+[target.'cfg(target_family = "wasm")'.dependencies]
+gossia-core.workspace = true
+gossia-calc.workspace = true
+gossia-app = { path = "../gossia-app" }
+egui = "0.37.0"
+eframe = "0.37.0"
+web-sys = { version = "0.3.106", features = ["HtmlCanvasElement", "console"] }
+wasm-bindgen-futures = "0.4.79"
+# The version in the lock file must match the wasm-bindgen command-line tool
+# that makes the JavaScript glue (`cargo xtask web` installs that version).
+wasm-bindgen = "0.2.129"
+js-sys = "0.3.106"
+
+[lints]
+workspace = true

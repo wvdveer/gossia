@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-  Builds the MSIX package of ClioTree for the Microsoft Store, on Windows.
+  Builds the MSIX package of Gossia for the Microsoft Store, on Windows.
 
 .DESCRIPTION
-  Builds the release cliotree.exe and cliotree-cli.exe, writes the logos
+  Builds the release gossia.exe and bidwillii.exe, writes the logos
   (cargo xtask icons), fills in AppxManifest.xml and packs it all with MakeAppx
   from the Windows SDK. The package is not signed: the Store signs it when it is
   uploaded in Partner Center (DESIGN.md, Testing and CI).
 
-  The result is target\msix\ClioTree-<version>-x64.msix, and the folder it was
+  The result is target\msix\Gossia-<version>-x64.msix, and the folder it was
   packed from is target\msix\stage.
 
 .PARAMETER SkipBuild
@@ -17,11 +17,11 @@
 .PARAMETER Register
   Install the packed folder for this user (Add-AppxPackage -Register), to try
   the package before uploading it. Needs Developer Mode turned on in Settings.
-  Remove it again with: Get-AppxPackage WardvanderVeer.ClioTree | Remove-AppxPackage
+  Remove it again with: Get-AppxPackage WardvanderVeer.Gossia | Remove-AppxPackage
 
 .PARAMETER Publish
   Upload the .msix to the generic package registry of the Gitea instance
-  (http://acer.patersonst:3000, package cliotree, owner ward), replacing a file
+  (http://acer.patersonst:3000, package gossia, owner ward), replacing a file
   of the same version. The login is the one Git Credential Manager holds for
   that host and user ward; the token needs the package write permission.
 
@@ -53,8 +53,8 @@ function Invoke-Native([string]$program, [string[]]$arguments) {
 }
 
 if (-not $SkipBuild) {
-    Invoke-Native 'cargo' @('build', '--release', '-p', 'cliotree-app', '-p', 'cliotree-cli',
-        '--bin', 'cliotree', '--bin', 'cliotree-cli')
+    Invoke-Native 'cargo' @('build', '--release', '-p', 'gossia-app', '-p', 'gossia-cli',
+        '--bin', 'gossia', '--bin', 'bidwillii')
 }
 
 $out = Join-Path $root 'target\msix'
@@ -64,7 +64,7 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force (Join-Path $stage 'Assets') | Out-Null
 Invoke-Native 'cargo' @('xtask', 'icons', $icons)
 
-foreach ($exe in 'cliotree.exe', 'cliotree-cli.exe') {
+foreach ($exe in 'gossia.exe', 'bidwillii.exe') {
     $from = Join-Path $root "target\release\$exe"
     if (-not (Test-Path $from)) { throw "$from is missing: build without -SkipBuild" }
     Copy-Item $from $stage
@@ -92,13 +92,13 @@ $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\ma
     Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
 if (-not $makeappx) { throw 'makeappx.exe not found: install the Windows SDK' }
 
-$msix = Join-Path $out "ClioTree-$version-x64.msix"
+$msix = Join-Path $out "Gossia-$version-x64.msix"
 Invoke-Native $makeappx.FullName @('pack', '/o', '/d', $stage, '/p', $msix)
 Write-Host "Packed $msix"
 
 if ($Register) {
     Add-AppxPackage -Register (Join-Path $stage 'AppxManifest.xml')
-    Write-Host 'Registered for this user: ClioTree is on the Start menu, and cliotree-cli runs by name.'
+    Write-Host 'Registered for this user: Gossia is on the Start menu, and bidwillii runs by name.'
 }
 
 if ($Publish) {
@@ -107,7 +107,7 @@ if ($Publish) {
     # Process) git reports "credential missing protocol field", while a file
     # redirect through cmd works. The file holds no secret.
     $env:GCM_INTERACTIVE = 'never'
-    $queryFile = Join-Path $env:TEMP 'cliotree-credential-query.txt'
+    $queryFile = Join-Path $env:TEMP 'gossia-credential-query.txt'
     [IO.File]::WriteAllBytes($queryFile, [Text.Encoding]::ASCII.GetBytes("protocol=http`nhost=acer.patersonst:3000`nusername=ward`n`n"))
     try { $answer = cmd /c "git credential fill < `"$queryFile`"" }
     finally { Remove-Item $queryFile -ErrorAction SilentlyContinue }
@@ -115,7 +115,7 @@ if ($Publish) {
     if (-not $password) { throw 'Git Credential Manager has no login for ward at acer.patersonst:3000' }
     $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("ward:$password"))
     $headers = @{ Authorization = "Basic $basic" }
-    $url = "$server/api/packages/ward/generic/cliotree/$version/$(Split-Path $msix -Leaf)"
+    $url = "$server/api/packages/ward/generic/gossia/$version/$(Split-Path $msix -Leaf)"
     try {
         Invoke-WebRequest -UseBasicParsing -Method Delete -Uri $url -Headers $headers | Out-Null
         Write-Host 'Removed the earlier file of this version'

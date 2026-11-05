@@ -1,6 +1,8 @@
-# cliotree
+# Gossia
 
 An Excel-like application which handles JSON Schema and XML Schema documents. Each sheet is a tree defined by a schema instead of a 2D grid, and cells can hold Python formulas whose results must match the schema.
+
+**The name.** Gossia uses Python, and its sheets are trees. The Python Tree is *Gossia bidwillii*, an Australian rainforest tree named for its smooth, mottled, python-like bark. 
 
 The full design is in [DESIGN.md](DESIGN.md).
 
@@ -15,7 +17,7 @@ The full design is in [DESIGN.md](DESIGN.md).
 cargo xtask test      # run the tests
 cargo xtask lint      # formatting and clippy
 cargo xtask ci        # everything the blocking CI jobs run
-cargo build           # build the application (binary: cliotree)
+cargo build           # build the application (binary: gossia)
 ```
 
 `cargo xtask` is the project's helper command (see `tools/`). It lives in its own workspace, so it works on a fresh clone.
@@ -35,15 +37,15 @@ cargo xtask clean            # remove the build output AND vendor/
 - `cargo xtask lint`, `test` and `ci` fetch whatever the workspace needs before starting Cargo.
 - **The first build takes several minutes**, because it compiles RustPython (about 4.5 minutes in release on the development machine). Later builds reuse it. The `rustpython` item is fetched with a patch (`vendor-patches/rustpython.patch`) that makes its `ruff` dependencies point at `vendor/ruff`; see DESIGN.md, "Patching a vendored item".
 - **A plain `cargo build` cannot do that.** Cargo needs every path dependency to exist before it runs any build script, so on a fresh clone, once the workspace depends on `vendor/`, run `cargo xtask vendor fetch` first (once). Cargo's error in that case is `no matching package named ... found`, with the path under `vendor/`.
-- Set `CLIOTREE_VENDOR_DIR` to use a copy of the folder prepared elsewhere (for example when offline).
+- Set `GOSSIA_VENDOR_DIR` to use a copy of the folder prepared elsewhere (for example when offline).
 
 ## CI runner
 
-CI (`.github/workflows/ci.yml`) runs on a self-hosted GitHub Actions runner, not on GitHub's hosted runners. Every job uses `runs-on: [self-hosted, cliotree]`.
+CI (`.github/workflows/ci.yml`) runs on a self-hosted GitHub Actions runner, not on GitHub's hosted runners. Every job uses `runs-on: [self-hosted, gossia]`.
 
 To register a runner (once, as an unprivileged user):
 
-1. On GitHub: repository **Settings, Actions, Runners, New self-hosted runner**, choose Linux, and follow the download and `./config.sh --url ... --token ...` commands. Give it the label `cliotree` (`--labels cliotree`).
+1. On GitHub: repository **Settings, Actions, Runners, New self-hosted runner**, choose Linux, and follow the download and `./config.sh --url ... --token ...` commands. Give it the label `gossia` (`--labels gossia`).
 2. Start it with `./run.sh` (for example `nohup ./run.sh > runner.log 2> runner.err &`), or install it as a service with `sudo ./svc.sh install && sudo ./svc.sh start`.
 3. The machine needs `git`, `curl`, a C compiler and linker (`build-essential` or equivalent), and `rustup`. The workflow installs the toolchain pinned in `rust-toolchain.toml` through `rustup`, so nothing else has to be provisioned.
 
@@ -53,4 +55,4 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Trying the window
 
-`cargo run -p cliotree-app` opens a sample workbook (an order with formulas, and a price list) so that the grid, the formula bar, undo and the rest can be tried. Opening and saving files comes later in the build.
+`cargo run -p gossia-app` opens a sample workbook (an order with formulas, and a price list) so that the grid, the formula bar, undo and the rest can be tried. Opening and saving files comes later in the build.

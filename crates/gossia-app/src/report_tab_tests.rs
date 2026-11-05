@@ -1,0 +1,331 @@
+//! Tests of report tabs in the window (DESIGN.md, "Reports" and "Managing
+//! tabs"): making one with *New tab...* or *New report...*, duplicating,
+//! renaming and deleting it, and its design in the code editor.
+
+use std::time::Duration;
+
+use gossia_core::Path;
+use gossia_core::form::{Control, ControlKind};
+use gossia_core::report::{ReportDesign, ReportKind};
+use serde_json::json;
+
+use crate::GossiaApp;
+use crate::code::CodeItem;
+use crate::control;
+use crate::tab_commands::NewKind;
+
+fn sample() -> GossiaApp {
+    let mut app = GossiaApp::sample();
+    app.files.browse = false;
+    assert!(app.session.wait_idle(Duration::from_secs(60)));
+    app
+}
+
+fn p(text: &str) -> Path {
+    text.parse().unwrap()
+}
+
+/// Makes a report with *New report...*, as the dialog would.
+fn new_report(app: &mut GossiaApp, name: &str) {
+    app.begin_new_report();
+    let mut dialog = app.tab_dialogs.new.take().unwrap();
+    dialog.name = name.to_owned();
+    app.create_tab(&dialog).unwrap();
+}
+
+#[test]
+fn new_report_offers_a_free_name_and_makes_one_entry() {
+    let mut app = sample();
+    app.begin_new_report();
+    let dialog = app.tab_dialogs.new.take().unwrap();
+    assert_eq!(dialog.kind, NewKind::Report);
+    assert_eq!(dialog.name, "Report");
+    assert_eq!(dialog.report_kind, ReportKind::SinglePage);
+    assert!(app.new_tab_problem(&dialog).is_none());
+    app.create_tab(&dialog).unwrap();
+
+    assert_eq!(app.calc().tab_names().last().unwrap(), "Report");
+    assert_eq!(app.sheet, "Report");
+    assert!(app.in_report() && !app.in_tree() && !app.in_form());
+    assert!(app.view_names().is_empty());
+    assert_eq!(app.calc().undo_label(), Some("New report Report"));
+    // A report is not a data tab.
+    assert!(app.calc().data("Report").is_none());
+
+    // The next one gets the next number.
+    app.begin_new_report();
+    assert_eq!(app.tab_dialogs.new.take().unwrap().name, "Report2");
+
+    app.undo();
+    app.follow_tabs();
+    assert!(app.calc().report("Report").is_none());
+    assert_ne!(app.sheet, "Report");
+}
+
+#[test]
+fn a_report_name_is_checked_as_any_tab_name() {
+    let mut app = sample();
+    app.begin_new_report();
+    let mut dialog = app.tab_dialogs.new.take().unwrap();
+    dialog.name = "orders".to_owned();
+    let why = app.new_tab_problem(&dialog).unwrap();
+    assert!(why.starts_with("The tab name:"), "{why}");
+    dialog.name = "not a name".to_owned();
+    assert!(app.new_tab_problem(&dialog).is_some());
+}
+
+/// Starting from an array makes a multipage report whose detail band
+/// repeats for each item.
+#[test]
+fn starting_from_an_array_makes_a_multipage_report_of_its_items() {
+    let mut app = sample();
+    let starts = app.starting_points();
+    let shown: Vec<&str> = starts.iter().map(|(.., s)| s.as_str()).collect();
+    assert!(shown.contains(&"Orders.items"), "{shown:?}");
+    // Schema tabs are not data to report on.
+    assert!(!shown.iter().any(|s| s.starts_with("Orders_schema")));
+
+    app.begin_new_report();
+    let mut dialog = app.tab_dialogs.new.take().unwrap();
+    dialog.name = "Lines".to_owned();
+    dialog.report_kind = ReportKind::Multipage;
+    dialog.start = Some(("Orders".to_owned(), p("items")));
+    app.create_tab(&dialog).unwrap();
+    let design = app.calc().report("Lines").unwrap();
+    assert_eq!(design.bands(), Some(0));
+    let detail = &design.layout.controls[2];
+    assert_eq!(detail.items.as_deref(), Some("Orders.items"));
+    assert_eq!(detail.item_name.as_deref(), Some("order"));
+}
+
+#[test]
+fn choosing_report_in_new_tab_keeps_the_data_choices_out() {
+    let mut app = sample();
+    app.begin_new_tab();
+    let mut dialog = app.tab_dialogs.new.take().unwrap();
+    dialog.kind = NewKind::Report;
+    dialog.name = "Summary".to_owned();
+    // The schema name of a data tab is not checked for a report.
+    dialog.schema_name = "Orders".to_owned();
+    assert!(app.new_tab_problem(&dialog).is_none());
+    let before = app.calc().sheet_names().count();
+    app.create_tab(&dialog).unwrap();
+    assert_eq!(app.calc().sheet_names().count(), before);
+    assert!(app.calc().is_report("Summary"));
+}
+
+#[test]
+fn duplicate_puts_the_copy_after_its_report_and_shows_it() {
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    app.move_tab("Sales", 0);
+    let copy = app.duplicate_report_tab("Sales").unwrap();
+    assert_eq!(copy, "Sales_2");
+    assert_eq!(app.calc().tab_names()[..2], ["Sales", "Sales_2"]);
+    assert_eq!(app.sheet, "Sales_2");
+    assert_eq!(app.calc().undo_label(), Some("Duplicate report Sales"));
+}
+
+#[test]
+fn deleting_a_report_shows_the_next_tab_and_undo_puts_it_back() {
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    app.move_tab("Sales", 0);
+    let next = app.calc().tab_names()[1].clone();
+    assert!(app.calc().delete_problem("Sales").is_none());
+    app.delete_tab("Sales").unwrap();
+    assert_eq!(app.sheet, next);
+    assert!(!app.calc().tab_names().contains(&"Sales".to_owned()));
+    app.undo();
+    app.follow_tabs();
+    assert_eq!(app.calc().tab_names()[0], "Sales");
+}
+
+#[test]
+fn the_current_report_tab_stays_shown_from_frame_to_frame() {
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    app.follow_tabs();
+    app.follow_tabs();
+    assert_eq!(app.sheet, "Sales");
+}
+
+#[test]
+fn a_renamed_report_keeps_its_design_open_in_the_code_editor() {
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    app.open_code_editor();
+    app.open_report_design("Sales");
+    app.rename_tab("Sales", "Revenue").unwrap();
+    assert_eq!(app.sheet, "Revenue");
+    app.sync_code(0.0);
+    assert!(
+        app.code
+            .tabs
+            .iter()
+            .any(|t| t.item == CodeItem::Report("Revenue".to_owned()))
+    );
+}
+
+#[test]
+fn the_code_editor_takes_a_report_design_that_a_report_can_have() {
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    let undo = app.calc().undo_label().map(str::to_owned);
+
+    // A field that shows an expression is fine, and not in the history.
+    let mut design = ReportDesign::new(ReportKind::SinglePage);
+    let mut field = Control::new(ControlKind::Field);
+    field.value = Some("SUM(i.qty for i in Orders.items)".to_owned());
+    design.layout.controls.push(field);
+    app.put_report_text("Sales", &design.to_json()).unwrap();
+    assert_eq!(app.calc().report("Sales"), Some(&design));
+    assert_eq!(app.calc().undo_label().map(str::to_owned), undo);
+    assert!(app.calc().is_modified());
+
+    // A button is not.
+    let mut bad = design.clone();
+    bad.layout.controls.push(Control::new(ControlKind::Button));
+    let why = app.put_report_text("Sales", &bad.to_json()).unwrap_err();
+    assert!(why.starts_with("control 1:"), "{why}");
+    assert!(why.contains("buttons"), "{why}");
+    assert_eq!(app.calc().report("Sales"), Some(&design));
+
+    // Nor is text that is not a design.
+    assert!(app.put_report_text("Sales", "{").is_err());
+}
+
+#[test]
+fn the_control_channel_makes_and_duplicates_reports() {
+    let mut app = sample();
+    control::run(
+        &mut app,
+        "new_tab",
+        &json!({"name": "Sales", "report": true, "kind": "multipage"}),
+    )
+    .unwrap();
+    assert_eq!(
+        app.calc().report("Sales").unwrap().kind,
+        ReportKind::Multipage
+    );
+    let state = control::run(&mut app, "status", &json!(null)).unwrap();
+    assert_eq!(state["view"], "Report");
+    let copy = control::run(&mut app, "duplicate_tab", &json!({"name": "Sales"})).unwrap();
+    assert_eq!(copy["name"], "Sales_2");
+    control::run(&mut app, "tab", &json!({"name": "Sales"})).unwrap();
+    assert_eq!(app.sheet, "Sales");
+    assert!(
+        control::run(
+            &mut app,
+            "new_tab",
+            &json!({"name": "Bad", "report": true, "kind": "sideways"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn copy_batch_command_names_the_program_the_file_the_values_chosen_and_the_saved_digest() {
+    use gossia_core::Value;
+    use gossia_core::report::{ParamKind, ReportParam};
+
+    let mut app = sample();
+    new_report(&mut app, "Sales");
+    let mut design = app.calc().report("Sales").unwrap().clone();
+    let mut units = ReportParam::new("units", ParamKind::Choices);
+    units.choices = Some("['North', 'South']".to_owned());
+    design.params = vec![
+        ReportParam::new("since", ParamKind::Date),
+        units,
+        ReportParam::new("note", ParamKind::Text),
+    ];
+    app.session.calc_mut().set_report("Sales", design).unwrap();
+    // Only what was saved can be run.
+    app.copy_batch_command("Sales");
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .starts_with("Save the workbook first")
+    );
+    assert!(app.tables.to_clipboard.is_none());
+
+    let dir = std::env::temp_dir().join(format!("gossia-batch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("my book.gossia");
+    app.save_as(&file).unwrap();
+    let calc = app.session.calc_mut();
+    calc.set_report_param(
+        "Sales",
+        "since",
+        Some(Value::Date(
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+        )),
+    );
+    calc.set_report_param(
+        "Sales",
+        "units",
+        Some(Value::Array(vec![
+            gossia_core::Node::new(Value::Str("North".into())),
+            gossia_core::Node::new(Value::Str("South".into())),
+        ])),
+    );
+    calc.set_report_param("Sales", "note", Some(Value::Str("it's \"q\"".into())));
+    let digest = app.calc().fingerprint().hash;
+
+    app.copy_batch_command("Sales");
+    let command = app.tables.to_clipboard.take().unwrap();
+    assert_eq!(
+        app.notice.as_deref(),
+        Some("Copied the command that writes Sales as a PDF.")
+    );
+    let program = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(crate::report_tab::CLI_PROGRAM);
+    let q = crate::report_tab::quote;
+    let expected = [
+        q(&program.display().to_string()),
+        "report".to_owned(),
+        q(&file.display().to_string()),
+        q("Sales"),
+        "--out".to_owned(),
+        q(&dir.join("Sales.pdf").display().to_string()),
+        "--param since=2026-10-01".to_owned(),
+        "--param units=North".to_owned(),
+        "--param units=South".to_owned(),
+        format!("--param {}", q("note=it's \"q\"")),
+        format!("--trust-digest {digest}"),
+    ]
+    .join(" ");
+    assert_eq!(command, expected);
+
+    // A change to a formula that is not saved is said: the file runs as saved.
+    app.session
+        .calc_mut()
+        .set_formula("Orders", &p("tax_rate"), "=0.25")
+        .unwrap();
+    app.copy_batch_command("Sales");
+    let command = app.tables.to_clipboard.take().unwrap();
+    assert!(command.ends_with(&format!("--trust-digest {digest}")));
+    assert!(app.notice.as_deref().unwrap().contains("unsaved changes"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_word_is_quoted_only_when_the_shell_needs_it() {
+    use crate::report_tab::quote;
+    assert_eq!(quote("--param"), "--param");
+    assert_eq!(quote("since=2026-10-01"), "since=2026-10-01");
+    assert_eq!(quote(""), if cfg!(windows) { "\"\"" } else { "''" });
+    if cfg!(windows) {
+        assert_eq!(quote(r"C:\My Files\a.gossia"), r#""C:\My Files\a.gossia""#);
+        assert_eq!(quote(r#"say "hi""#), r#""say \"hi\"""#);
+        assert_eq!(quote(r"C:\files\a.gossia"), r"C:\files\a.gossia");
+    } else {
+        assert_eq!(quote("/my files/a.gossia"), "'/my files/a.gossia'");
+        assert_eq!(quote("it's"), r"'it'\''s'");
+    }
+}

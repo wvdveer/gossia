@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer of Gossia, in the WiX 3 dialect that wixl (msitools)
+  reads, so that it can be built on Linux by build-msi.sh. Variables: Version,
+  Exe, CliExe and License, given with -D.
+  bidwillii.exe is installed next to gossia.exe, not on the PATH: scripts
+  name it by its full path.
+  The UpgradeCode never changes: it is what lets a newer MSI replace an older one.
+  The icon is in the executable (build.rs); .gossia files open with it.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Gossia" Language="1033" Version="$(var.Version)"
+           Manufacturer="Gossia" UpgradeCode="6f1b8a3e-5d0c-4c0e-9f43-2a6c1d7b9e15">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="Gossia installer"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Gossia is already installed."/>
+    <Media Id="1" Cabinet="gossia.cab" EmbedCab="yes"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="Gossia">
+          <Component Id="MainExecutable" Guid="0b7e4c52-8a1d-4f6e-b3a9-71c5d2e8f4a0" Win64="yes">
+            <File Id="GossiaExe" Name="gossia.exe" Source="$(var.Exe)" KeyPath="yes">
+              <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Gossia"
+                        WorkingDirectory="INSTALLDIR" Advertise="yes"/>
+            </File>
+          </Component>
+          <Component Id="CliExecutable" Guid="e5a8c1f3-6b2d-4e97-8a40-3f9d7c2b1e86" Win64="yes">
+            <File Id="GossiaCliExe" Name="bidwillii.exe" Source="$(var.CliExe)" KeyPath="yes"/>
+          </Component>
+          <!-- A workbook (.gossia) opens in Gossia, with its icon. -->
+          <Component Id="WorkbookFiles" Guid="4d2f9a61-7c3e-4b85-9e10-b6a8d5c3f217" Win64="yes">
+            <RegistryValue Root="HKLM" Key="Software\Classes\.gossia" Type="string"
+                           Value="Gossia.Workbook" KeyPath="yes"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Gossia.Workbook" Type="string"
+                           Value="Gossia workbook"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Gossia.Workbook\DefaultIcon"
+                           Type="string" Value="&quot;[INSTALLDIR]gossia.exe&quot;,0"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Gossia.Workbook\shell\open\command"
+                           Type="string" Value="&quot;[INSTALLDIR]gossia.exe&quot; &quot;%1&quot;"/>
+          </Component>
+          <Component Id="LicenseFile" Guid="c93a1e7d-24b6-4d58-a0f1-5e8b3c6d7a29" Win64="yes">
+            <File Id="LicenseTxt" Name="LICENSE.txt" Source="$(var.License)" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+    </Directory>
+
+    <Feature Id="Everything" Title="Gossia" Level="1">
+      <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="CliExecutable"/>
+      <ComponentRef Id="WorkbookFiles"/>
+      <ComponentRef Id="LicenseFile"/>
+    </Feature>
+  </Product>
+</Wix>

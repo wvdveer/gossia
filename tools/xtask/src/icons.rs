@@ -1,11 +1,11 @@
-//! `cargo xtask icons <dir>`: ClioTree's icon as PNG files, for the packages
+//! `cargo xtask icons <dir>`: Gossia's icon as PNG files, for the packages
 //! (the Linux icon theme and the MSIX logos). The icon is drawn by the same
-//! code as the window's (`crates/cliotree-app/src/app_icon.rs`), so the
+//! code as the window's (`crates/gossia-app/src/app_icon.rs`), so the
 //! repository keeps no image files.
 
 use std::path::Path;
 
-#[path = "../../../crates/cliotree-app/src/app_icon.rs"]
+#[path = "../../../crates/gossia-app/src/app_icon.rs"]
 #[allow(dead_code)]
 mod app_icon;
 
