@@ -12,6 +12,7 @@ pub mod code_check;
 pub mod code_text;
 #[cfg(test)]
 mod code_text_tests;
+pub mod commands;
 pub mod comments;
 pub mod control;
 #[cfg(feature = "test-control")]
@@ -29,6 +30,7 @@ pub mod form_layout;
 mod form_layout_tests;
 pub mod form_nav;
 pub mod host;
+pub mod host_code;
 pub mod icons;
 pub mod immediate;
 pub mod import;

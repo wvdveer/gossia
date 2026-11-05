@@ -148,6 +148,57 @@ async function suite(dir) {
   equal(subtotal.formula, '=sum(i.qty * i.price for i in Orders.items)', 'the formula was saved');
   equal(subtotal.value, 52.5, 'and is calculated again');
 
+  // Gossia's commands in the Command Palette, run in the active workbook.
+  await command('gossia.codeEditor');
+  await waitFor(async () => (await send('status')).code_editor, 'the code editor');
+  check(true, 'Gossia: Code Editor opens the code editor');
+
+  // A module is a `gossia:` file: writing one makes the module, and a
+  // formula calls its function.
+  const taxUri = vscode.Uri.parse(await command('gossia.test.moduleUri', 'Tax'));
+  const encode = (text) => new TextEncoder().encode(text);
+  await vscode.workspace.fs.writeFile(taxUri, encode('def vat(x):\n    return x * 0.21\n'));
+  await send('select', { path: 'tax_rate' });
+  await send('enter', { text: '=vat(100)' });
+  await idle();
+  equal(await value('tax_rate'), 21, 'a module written as a gossia: file is called by a formula: 21');
+
+  // Opening it from Gossia opens it in VS Code's editor.
+  await send('open_module', { name: 'Tax' });
+  await waitFor(() => vscode.window.activeTextEditor
+    && vscode.window.activeTextEditor.document.uri.toString() === taxUri.toString(), "the module's editor");
+  const editor = vscode.window.activeTextEditor;
+  equal(editor.document.languageId, 'python', "the module opens in VS Code's editor, as Python");
+
+  // Saving it there puts it in the workbook, and the formula follows.
+  const text = editor.document.getText();
+  const edit = new vscode.WorkspaceEdit();
+  const at = text.indexOf('0.21');
+  edit.replace(taxUri, new vscode.Range(editor.document.positionAt(at), editor.document.positionAt(at + 4)), '0.25');
+  await vscode.workspace.applyEdit(edit);
+  await editor.document.save();
+  await idle();
+  await waitFor(async () => {
+    await idle();
+    return (await value('tax_rate')) === 25;
+  }, 'the formula after the save');
+  check(true, 'saving the module in VS Code puts it in the workbook: 25');
+
+  // An undo in the workbook is the module's too, and the open file follows.
+  await command('gossia.undo');
+  await waitFor(() => editor.document.getText().includes('0.21'), 'the file after the undo');
+  await idle();
+  equal(await value('tax_rate'), 21, 'Gossia: Undo takes the module back, and the open file shows it');
+
+  // A file that is not a module name is refused, with the workbook's reason.
+  let refused = null;
+  try {
+    await vscode.workspace.fs.writeFile(taxUri.with({ path: '/not a name.py' }), encode(''));
+  } catch (err) {
+    refused = err.message || String(err);
+  }
+  check(refused, 'a file whose name is no module name is refused', refused);
+
   server.close();
 }
 

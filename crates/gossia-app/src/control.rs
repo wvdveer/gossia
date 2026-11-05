@@ -28,6 +28,22 @@ const WAIT_FOR_WORKBOOKS: &[&str] = &["close", "menu", "context_menu", "grant"];
 pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> {
     match cmd {
         "hello" => Ok(json!({ "protocol": PROTOCOL, "app": "Gossia" })),
+        // Opens a module as the code editor's explorer does (in a host whose
+        // editor has the modules, there).
+        "open_module" => {
+            let name = text_arg(args, "name")?;
+            if app.calc().module_source(name).is_none() {
+                return Err(format!("there is no module {name}"));
+            }
+            app.open_code_editor();
+            app.open_module(name);
+            Ok(json!({}))
+        }
+        // A command by its name, as a host's command list runs it.
+        "command" => {
+            app.run_command(text_arg(args, "name")?)?;
+            Ok(json!({}))
+        }
         "tab" => {
             let name = text_arg(args, "name")?;
             if app.calc().tab_kind(name).is_none() {
@@ -493,6 +509,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                     .collect::<Vec<_>>(),
                 "view": if app.in_report() { "Report" } else { app.current_view().label() },
                 "selection": app.selection.as_ref().map(ToString::to_string),
+                "code_editor": app.code.open,
             }))
         }
         "open_workbook" => {

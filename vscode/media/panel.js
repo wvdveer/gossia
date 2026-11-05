@@ -75,6 +75,11 @@ const host = {
   fetch(id, method, url, headers, body, timeoutMs, maxBytes) {
     vscode.postMessage({ type: 'fetch', id, method, url, headers, body, timeoutMs, maxBytes });
   },
+  // Modules are edited in VS Code's own editor, as `gossia:` files: having
+  // openModule tells the application so.
+  openModule(name, line, column) { vscode.postMessage({ type: 'openModule', name, line, column }); },
+  modulesChanged(modules) { vscode.postMessage({ type: 'modulesChanged', modules }); },
+  moduleAnswer(id, error) { vscode.postMessage({ type: 'moduleAnswer', id, error }); },
 };
 
 async function start(init) {
@@ -122,6 +127,10 @@ window.addEventListener('message', (e) => {
     case 'fetched': gossia.fetch_answered(m.id, m.status, m.reason, m.headers, bytesOf(m.body)); break;
     case 'fetchFailed': gossia.fetch_failed(m.id, m.message); break;
     case 'control': control(m.id, m.cmd, m.args); break;
+    case 'command': gossia.run_command(m.name); break;
+    case 'writeModule': gossia.module_written(m.id, m.name, m.text); break;
+    case 'renameModule': gossia.module_renamed(m.id, m.from, m.to); break;
+    case 'removeModule': gossia.module_removed(m.id, m.name); break;
   }
 });
 

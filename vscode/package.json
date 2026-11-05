@@ -17,7 +17,9 @@
     "Other"
   ],
   "main": "./extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onFileSystem:gossia"
+  ],
   "contributes": {
     "customEditors": [
       {
@@ -30,7 +32,148 @@
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "gossia.newTab",
+        "title": "New Tab...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.import",
+        "title": "Import...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.export",
+        "title": "Export...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.exportPdf",
+        "title": "Export as PDF...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.undo",
+        "title": "Undo",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.redo",
+        "title": "Redo",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.recalculate",
+        "title": "Recalculate",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.codeEditor",
+        "title": "Code Editor",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.dataSources",
+        "title": "Data Sources...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.disconnect",
+        "title": "Disconnect from Data Sources...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.options",
+        "title": "Options...",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.toolbar",
+        "title": "Show or Hide the Toolbar",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.issues",
+        "title": "Show or Hide the Issues Panel",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.inspector",
+        "title": "Show or Hide the Node Inspector",
+        "category": "Gossia"
+      },
+      {
+        "command": "gossia.openModule",
+        "title": "Open Module...",
+        "category": "Gossia"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "gossia.newTab",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.import",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.export",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.exportPdf",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.undo",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.redo",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.recalculate",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.codeEditor",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.dataSources",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.disconnect",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.options",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.toolbar",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.issues",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.inspector",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.openModule",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        }
+      ]
+    }
   },
   "scripts": {
     "test": "node test/run.js"

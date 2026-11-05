@@ -104,9 +104,11 @@ impl GossiaApp {
             });
         if close {
             self.code.compiled = None;
-        } else if let Some(place) = go {
+        } else if let Some((line, column)) = go
+            && !self.open_module_outside(&module, line, column)
+        {
             self.open_module(&module);
-            self.code.jump = Some(place);
+            self.code.jump = Some((line, column));
         }
     }
 

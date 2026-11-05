@@ -68,6 +68,45 @@ pub trait Host {
     /// redirect and within its timeout and size. The answer is handed to
     /// [`fetched`] with the request's id, later.
     fn fetch(&self, request: &FetchRequest);
+
+    /// Whether modules are edited in the host's own editor (VS Code's, as
+    /// files): opening one there opens it as the host's file, and the host
+    /// is told the modules each time they change ([`Host::modules_changed`]).
+    fn edits_modules(&self) -> bool {
+        false
+    }
+
+    /// Opens a module in the host's editor, at a line and column (1-based).
+    fn open_module(&self, _name: &str, _line: usize, _column: usize) {}
+
+    /// The workbook's modules, each a name and its source, in order: at the
+    /// start and each time one is added, changed, renamed or removed.
+    fn modules_changed(&self, _modules: &[(String, String)]) {}
+
+    /// The answer to a module written, renamed or removed in the host's
+    /// editor ([`ModuleEdit`]): `None` when it was done, or why not.
+    fn module_answer(&self, _id: u32, _error: Option<&str>) {}
+}
+
+/// A change to a module made in the host's editor, to be made in the
+/// workbook, answered through [`Host::module_answer`] with its `id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModuleEdit {
+    /// A module's file was saved: its new source, or a new module.
+    Write {
+        id: u32,
+        name: String,
+        text: String,
+    },
+    Rename {
+        id: u32,
+        from: String,
+        to: String,
+    },
+    Remove {
+        id: u32,
+        name: String,
+    },
 }
 
 /// The storage entry of the application's own clipboard in a host: what

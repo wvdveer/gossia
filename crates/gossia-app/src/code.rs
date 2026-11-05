@@ -226,15 +226,21 @@ impl GossiaApp {
         self.code.open = true;
         self.code.focus = true;
         let first: Option<String> = self.calc().module_names().next().map(str::to_owned);
+        // In a host whose editor has the modules, nothing opens by itself.
         if self.code.tabs.is_empty()
+            && !self.modules_open_outside()
             && let Some(first) = first
         {
             self.open_module(&first);
         }
     }
 
-    /// Opens a module in a tab, or shows its tab.
+    /// Opens a module in a tab, or shows its tab; in a host whose editor
+    /// has the modules (VS Code), opens it there.
     pub fn open_module(&mut self, name: &str) {
+        if self.open_module_outside(name, 0, 0) {
+            return;
+        }
         let Some(source) = self.calc().module_source(name).map(str::to_owned) else {
             return;
         };

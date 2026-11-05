@@ -230,6 +230,7 @@ impl GossiaApp {
         self.drop_hint(ui.ctx());
         self.receive_picked();
         self.sync_sources();
+        self.sync_host_modules();
         self.forward_fetches();
         self.code_window(ui.ctx());
     }

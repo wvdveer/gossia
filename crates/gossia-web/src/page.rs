@@ -33,7 +33,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gossia_app::GossiaApp;
-use gossia_app::host::Host;
+use gossia_app::host::{Host, ModuleEdit};
 use gossia_app::prefs::{Config, Storage, User};
 use gossia_calc::WorkerLink;
 use js_sys::{Function, Reflect, Uint8Array};
@@ -59,6 +59,48 @@ enum Request {
     /// The workbook's bytes: `save` (counted as saved, given with
     /// `saveWorkbook`) or `backup` (given with `backupWorkbook`).
     Bytes(String),
+    /// One of Gossia's commands, by name, from the host's command list.
+    Command(String),
+}
+
+/// Runs one of Gossia's commands by its name (`gossia_app::commands`), as
+/// the host's command list (VS Code's Command Palette) asks. A command that
+/// is refused says why in the window.
+#[wasm_bindgen]
+pub fn run_command(name: String) {
+    REQUESTS.with(|r| r.borrow_mut().push(Request::Command(name)));
+    repaint();
+}
+
+/// The names and titles of Gossia's commands, as a flat list.
+#[wasm_bindgen]
+pub fn command_list() -> Vec<String> {
+    gossia_app::commands::COMMANDS
+        .iter()
+        .flat_map(|(name, title)| [(*name).to_owned(), (*title).to_owned()])
+        .collect()
+}
+
+/// A module's file saved in the host's editor: its source, or a new module.
+/// Answered with `moduleAnswer(id, error)`.
+#[wasm_bindgen]
+pub fn module_written(id: u32, name: String, text: String) {
+    gossia_app::host_code::module_edited(ModuleEdit::Write { id, name, text });
+    repaint();
+}
+
+/// A module's file renamed in the host's editor.
+#[wasm_bindgen]
+pub fn module_renamed(id: u32, from: String, to: String) {
+    gossia_app::host_code::module_edited(ModuleEdit::Rename { id, from, to });
+    repaint();
+}
+
+/// A module's file deleted in the host's editor.
+#[wasm_bindgen]
+pub fn module_removed(id: u32, name: String) {
+    gossia_app::host_code::module_edited(ModuleEdit::Remove { id, name });
+    repaint();
 }
 
 /// Opens this workbook in place of the one there is, as the host asks when
@@ -132,6 +174,8 @@ pub(crate) fn repaint() {
 /// The host, through its JavaScript object.
 struct JsHost {
     object: JsValue,
+    /// The host has an editor of its own for modules (`openModule`).
+    edits_modules: bool,
 }
 
 impl JsHost {
@@ -160,6 +204,7 @@ impl Host for JsHost {
         Box::new(HostLink {
             host: JsHost {
                 object: self.object.clone(),
+                edits_modules: false,
             },
         })
     }
@@ -237,6 +282,39 @@ impl Host for JsHost {
             ],
         );
     }
+
+    fn edits_modules(&self) -> bool {
+        self.edits_modules
+    }
+
+    fn open_module(&self, name: &str, line: usize, column: usize) {
+        self.call_logged(
+            "openModule",
+            &[
+                JsValue::from_str(name),
+                JsValue::from_f64(line as f64),
+                JsValue::from_f64(column as f64),
+            ],
+        );
+    }
+
+    fn modules_changed(&self, modules: &[(String, String)]) {
+        let list: js_sys::Array = modules
+            .iter()
+            .map(|(name, source)| {
+                let pair: js_sys::Array = [JsValue::from_str(name), JsValue::from_str(source)]
+                    .into_iter()
+                    .collect();
+                JsValue::from(pair)
+            })
+            .collect();
+        self.call_logged("modulesChanged", &[list.into()]);
+    }
+
+    fn module_answer(&self, id: u32, error: Option<&str>) {
+        let error = error.map_or(JsValue::NULL, JsValue::from_str);
+        self.call_logged("moduleAnswer", &[JsValue::from_f64(f64::from(id)), error]);
+    }
 }
 
 /// The preferences, the trust record and the Immediate window's history in
@@ -302,6 +380,11 @@ impl PageApp {
                 Request::Bytes(kind) if !self.app.session.wait_idle(Duration::ZERO) => {
                     later.push(Request::Bytes(kind));
                 }
+                Request::Command(name) => {
+                    if let Err(e) = self.app.run_command(&name) {
+                        self.app.notice = Some(format!("{e}."));
+                    }
+                }
                 Request::Bytes(kind) => {
                     let result = match kind.as_str() {
                         "save" => self.app.save_to_host(&*self.host),
@@ -352,7 +435,14 @@ pub async fn start_app(
     bytes: Option<Vec<u8>>,
     sample: bool,
 ) -> Result<(), JsValue> {
-    let host = Rc::new(JsHost { object: host });
+    // A host with an editor of its own for modules says so by having
+    // `openModule`.
+    let edits_modules =
+        Reflect::get(&host, &JsValue::from_str("openModule")).is_ok_and(|f| f.is_function());
+    let host = Rc::new(JsHost {
+        object: host,
+        edits_modules,
+    });
     gossia_app::host::set(host.clone());
     let page_host = host.clone();
     let (user, mut warnings) = User::load(Config::in_storage(Rc::new(HostStorage(host.clone()))));
