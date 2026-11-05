@@ -13,7 +13,11 @@ use std::hash::Hash;
 use cliotree_core::Segment;
 use indexmap::IndexSet;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "T: serde::Serialize + Hash + Eq",
+    deserialize = "T: serde::Deserialize<'de> + Hash + Eq"
+))]
 pub(crate) struct PathTrie<T> {
     here: IndexSet<T>,
     children: HashMap<Segment, PathTrie<T>>,

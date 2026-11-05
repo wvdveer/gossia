@@ -32,7 +32,7 @@ use crate::value::{CommentPlace, DateTimeValue, Node, Value};
 use crate::xmltree::{self, Attribute, Child, Declaration, Element, XmlError};
 
 /// What a document says about itself beyond its tree.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct XmlDocument {
     pub declaration: Option<Declaration>,
     /// The prefix the root element was written with.

@@ -11,7 +11,7 @@ use crate::value::{Node, Value};
 use crate::yaml;
 
 /// A tab's file format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DataFormat {
     Json,
     Xml,

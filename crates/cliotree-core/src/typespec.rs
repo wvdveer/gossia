@@ -20,11 +20,11 @@ pub struct Resolved {
 }
 
 /// The id of a type within one [`TypeSpec`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TypeId(pub(crate) u32);
 
 /// A lowered schema: an arena of types and the id of the root type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TypeSpec {
     types: Vec<TypeDef>,
     root: TypeId,
@@ -34,7 +34,7 @@ pub struct TypeSpec {
 }
 
 /// What a schema lowered from an XSD says about the XML document itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct XmlInfo {
     /// The name of the root element: the one global element.
     pub root: String,
@@ -180,7 +180,7 @@ impl TypeSpec {
 }
 
 /// One type, with where it came from.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TypeDef {
     pub kind: Kind,
     /// Where in the schema document this type was written, for error messages.
@@ -197,7 +197,7 @@ pub struct TypeDef {
 }
 
 /// What a type is.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     String(StringConstraints),
     Integer(Range),
@@ -229,7 +229,7 @@ pub enum Kind {
 }
 
 /// A field of an object type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Field {
     pub name: String,
     pub ty: TypeId,
@@ -237,14 +237,14 @@ pub struct Field {
 }
 
 /// Inclusive bounds. The bounds are kept as written, integer or float.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Range {
     pub min: Option<Num>,
     pub max: Option<Num>,
 }
 
 /// Constraints on a string. Lengths count Unicode code points.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StringConstraints {
     pub pattern: Option<Pattern>,
     pub min_length: Option<usize>,
@@ -254,7 +254,7 @@ pub struct StringConstraints {
 
 /// A string constraint that a string must be a valid date or date and time.
 /// The node stays a string either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StringFormat {
     /// `format: date`, an RFC 3339 full date (`2026-10-23`).
     Date,
@@ -285,6 +285,20 @@ impl Pattern {
 
     pub fn is_match(&self, text: &str) -> bool {
         self.regex.is_match(text)
+    }
+}
+
+/// A pattern travels as its source text and is compiled again on arrival.
+impl serde::Serialize for Pattern {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.source)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Pattern {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Pattern, D::Error> {
+        let source = String::deserialize(deserializer)?;
+        Pattern::new(&source).map_err(serde::de::Error::custom)
     }
 }
 
@@ -387,5 +401,18 @@ mod tests {
         assert_eq!(resolved(&spec, "name[0]"), None);
         assert_eq!(resolved(&spec, "tags.first"), None);
         assert_eq!(resolved(&spec, "address[0]"), None);
+    }
+
+    /// The worker of the wasm version receives schemas encoded (DESIGN.md,
+    /// Web port, 0.3.0): a pattern arrives as its text and is compiled again.
+    #[test]
+    fn a_pattern_is_encoded_as_its_text_and_compiled_again() {
+        let pattern = Pattern::new("^[A-Z]{3}$").unwrap();
+        let text = serde_json::to_string(&pattern).unwrap();
+        assert_eq!(text, r#""^[A-Z]{3}$""#);
+        let back: Pattern = serde_json::from_str(&text).unwrap();
+        assert!(back.is_match("EUR"));
+        assert!(!back.is_match("euro"));
+        assert!(serde_json::from_str::<Pattern>(r#""(?=x)""#).is_err());
     }
 }

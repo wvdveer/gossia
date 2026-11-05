@@ -10,7 +10,7 @@
 use super::*;
 
 /// The rule: this field of every item of this array has this formula.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnFormula {
     /// The array, which is not inside another array.
     pub array: Path,

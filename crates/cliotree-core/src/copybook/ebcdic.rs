@@ -7,7 +7,9 @@ use std::sync::OnceLock;
 use super::tables;
 
 /// An EBCDIC code page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum CodePage {
     /// USA, Canada and others.
     #[default]

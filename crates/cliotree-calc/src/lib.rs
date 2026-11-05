@@ -24,12 +24,17 @@ pub mod names;
 mod node_bytes;
 pub mod python;
 mod session;
+// The evaluator of the wasm version. It is compiled everywhere so that its
+// tests run with the others, and is the `Evaluator` only on wasm.
+#[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+mod session_web;
 pub mod sources;
 #[cfg(not(target_family = "wasm"))]
 pub mod sqlite;
 mod trie;
 #[cfg(target_family = "wasm")]
 mod unavailable;
+pub mod wire;
 #[cfg(target_family = "wasm")]
 pub use unavailable::{database, journal, sqlite};
 
@@ -55,6 +60,8 @@ pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
 pub use history::{DEFAULT_MAX_ENTRIES, DEFAULT_MAX_WEIGHT};
 pub use model::{Dep, Loc};
+#[cfg(target_family = "wasm")]
+pub use session::WorkerLink;
 pub use session::{
     EngineFactory, EvalSettings, Evaluator, Finished, Session, SessionRunner, Status,
 };

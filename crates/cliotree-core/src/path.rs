@@ -9,7 +9,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// One step of a path.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Segment {
     /// A field of an object or a key of a map.
     Key(String),
@@ -18,7 +18,7 @@ pub enum Segment {
 }
 
 /// A sequence of steps from the root of a tree.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Path(Vec<Segment>);
 
 /// The text given to [`Path::from_str`] is not a path.

@@ -101,7 +101,7 @@ impl Element {
 }
 
 /// The XML declaration, `<?xml version="1.0" encoding="UTF-8"?>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Declaration {
     pub version: String,
     pub encoding: Option<String>,

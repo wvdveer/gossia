@@ -37,7 +37,9 @@ pub struct Copybook {
 
 /// How floating point items (`COMP-1`, `COMP-2`) are held (owner,
 /// 2026-11-01: IBM hexadecimal unless the copybook tab says IEEE 754).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum FloatFormat {
     /// IBM hexadecimal floating point (HFP), as z/OS COBOL holds them.
     #[default]

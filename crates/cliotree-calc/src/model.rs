@@ -10,7 +10,7 @@ use crate::trie::PathTrie;
 /// A place in the workbook: a node in one tab. A formula belongs to a `Loc`,
 /// not to the item that happens to be there (DESIGN.md, "References are
 /// literal").
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Loc {
     pub sheet: String,
     pub path: Path,
@@ -44,7 +44,7 @@ impl fmt::Display for Loc {
 /// kind it is, and how many items an array has. Moving through a proxy such as
 /// `Orders.items[2]` reads shallowly, so that a formula on one item can look at
 /// a sibling without depending on the whole array.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Dep {
     pub loc: Loc,
     pub shallow: bool,
@@ -56,7 +56,7 @@ pub(crate) fn overlaps(a: &Path, b: &Path) -> bool {
 }
 
 /// A formula and what the last evaluation of it found out.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Formula {
     /// The expression, without the leading `=`.
     pub text: String,
@@ -74,7 +74,7 @@ pub(crate) struct Formula {
 }
 
 /// The formulas of one tab, by the path of the node they are attached to.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Formulas {
     pub by_path: IndexMap<Path, Formula>,
     pub index: PathTrie<Path>,

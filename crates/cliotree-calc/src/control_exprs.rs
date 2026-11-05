@@ -50,7 +50,7 @@ use super::*;
 use crate::model::Dep;
 
 /// Which expression of a control.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ExprKind {
     Visible,
     Enabled,
@@ -165,7 +165,7 @@ impl ExprKind {
 }
 
 /// One expression of one control of one form.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ExprKey {
     pub tab: String,
     pub form: String,
@@ -214,7 +214,7 @@ const PROBE_FORM: &str = "\u{1}probe";
 pub const REPORT_FORM: &str = "\u{1}report";
 
 /// An expression to run, as a snapshot carries it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ExprJob {
     pub key: ExprKey,
     pub text: String,
@@ -226,7 +226,7 @@ pub(crate) struct ExprJob {
 }
 
 /// What running one came to.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ExprOutcome {
     pub key: ExprKey,
     pub text: String,

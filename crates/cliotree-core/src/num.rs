@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 
 /// A bound or value that keeps the difference between `Int` and `Float`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Num {
     Int(i64),
     Float(f64),

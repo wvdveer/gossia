@@ -37,7 +37,7 @@ use crate::model::{Dep, Formulas, Loc};
 use crate::node_bytes::{self, TabInfo};
 
 /// One tab as the evaluator sees it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SheetSnap {
     pub spec: Arc<TypeSpec>,
     pub data: Node,
@@ -48,7 +48,7 @@ pub(crate) struct SheetSnap {
 
 /// A consistent view of the workbook and the list of formulas to run. Cheap to
 /// make: it shares the tree and the formulas with the live workbook.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub(crate) version: u64,
     pub(crate) modules: Arc<Vec<ModuleSpec>>,
@@ -60,7 +60,7 @@ pub struct Snapshot {
 }
 
 /// What one formula came to.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Outcome {
     pub loc: Loc,
     pub computed: Computed,
@@ -73,7 +73,7 @@ pub struct Outcome {
 
 /// The results of one evaluation, in the order they were finished: a formula
 /// comes after those it read.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Evaluation {
     pub(crate) base: u64,
     pub(crate) outcomes: Vec<Outcome>,
@@ -84,7 +84,7 @@ pub struct Evaluation {
 
 /// What running a button procedure came to: the writes it made, not yet
 /// applied (see [`crate::Calc::apply_procedure`]), or why it failed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProcedureResult {
     pub(crate) base: u64,
     pub(crate) call: Call,

@@ -1,30 +1,24 @@
-// The Web Worker that runs Python (DESIGN.md, Web port, 0.3.0). Build step
-// 13a: it loads the engine and answers probe requests from the page.
-import init, { Probe, last_panic } from './pkg/cliotree_worker.js';
+// The Web Worker that runs Python (DESIGN.md, Web port, 0.3.0). It loads the
+// engine, then takes the messages of the worker protocol in order and posts
+// its own back as bytes.
+import init, { WorkerSide, last_panic } from './pkg/cliotree_worker.js';
 
-let probe = null;
+const ready = init().then(() => new WorkerSide((bytes) => postMessage(bytes, [bytes.buffer])));
 
-self.onmessage = async (e) => {
-  const m = e.data;
-  try {
-    if (m.type === 'start') {
-      const t0 = performance.now();
-      await init();
-      const t1 = performance.now();
-      probe = new Probe();
-      const t2 = performance.now();
-      postMessage({ type: 'started', loadMs: Math.round(t1 - t0), engineMs: Math.round(t2 - t1) });
-    } else if (m.type === 'run') {
-      const t0 = performance.now();
-      const reply = JSON.parse(probe.run(m.schema, m.data, m.path, m.formula));
-      postMessage({ type: 'ran', id: m.id, ms: Math.round(performance.now() - t0), ...reply });
-    } else if (m.type === 'ping') {
-      postMessage({ type: 'pong' });
+// Messages that arrive while the engine loads, or while a job runs, wait
+// their turn.
+let queue = Promise.resolve();
+
+self.onmessage = (e) => {
+  const message = new Uint8Array(e.data);
+  queue = queue.then(async () => {
+    const side = await ready;
+    try {
+      side.handle(message);
+    } catch (err) {
+      let panic = null;
+      try { panic = last_panic(); } catch (_) { /* the module is unusable */ }
+      postMessage({ error: String(err), panic });
     }
-  } catch (err) {
-    let panic = null;
-    try { panic = last_panic(); } catch (_) { /* the module is unusable */ }
-    const stack = err && err.stack ? err.stack.split('\n').slice(0, 12).join('\n') : null;
-    postMessage({ type: 'failed', id: m.id, error: String(err), panic, stack });
-  }
+  });
 };

@@ -39,7 +39,7 @@ impl std::fmt::Display for SyntaxError {
 }
 
 /// A formula that failed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Failure {
     pub error: ErrorValue,
     /// The engine's own account of where it went wrong, such as a Python
@@ -151,7 +151,7 @@ pub trait Context {
 }
 
 /// What the source of a module says about itself, found without running it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleInfo {
     /// The first part of each name imported at the top level, in order.
     pub imports: Vec<String>,
@@ -165,7 +165,7 @@ pub struct ModuleInfo {
 
 /// A chart type, read from its function without running it (DESIGN.md,
 /// Reports, "Chart functions").
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChartInfo {
     /// The name `@chart` gives it, as the designer shows it.
     pub name: String,
@@ -178,7 +178,7 @@ pub struct ChartInfo {
 }
 
 /// A parameter of a chart function: a box on the chart's property page.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChartParam {
     pub name: String,
     /// It has no default, so the chart cannot be drawn without it.
@@ -186,7 +186,7 @@ pub struct ChartParam {
 }
 
 /// A module as the engine is asked to have it loaded.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModuleSpec {
     pub name: String,
     pub source: Arc<str>,
@@ -200,7 +200,7 @@ pub struct ModuleSpec {
 }
 
 /// What loading a module came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleReport {
     pub name: String,
     pub generation: u64,
@@ -255,7 +255,7 @@ pub struct SourceRead {
 /// "Python modules"). It runs as a formula on the node `path` of `sheet`
 /// would, so `this` is that node, but nothing it reads is recorded and its
 /// result is shown, not stored.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Immediate {
     /// Tells the answers apart.
     pub id: u64,
@@ -267,7 +267,7 @@ pub struct Immediate {
 }
 
 /// What an expression of the Immediate window came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImmediateResult {
     pub id: u64,
     pub text: String,
@@ -277,7 +277,7 @@ pub struct ImmediateResult {
 
 /// What a button procedure does to a tab, collected while it runs and applied
 /// afterwards, all or nothing (DESIGN.md, "Button procedures").
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WriteOp {
     /// Puts a value at the path: replaces what is there, or makes the node.
     Set(Value),
@@ -288,14 +288,14 @@ pub enum WriteOp {
 }
 
 /// One write of a procedure, in the order it was made.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Write {
     pub loc: crate::Loc,
     pub op: WriteOp,
 }
 
 /// A button procedure to run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Call {
     /// The function, as the button names it: `name`, or `module.name`.
     pub procedure: String,

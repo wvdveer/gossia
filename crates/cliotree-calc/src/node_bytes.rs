@@ -15,7 +15,7 @@ use cliotree_core::{ErrorKind, ErrorValue, Kind, Node, Path, Segment, TypeSpec, 
 use crate::ColumnFormula;
 
 /// What a tab is besides its data and its formulas, for its bytes.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TabInfo {
     pub format: Option<DataFormat>,
     /// What an XML tab says about its document beyond the tree.

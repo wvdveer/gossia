@@ -10,7 +10,7 @@ use crate::engine::Failure;
 use crate::model::Loc;
 
 /// What a formula's node holds after the formula has run.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Computed {
     /// The result, which matches the node's type.
     Value(Value),

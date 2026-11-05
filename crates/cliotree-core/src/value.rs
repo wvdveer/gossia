@@ -33,14 +33,14 @@ impl NodeId {
 }
 
 /// A date and time, which keeps its offset if it had one and stays naive if not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DateTimeValue {
     Naive(NaiveDateTime),
     Zoned(DateTime<FixedOffset>),
 }
 
 /// The kind of failure an error value records (see DESIGN.md, "Error values").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ErrorKind {
     Type,
     Ref,
@@ -106,7 +106,7 @@ impl fmt::Display for ErrorKind {
 /// What a failed formula leaves in its node. It exists only in memory and is
 /// never written to a data file. The Python exception and traceback that caused
 /// it are kept by the calculation layer, which owns the Python side.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ErrorValue {
     pub kind: ErrorKind,
     pub message: String,
@@ -115,7 +115,7 @@ pub struct ErrorValue {
 }
 
 /// The content of a node.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -192,8 +192,44 @@ struct NodeData {
     blank: bool,
 }
 
+/// A node as the Web Worker of the wasm version receives it (DESIGN.md, Web
+/// port, 0.3.0): everything but the id. A node that is read back gets a fresh
+/// id, since ids are never saved and each process numbers its own.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NodeWire {
+    value: Value,
+    comment: Option<String>,
+    inner: Option<Box<[Option<String>; 2]>>,
+    blank: bool,
+}
+
+impl serde::Serialize for Node {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("NodeWire", 4)?;
+        s.serialize_field("value", &self.0.value)?;
+        s.serialize_field("comment", &self.0.comment)?;
+        s.serialize_field("inner", &self.0.inner)?;
+        s.serialize_field("blank", &self.0.blank)?;
+        s.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Node {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Node, D::Error> {
+        let wire = NodeWire::deserialize(deserializer)?;
+        Ok(Node(Arc::new(NodeData {
+            id: NodeId::fresh(),
+            value: wire.value,
+            comment: wire.comment,
+            inner: wire.inner,
+            blank: wire.blank,
+        })))
+    }
+}
+
 /// Where a comment on a node is written in XML (DESIGN.md, "Comments").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CommentPlace {
     /// Before the node's element: the node's comment.
     Before,
@@ -531,6 +567,21 @@ impl From<Value> for Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ids are never saved: a node read back from the worker's encoding
+    /// (DESIGN.md, Web port, 0.3.0) gets a new one, and keeps the rest.
+    #[test]
+    fn an_encoded_node_comes_back_with_a_fresh_id() {
+        let node = Node::new(Value::Array(vec![Node::new(Value::Int(1))]))
+            .with_comment(Some("note".to_owned()));
+        let back: Node = serde_json::from_str(&serde_json::to_string(&node).unwrap()).unwrap();
+        assert_ne!(back.id(), node.id());
+        assert_eq!(back.comment(), Some("note"));
+        let Value::Array(items) = back.value() else {
+            panic!("not an array");
+        };
+        assert_eq!(items[0].value(), &Value::Int(1));
+    }
 
     #[test]
     fn position_replace_and_insert_child_restore_what_remove_took_out() {

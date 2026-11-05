@@ -985,6 +985,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -1052,6 +1053,7 @@ dependencies = [
  "postgres",
  "postgres-native-tls",
  "proptest",
+ "rmp-serde",
  "rusqlite",
  "rust_decimal",
  "rustpython",
@@ -1064,6 +1066,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "ureq",
+ "web-time",
 ]
 
 [[package]]
@@ -1142,7 +1145,7 @@ version = "0.3.0"
 dependencies = [
  "cliotree-calc",
  "cliotree-core",
- "serde_json",
+ "js-sys",
  "wasm-bindgen",
 ]
 
@@ -2874,6 +2877,8 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -5285,6 +5290,25 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
+dependencies = [
+ "rmp",
+ "serde",
 ]
 
 [[package]]

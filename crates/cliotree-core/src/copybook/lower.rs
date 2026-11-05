@@ -12,7 +12,7 @@ use crate::typespec::{Field, Kind, Range, StringConstraints, TypeDef, TypeId, Ty
 use crate::value::{Node, Value};
 
 /// Where the fields of a record are in its bytes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Layout {
     pub code_page: CodePage,
     /// How `COMP-1` and `COMP-2` items hold their numbers.
@@ -30,7 +30,7 @@ pub struct Layout {
 }
 
 /// An item placed in a record.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Slot {
     /// The field's key: the COBOL name with `-` as `_`. None for `FILLER`,
     /// whose bytes are passed over; a `FILLER` group's items are fields of
@@ -51,7 +51,7 @@ pub struct Slot {
 }
 
 /// A condition name (level 88) of an item.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Condition {
     pub name: String,
     /// The literals, as written: `'A'`, `1`, `SPACES`.
@@ -67,7 +67,7 @@ impl Slot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SlotOccurs {
     pub min: usize,
     pub max: usize,
@@ -77,7 +77,7 @@ pub struct SlotOccurs {
 
 /// The field an `OCCURS DEPENDING ON` table counts its items by: where it is
 /// in the record.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Counter {
     pub name: String,
     pub offset: usize,
@@ -85,7 +85,7 @@ pub struct Counter {
     pub numeric: Numeric,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Element {
     Group(Vec<Slot>),
     /// Characters: `PIC X`, `PIC A`, and numbers with editing (`PIC Z,ZZ9.99`).
@@ -95,7 +95,7 @@ pub enum Element {
     Float,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Numeric {
     pub usage: NumUsage,
     pub digits: u32,
@@ -105,7 +105,7 @@ pub struct Numeric {
     pub sign: SignPlace,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NumUsage {
     /// `DISPLAY`: zoned decimal, a digit a byte.
     Zoned,
@@ -117,7 +117,7 @@ pub enum NumUsage {
     Native,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SignPlace {
     TrailingEmbedded,
     LeadingEmbedded,
@@ -127,7 +127,7 @@ pub enum SignPlace {
 
 /// Items over the same bytes (`REDEFINES`, and `RENAMES`), of which a tab
 /// shows one.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RedefineSet {
     /// The COBOL names, the redefined item first. For a `RENAMES`, the
     /// first is the run of items renamed (`A THRU B`), the second its name.
