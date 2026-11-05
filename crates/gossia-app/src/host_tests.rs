@@ -172,6 +172,29 @@ fn save_gives_the_host_the_workbook_file() {
     assert_eq!(fake.0.borrow().workbooks[1].0, "Untitled.gossia");
 }
 
+/// A backup (VS Code's hot exit) is the workbook's file, and the workbook
+/// still has its unsaved changes afterwards.
+#[test]
+fn a_backup_gives_the_bytes_without_counting_the_workbook_as_saved() {
+    let (fake, mut app) = hosted();
+    crate::control::run(&mut app, "tab", &serde_json::json!({ "name": "Orders" })).unwrap();
+    crate::control::run(
+        &mut app,
+        "select",
+        &serde_json::json!({ "path": "tax_rate" }),
+    )
+    .unwrap();
+    crate::control::run(&mut app, "enter", &serde_json::json!({ "text": "0.5" })).unwrap();
+    assert!(app.is_dirty());
+    let bytes = app.backup_bytes().unwrap();
+    assert!(bytes.starts_with(b"PK"), "a zip");
+    assert!(app.is_dirty(), "still unsaved");
+    assert!(
+        fake.0.borrow().workbooks.is_empty(),
+        "nothing given to the host"
+    );
+}
+
 #[test]
 fn data_sources_are_kept_in_the_host_with_their_secrets_apart() {
     let (fake, mut app) = hosted();

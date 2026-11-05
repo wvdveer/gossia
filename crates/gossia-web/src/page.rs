@@ -21,9 +21,16 @@
 //!   HTTP request for a data source (`headers` a flat list of names and
 //!   values, `body` bytes or `null`), without following a redirect; the
 //!   answer goes to [`fetch_answered`] or [`fetch_failed`] with the same id.
+//! - `backupWorkbook(bytes)` and `bytesFailed(kind, message)`: the answers to
+//!   [`request_bytes`], for a host that saves and backs up the file itself
+//!   (VS Code). A save asked for that way is answered with `saveWorkbook`.
+//!
+//! Such a host also hands the page a workbook while it runs
+//! ([`open_workbook`], for Revert).
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gossia_app::GossiaApp;
 use gossia_app::host::Host;
@@ -40,6 +47,35 @@ thread_local! {
     static CONTEXT: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
     /// The runner, kept for the life of the page.
     static RUNNER: RefCell<Option<eframe::WebRunner>> = const { RefCell::new(None) };
+    /// What the host has asked of the application, until the next frame.
+    static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Something the host asks of the application, done in the next frame.
+enum Request {
+    /// Show this workbook in place of the one there is (empty bytes: a blank
+    /// workbook, as a new empty file is).
+    Open { name: String, bytes: Vec<u8> },
+    /// The workbook's bytes: `save` (counted as saved, given with
+    /// `saveWorkbook`) or `backup` (given with `backupWorkbook`).
+    Bytes(String),
+}
+
+/// Opens this workbook in place of the one there is, as the host asks when
+/// it reverts the file. Empty bytes give a blank workbook.
+#[wasm_bindgen]
+pub fn open_workbook(name: String, bytes: Vec<u8>) {
+    REQUESTS.with(|r| r.borrow_mut().push(Request::Open { name, bytes }));
+    repaint();
+}
+
+/// Asks for the workbook's bytes, once nothing is being calculated: `kind`
+/// is `save` or `backup`. The answer is `saveWorkbook(name, bytes)`,
+/// `backupWorkbook(bytes)`, or `bytesFailed(kind, message)`.
+#[wasm_bindgen]
+pub fn request_bytes(kind: String) {
+    REQUESTS.with(|r| r.borrow_mut().push(Request::Bytes(kind)));
+    repaint();
 }
 
 /// A message from the Python worker.
@@ -238,6 +274,73 @@ impl WorkerLink for HostLink {
     }
 }
 
+/// The application, with what the host asks of it done before each frame.
+struct PageApp {
+    app: GossiaApp,
+    host: Rc<JsHost>,
+}
+
+impl PageApp {
+    fn requests(&mut self, ctx: &egui::Context) {
+        let requests = REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
+        let mut later = Vec::new();
+        for request in requests {
+            match request {
+                Request::Open { name, bytes } => {
+                    let opened = if bytes.is_empty() {
+                        self.app.new_workbook();
+                        Ok(())
+                    } else {
+                        self.app.open_bytes(&name, &bytes)
+                    };
+                    if let Err(e) = opened {
+                        self.app.notice = Some(e);
+                    }
+                }
+                // The bytes wait for the calculation, which the page cannot
+                // wait for within a frame.
+                Request::Bytes(kind) if !self.app.session.wait_idle(Duration::ZERO) => {
+                    later.push(Request::Bytes(kind));
+                }
+                Request::Bytes(kind) => {
+                    let result = match kind.as_str() {
+                        "save" => self.app.save_to_host(&*self.host),
+                        "backup" => self.app.backup_bytes().map(|bytes| {
+                            let bytes = Uint8Array::from(bytes.as_slice());
+                            self.host.call_logged("backupWorkbook", &[bytes.into()]);
+                        }),
+                        other => Err(format!("{other} is not a kind of bytes to ask for")),
+                    };
+                    if let Err(e) = result {
+                        self.host.call_logged(
+                            "bytesFailed",
+                            &[JsValue::from_str(&kind), JsValue::from_str(&e)],
+                        );
+                    }
+                }
+            }
+        }
+        if !later.is_empty() {
+            REQUESTS.with(|r| {
+                let mut r = r.borrow_mut();
+                later.append(&mut r);
+                *r = later;
+            });
+            ctx.request_repaint();
+        }
+    }
+}
+
+impl eframe::App for PageApp {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.requests(&ctx);
+        #[cfg(feature = "test-control")]
+        crate::control::answer(&mut self.app, &ctx);
+        eframe::App::ui(&mut self.app, ui, frame);
+    }
+}
+
 /// Starts the application on `canvas`, with `host`. `name` and `bytes` are
 /// the workbook to open; without them a blank workbook is shown, or with
 /// `sample` the sample workbook (for the test page).
@@ -251,6 +354,7 @@ pub async fn start_app(
 ) -> Result<(), JsValue> {
     let host = Rc::new(JsHost { object: host });
     gossia_app::host::set(host.clone());
+    let page_host = host.clone();
     let (user, mut warnings) = User::load(Config::in_storage(Rc::new(HostStorage(host.clone()))));
     gossia_app::host::load_sources(&*host, &user.sources, &mut warnings);
     let mut app = if sample {
@@ -260,6 +364,7 @@ pub async fn start_app(
     }
     .with_user(user);
     if let (Some(name), Some(bytes)) = (name, bytes)
+        && !bytes.is_empty()
         && let Err(e) = app.open_bytes(&name, &bytes)
     {
         warnings.push(e);
@@ -274,9 +379,10 @@ pub async fn start_app(
             eframe::WebOptions::default(),
             Box::new(move |cc| {
                 CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(cc.egui_ctx.clone()));
-                #[cfg(feature = "test-control")]
-                let app = crate::control::Controlled::new(app);
-                Ok(Box::new(app))
+                Ok(Box::new(PageApp {
+                    app,
+                    host: page_host,
+                }))
             }),
         )
         .await;

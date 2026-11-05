@@ -64,63 +64,51 @@ pub fn control(cmd: String, args: String) -> Promise {
     promise
 }
 
-/// The application with the commands that have come for it.
-pub struct Controlled {
-    app: GossiaApp,
-}
-
-impl Controlled {
-    pub fn new(app: GossiaApp) -> Self {
-        Controlled { app }
+/// Runs the commands that have come for the application, and keeps the
+/// waits that are not over for the next frame. Called by the page each frame.
+pub(crate) fn answer(app: &mut GossiaApp, ctx: &egui::Context) {
+    let jobs = JOBS.with(|jobs| std::mem::take(&mut *jobs.borrow_mut()));
+    if jobs.is_empty() {
+        return;
     }
-
-    /// Runs the commands that have come, and keeps the waits that are not
-    /// over for the next frame.
-    fn answer(&mut self, ctx: &egui::Context) {
-        let jobs = JOBS.with(|jobs| std::mem::take(&mut *jobs.borrow_mut()));
-        if jobs.is_empty() {
-            return;
-        }
-        let mut waiting = Vec::new();
-        for mut job in jobs {
-            match job.cmd.as_str() {
-                "wait_idle" => {
-                    let now = js_sys::Date::now();
-                    let asked = job
-                        .args
-                        .get("timeout_ms")
-                        .and_then(Json::as_f64)
-                        .unwrap_or(10_000.0);
-                    let until = *job.until.get_or_insert(now + asked.min(MAX_WAIT_MS));
-                    match control::run(&mut self.app, "wait_idle", &job.args) {
-                        Err(_) if now < until => waiting.push(job),
-                        result => settle(&job, result),
-                    }
-                }
-                "quit" | "screenshot" => {
-                    let error = format!(
-                        "{} is not done in the page: it has no window of its own, and the \
-                         Playwright script takes the screenshots",
-                        job.cmd
-                    );
-                    settle(&job, Err(error));
-                }
-                cmd => {
-                    let result = control::run(&mut self.app, cmd, &job.args);
-                    settle(&job, result);
+    let mut waiting = Vec::new();
+    for mut job in jobs {
+        match job.cmd.as_str() {
+            "wait_idle" => {
+                let now = js_sys::Date::now();
+                let asked = job
+                    .args
+                    .get("timeout_ms")
+                    .and_then(Json::as_f64)
+                    .unwrap_or(10_000.0);
+                let until = *job.until.get_or_insert(now + asked.min(MAX_WAIT_MS));
+                match control::run(app, "wait_idle", &job.args) {
+                    Err(_) if now < until => waiting.push(job),
+                    result => settle(&job, result),
                 }
             }
+            "quit" | "screenshot" => {
+                let error = format!(
+                    "{} is not done in the page: it has no window of its own, and the                      Playwright script takes the screenshots",
+                    job.cmd
+                );
+                settle(&job, Err(error));
+            }
+            cmd => {
+                let result = control::run(app, cmd, &job.args);
+                settle(&job, result);
+            }
         }
-        if !waiting.is_empty() {
-            // Commands that came meanwhile go after the waits.
-            JOBS.with(|jobs| {
-                let mut jobs = jobs.borrow_mut();
-                waiting.append(&mut jobs);
-                *jobs = waiting;
-            });
-        }
-        ctx.request_repaint();
     }
+    if !waiting.is_empty() {
+        // Commands that came meanwhile go after the waits.
+        JOBS.with(|jobs| {
+            let mut jobs = jobs.borrow_mut();
+            waiting.append(&mut jobs);
+            *jobs = waiting;
+        });
+    }
+    ctx.request_repaint();
 }
 
 fn settle(job: &Job, result: Result<Json, String>) {
@@ -130,12 +118,4 @@ fn settle(job: &Job, result: Result<Json, String>) {
             .call1(&JsValue::NULL, &JsValue::from_str(&value.to_string())),
         Err(error) => job.reject.call1(&JsValue::NULL, &JsValue::from_str(&error)),
     };
-}
-
-impl eframe::App for Controlled {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        self.answer(&ctx);
-        eframe::App::ui(&mut self.app, ui, frame);
-    }
 }

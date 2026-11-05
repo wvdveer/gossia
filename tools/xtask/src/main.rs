@@ -25,6 +25,8 @@ cargo xtask <command>
                                  with --test-control the test build and the harness, in target/web-test
   web-test                       the test build of the wasm version, driven by the harness page in
                                  headless Chromium (needs Playwright for Python)
+  vscode [--test-control]        the wasm version copied into the VS Code extension (vscode/media/pkg)
+  vscode-test                    the extension's tests in a downloaded VS Code (needs Node.js)
   ci                             everything the blocking CI jobs run: lint, test, e2e
 ";
 
@@ -68,6 +70,18 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("web-test") => {
             fetch_vendor::ensure_required(&root)?;
             web_test(&root)
+        }
+        Some("vscode") => {
+            fetch_vendor::ensure_required(&root)?;
+            match args.get(1).map(String::as_str) {
+                None => vscode(&root, false),
+                Some("--test-control") => vscode(&root, true),
+                Some(other) => Err(format!("vscode takes --test-control, not {other}")),
+            }
+        }
+        Some("vscode-test") => {
+            fetch_vendor::ensure_required(&root)?;
+            vscode_test(&root)
         }
         Some("icons") => match args.get(1) {
             Some(dir) => icons::write(Path::new(dir)),
@@ -298,6 +312,53 @@ fn copy_files(from: &Path, to: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Builds the wasm version (or its test build) and copies the module and its
+/// glue into the VS Code extension, `vscode/media/pkg`.
+fn vscode(root: &Path, test_control: bool) -> Result<(), String> {
+    let out = web(root, test_control)?;
+    let pkg = root.join("vscode").join("media").join("pkg");
+    std::fs::create_dir_all(&pkg).map_err(|e| format!("{}: {e}", pkg.display()))?;
+    for name in ["gossia_web.js", "gossia_web_bg.wasm"] {
+        std::fs::copy(out.join("pkg").join(name), pkg.join(name))
+            .map_err(|e| format!("cannot copy {name}: {e}"))?;
+    }
+    println!("copied the wasm version into {}", pkg.display());
+    Ok(())
+}
+
+/// Builds the test build into the extension and runs the extension's tests
+/// in a VS Code downloaded for them (`vscode/test/run.js`), installing the
+/// Node.js packages first when they are missing.
+fn vscode_test(root: &Path) -> Result<(), String> {
+    vscode(root, true)?;
+    let dir = root.join("vscode");
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    if !dir.join("node_modules").is_dir() {
+        let install = if dir.join("package-lock.json").is_file() {
+            "ci"
+        } else {
+            "install"
+        };
+        run_in(&dir, npm, &[install])?;
+    }
+    run_in(&dir, "node", &["test/run.js"])
+}
+
+/// Runs a program in a folder, failing when it fails.
+fn run_in(dir: &Path, program: &str, args: &[&str]) -> Result<(), String> {
+    println!("+ {program} {}", args.join(" "));
+    let status = Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .map_err(|e| format!("cannot run {program}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} {} failed", args.join(" ")))
+    }
 }
 
 /// Builds the test build of the wasm version and runs the harness page in

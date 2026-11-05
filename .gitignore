@@ -40,3 +40,8 @@ crates/gossia-app/tests/snapshots/**/*.old.png
 packaging/linux/arch/src/
 packaging/linux/arch/pkg/
 packaging/linux/arch/*.pkg.tar.zst
+
+# The VS Code extension: its Node.js packages, and the wasm module copied in
+# by cargo xtask vscode.
+/vscode/node_modules/
+/vscode/media/pkg/

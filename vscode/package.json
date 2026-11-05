@@ -1,0 +1,41 @@
+{
+  "name": "gossia",
+  "displayName": "Gossia",
+  "description": "Workbooks whose sheets are trees defined by a schema, with Python formulas.",
+  "version": "0.3.0",
+  "publisher": "wvdveer",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wvdveer/gossia"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Data Science",
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "gossia.workbook",
+        "displayName": "Gossia workbook",
+        "selector": [
+          {
+            "filenamePattern": "*.gossia"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

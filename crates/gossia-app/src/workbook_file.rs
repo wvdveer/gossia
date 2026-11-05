@@ -381,7 +381,7 @@ impl GossiaApp {
 
     /// Saves through the host, which writes the file the workbook came from
     /// (or asks where, for a new one).
-    pub(crate) fn save_to_host(&mut self, host: &dyn crate::host::Host) -> Result<(), String> {
+    pub fn save_to_host(&mut self, host: &dyn crate::host::Host) -> Result<(), String> {
         let (bytes, meta) = self.workbook_bytes()?;
         // A new workbook is offered under the name Save As would suggest.
         let name = match self.doc.path {
@@ -391,6 +391,12 @@ impl GossiaApp {
         host.save_workbook(&name, bytes);
         self.saved(meta, Path::new(&name));
         Ok(())
+    }
+
+    /// The workbook as a save would write it, without counting it as saved:
+    /// for a host's backup of unsaved changes (VS Code's hot exit).
+    pub fn backup_bytes(&mut self) -> Result<Vec<u8>, String> {
+        self.workbook_bytes().map(|(bytes, _)| bytes)
     }
 
     /// The workbook as its file holds it, with the view state that goes in it.
