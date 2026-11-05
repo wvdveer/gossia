@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ClioTree worker probe</title>
+<style>
+  body { font: 14px/1.4 ui-monospace, monospace; margin: 16px; }
+  .ok { color: #1a7f37; } .fail { color: #cf222e; }
+</style>
+</head>
+<body>
+<h1>ClioTree worker probe</h1>
+<p>Build step 13a: Python in a Web Worker, run against the real calculation layer.</p>
+<pre id="log"></pre>
+<script type="module">
+const logEl = document.getElementById('log');
+const results = { ok: 0, fail: 0, lines: [] };
+function line(cls, text) {
+  results.lines.push(text);
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = text + '\n';
+  logEl.appendChild(span);
+}
+function check(name, cond, detail) {
+  if (cond) { results.ok++; line('ok', `ok   ${name}${detail ? '  (' + detail + ')' : ''}`); }
+  else { results.fail++; line('fail', `FAIL ${name}${detail ? '  (' + detail + ')' : ''}`); }
+}
+
+function startWorker() { return new Worker('./worker.js', { type: 'module' }); }
+function ask(w, msg, timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ type: 'timeout' }), timeoutMs);
+    w.onmessage = (e) => { clearTimeout(t); resolve(e.data); };
+    w.onerror = (e) => { clearTimeout(t); resolve({ type: 'failed', error: e.message }); };
+    w.postMessage(msg);
+  });
+}
+
+const schema = JSON.stringify({ type: 'object', properties: {
+  out: { type: 'number' },
+  text: { type: 'string' },
+  nums: { type: 'array', items: { type: 'integer' } },
+  one: { type: 'object', properties: { qty: { type: 'integer' }, price: { type: 'number' } } },
+} });
+const data = JSON.stringify({ out: 0, text: '', nums: [1, 2, 3, 4], one: { qty: 3, price: 2.5 } });
+
+(async () => {
+  let w = startWorker();
+  const started = await ask(w, { type: 'start' }, 120000);
+  check('the engine starts in the worker', started.type === 'started',
+    started.type === 'started' ? `load ${started.loadMs} ms, engine ${started.engineMs} ms` : JSON.stringify(started));
+  results.started = started;
+
+  const cases = [
+    ['a sum', 'out', '1 + 2', 3],
+    ['SUM over an array', 'out', 'SUM(S.nums)', 10],
+    ['proxy reads', 'out', 'S.one.qty * S.one.price', 7.5],
+    ['a module without import', 'out', 'math.sqrt(16)', 4],
+    ['text', 'text', '"-".join(str(n) for n in S.nums)', '1-2-3-4'],
+  ];
+  for (const [name, path, formula, want] of cases) {
+    const r = await ask(w, { type: 'run', id: name, schema, data, path, formula });
+    check(name, r.type === 'ran' && r.error === null && r.value === want,
+      r.type === 'ran' ? `${JSON.stringify(r.value)}${r.error ? ' ' + r.error : ''}, ${r.ms} ms` : JSON.stringify(r));
+  }
+  const div = await ask(w, { type: 'run', id: 'div', schema, data, path: 'out', formula: '1 / 0' });
+  check('an error comes back as an error', div.type === 'ran' && div.error !== null, div.error || JSON.stringify(div));
+
+  // A runaway formula: the page terminates the worker and starts a fresh one.
+  w.postMessage({ type: 'run', id: 'spin', schema, data, path: 'out', formula: 'next(x for x in iter(int, 1) if x)' });
+  await new Promise((r) => setTimeout(r, 1000));
+  const t0 = performance.now();
+  w.terminate();
+  w = startWorker();
+  const again = await ask(w, { type: 'start' }, 120000);
+  const ran = again.type === 'started' && (await ask(w, { type: 'run', id: 'after', schema, data, path: 'out', formula: '2 * 21' }));
+  check('a runaway worker is replaced', ran && ran.value === 42, `new worker ready in ${Math.round(performance.now() - t0)} ms`);
+  w.terminate();
+
+  line(results.fail ? 'fail' : 'ok', `${results.ok} ok, ${results.fail} failed`);
+  window.probeResults = results;
+  document.title = 'DONE ' + (results.fail ? 'FAIL' : 'OK');
+})();
+</script>
+</body>
+</html>

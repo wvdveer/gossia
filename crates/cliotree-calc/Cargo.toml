@@ -24,11 +24,16 @@ ruff_python_parser = { package = "rustpython-ruff_python_parser", path = "../../
 ruff_source_file = { package = "rustpython-ruff_source_file", path = "../../vendor/ruff/crates/ruff_source_file" }
 ruff_text_size = { package = "rustpython-ruff_text_size", path = "../../vendor/ruff/crates/ruff_text_size" }
 sha2 = "0.11.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+
+# The data source drivers, which the wasm version does not have (DESIGN.md,
+# "Data sources": the kinds available depend on the target). Its HTTP
+# requests are made by the host instead (Web port, 0.3.0).
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 # HTTP/HTTPS data sources (DESIGN.md, "Data sources"): blocking, rustls, and
 # the operating system's certificate store through the platform verifier.
 ureq = { version = "3.5.0", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
 # SQLite data sources: SQLite built in, the progress handler for the call
 # timeout, and declared column types to give dates as dates.
 rusqlite = { version = "0.41.1", features = ["bundled", "hooks", "column_decltype"] }
@@ -39,6 +44,13 @@ native-tls = "0.2.18"
 bytes = "1.12.1"
 beancount-parser = "2.6"
 rust_decimal = { version = "1", default-features = false }
+
+# The wasm version takes its random numbers from the browser's crypto API, as
+# RustPython's own wasm crate does: getrandom 0.4 for RustPython, 0.2 for
+# rand 0.8 below it.
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 # ODBC data sources, on Windows only, where the driver manager (odbc32.dll)
 # is part of the system.

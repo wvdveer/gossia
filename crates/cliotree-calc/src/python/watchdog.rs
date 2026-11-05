@@ -9,23 +9,38 @@
 //! A single long call into the interpreter's own code, such as
 //! `sum(range(10**9))`, does not look at signals and is not stopped by this. The
 //! evaluation thread abandons such a formula instead (a later step).
+//!
+//! The wasm version has no threads, so it has no watchdog: a formula that
+//! overruns is ended by terminating the Web Worker it runs in (DESIGN.md, Web
+//! port, 0.3.0). There `Watchdog` does nothing.
 
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_family = "wasm"))]
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+#[cfg(not(target_family = "wasm"))]
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_family = "wasm"))]
 use rustpython::vm::signal::UserSignalSender;
 
 /// How often a signal is sent again while a formula is still running past its
 /// deadline.
+#[cfg(not(target_family = "wasm"))]
 const RESEND: Duration = Duration::from_millis(25);
 
+#[cfg(not(target_family = "wasm"))]
 enum Message {
     Start { id: u64, deadline: Instant },
     Stop,
 }
 
+#[cfg(target_family = "wasm")]
+pub(super) use no_threads::Watchdog;
+
+#[cfg(not(target_family = "wasm"))]
 pub(super) struct Watchdog {
     messages: Sender<Message>,
     /// The evaluation that is allowed to be interrupted, or 0.
@@ -35,6 +50,7 @@ pub(super) struct Watchdog {
     deadline: std::cell::Cell<Option<Instant>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Watchdog {
     pub fn new(signals: UserSignalSender) -> Watchdog {
         let (messages, inbox) = mpsc::channel::<Message>();
@@ -123,5 +139,31 @@ impl Watchdog {
         if let Some(left) = left {
             self.start(left);
         }
+    }
+}
+
+#[cfg(target_family = "wasm")]
+mod no_threads {
+    use std::time::Duration;
+
+    use rustpython::vm::signal::UserSignalSender;
+
+    /// The watchdog of the wasm version, which does nothing (see the module).
+    pub struct Watchdog;
+
+    impl Watchdog {
+        pub fn new(_signals: UserSignalSender) -> Watchdog {
+            Watchdog
+        }
+
+        pub fn start(&self, _limit: Duration) {}
+
+        pub fn stop(&self) {}
+
+        pub fn pause(&self) -> Option<Duration> {
+            None
+        }
+
+        pub fn resume(&self, _left: Option<Duration>) {}
     }
 }

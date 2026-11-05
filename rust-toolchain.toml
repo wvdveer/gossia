@@ -3,4 +3,6 @@
 # `rust-version` in Cargo.toml (1.97, required by RustPython).
 channel = "1.99.1"
 components = ["rustfmt", "clippy"]
+# The wasm version (DESIGN.md, Web port, 0.3.0).
+targets = ["wasm32-unknown-unknown"]
 profile = "minimal"

@@ -8,6 +8,7 @@
 
 mod calc;
 mod check;
+#[cfg(not(target_family = "wasm"))]
 pub mod database;
 mod engine;
 pub mod entry;
@@ -16,6 +17,7 @@ pub mod fake;
 mod forms;
 mod history;
 pub mod http;
+#[cfg(not(target_family = "wasm"))]
 pub mod journal;
 mod model;
 pub mod names;
@@ -23,8 +25,13 @@ mod node_bytes;
 pub mod python;
 mod session;
 pub mod sources;
+#[cfg(not(target_family = "wasm"))]
 pub mod sqlite;
 mod trie;
+#[cfg(target_family = "wasm")]
+mod unavailable;
+#[cfg(target_family = "wasm")]
+pub use unavailable::{database, journal, sqlite};
 
 pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ChartType, ColumnFormula, Decision, Detail,

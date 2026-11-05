@@ -21,6 +21,7 @@ cargo xtask <command>
   e2e                            end-to-end tests on the running application (under xvfb-run on Linux without a display)
   snapshots                      visual snapshot tests (needs a graphics adapter)
   icons <dir>                    the icon as PNG files for the packages (16 to 512 pixels)
+  web                            the wasm worker and its probe page, in target/web (serve that folder)
   ci                             everything the blocking CI jobs run: lint, test, e2e
 ";
 
@@ -52,6 +53,10 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("snapshots") => {
             fetch_vendor::ensure_required(&root)?;
             snapshots(&root)
+        }
+        Some("web") => {
+            fetch_vendor::ensure_required(&root)?;
+            web(&root)
         }
         Some("icons") => match args.get(1) {
             Some(dir) => icons::write(Path::new(dir)),
@@ -133,6 +138,24 @@ fn lint(root: &Path) -> Result<(), String> {
             "warnings",
         ],
     )?;
+    // The wasm version (DESIGN.md, Web port, 0.3.0): the crates that are built
+    // for wasm, with the code that only that target compiles.
+    cargo(
+        root,
+        &[
+            "clippy",
+            "-p",
+            "cliotree-calc",
+            "-p",
+            "cliotree-worker",
+            "--lib",
+            "--target",
+            WASM_TARGET,
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
     cargo(
         root,
         &[
@@ -157,6 +180,93 @@ fn lint(root: &Path) -> Result<(), String> {
             "warnings",
         ],
     )
+}
+
+const WASM_TARGET: &str = "wasm32-unknown-unknown";
+
+/// Builds the wasm worker (`cliotree-worker`) in release, makes its JavaScript
+/// glue with `wasm-bindgen`, and puts it beside the probe page in
+/// `target/web`. The `wasm-bindgen` command-line tool must be the version the
+/// lock file has, so that version is installed into `target/wasm-tools` the
+/// first time.
+fn web(root: &Path) -> Result<(), String> {
+    cargo(
+        root,
+        &[
+            "build",
+            "-p",
+            "cliotree-worker",
+            "--release",
+            "--target",
+            WASM_TARGET,
+        ],
+    )?;
+    let version = locked_version(root, "wasm-bindgen")?;
+    let tools = root.join("target").join("wasm-tools");
+    let bindgen = tools
+        .join("bin")
+        .join(format!("wasm-bindgen{}", std::env::consts::EXE_SUFFIX));
+    let installed = Command::new(&bindgen)
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+    if installed.as_deref() != Some(&format!("wasm-bindgen {version}")) {
+        let root_arg = tools.to_string_lossy().into_owned();
+        cargo(
+            root,
+            &[
+                "install",
+                "wasm-bindgen-cli",
+                "--version",
+                &version,
+                "--locked",
+                "--root",
+                &root_arg,
+            ],
+        )?;
+    }
+    let out = root.join("target").join("web");
+    let wasm = root
+        .join("target")
+        .join(WASM_TARGET)
+        .join("release")
+        .join("cliotree_worker.wasm");
+    println!("+ wasm-bindgen {}", wasm.display());
+    let status = Command::new(&bindgen)
+        .args(["--target", "web", "--no-typescript", "--out-dir"])
+        .arg(out.join("pkg"))
+        .arg(&wasm)
+        .status()
+        .map_err(|e| format!("cannot run wasm-bindgen: {e}"))?;
+    if !status.success() {
+        return Err("wasm-bindgen failed".to_owned());
+    }
+    let page = root.join("crates").join("cliotree-worker").join("web");
+    for name in ["index.html", "worker.js"] {
+        std::fs::copy(page.join(name), out.join(name))
+            .map_err(|e| format!("cannot copy {name}: {e}"))?;
+    }
+    println!("built {}", out.display());
+    Ok(())
+}
+
+/// The version of a package in the workspace's `Cargo.lock`.
+fn locked_version(root: &Path, package: &str) -> Result<String, String> {
+    let lock = std::fs::read_to_string(root.join("Cargo.lock"))
+        .map_err(|e| format!("cannot read Cargo.lock: {e}"))?;
+    let mut lines = lock.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() == format!("name = \"{package}\"")
+            && let Some(version) = lines
+                .next()
+                .and_then(|l| l.trim().strip_prefix("version = \""))
+                .and_then(|v| v.strip_suffix('"'))
+        {
+            return Ok(version.to_owned());
+        }
+    }
+    Err(format!("{package} is not in Cargo.lock"))
 }
 
 fn test(root: &Path) -> Result<(), String> {
