@@ -1,6 +1,7 @@
 //! A report of a workbook, read from what the workbook calculated: the
 //! [`Source`] its layout takes its values from, and the whole report as a
-//! PDF, as the application and `bidwillii` write it.
+//! PDF, as the application and `bidwillii` write it, or as HTML, as the
+//! application writes it.
 
 use std::cell::RefCell;
 
@@ -108,6 +109,41 @@ pub fn pdf(calc: &Calc, name: &str) -> Result<Vec<u8>, String> {
     run(calc, name).map(|r| r.pdf)
 }
 
+/// The report `name` of `calc` as an HTML page, laid out as its tab draws
+/// it (see [`crate::html`]).
+pub fn html(calc: &Calc, name: &str) -> Result<String, String> {
+    let design = calc
+        .report(name)
+        .ok_or_else(|| format!("there is no report {name}"))?;
+    let source = CalcSource { calc, report: name };
+    Ok(match lay_out(calc, design, &source) {
+        Layout::Single(laid) => crate::html::single_page(&laid, name),
+        Layout::Pages(paged) => crate::html::pages(&paged, name),
+    })
+}
+
+/// A report laid out: one page, or page by page.
+enum Layout {
+    Single(report::Laid),
+    Pages(report::Paged),
+}
+
+/// Lays out a report as its tab draws it: a multipage report page by page,
+/// a single page report (or a canvas) as one page.
+fn lay_out(calc: &Calc, design: &gossia_core::report::ReportDesign, source: &dyn Source) -> Layout {
+    if design.bands().is_some() {
+        Layout::Pages(report::pages(design, source, calc.detail_limit()))
+    } else if design.canvas {
+        Layout::Single(report::canvas(design, source))
+    } else {
+        Layout::Single(report::single_page(
+            design,
+            design.page.content_width(),
+            source,
+        ))
+    }
+}
+
 /// The report `name` of `calc` laid out and written as a PDF, with what it
 /// shows that went wrong.
 pub fn run(calc: &Calc, name: &str) -> Result<Run, String> {
@@ -118,16 +154,9 @@ pub fn run(calc: &Calc, name: &str) -> Result<Run, String> {
         inner: CalcSource { calc, report: name },
         errors: RefCell::new(Vec::new()),
     };
-    let (pdf, limited) = if design.bands().is_some() {
-        let paged = report::pages(design, &source, calc.detail_limit());
-        (crate::pages(&paged, name)?, paged.limited)
-    } else {
-        let laid = if design.canvas {
-            report::canvas(design, &source)
-        } else {
-            report::single_page(design, design.page.content_width(), &source)
-        };
-        (crate::single_page(&laid, name)?, false)
+    let (pdf, limited) = match lay_out(calc, design, &source) {
+        Layout::Pages(paged) => (crate::pages(&paged, name)?, paged.limited),
+        Layout::Single(laid) => (crate::single_page(&laid, name)?, false),
     };
     let multipage = design.bands().is_some();
     let mut errors = Vec::new();

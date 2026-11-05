@@ -2480,6 +2480,7 @@ dependencies = [
 name = "gossia-report"
 version = "0.3.0"
 dependencies = [
+ "base64 0.22.1",
  "gossia-calc",
  "gossia-core",
  "gossia-layout",

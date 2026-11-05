@@ -279,10 +279,11 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             done?;
             Ok(json!({ "schema": schema }))
         }
-        // Writes a report as PDF, as *Export as PDF...* does: `report` (the
-        // tab shown if left out) is shown and calculated, with the parameter
-        // values it has, and written to `path`.
-        "export_pdf" => {
+        // Writes a report as PDF or HTML, as *Export as PDF...* and *Export
+        // as HTML...* do: `report` (the tab shown if left out) is shown and
+        // calculated, with the parameter values it has, and written to
+        // `path`.
+        "export_pdf" | "export_html" => {
             let path = std::path::PathBuf::from(text_arg(args, "path")?);
             let report = match args.get("report").and_then(Json::as_str) {
                 Some(report) => report.to_owned(),
@@ -291,7 +292,11 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             if app.calc().report(&report).is_none() {
                 return Err(format!("there is no report called {report}"));
             }
-            app.begin_export_pdf(&report);
+            if cmd == "export_pdf" {
+                app.begin_export_pdf(&report);
+            } else {
+                app.begin_export_html(&report);
+            }
             app.session.calc_mut().show_report(Some(&report));
             if !app.session.wait_idle(std::time::Duration::from_secs(60)) {
                 app.pdf_export = None;
@@ -299,7 +304,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                     "{report} was still being calculated after a minute"
                 ));
             }
-            let done = app.export_pdf_to(&path);
+            let done = app.export_report_to(&path);
             let error = app.pdf_export.take().and_then(|e| e.error);
             done?;
             match error {

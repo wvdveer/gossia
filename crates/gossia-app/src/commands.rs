@@ -12,6 +12,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("import", "Import..."),
     ("export", "Export..."),
     ("exportPdf", "Export as PDF..."),
+    ("exportHtml", "Export as HTML..."),
     ("undo", "Undo"),
     ("redo", "Redo"),
     ("recalculate", "Recalculate"),
@@ -33,9 +34,12 @@ impl GossiaApp {
             "newTab" => self.begin_new_tab(),
             "import" if editing => return Err(busy()),
             "import" => self.begin_import(),
-            "export" | "exportPdf" if editing => return Err(busy()),
+            "export" | "exportPdf" | "exportHtml" if editing => return Err(busy()),
             "export" if self.in_report() => {
-                return Err("a report is exported as a PDF: Export as PDF...".to_owned());
+                return Err(
+                    "a report is exported as PDF or HTML: Export as PDF... or Export as HTML..."
+                        .to_owned(),
+                );
             }
             "export" => {
                 let tab = self.sheet.clone();
@@ -47,6 +51,13 @@ impl GossiaApp {
             "exportPdf" => {
                 let tab = self.sheet.clone();
                 self.begin_export_pdf(&tab);
+            }
+            "exportHtml" if !self.in_report() => {
+                return Err("show a report to export it as HTML".to_owned());
+            }
+            "exportHtml" => {
+                let tab = self.sheet.clone();
+                self.begin_export_html(&tab);
             }
             "undo" | "redo" if editing || self.session.running_procedure().is_some() => {
                 return Err("undo and redo wait for the edit or the procedure".to_owned());

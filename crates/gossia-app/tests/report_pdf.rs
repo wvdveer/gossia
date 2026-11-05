@@ -185,7 +185,7 @@ fn a_required_parameter_left_empty_stops_the_export() {
     );
     let dir = folder("missing");
     let path = dir.join("summary.pdf");
-    let error = harness.state_mut().export_pdf_to(&path).unwrap_err();
+    let error = harness.state_mut().export_report_to(&path).unwrap_err();
     assert!(error.starts_with("Fill in"), "{error}");
     assert!(!path.exists());
     let _ = std::fs::remove_dir_all(&dir);
@@ -250,4 +250,42 @@ fn the_file_menu_exports_the_report_shown_as_pdf() {
             .accesskit_node()
             .is_disabled()
     );
+}
+
+#[test]
+fn export_as_html_writes_the_report_as_one_page_with_its_text() {
+    let mut harness = window();
+    report(&mut harness, &[("Total", "Orders.total")], Vec::new());
+    let dir = folder("html");
+    harness.state_mut().begin_export_html("Summary");
+    harness.run();
+    assert!(has(&harness, "Export Summary as HTML"));
+    harness.get_by_label("Export HTML").click();
+    harness.run();
+    harness.get_by_label("File name").click();
+    harness.run();
+    harness.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
+    // Without an extension, it is given .html.
+    harness
+        .get_by_label("File name")
+        .type_text(&dir.join("summary").display().to_string());
+    harness.run();
+    harness.get_by_label("Export").click();
+    settle(&mut harness);
+    assert!(harness.state().pdf_export.is_none(), "the dialog closes");
+    let html = std::fs::read_to_string(dir.join("summary.html")).unwrap();
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("<title>Summary</title>"));
+    assert!(html.contains(">Total</text>"));
+    assert!(html.contains(">62.92</text>"));
+    assert!(!html.contains("<script"));
+    // The control command writes it too.
+    let path = dir.join("again.html");
+    control::run(
+        harness.state_mut(),
+        "export_html",
+        &json!({"report": "Summary", "path": path.display().to_string()}),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
 }

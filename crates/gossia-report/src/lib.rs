@@ -17,8 +17,10 @@
 //!
 //! Nothing here depends on egui: the application and `bidwillii` both
 //! write their PDFs with it. [`workbook`] reads a report's values from a
-//! workbook; the rest takes only what was laid out.
+//! workbook; the rest takes only what was laid out. [`html`] writes the
+//! same layout as an HTML page.
 
+pub mod html;
 pub mod workbook;
 
 use std::collections::HashMap;

@@ -455,6 +455,18 @@ impl GossiaApp {
                     self.begin_export_pdf(&tab);
                     ui.close();
                 }
+                if ui
+                    .add_enabled(
+                        self.editing.is_none() && self.in_report(),
+                        egui::Button::new("Export as HTML..."),
+                    )
+                    .on_disabled_hover_text("Show a report to export it as HTML")
+                    .clicked()
+                {
+                    let tab = self.sheet.clone();
+                    self.begin_export_html(&tab);
+                    ui.close();
+                }
                 ui.separator();
                 if ui
                     .add_enabled(self.editing.is_none(), egui::Button::new("Save"))

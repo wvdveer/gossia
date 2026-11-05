@@ -1,10 +1,11 @@
-//! *Export as PDF...* on a report tab's menu (DESIGN.md, Reports, "PDF
-//! export"): a dialog says what the PDF will hold, *Export...* in it asks
-//! for the file, and the PDF is written when the report is calculated, with
-//! the parameter values in the parameter bar.
+//! *Export as PDF...* and *Export as HTML...* on a report tab's menu
+//! (DESIGN.md, Reports, "PDF export" and "Export as HTML"): a dialog says
+//! what the file will hold, *Export...* in it asks for the file, and the
+//! file is written when the report is calculated, with the parameter values
+//! in the parameter bar.
 //!
 //! The report is shown while it is exported, so that it is calculated; in a
-//! workbook that is not trusted nothing runs and the PDF has what the
+//! workbook that is not trusted nothing runs and the file has what the
 //! results cache has, which the dialog says. The file is written
 //! atomically, by `gossia-report`, from the same layout the tab draws.
 
@@ -16,10 +17,43 @@ use crate::report_view::local_time;
 use crate::view::named;
 use crate::workbook_file::{Browsing, FileDialog};
 
-/// The PDF export of a report, while its dialog is open.
+/// What a report is exported as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportFormat {
+    Pdf,
+    Html,
+}
+
+impl ReportFormat {
+    /// Its name, as the menus say it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ReportFormat::Pdf => "PDF",
+            ReportFormat::Html => "HTML",
+        }
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            ReportFormat::Pdf => "pdf",
+            ReportFormat::Html => "html",
+        }
+    }
+
+    /// The purpose of the file dialog that asks for its file.
+    fn browsing(self) -> Browsing {
+        match self {
+            ReportFormat::Pdf => Browsing::ExportPdf,
+            ReportFormat::Html => Browsing::ExportHtml,
+        }
+    }
+}
+
+/// The export of a report as PDF or HTML, while its dialog is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdfExport {
     pub tab: String,
+    pub format: ReportFormat,
     /// The file chosen, while the report is still being calculated: it is
     /// written when the report is done.
     pub waiting: Option<PathBuf>,
@@ -31,6 +65,15 @@ impl GossiaApp {
     /// *Export as PDF...*: shows the report, so that it is calculated, and
     /// opens the dialog.
     pub fn begin_export_pdf(&mut self, tab: &str) {
+        self.begin_report_export(tab, ReportFormat::Pdf);
+    }
+
+    /// *Export as HTML...*: as *Export as PDF...*, for an HTML page.
+    pub fn begin_export_html(&mut self, tab: &str) {
+        self.begin_report_export(tab, ReportFormat::Html);
+    }
+
+    fn begin_report_export(&mut self, tab: &str, format: ReportFormat) {
         if self.calc().report(tab).is_none() {
             self.notice = Some(format!("there is no report {tab}"));
             return;
@@ -40,6 +83,7 @@ impl GossiaApp {
         }
         self.pdf_export = Some(PdfExport {
             tab: tab.to_owned(),
+            format,
             waiting: None,
             error: None,
         });
@@ -50,10 +94,11 @@ impl GossiaApp {
         let Some(export) = &self.pdf_export else {
             return;
         };
-        let name = format!("{}.pdf", export.tab);
-        // In a host the file is asked for once the PDF is made.
+        let format = export.format;
+        let name = format!("{}.{}", export.tab, format.extension());
+        // In a host the file is asked for once the file is made.
         if crate::host::current().is_some() {
-            if let Err(e) = self.export_pdf_to(Path::new(&name))
+            if let Err(e) = self.export_report_to(Path::new(&name))
                 && let Some(export) = &mut self.pdf_export
             {
                 export.error = Some(e);
@@ -62,25 +107,25 @@ impl GossiaApp {
         }
         if self.files.browse {
             self.files.browser = crate::workbook_file::new_browser()
-                .title(&format!("Export {} as PDF", export.tab))
+                .title(&format!("Export {} as {}", export.tab, format.name()))
                 .initial_directory(self.start_folder())
                 .default_file_name(&name)
-                .add_save_extension("PDF", "pdf")
-                .default_save_extension("PDF");
+                .add_save_extension(format.name(), format.extension())
+                .default_save_extension(format.name());
             self.files.browser.save_file();
-            self.files.browsing = Some(Browsing::ExportPdf);
+            self.files.browsing = Some(format.browsing());
             return;
         }
         self.files.dialog = Some(FileDialog {
-            purpose: Browsing::ExportPdf,
+            purpose: format.browsing(),
             text: self.start_folder().join(name).display().to_string(),
             error: None,
         });
     }
 
-    /// The file is chosen: writes the PDF now, or when the report is
-    /// calculated. A path without an extension is given `.pdf`.
-    pub fn export_pdf_to(&mut self, path: &Path) -> Result<(), String> {
+    /// The file is chosen: writes it now, or when the report is
+    /// calculated. A path without an extension is given `.pdf` or `.html`.
+    pub fn export_report_to(&mut self, path: &Path) -> Result<(), String> {
         let export = self
             .pdf_export
             .as_mut()
@@ -88,7 +133,7 @@ impl GossiaApp {
         let path = if path.extension().is_some() {
             path.to_path_buf()
         } else {
-            path.with_extension("pdf")
+            path.with_extension(export.format.extension())
         };
         let missing = self.session.calc().missing_params(&export.tab);
         if !missing.is_empty() {
@@ -103,7 +148,7 @@ impl GossiaApp {
         Ok(())
     }
 
-    /// Writes the PDF waited for, once nothing of the report is left to
+    /// Writes the file waited for, once nothing of the report is left to
     /// calculate. A failure is shown in the dialog.
     pub(crate) fn write_pdf_when_ready(&mut self) {
         let Some(export) = self.pdf_export.clone() else {
@@ -120,8 +165,11 @@ impl GossiaApp {
             return;
         }
         let host = crate::host::current();
-        let written = self
-            .pdf_bytes(&export.tab)
+        let bytes = match export.format {
+            ReportFormat::Pdf => self.pdf_bytes(&export.tab),
+            ReportFormat::Html => self.html_bytes(&export.tab),
+        };
+        let written = bytes
             .and_then(|bytes| match &host {
                 Some(host) => {
                     host.save_file(&path.to_string_lossy(), bytes);
@@ -147,15 +195,21 @@ impl GossiaApp {
         gossia_report::workbook::pdf(self.calc(), tab)
     }
 
-    /// The dialog of a PDF export, while it is open and not waiting for a
-    /// file.
+    /// The report as an HTML page, laid out as its tab draws it.
+    pub fn html_bytes(&self, tab: &str) -> Result<Vec<u8>, String> {
+        gossia_report::workbook::html(self.calc(), tab).map(String::into_bytes)
+    }
+
+    /// The dialog of a report's export, while it is open and not waiting
+    /// for a file.
     pub(crate) fn pdf_window(&mut self, ctx: &egui::Context) {
-        let choosing = self.files.browsing == Some(Browsing::ExportPdf)
+        let exporting = |b: &Browsing| matches!(b, Browsing::ExportPdf | Browsing::ExportHtml);
+        let choosing = self.files.browsing.as_ref().is_some_and(exporting)
             || self
                 .files
                 .dialog
                 .as_ref()
-                .is_some_and(|d| d.purpose == Browsing::ExportPdf);
+                .is_some_and(|d| exporting(&d.purpose));
         if choosing {
             return;
         }
@@ -175,18 +229,31 @@ impl GossiaApp {
             calc.report_cache(&export.tab)
                 .map(|c| local_time(&c.calculated))
         });
+        let kind = export.format.name();
+        let html = export.format == ReportFormat::Html;
         let (mut choose, mut cancel, mut open) = (false, false, true);
-        egui::Window::new(format!("Export {} as PDF", export.tab))
+        egui::Window::new(format!("Export {} as {kind}", export.tab))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .min_width(380.0)
             .show(ctx, |ui| {
-                ui.label(if multipage {
-                    "Each page on the paper of the page setup, as the page view shows it."
-                } else {
-                    "One page, as wide as the paper of the page setup less its margins, \
-                     and as tall as the report."
+                ui.label(match (multipage, html) {
+                    (true, false) => {
+                        "Each page on the paper of the page setup, as the page view shows it."
+                    }
+                    (true, true) => {
+                        "Each page as the page view shows it, in one file with no scripts; \
+                         printed, each page goes on a sheet of the paper of the page setup."
+                    }
+                    (false, false) => {
+                        "One page, as wide as the paper of the page setup less its margins, \
+                         and as tall as the report."
+                    }
+                    (false, true) => {
+                        "The report as it is shown, in one file with no scripts, as wide as \
+                         the paper of the page setup less its margins."
+                    }
                 });
                 if has_params {
                     ui.weak("With the parameter values in the parameter bar.");
@@ -194,15 +261,15 @@ impl GossiaApp {
                 match &untrusted {
                     Some(Some(time)) => {
                         ui.weak(format!(
-                            "This workbook is not trusted, so nothing runs: the PDF has the \
+                            "This workbook is not trusted, so nothing runs: the {kind} has the \
                              results calculated on {time}."
                         ));
                     }
                     Some(None) => {
-                        ui.weak(
+                        ui.weak(format!(
                             "This workbook is not trusted, so nothing runs, and no results of \
-                             the report were kept: the PDF shows #UNTRUSTED! in their place.",
-                        );
+                             the report were kept: the {kind} shows #UNTRUSTED! in their place."
+                        ));
                     }
                     None => {}
                 }
@@ -218,7 +285,9 @@ impl GossiaApp {
                 if export.waiting.is_some() {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Calculating the report: the PDF is written when it is done.");
+                        ui.label(format!(
+                            "Calculating the report: the {kind} is written when it is done."
+                        ));
                     });
                 }
                 if let Some(error) = &export.error {
@@ -228,7 +297,7 @@ impl GossiaApp {
                 ui.horizontal(|ui| {
                     let ready = missing.is_empty() && export.waiting.is_none();
                     let response = ui.add_enabled(ready, egui::Button::new("Export..."));
-                    named(&response, "Export PDF");
+                    named(&response, if html { "Export HTML" } else { "Export PDF" });
                     choose = response.clicked();
                     cancel = ui.button("Cancel").clicked();
                 });

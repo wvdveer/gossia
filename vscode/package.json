@@ -56,6 +56,11 @@
         "category": "Gossia"
       },
       {
+        "command": "gossia.exportHtml",
+        "title": "Export as HTML...",
+        "category": "Gossia"
+      },
+      {
         "command": "gossia.undo",
         "title": "Undo",
         "category": "Gossia"
@@ -127,6 +132,10 @@
         },
         {
           "command": "gossia.exportPdf",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.exportHtml",
           "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
         },
         {

@@ -120,6 +120,10 @@ impl GossiaApp {
                 self.begin_export_pdf(tab);
                 ui.close();
             }
+            if ui.button("Export as HTML...").clicked() {
+                self.begin_export_html(tab);
+                ui.close();
+            }
             let saved = self.doc.path.is_some();
             let copy = ui
                 .add_enabled(saved, egui::Button::new("Copy batch command"))

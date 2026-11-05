@@ -142,6 +142,8 @@ pub enum Browsing {
     Export,
     /// The PDF a report is exported to.
     ExportPdf,
+    /// The HTML page a report is exported to.
+    ExportHtml,
 }
 
 /// What the file commands keep between frames.
@@ -631,7 +633,7 @@ impl GossiaApp {
             Browsing::Open => self.open_path(&path),
             Browsing::Import => self.begin_import_path(&path),
             Browsing::Export => self.export_to(&path),
-            Browsing::ExportPdf => self.export_pdf_to(&path),
+            Browsing::ExportPdf | Browsing::ExportHtml => self.export_report_to(&path),
         };
         if let Err(e) = done {
             dialog.error = Some(e);
@@ -681,6 +683,7 @@ impl GossiaApp {
                 Browsing::Import => "Import a file",
                 Browsing::Export => "Export",
                 Browsing::ExportPdf => "Export as PDF",
+                Browsing::ExportHtml => "Export as HTML",
             })
             .open(&mut open)
             .collapsible(false)
@@ -702,7 +705,9 @@ impl GossiaApp {
                             Browsing::SaveAs => "Save",
                             Browsing::Open => "Open",
                             Browsing::Import => "Import",
-                            Browsing::Export | Browsing::ExportPdf => "Export",
+                            Browsing::Export | Browsing::ExportPdf | Browsing::ExportHtml => {
+                                "Export"
+                            }
                         })
                         .clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -770,7 +775,7 @@ impl GossiaApp {
                 Browsing::SaveAs => self.save_as(&path),
                 Browsing::Import => self.begin_import_path(&path),
                 Browsing::Export => self.export_to(&path),
-                Browsing::ExportPdf => self.export_pdf_to(&path),
+                Browsing::ExportPdf | Browsing::ExportHtml => self.export_report_to(&path),
             };
             if let Err(error) = done {
                 self.files.dialog = Some(FileDialog {
