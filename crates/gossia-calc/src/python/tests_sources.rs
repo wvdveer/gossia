@@ -269,22 +269,24 @@ fn a_read_is_made_once_per_pass_and_again_on_the_next() {
 }
 
 #[test]
-fn a_write_needs_allow_writes_and_a_procedure_or_the_immediate_window() {
+fn a_write_needs_allow_writes_and_is_sent_from_a_formula_each_time_it_runs() {
     let server = crate::http::http_tests::Server::start();
     let store = SourceStore::in_memory();
     let mut def = crate::http::http_tests::api(&server.url);
     def.writes = true;
     store.save(def, None, false).unwrap();
-    // Not in a formula, even when writes are allowed.
+    // A formula may send it once writes are allowed (owner, 2026-11-06), and
+    // a write is never taken from the pass's cache.
     let mut b = Book::new();
     b.engine = PythonEngine::with_settings(settings(&store));
     b.formula("text", "source('Api').post('orders', json={'a': 1}).text");
+    b.formula("name", "source('Api').post('orders', json={'a': 1}).text");
     b.run();
-    assert!(
-        b.message("text").contains("button procedure"),
-        "{}",
-        b.message("text")
-    );
+    assert_eq!(b.get("text"), Some(Value::Str("ok".into())));
+    assert_eq!(b.get("name"), Some(Value::Str("ok".into())));
+    assert_eq!(server.count(), 2);
+    assert_eq!(server.last().method, "POST");
+    server.received.lock().unwrap().clear();
     // In the Immediate window, with JSON and with a form.
     let mut s = session(&store);
     assert_eq!(
@@ -311,6 +313,86 @@ fn a_write_needs_allow_writes_and_a_procedure_or_the_immediate_window() {
         ("PUT", "name=a%26b")
     );
     assert_eq!(server.count(), 2);
+}
+
+#[test]
+fn any_method_can_be_sent_and_only_get_head_and_options_read() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    // Reads need no Allow writes, and two alike in a pass are one request.
+    b.formula("a", "source('Api').head('json').status");
+    b.formula("b", "source('Api').head('json').status");
+    b.formula("name", "source('Api').request('options', 'json').text");
+    // Any other method writes, custom or not.
+    b.formula("text", "source('Api').request('PURGE', 'json').text");
+    b.formula("note", "source('Api').request('NOT A VERB').text");
+    b.run();
+    assert_eq!(b.get("a"), Some(Value::Int(200)));
+    assert_eq!(b.get("b"), Some(Value::Int(200)));
+    assert!(matches!(b.get("name"), Some(Value::Str(_))));
+    assert!(b.message("text").contains("PURGE"), "{}", b.message("text"));
+    assert!(b.message("text").contains("Allow writes"));
+    assert!(
+        b.message("note").contains("not an HTTP method"),
+        "{}",
+        b.message("note")
+    );
+    let methods: Vec<String> = server
+        .received
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.method.clone())
+        .collect();
+    assert_eq!(methods, ["HEAD", "OPTIONS"]);
+    // With writes allowed, a custom method goes out as it is named.
+    let mut def = crate::http::http_tests::api(&server.url);
+    def.writes = true;
+    store.save(def, Some("Api"), true).unwrap();
+    b.formula("text", "source('Api').request('purge', 'json').text");
+    b.formula("note", "source('Api').request('CONNECT', 'json').text");
+    b.run();
+    assert!(
+        matches!(b.get("text"), Some(Value::Str(_))),
+        "{}",
+        b.message("text")
+    );
+    assert_eq!(server.last().method, "PURGE");
+    assert!(
+        b.message("note").contains("not a method a data source"),
+        "{}",
+        b.message("note")
+    );
+}
+
+#[test]
+fn recalculating_one_formula_runs_only_it_and_what_reads_it() {
+    let server = crate::http::http_tests::Server::start();
+    let store = SourceStore::in_memory();
+    store
+        .save(crate::http::http_tests::api(&server.url), None, false)
+        .unwrap();
+    let mut b = Book::new();
+    b.engine = PythonEngine::with_settings(settings(&store));
+    b.formula("a", "source('Api').get('json').json()['total']");
+    b.formula("name", "source('Api').get('echo').text");
+    b.formula("c", "S.a + 1");
+    b.run();
+    assert_eq!(b.get("c"), Some(Value::Int(43)));
+    assert_eq!(server.count(), 2);
+    // Only `a` reads again; `name` is left as it is.
+    assert!(b.calc.recalc_one("S", &Path::root().key("a")));
+    b.run();
+    assert_eq!(server.count(), 3);
+    assert_eq!(server.last().target, "/v1/json");
+    assert_eq!(b.get("c"), Some(Value::Int(43)));
+    // A node without a formula has nothing to run.
+    assert!(!b.calc.recalc_one("S", &Path::root().key("note")));
 }
 
 #[test]

@@ -2,6 +2,7 @@
 # Drafted by Claude (2026-11-06); corrections by a native speaker are welcome.
 # Each key is the English text; named places such as {tab} must stay, in any order.
 
+"Recalculate this formula" = "重新计算此公式"
 "\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)" = "\"{text}\" 不是颜色；请给出名称，例如 \"red\"、\"#rrggbb\" 或 (r, g, b)"
 "#TIMEOUT!: the expression did not stop when its time ran out and was abandoned" = "#TIMEOUT!：表达式在超时后仍未停止，已被放弃"
 "#TIMEOUT!: the expression did not stop when its time ran out and was ended" = "#TIMEOUT!：表达式在超时后仍未停止，已被终止"
@@ -1918,8 +1919,8 @@
 "{map} is not a map" = "{map} 不是映射"
 "{message} (at position {position})" = "{message}（位置 {position}）"
 "{message} at position {pos}" = "位置 {pos} 处：{message}"
-"{method} changes data, so it can be used only in a button procedure or the Immediate window, not in a formula" = "{method} 会更改数据，因此只能在按钮过程或“立即”窗口中使用，不能在公式中使用"
 "{method} is not a method a data source can be called with" = "{method} 不是可用于调用数据源的方法"
+"{method} is not an HTTP method: a method is a word of letters, digits and !#$%&'*+-.^_`|~, at most 64 long" = "{method} 不是 HTTP 方法：方法是由字母、数字和 !#$%&'*+-.^_`|~ 组成、最多 64 个字符的词"
 "{method} is not something a Beancount source can do" = "{method} 不是 Beancount 数据源能执行的操作"
 "{module} is the name of a module, and a tab cannot share it" = "{module} 是模块的名称，标签页不能与之同名"
 "{name} cannot be a {kind}: it is {what}" = "{name} 不能作为{kind}：它是{what}"

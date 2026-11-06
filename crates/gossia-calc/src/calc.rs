@@ -1489,6 +1489,21 @@ impl Calc {
         }
     }
 
+    /// Marks the formula at `path` as out of date, and so runs it again, alone,
+    /// reading its sources afresh; what reads its result follows if the result
+    /// changes. Returns whether there is a formula there that parses.
+    pub fn recalc_one(&mut self, sheet: &str, path: &Path) -> bool {
+        let runs = self
+            .sheets
+            .get(sheet)
+            .and_then(|s| s.formulas.by_path.get(path))
+            .is_some_and(|f| !f.syntax_error);
+        if runs {
+            self.dirty.insert(Loc::new(sheet.to_owned(), path.clone()));
+        }
+        runs
+    }
+
     /// Marks as out of date every formula that read the data source `name`,
     /// and what read their results: for a journal whose file changed.
     pub fn source_changed(&mut self, name: &str) {

@@ -59,7 +59,7 @@ fn cached(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         "journal" => payload["method"].as_str() != Some("add"),
         "http" => payload["method"]
             .as_str()
-            .is_none_or(|m| m.eq_ignore_ascii_case("GET")),
+            .is_none_or(|m| crate::http::is_read_method(&m.to_ascii_uppercase())),
         _ => false,
     };
     if !read || shared.side_effects.get() {
@@ -153,22 +153,19 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
         .as_str()
         .unwrap_or("GET")
         .to_ascii_uppercase();
-    if method != "GET" {
-        if !def.writes {
-            return Err(tr!(
-                "{name} does not allow writes, so {method} is refused: tick Allow writes in its \
-                 definition (Tools > Data sources...)",
-                name = name,
-                method = method
-            ));
-        }
-        if !shared.side_effects.get() {
-            return Err(tr!(
-                "{method} changes data, so it can be used only in a button procedure or the \
-                 Immediate window, not in a formula",
-                method = method
-            ));
-        }
+    if let Some(why) = crate::http::method_problem(&method) {
+        return Err(why);
+    }
+    // A method that writes needs Allow writes, and then may be sent from a
+    // formula too, each time it runs (owner, 2026-11-06: testing an API as
+    // Postman does).
+    if !crate::http::is_read_method(&method) && !def.writes {
+        return Err(tr!(
+            "{name} does not allow writes, so {method} is refused: tick Allow writes in its \
+             definition (Tools > Data sources...)",
+            name = name,
+            method = method
+        ));
     }
     let pairs = |value: &Json| -> Vec<(String, String)> {
         value

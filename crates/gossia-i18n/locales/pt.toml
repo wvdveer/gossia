@@ -2,6 +2,7 @@
 # Drafted by Claude (2026-11-06); corrections by a native speaker are welcome.
 # Each key is the English text; named places such as {tab} must stay, in any order.
 
+"Recalculate this formula" = "Recalcular esta fórmula"
 "\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)" = "\"{text}\" não é uma cor; dê um nome como \"red\", \"#rrggbb\" ou (r, g, b)"
 "#TIMEOUT!: the expression did not stop when its time ran out and was abandoned" = "#TIMEOUT!: a expressão não parou quando seu tempo acabou e foi abandonada"
 "#TIMEOUT!: the expression did not stop when its time ran out and was ended" = "#TIMEOUT!: a expressão não parou quando seu tempo acabou e foi encerrada"
@@ -1918,8 +1919,8 @@
 "{map} is not a map" = "{map} não é um mapa"
 "{message} (at position {position})" = "{message} (na posição {position})"
 "{message} at position {pos}" = "{message} na posição {pos}"
-"{method} changes data, so it can be used only in a button procedure or the Immediate window, not in a formula" = "{method} altera dados, então só pode ser usado em um procedimento de botão ou na janela Imediata, não em uma fórmula"
 "{method} is not a method a data source can be called with" = "{method} não é um método com o qual uma fonte de dados possa ser chamada"
+"{method} is not an HTTP method: a method is a word of letters, digits and !#$%&'*+-.^_`|~, at most 64 long" = "{method} não é um método HTTP: um método é uma palavra de letras, dígitos e !#$%&'*+-.^_`|~, com no máximo 64 caracteres"
 "{method} is not something a Beancount source can do" = "{method} não é algo que uma fonte Beancount possa fazer"
 "{module} is the name of a module, and a tab cannot share it" = "{module} é o nome de um módulo, e uma guia não pode compartilhá-lo"
 "{name} cannot be a {kind}: it is {what}" = "{name} não pode ser um {kind}: é {what}"

@@ -50,6 +50,8 @@ pub(crate) enum Action {
     Extend(Path),
     Copy(CopyMode),
     Paste(PasteMode),
+    /// Runs the formula at the path again, alone.
+    RecalculateFormula(Path),
     Toggle(Path),
     BeginEdit(Path),
     EnterText(Path, String),
@@ -1190,6 +1192,7 @@ impl GossiaApp {
             Action::Paste(mode) => {
                 let _ = self.paste_from_clipboard(mode);
             }
+            Action::RecalculateFormula(path) => self.recalculate_formula(&path),
             Action::SelectColumn(array, name) => self.select_column(&array, &name),
             Action::Toggle(path) => {
                 let open = !self.is_open(&path);
@@ -2145,6 +2148,7 @@ impl GossiaApp {
             actions.push(Action::Select(path.clone()));
         }
         let comments = self.calc().format_has_comments(&self.sheet);
+        let formula = self.calc().formula_text(&self.sheet, path).is_some();
         response.context_menu(|ui| {
             let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, action: Action| {
                 if ui
@@ -2169,6 +2173,15 @@ impl GossiaApp {
                 "Ctrl+Shift+V",
                 Action::Paste(PasteMode::Values),
             );
+            if formula {
+                ui.separator();
+                item(
+                    ui,
+                    tr!("Recalculate this formula"),
+                    "",
+                    Action::RecalculateFormula(path.clone()),
+                );
+            }
             match row {
                 // The row's commands, which take in its comments.
                 Some(row) => {

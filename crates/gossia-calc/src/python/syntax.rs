@@ -161,6 +161,7 @@ fn chart_name(function: &ruff_python_ast::StmtFunctionDef) -> Option<(String, Te
 const READS: &[&str] = &[
     "query",
     "get",
+    "head",
     "transactions",
     "balance",
     "accounts",

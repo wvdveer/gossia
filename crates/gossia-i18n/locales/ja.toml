@@ -2,6 +2,7 @@
 # Drafted by Claude (2026-11-06); corrections by a native speaker are welcome.
 # Each key is the English text; named places such as {tab} must stay, in any order.
 
+"Recalculate this formula" = "この数式を再計算"
 "\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)" = "\"{text}\" は色ではありません。\"red\"、\"#rrggbb\"、(r, g, b) のように指定してください"
 "#TIMEOUT!: the expression did not stop when its time ran out and was abandoned" = "#TIMEOUT!: 式は時間切れになっても停止しなかったため、破棄されました"
 "#TIMEOUT!: the expression did not stop when its time ran out and was ended" = "#TIMEOUT!: 式は時間切れになっても停止しなかったため、終了されました"
@@ -1918,8 +1919,8 @@
 "{map} is not a map" = "{map} はマップではありません"
 "{message} (at position {position})" = "{message} (位置 {position})"
 "{message} at position {pos}" = "位置 {pos} で {message}"
-"{method} changes data, so it can be used only in a button procedure or the Immediate window, not in a formula" = "{method} はデータを変更するため、数式ではなくボタンのプロシージャまたはイミディエイト ウィンドウでのみ使用できます"
 "{method} is not a method a data source can be called with" = "{method} はデータソースの呼び出しに使えるメソッドではありません"
+"{method} is not an HTTP method: a method is a word of letters, digits and !#$%&'*+-.^_`|~, at most 64 long" = "{method} は HTTP メソッドではありません。メソッドは英字、数字、!#$%&'*+-.^_`|~ からなる 64 文字以内の語です"
 "{method} is not something a Beancount source can do" = "{method} は Beancount ソースで実行できる操作ではありません"
 "{module} is the name of a module, and a tab cannot share it" = "{module} はモジュールの名前のため、タブに同じ名前は付けられません"
 "{name} cannot be a {kind}: it is {what}" = "{name} は{kind}にできません。{what}です"

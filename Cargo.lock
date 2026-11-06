@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -2404,7 +2404,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-calc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "beancount-parser",
  "bytes",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "gossia-calc",
@@ -2453,7 +2453,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2471,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-i18n"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "sys-locale",
  "toml",
@@ -2479,7 +2479,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-layout"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "epaint_default_fonts",
  "gossia-core",
@@ -2491,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-report"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "gossia-calc",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-std"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "gossia-core",
  "gossia-i18n",
@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-user"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "gossia-calc",
  "gossia-core",
@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "gossia-web"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "egui",

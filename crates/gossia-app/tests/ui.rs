@@ -582,6 +582,30 @@ fn the_cell_menu_copies_formulas_and_ctrl_shift_v_pastes_values() {
 }
 
 #[test]
+fn a_formula_cell_can_be_recalculated_alone_from_its_menu() {
+    let mut harness = table_window();
+    // A cell without a formula has no such command.
+    harness.get_by_label("9.5").click_secondary();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label_contains("Recalculate this formula")
+            .is_none()
+    );
+    harness.key_press(Key::Escape);
+    harness.run();
+    // One with a formula has, and runs it again with the same result.
+    harness.get_by_label("19.0").click_secondary();
+    harness.run();
+    harness
+        .get_by_label_contains("Recalculate this formula")
+        .click();
+    settle(&mut harness);
+    harness.get_by_label("19.0");
+    assert!(harness.state().notice.is_none());
+}
+
+#[test]
 fn rows_are_added_and_the_table_is_closed_from_its_toolbar() {
     let mut harness = table_window();
     click(&mut harness, "Add row");

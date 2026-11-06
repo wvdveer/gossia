@@ -18,8 +18,43 @@ use serde::{Deserialize, Serialize};
 
 use crate::sources::{HttpAuth, SourceDef, SourceKind, TestOutcome};
 
-/// The methods a source may be called with. Only `GET` reads.
-pub const METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE"];
+/// The methods that only read: cached for a pass, and allowed on a source
+/// without *Allow writes*. Any other method, standard or custom, writes.
+pub const READ_METHODS: &[&str] = &["GET", "HEAD", "OPTIONS"];
+
+/// Methods a source is never called with: `CONNECT` opens a tunnel, and
+/// `TRACE` and `TRACK` echo the request, with its credentials, and browsers
+/// refuse them.
+const REFUSED_METHODS: &[&str] = &["CONNECT", "TRACE", "TRACK"];
+
+/// The longest method name accepted.
+const MAX_METHOD: usize = 64;
+
+/// Whether `method` (upper case) only reads.
+pub fn is_read_method(method: &str) -> bool {
+    READ_METHODS.contains(&method)
+}
+
+/// Why `method` cannot be sent, if it cannot: it must be an HTTP token
+/// (RFC 9110: letters, digits and ``!#$%&'*+-.^_`|~``), and not one of the
+/// refused ones. Custom methods (`PURGE`, `PROPFIND`, `QUERY`) are allowed.
+pub fn method_problem(method: &str) -> Option<String> {
+    let token = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if method.is_empty() || method.len() > MAX_METHOD || !method.chars().all(token) {
+        return Some(tr!(
+            "{method} is not an HTTP method: a method is a word of letters, digits and \
+                 !#$%&'*+-.^_`|~, at most 64 long",
+            method = method
+        ));
+    }
+    if REFUSED_METHODS.contains(&method) {
+        return Some(tr!(
+            "{method} is not a method a data source can be called with",
+            method = method
+        ));
+    }
+    None
+}
 
 /// A request, before the definition's settings are added.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -165,11 +200,8 @@ pub fn prepare(def: &SourceDef, request: &HttpRequest) -> Result<Prepared, Strin
         ));
     }
     let method = request.method.to_ascii_uppercase();
-    if !METHODS.contains(&method.as_str()) {
-        return Err(tr!(
-            "{method} is not a method a data source can be called with",
-            method = method
-        ));
+    if let Some(why) = method_problem(&method) {
+        return Err(why);
     }
     Ok((method, url(def, request)?, headers(def, request)))
 }

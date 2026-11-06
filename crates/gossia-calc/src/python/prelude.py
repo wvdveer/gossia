@@ -210,10 +210,16 @@ class Source:
         use it; its result refreshes when the formula runs again (F9)."""
         return self._http('GET', path, params, headers, None, None)
 
+    def head(self, path='', params=None, headers=None):
+        """An HTTP source: `HEAD` of `path`, the status and headers a `GET`
+        would give, without the body."""
+        return self._http('HEAD', path, params, headers, None, None)
+
     def post(self, path='', json=None, data=None, params=None, headers=None):
-        """`POST` to an HTTP source that allows writes, from a button
-        procedure or the Immediate window. `json` is sent as JSON, `data` as
-        text, or as a form when it is a dict."""
+        """`POST` to an HTTP source that allows writes. A formula sends it
+        each time it runs; right-click > Recalculate this formula runs one.
+        `json` is sent as JSON, `data` as text, or as a form when it is a
+        dict."""
         return self._http('POST', path, params, headers, json, data)
 
     def put(self, path='', json=None, data=None, params=None, headers=None):
@@ -224,6 +230,15 @@ class Source:
 
     def delete(self, path='', params=None, headers=None):
         return self._http('DELETE', path, params, headers, None, None)
+
+    def request(self, method, path='', json=None, data=None, params=None,
+                headers=None):
+        """An HTTP source with any method, standard or custom (`OPTIONS`,
+        `PURGE`, `PROPFIND`, `QUERY`). `GET`, `HEAD` and `OPTIONS` read; any
+        other method writes, so the source must allow writes."""
+        if not isinstance(method, str):
+            raise TypeError('the method of a request is text, such as "PURGE"')
+        return self._http(method.upper(), path, params, headers, json, data)
 
     def query(self, sql, params=None):
         """A database source: the rows of a statement that reads, as a list

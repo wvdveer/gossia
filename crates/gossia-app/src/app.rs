@@ -328,6 +328,24 @@ impl GossiaApp {
         self.session.calc_mut().recalc_all();
     }
 
+    /// *Recalculate this formula* on a cell's menu: only the formula at
+    /// `path` of the tab shown runs again, sending its requests afresh, and
+    /// what reads its result follows (DESIGN.md, "Data sources").
+    pub fn recalculate_formula(&mut self, path: &Path) {
+        if !self.calc().is_trusted() {
+            self.notice = Some(
+                tr!(
+                    "This workbook is not trusted, so its formulas are not run. Trust it first to \
+                 recalculate."
+                )
+                .to_owned(),
+            );
+            return;
+        }
+        let sheet = self.sheet.clone();
+        self.session.calc_mut().recalc_one(&sheet, path);
+    }
+
     // ----------------------------------------------------------- the rows
 
     /// Makes the rows of the current tab if the data or the open nodes have

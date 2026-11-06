@@ -2,6 +2,7 @@
 # Drafted by Claude (2026-11-06); corrections by a native speaker are welcome.
 # Each key is the English text; named places such as {tab} must stay, in any order.
 
+"Recalculate this formula" = "Recalculer cette formule"
 "\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)" = "\"{text}\" n'est pas une couleur ; donnez un nom comme \"red\", \"#rrggbb\" ou (r, g, b)"
 "#TIMEOUT!: the expression did not stop when its time ran out and was abandoned" = "#TIMEOUT! : l'expression ne s'est pas arrêtée à la fin de son temps et a été abandonnée"
 "#TIMEOUT!: the expression did not stop when its time ran out and was ended" = "#TIMEOUT! : l'expression ne s'est pas arrêtée à la fin de son temps et a été interrompue"
@@ -1918,8 +1919,8 @@
 "{map} is not a map" = "{map} n'est pas un dictionnaire"
 "{message} (at position {position})" = "{message} (à la position {position})"
 "{message} at position {pos}" = "{message} à la position {pos}"
-"{method} changes data, so it can be used only in a button procedure or the Immediate window, not in a formula" = "{method} modifie les données : il ne peut être utilisé que dans une procédure de bouton ou la fenêtre Exécution, pas dans une formule"
 "{method} is not a method a data source can be called with" = "{method} n'est pas une méthode avec laquelle une source de données peut être appelée"
+"{method} is not an HTTP method: a method is a word of letters, digits and !#$%&'*+-.^_`|~, at most 64 long" = "{method} n'est pas une méthode HTTP : une méthode est un mot de lettres, de chiffres et de !#$%&'*+-.^_`|~, de 64 caractères au plus"
 "{method} is not something a Beancount source can do" = "{method} n'est pas quelque chose qu'une source Beancount peut faire"
 "{module} is the name of a module, and a tab cannot share it" = "{module} est le nom d'un module, et un onglet ne peut pas le partager"
 "{name} cannot be a {kind}: it is {what}" = "{name} ne peut pas être un {kind} : c'est {what}"

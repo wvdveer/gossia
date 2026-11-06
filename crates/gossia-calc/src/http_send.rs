@@ -16,6 +16,9 @@ use crate::sources::SourceDef;
 fn config(def: &SourceDef, limits: Limits) -> ureq::config::Config {
     let mut builder = Agent::config_builder()
         .http_status_as_error(false)
+        // Custom methods (PURGE, PROPFIND) are allowed; `http::method_problem`
+        // has checked the name.
+        .allow_non_standard_methods(true)
         .max_redirects(0)
         .max_redirects_will_error(false)
         .timeout_global(Some(limits.timeout))

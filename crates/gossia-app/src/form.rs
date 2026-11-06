@@ -2847,7 +2847,8 @@ impl Painter<'_> {
             // popup, and outside layout mode the comment commands in the
             // field's menu.
             app.comment_marks(ui, r.rect, path);
-            if self.layout.is_none() && calc.format_has_comments(&app.sheet) {
+            let comments = calc.format_has_comments(&app.sheet);
+            if self.layout.is_none() && (comments || formula.is_some()) {
                 let mut commands = Vec::new();
                 // A menu of its own id: egui's default is the one a dropdown's
                 // list uses, and a click, which closes the menu, would close
@@ -2855,7 +2856,25 @@ impl Painter<'_> {
                 egui::Popup::context_menu(r)
                     .id(r.id.with("comment_menu"))
                     .show(|ui| {
-                        app.comment_menu_items(ui, path, r.rect.right_top(), &mut commands, false);
+                        if formula.is_some() {
+                            if ui.button(tr!("Recalculate this formula")).clicked() {
+                                commands
+                                    .push(crate::view::Action::RecalculateFormula(path.clone()));
+                                ui.close();
+                            }
+                            if comments {
+                                ui.separator();
+                            }
+                        }
+                        if comments {
+                            app.comment_menu_items(
+                                ui,
+                                path,
+                                r.rect.right_top(),
+                                &mut commands,
+                                false,
+                            );
+                        }
                     });
                 self.actions
                     .extend(commands.into_iter().map(FormAction::Table));
