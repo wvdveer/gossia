@@ -289,6 +289,21 @@ fn clear(calc: &mut Calc, sheet: &str, path: &Path) -> Result<(), EditError> {
                     tr!("an item cannot be left empty; remove it instead").to_owned(),
                 ));
             }
+        } else if path.is_root() {
+            // The root cannot be absent: a record or a list is emptied, to be
+            // filled in by hand; any other root keeps its value.
+            let empty = calc
+                .spec(sheet)
+                .and_then(|spec| match &spec.get(spec.root()).kind {
+                    Kind::Object { .. } | Kind::Map { .. } => {
+                        Some(Value::Object(Default::default()))
+                    }
+                    Kind::Array { .. } => Some(Value::Array(Vec::new())),
+                    _ => None,
+                });
+            if let Some(empty) = empty {
+                calc.set_value(sheet, path, empty)?;
+            }
         } else if calc.data(sheet).is_some_and(|d| d.get(path).is_some()) {
             calc.remove(sheet, path)?;
         }
@@ -495,6 +510,37 @@ mod tests {
         enter(&mut calc, "S", &p("n"), "", false).unwrap();
         calc.undo().unwrap();
         assert_eq!(calc.formula_text("S", &p("n")).as_deref(), Some("S.x"));
+    }
+
+    /// The root cannot be removed: clearing its formula leaves an empty
+    /// record to fill in by hand, as one entry to undo.
+    #[test]
+    fn clearing_the_formula_of_the_root_leaves_it_empty() {
+        let mut calc = book();
+        enter(
+            &mut calc,
+            "S",
+            &Path::root(),
+            "={'n': 5, 'items': [], 'nums': []}",
+            false,
+        )
+        .unwrap();
+        assert!(calc.formula_text("S", &Path::root()).is_some());
+        enter(&mut calc, "S", &Path::root(), "", false).unwrap();
+        assert_eq!(calc.formula_text("S", &Path::root()), None);
+        assert_eq!(
+            calc.data("S").unwrap().value(),
+            &Value::Object(Default::default())
+        );
+        // Detail can be entered below it now.
+        enter(&mut calc, "S", &p("n"), "3", false).unwrap();
+        assert_eq!(
+            calc.data("S").unwrap().get(&p("n")).unwrap().value(),
+            &Value::Int(3)
+        );
+        calc.undo().unwrap();
+        calc.undo().unwrap();
+        assert!(calc.formula_text("S", &Path::root()).is_some());
     }
 
     #[test]
