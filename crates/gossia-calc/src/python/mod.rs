@@ -25,7 +25,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gossia_core::{ErrorKind, Path, Value};
-use rustpython::InterpreterBuilderExt;
 use rustpython::vm::builtins::{PyCode, PyDictRef};
 use rustpython::vm::compiler::Mode;
 use rustpython::vm::function::ArgMapping;
@@ -79,6 +78,34 @@ pub(crate) const MODULES: &[&str] = &[
     "string",
     "textwrap",
 ];
+
+/// Modules the interpreter's own Rust code imports by name when a formula
+/// calls it: `date.strftime` imports `time`, the `n` format of a number
+/// `locale`, some codecs `_pycodecs`. The replacement `__import__` serves
+/// them as Python's own does, since it is the one in force while a formula
+/// runs. build.rs freezes those written in Python. (`datetime.strptime`
+/// imports `_strptime`, which needs `os`, so it is not available.)
+pub(crate) const INTERNAL_MODULES: &[&str] = &[
+    "time",
+    "locale",
+    "_pycodecs",
+    "typing",
+    "warnings",
+    "weakref",
+    "copyreg",
+    "codecs",
+    "string.templatelib",
+];
+
+/// The standard library modules frozen into the engine, chosen by build.rs.
+fn frozen_lib() -> &'static rustpython_vm::frozen::FrozenLib {
+    let lib = include!(concat!(env!("OUT_DIR"), "/frozen_lib.rs"));
+    rustpython_vm::frozen::FrozenLib::from_ref(&lib.bytes[..])
+}
+
+/// The names of the modules [`frozen_lib`] holds.
+#[cfg(test)]
+pub(crate) const FROZEN: &[&str] = include!(concat!(env!("OUT_DIR"), "/frozen_names.rs"));
 
 /// Builtins a formula does not see. This catches mistakes; it is not a
 /// boundary (DESIGN.md, "What the sandbox really is").
@@ -180,8 +207,13 @@ impl PythonEngine {
         vm_settings.write_bytecode = false;
         vm_settings.safe_path = true;
         let (signals, inbox) = rustpython::vm::signal::user_signal_channel();
-        let builder = rustpython::Interpreter::builder(vm_settings)
-            .init_stdlib()
+        let builder = rustpython::Interpreter::builder(vm_settings);
+        // What init_stdlib does, with only the Python modules formulas can
+        // reach frozen in (build.rs) instead of all of `Lib`.
+        let native = rustpython_stdlib::formula_module_defs(&builder.ctx);
+        let builder = builder
+            .add_native_modules(&native)
+            .add_frozen_modules(frozen_lib())
             .init_hook(move |vm| vm.set_user_signal_channel(inbox));
         let module = node::_gossia::module_def(&builder.ctx);
         let interp = builder.add_native_module(module).build();
@@ -748,6 +780,10 @@ mod tests_modules;
 #[cfg(test)]
 #[path = "tests_trust.rs"]
 mod tests_trust;
+
+#[cfg(test)]
+#[path = "tests_frozen.rs"]
+mod tests_frozen;
 
 #[cfg(test)]
 #[path = "tests_xml.rs"]

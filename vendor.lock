@@ -9,7 +9,8 @@ url  = "https://github.com/RustPython/RustPython"
 rev  = "e5554e23abfbaee85508c32fc22e5074f88aebdd"
 # Makes the four ruff crates path dependencies on the ruff item below, so that
 # Cargo never checks the ruff repository out (see DESIGN.md, "Build and
-# dependencies").
+# dependencies"), and adds rustpython_stdlib::formula_module_defs, the modules
+# written in Rust that formulas can reach (DESIGN.md, step 13g).
 patch = "vendor-patches/rustpython.patch"
 
 [[item]]

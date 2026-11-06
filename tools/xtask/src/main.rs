@@ -284,8 +284,15 @@ fn web(root: &Path, test_control: bool) -> Result<PathBuf, String> {
         .join("release")
         .join("gossia_web.wasm");
     println!("+ wasm-bindgen {}", wasm.display());
-    let status = Command::new(&bindgen)
-        .args(["--target", "web", "--no-typescript", "--out-dir"])
+    let mut command = Command::new(&bindgen);
+    command.args(["--target", "web", "--no-typescript"]);
+    // The function names are a fifth of the module (DESIGN.md, step 13g);
+    // the test build keeps them, for stack traces that say where.
+    if !test_control {
+        command.arg("--remove-name-section");
+    }
+    let status = command
+        .arg("--out-dir")
         .arg(out.join("pkg"))
         .arg(&wasm)
         .status()

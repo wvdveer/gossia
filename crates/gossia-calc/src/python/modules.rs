@@ -415,6 +415,10 @@ pub(super) fn import(shared: &Rc<Shared>, args: &FuncArgs, vm: &VirtualMachine) 
     if let Some(module) = shared.stdlib.borrow().get(&name) {
         return Ok(module.clone());
     }
+    if super::INTERNAL_MODULES.contains(&name.as_str()) {
+        let real = vm.builtins.get_attr("__import__", vm)?;
+        return real.call(args.clone(), vm);
+    }
     Err(vm.new_import_error(no_module(&name), vm.ctx.new_str(name.as_str())))
 }
 /// Why an import of a module that is not available fails.

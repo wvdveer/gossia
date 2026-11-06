@@ -17,3 +17,38 @@ index 5b4efbd..529470b 100644
  
  der = { version = "0.8", features = ["alloc", "oid", "pem", "zeroize"] }
  phf = { version = "0.14.0", default-features = false, features = ["macros"]}
+diff --git a/crates/stdlib/src/lib.rs b/crates/stdlib/src/lib.rs
+index 5eb8062..fea8f4e 100644
+--- a/crates/stdlib/src/lib.rs
++++ b/crates/stdlib/src/lib.rs
+@@ -327,3 +327,30 @@ pub fn stdlib_module_defs(ctx: &Context) -> Vec<&'static builtins::PyModuleDef>
+         zlib::module_def(ctx),
+     ]
+ }
++
++/// Only the modules that Gossia's formulas can reach (a patch of Gossia's,
++/// DESIGN.md step 13g). Naming them here instead of taking
++/// [`stdlib_module_defs`] lets the linker leave the others out.
++pub fn formula_module_defs(ctx: &Context) -> Vec<&'static builtins::PyModuleDef> {
++    vec![
++        // The codecs of Chinese, Japanese and Korean, found by name.
++        cjkcodecs::_codecs_cn::module_def(ctx),
++        cjkcodecs::_codecs_hk::module_def(ctx),
++        cjkcodecs::_codecs_iso2022::module_def(ctx),
++        cjkcodecs::_codecs_jp::module_def(ctx),
++        cjkcodecs::_codecs_kr::module_def(ctx),
++        cjkcodecs::_codecs_tw::module_def(ctx),
++        cjkcodecs::multibytecodec::module_def(ctx),
++        binascii::module_def(ctx),
++        bisect::module_def(ctx),
++        contextvars::module_def(ctx),
++        json::module_def(ctx),
++        math::module_def(ctx),
++        math::integer_module_def(ctx),
++        _datetime::module_def(ctx),
++        _heapq::module_def(ctx),
++        pystruct::module_def(ctx),
++        suggestions::module_def(ctx),
++        unicodedata::module_def(ctx),
++    ]
++}

@@ -2430,6 +2430,7 @@ dependencies = [
  "rustpython-ruff_python_parser",
  "rustpython-ruff_source_file",
  "rustpython-ruff_text_size",
+ "rustpython-stdlib",
  "rustpython-vm",
  "serde",
  "serde_json",
@@ -5707,9 +5708,6 @@ name = "rustpython-pylib"
 version = "0.6.1"
 dependencies = [
  "glob",
- "rustpython-compiler-core",
- "rustpython-derive",
- "sha2 0.11.1",
 ]
 
 [[package]]

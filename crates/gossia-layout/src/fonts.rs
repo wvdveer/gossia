@@ -9,16 +9,19 @@
 
 use gossia_core::form::FontFamily as Typeface;
 
-pub const INTER: &[u8] = include_bytes!("../assets/fonts/Inter.ttf");
-pub const GEIST_MONO: &[u8] = include_bytes!("../assets/fonts/GeistMono.ttf");
-pub const SOURCE_SERIF: &[u8] = include_bytes!("../assets/fonts/SourceSerif4.ttf");
-pub const OSWALD: &[u8] = include_bytes!("../assets/fonts/Oswald.ttf");
-pub const DANCING_SCRIPT: &[u8] = include_bytes!("../assets/fonts/DancingScript.ttf");
-pub const CAVEAT: &[u8] = include_bytes!("../assets/fonts/Caveat.ttf");
+// Statics, not constants: a constant is copied into each part of the program
+// that uses it, and these are megabytes (DESIGN.md, step 13g).
+
+pub static INTER: &[u8] = include_bytes!("../assets/fonts/Inter.ttf");
+pub static GEIST_MONO: &[u8] = include_bytes!("../assets/fonts/GeistMono.ttf");
+pub static SOURCE_SERIF: &[u8] = include_bytes!("../assets/fonts/SourceSerif4.ttf");
+pub static OSWALD: &[u8] = include_bytes!("../assets/fonts/Oswald.ttf");
+pub static DANCING_SCRIPT: &[u8] = include_bytes!("../assets/fonts/DancingScript.ttf");
+pub static CAVEAT: &[u8] = include_bytes!("../assets/fonts/Caveat.ttf");
 
 /// egui's fonts, behind the bundled ones.
-pub const UBUNTU_LIGHT: &[u8] = epaint_default_fonts::UBUNTU_LIGHT;
-pub const HACK: &[u8] = epaint_default_fonts::HACK_REGULAR;
+pub static UBUNTU_LIGHT: &[u8] = epaint_default_fonts::UBUNTU_LIGHT;
+pub static HACK: &[u8] = epaint_default_fonts::HACK_REGULAR;
 
 /// The weight of ordinary text, and of bold text. The bundled fonts are
 /// variable fonts with a weight axis (`wght`).
@@ -34,7 +37,7 @@ pub struct FontFile {
 
 /// Every font a report can be set in, in a fixed order; [`chain`] gives
 /// places in this list.
-pub const FILES: [FontFile; 8] = [
+pub static FILES: [FontFile; 8] = [
     FontFile {
         name: "Inter",
         bytes: INTER,
