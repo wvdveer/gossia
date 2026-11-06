@@ -52,6 +52,8 @@ pub(crate) enum Action {
     Paste(PasteMode),
     /// Runs the formula at the path again, alone.
     RecalculateFormula(Path),
+    /// Removes the formula at the path, keeping what it gave as data.
+    ConvertToValues(Path),
     Toggle(Path),
     BeginEdit(Path),
     EnterText(Path, String),
@@ -1193,6 +1195,7 @@ impl GossiaApp {
                 let _ = self.paste_from_clipboard(mode);
             }
             Action::RecalculateFormula(path) => self.recalculate_formula(&path),
+            Action::ConvertToValues(path) => self.convert_formula_to_values(&path),
             Action::SelectColumn(array, name) => self.select_column(&array, &name),
             Action::Toggle(path) => {
                 let open = !self.is_open(&path);
@@ -2180,6 +2183,12 @@ impl GossiaApp {
                     tr!("Recalculate this formula"),
                     "",
                     Action::RecalculateFormula(path.clone()),
+                );
+                item(
+                    ui,
+                    tr!("Convert formula to values"),
+                    "",
+                    Action::ConvertToValues(path.clone()),
                 );
             }
             match row {

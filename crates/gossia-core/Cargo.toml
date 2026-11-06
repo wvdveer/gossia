@@ -26,6 +26,8 @@ base64 = "0.22.1"
 calamine = { version = "0.38.0", default-features = false, features = ["chrono"] }
 # Writes the .xlsx export of a list of records (DESIGN.md, Excel and ODS files).
 rust_xlsxwriter = { version = "0.102.0", default-features = false }
+# Packs the .ods export, which Gossia writes itself.
+zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2"] }
 
 # A new workbook reads the clock, which on wasm comes from JavaScript.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -34,4 +36,3 @@ rust_xlsxwriter = { version = "0.102.0", default-features = false, features = ["
 [dev-dependencies]
 proptest = "1.12.0"
 toml = "1.1.8"
-zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2"] }

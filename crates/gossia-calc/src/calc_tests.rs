@@ -1050,3 +1050,39 @@ fn the_detail_inside_a_node_counts_values_and_formulas() {
         .unwrap();
     assert!(b.calc.detail_inside("S", &p("list")).is_empty());
 }
+
+/// *Convert formula to values*: the formula goes, what it gave stays as data
+/// that no longer follows its inputs, and undo brings the formula back.
+#[test]
+fn a_formula_converted_to_values_keeps_its_result_as_data() {
+    let mut b = Book::new();
+    b.formula("copy", "S.list");
+    b.run();
+    assert!(b.calc.formula_to_values("S", &p("copy")).unwrap());
+    assert_eq!(b.calc.formula_text("S", &p("copy")), None);
+    let kept = b.get("copy");
+    assert!(
+        matches!(&kept, Some(Value::Array(items)) if items.len() == 6),
+        "{kept:?}"
+    );
+    // The items can be edited now, and the list no longer feeds it.
+    b.set("copy[0]", Value::Int(100));
+    b.set("list[1]", Value::Int(7));
+    b.run();
+    assert_eq!(b.get("copy[0]"), Some(Value::Int(100)));
+    assert_eq!(b.get("copy[1]"), Some(Value::Int(2)));
+    // One entry to undo for the conversion.
+    b.calc.undo().unwrap();
+    b.calc.undo().unwrap();
+    b.calc.undo().unwrap();
+    assert_eq!(
+        b.calc.formula_text("S", &p("copy")).as_deref(),
+        Some("S.list")
+    );
+    // A node without a formula has nothing to convert; an error has no value.
+    assert!(!b.calc.formula_to_values("S", &p("a")).unwrap());
+    b.formula("b", "1 / 0");
+    b.run();
+    assert!(b.calc.formula_to_values("S", &p("b")).is_err());
+    assert_eq!(b.calc.formula_text("S", &p("b")).as_deref(), Some("1 / 0"));
+}

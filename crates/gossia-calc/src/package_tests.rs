@@ -620,6 +620,7 @@ fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
             crate::ExportFormat::Csv,
             crate::ExportFormat::Tsv,
             crate::ExportFormat::Xlsx,
+            crate::ExportFormat::Ods,
         ],
         "an object is not lines of text, nor JSON Lines; its items are rows"
     );

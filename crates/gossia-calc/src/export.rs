@@ -25,6 +25,8 @@ pub enum ExportFormat {
     Tsv,
     /// The same as an Excel workbook of one worksheet.
     Xlsx,
+    /// The same as an OpenDocument spreadsheet of one sheet.
+    Ods,
 }
 
 impl ExportFormat {
@@ -40,6 +42,7 @@ impl ExportFormat {
             ExportFormat::Csv => "csv",
             ExportFormat::Tsv => "tsv",
             ExportFormat::Xlsx => "xlsx",
+            ExportFormat::Ods => "ods",
         }
     }
 
@@ -52,6 +55,7 @@ impl ExportFormat {
             ExportFormat::Csv => tr!("CSV, a row for each item"),
             ExportFormat::Tsv => tr!("TSV, a row for each item"),
             ExportFormat::Xlsx => tr!("Excel workbook, a row for each item"),
+            ExportFormat::Ods => tr!("ODS spreadsheet, a row for each item"),
         }
     }
 
@@ -59,7 +63,7 @@ impl ExportFormat {
     pub fn is_rows(self) -> bool {
         matches!(
             self,
-            ExportFormat::Csv | ExportFormat::Tsv | ExportFormat::Xlsx
+            ExportFormat::Csv | ExportFormat::Tsv | ExportFormat::Xlsx | ExportFormat::Ods
         )
     }
 }
@@ -93,7 +97,12 @@ impl Calc {
             formats.push(ExportFormat::Text);
         }
         if !self.is_schema_sheet(tab) && !self.export_row_arrays(tab).is_empty() {
-            formats.extend([ExportFormat::Csv, ExportFormat::Tsv, ExportFormat::Xlsx]);
+            formats.extend([
+                ExportFormat::Csv,
+                ExportFormat::Tsv,
+                ExportFormat::Xlsx,
+                ExportFormat::Ods,
+            ]);
         }
         formats
     }
@@ -150,7 +159,11 @@ impl Calc {
                 } else {
                     at.to_string()
                 };
-                tabular::to_xlsx(&table, &name)?
+                if format == ExportFormat::Ods {
+                    gossia_core::ods::write(&table, &name)?
+                } else {
+                    tabular::to_xlsx(&table, &name)?
+                }
             }
         };
         Ok((bytes, table.left_out))
@@ -190,7 +203,7 @@ impl Calc {
             }
             return self.records_bytes(tab);
         }
-        if format == ExportFormat::Xlsx {
+        if matches!(format, ExportFormat::Xlsx | ExportFormat::Ods) {
             return self.export_first_rows(tab, format);
         }
         self.export_text(tab, format, pretty)
@@ -224,9 +237,9 @@ impl Calc {
                 let bytes = self.export_first_rows(tab, format)?;
                 return Ok(String::from_utf8(bytes).expect("CSV is written as UTF-8"));
             }
-            ExportFormat::Xlsx => {
+            ExportFormat::Xlsx | ExportFormat::Ods => {
                 return Err(tr!(
-                    "tab {tab} as an Excel workbook is bytes, not text",
+                    "tab {tab} as a spreadsheet file is bytes, not text",
                     tab = tab
                 ));
             }

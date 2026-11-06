@@ -346,6 +346,20 @@ impl GossiaApp {
         self.session.calc_mut().recalc_one(&sheet, path);
     }
 
+    /// *Convert formula to values* on a cell's menu: the formula at `path` of
+    /// the tab shown is removed and what it last gave stays as data, to be
+    /// edited by hand.
+    pub fn convert_formula_to_values(&mut self, path: &Path) {
+        let sheet = self.sheet.clone();
+        match self.session.calc_mut().formula_to_values(&sheet, path) {
+            Ok(_) => {
+                self.notice = None;
+                self.session.tick();
+            }
+            Err(e) => self.notice = Some(e.to_string()),
+        }
+    }
+
     // ----------------------------------------------------------- the rows
 
     /// Makes the rows of the current tab if the data or the open nodes have

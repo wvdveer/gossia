@@ -1,6 +1,6 @@
 //! An array of objects as a table, for the formats that hold rows (DESIGN.md,
 //! "Excel and ODS files, 0.4.0", "Exporting a tab"): CSV, TSV and Excel
-//! workbooks here, and the `.ods` of step 14d.
+//! workbooks here, and OpenDocument spreadsheets in [`crate::ods`].
 //!
 //! The columns are the fields of the items' type in their declared order.
 //! A field that is an object is flattened into dotted columns
@@ -256,13 +256,13 @@ pub fn to_delimited(table: &Table, separator: char) -> String {
 }
 
 /// The most rows a worksheet holds, the header row included.
-const MAX_ROWS: usize = 1_048_576;
+pub(crate) const MAX_ROWS: usize = 1_048_576;
 /// The most columns a worksheet holds.
-const MAX_COLUMNS: usize = 16_384;
+pub(crate) const MAX_COLUMNS: usize = 16_384;
 /// The most characters a cell holds.
 const MAX_TEXT: usize = 32_767;
 /// The largest whole number a cell holds exactly (2^53).
-const EXACT: i64 = 9_007_199_254_740_992;
+pub(crate) const EXACT: i64 = 9_007_199_254_740_992;
 
 /// A worksheet name a spreadsheet accepts: at most 31 characters, none of
 /// `[ ] : * ? / \`, not starting or ending with an apostrophe, not empty.

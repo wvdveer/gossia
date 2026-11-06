@@ -164,6 +164,7 @@ impl GossiaApp {
                 "csv" => "CSV",
                 "tsv" => "TSV",
                 "xlsx" => "Excel",
+                "ods" => "ODS",
                 _ => tr!("Text"),
             };
             self.files.browser = crate::workbook_file::new_browser()

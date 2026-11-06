@@ -606,6 +606,26 @@ fn a_formula_cell_can_be_recalculated_alone_from_its_menu() {
 }
 
 #[test]
+fn a_formula_cell_is_converted_to_its_values_from_its_menu() {
+    let mut harness = table_window();
+    harness.get_by_label("19.0").click_secondary();
+    harness.run();
+    harness
+        .get_by_label_contains("Convert formula to values")
+        .click();
+    settle(&mut harness);
+    // The value stays, and the cell has no formula left to recalculate.
+    harness.get_by_label("19.0").click_secondary();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label_contains("Recalculate this formula")
+            .is_none()
+    );
+    assert!(harness.state().notice.is_none());
+}
+
+#[test]
 fn rows_are_added_and_the_table_is_closed_from_its_toolbar() {
     let mut harness = table_window();
     click(&mut harness, "Add row");

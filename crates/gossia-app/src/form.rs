@@ -2862,6 +2862,10 @@ impl Painter<'_> {
                                     .push(crate::view::Action::RecalculateFormula(path.clone()));
                                 ui.close();
                             }
+                            if ui.button(tr!("Convert formula to values")).clicked() {
+                                commands.push(crate::view::Action::ConvertToValues(path.clone()));
+                                ui.close();
+                            }
                             if comments {
                                 ui.separator();
                             }

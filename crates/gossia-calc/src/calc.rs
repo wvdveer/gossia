@@ -1504,6 +1504,41 @@ impl Calc {
         runs
     }
 
+    /// *Convert formula to values*: the formula at `path` is removed and what
+    /// it last gave stays as literal data, everything inside it included, to
+    /// be edited by hand. Errored nodes inside are left out, as an export
+    /// leaves them out. One entry to undo. Returns whether there was a formula.
+    pub fn formula_to_values(&mut self, sheet: &str, path: &Path) -> Result<bool, EditError> {
+        if self.formula_text(sheet, path).is_none() {
+            return Ok(false);
+        }
+        let current = self.sheet_mut(sheet)?.data.get(path).cloned();
+        let value = match current {
+            Some(node) if matches!(node.value(), Value::Error(_)) => {
+                return Err(EditError::Path(
+                    tr!("the formula's result is an error, so there is no value to keep")
+                        .to_owned(),
+                ));
+            }
+            Some(mut node) => {
+                without_errors(&mut node);
+                Some(node.value().clone())
+            }
+            None => None,
+        };
+        self.begin_entry(&tr!(
+            "Convert formula to values at {place}",
+            place = Loc::new(sheet, path.clone())
+        ));
+        let result = match value {
+            Some(value) => self.set_value(sheet, path, value),
+            // A formula that gave nothing leaves nothing.
+            None => self.remove_formula(sheet, path).map(|_| ()),
+        };
+        self.end_entry();
+        result.map(|()| true)
+    }
+
     /// Marks as out of date every formula that read the data source `name`,
     /// and what read their results: for a journal whose file changed.
     pub fn source_changed(&mut self, name: &str) {
@@ -1819,6 +1854,22 @@ impl Calc {
 }
 
 /// The children of a node with their paths.
+/// Leaves out the errored fields and items inside a node, at any depth.
+fn without_errors(node: &mut Node) {
+    let errored = |n: &Node| matches!(n.value(), Value::Error(_));
+    match node.value_mut() {
+        Value::Object(fields) => {
+            fields.retain(|_, n| !errored(n));
+            fields.values_mut().for_each(without_errors);
+        }
+        Value::Array(items) => {
+            items.retain(|n| !errored(n));
+            items.iter_mut().for_each(without_errors);
+        }
+        _ => {}
+    }
+}
+
 fn children<'a>(path: &Path, node: &'a Node) -> Vec<(Path, &'a Node)> {
     match node.value() {
         Value::Array(items) => items

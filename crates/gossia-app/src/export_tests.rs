@@ -50,6 +50,7 @@ fn the_dialog_starts_on_the_tabs_own_format_indented_without_the_schema() {
             ExportFormat::Csv,
             ExportFormat::Tsv,
             ExportFormat::Xlsx,
+            ExportFormat::Ods,
         ]
     );
     assert_eq!(plan.rows, ["items".parse::<gossia_core::Path>().unwrap()]);
@@ -154,21 +155,32 @@ fn a_list_of_records_is_exported_as_csv_and_tsv_rows() {
 /// array, the computed totals as values, read back by the workbook import.
 #[test]
 fn a_list_of_records_is_exported_as_an_excel_workbook() {
-    let dir = folder("export-xlsx");
+    spreadsheet_round_trip(ExportFormat::Xlsx);
+}
+
+/// The same as an OpenDocument spreadsheet.
+#[test]
+fn a_list_of_records_is_exported_as_an_ods_spreadsheet() {
+    spreadsheet_round_trip(ExportFormat::Ods);
+}
+
+fn spreadsheet_round_trip(format: ExportFormat) {
+    let ext = format.extension();
+    let dir = folder(&format!("export-{ext}"));
     let mut app = sample();
     let plan = app.export_plan("Orders").unwrap();
-    assert!(plan.formats.contains(&ExportFormat::Xlsx));
-    // Without an extension, the file is given .xlsx.
+    assert!(plan.formats.contains(&format));
+    // Without an extension, the file is given the format's.
     control::run(
         &mut app,
         "export",
-        &json!({"tab": "Orders", "format": "xlsx", "rows": "items", "path": dir.join("items").display().to_string()}),
+        &json!({"tab": "Orders", "format": ext, "rows": "items", "path": dir.join("items").display().to_string()}),
     )
     .unwrap();
-    let path = dir.join("items.xlsx");
-    let bytes = std::fs::read(&path).unwrap();
+    let file = format!("items.{ext}");
+    let bytes = std::fs::read(dir.join(&file)).unwrap();
     assert!(!dir.join("items.schema.json").exists());
-    let plan = app.plan_import("items.xlsx", &bytes).unwrap();
+    let plan = app.plan_import(&file, &bytes).unwrap();
     assert_eq!(plan.sheets.len(), 1);
     assert_eq!(plan.sheets[0].title, "items");
     app.import(&plan).unwrap();
@@ -199,12 +211,8 @@ fn a_list_of_records_is_exported_as_an_excel_workbook() {
             "{field}"
         );
     }
-    // An Excel workbook is not text.
-    assert!(
-        app.calc()
-            .export_text("Orders", ExportFormat::Xlsx, true)
-            .is_err()
-    );
+    // A spreadsheet file is not text.
+    assert!(app.calc().export_text("Orders", format, true).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

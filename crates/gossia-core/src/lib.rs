@@ -20,6 +20,7 @@ pub mod json5;
 pub mod jsonschema;
 pub mod metaschema;
 mod num;
+pub mod ods;
 mod path;
 pub mod report;
 #[cfg(test)]
