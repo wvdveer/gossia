@@ -49,6 +49,10 @@ To register a runner (once, as an unprivileged user):
 2. Start it with `./run.sh` (for example `nohup ./run.sh > runner.log 2> runner.err &`), or install it as a service with `sudo ./svc.sh install && sudo ./svc.sh start`.
 3. The machine needs `git`, `curl`, a C compiler and linker (`build-essential` or equivalent), and `rustup`. The workflow installs the toolchain pinned in `rust-toolchain.toml` through `rustup`, so nothing else has to be provisioned.
 
+## Support
+
+Questions, problems and ideas: raise an issue at https://github.com/wvdveer/gossia/issues. The privacy policy is in [PRIVACY.md](PRIVACY.md).
+
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE).
