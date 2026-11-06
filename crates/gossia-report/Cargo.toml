@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+gossia-i18n.workspace = true
 gossia-core.workspace = true
 gossia-layout.workspace = true
 gossia-calc.workspace = true

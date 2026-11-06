@@ -3,6 +3,7 @@
 //! and report expressions share one flat namespace, so every name in it has to
 //! be unique and mean the same thing everywhere. Nothing may shadow anything.
 
+use gossia_i18n::tr;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -19,12 +20,23 @@ pub enum Subject {
 }
 
 impl Subject {
-    fn noun(self) -> &'static str {
+    /// The kind of name, as a whole phrase ("tab name"), so that each
+    /// language words it its own way.
+    fn kind_of_name(self) -> &'static str {
         match self {
-            Subject::Tab => "tab",
-            Subject::Form => "form",
-            Subject::Module => "module",
-            Subject::Function => "function",
+            Subject::Tab => tr!("tab name"),
+            Subject::Form => tr!("form name"),
+            Subject::Module => tr!("module name"),
+            Subject::Function => tr!("function name"),
+        }
+    }
+
+    fn needs_a_name(self) -> &'static str {
+        match self {
+            Subject::Tab => tr!("a tab needs a name"),
+            Subject::Form => tr!("a form needs a name"),
+            Subject::Module => tr!("a module needs a name"),
+            Subject::Function => tr!("a function needs a name"),
         }
     }
 }
@@ -247,33 +259,42 @@ pub fn is_reserved(name: &str) -> bool {
 /// is judged: whether it clashes with another tab, module or function is for
 /// the workbook to say, since it knows the others.
 pub fn problem(name: &str, subject: Subject) -> Option<String> {
-    let noun = subject.noun();
+    let kind = subject.kind_of_name();
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
-        return Some(format!("a {noun} needs a name"));
+        return Some(subject.needs_a_name().to_owned());
     };
     if !(first == '_' || first.is_alphabetic()) || !chars.all(|c| c == '_' || c.is_alphanumeric()) {
-        return Some(format!(
-            "{name} is not a valid {noun} name: use letters, digits and underscores, \
-             and do not start with a digit"
+        return Some(tr!(
+            "{name} is not a valid {kind}: use letters, digits and underscores, \
+             and do not start with a digit",
+            name = name,
+            kind = kind
         ));
     }
     if reserved_set().contains(name) {
         let what = if KEYWORDS.contains(&name) {
-            "a Python keyword"
+            tr!("a Python keyword")
         } else if BUILTINS.contains(&name) {
-            "a Python builtin"
+            tr!("a Python builtin")
         } else if gossia_std::NAMES.contains(&name) || SPECIAL.contains(&name) {
-            "the name of a built-in function or of a special name in formulas"
+            tr!("the name of a built-in function or of a special name in formulas")
         } else {
-            "the name of a standard library module that formulas can use"
+            tr!("the name of a standard library module that formulas can use")
         };
-        return Some(format!("{name} cannot be a {noun} name: it is {what}"));
+        return Some(tr!(
+            "{name} cannot be a {kind}: it is {what}",
+            name = name,
+            kind = kind,
+            what = what
+        ));
     }
     if name.starts_with('_') || name.starts_with("gossia") {
-        return Some(format!(
-            "{name} cannot be a {noun} name: names starting with an underscore or with gossia \
-             are kept for internal use"
+        return Some(tr!(
+            "{name} cannot be a {kind}: names starting with an underscore or with gossia \
+             are kept for internal use",
+            name = name,
+            kind = kind
         ));
     }
     None
@@ -342,5 +363,31 @@ mod tests {
         for name in gossia_std::NAMES {
             assert!(is_reserved(name), "{name}");
         }
+    }
+
+    #[test]
+    fn the_reasons_are_in_the_interface_language() {
+        use gossia_i18n::{Language, set_thread_language};
+        // This thread's own language, so that the other tests stay in English.
+        set_thread_language(Some(Language::French));
+        assert_eq!(
+            problem("", Subject::Module).as_deref(),
+            Some("un module a besoin d'un nom")
+        );
+        assert_eq!(
+            problem("SUM", Subject::Tab).as_deref(),
+            Some(
+                "SUM ne peut pas être un nom d'onglet : c'est le nom d'une fonction intégrée \
+                 ou d'un nom spécial des formules"
+            )
+        );
+        set_thread_language(Some(Language::Japanese));
+        assert_eq!(
+            problem("1x", Subject::Function).as_deref(),
+            Some(
+                "1x は関数名として無効です。文字、数字、アンダースコアを使い、数字で始めないでください"
+            )
+        );
+        set_thread_language(None);
     }
 }

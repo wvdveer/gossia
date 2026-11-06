@@ -7,6 +7,7 @@
 //! (DESIGN.md, "Python engine", "What the sandbox really is"). That check
 //! catches mistakes; it is not a security boundary.
 
+use gossia_i18n::tr;
 use ruff_python_ast::visitor::{Visitor, walk_expr};
 use ruff_python_ast::{Expr, ExprAttribute, ExprName, Stmt};
 use ruff_python_parser::{parse_expression, parse_module};
@@ -26,7 +27,7 @@ impl Syntax for PythonSyntax {
         let text = formula.trim();
         if text.is_empty() {
             return Err(SyntaxError {
-                message: "the formula is empty".to_owned(),
+                message: tr!("the formula is empty").to_owned(),
                 line: 1,
                 column: 1,
             });
@@ -40,7 +41,10 @@ impl Syntax for PythonSyntax {
             Some((offset, name)) => Err(error_at(
                 text,
                 offset,
-                format!("double-underscore access is not allowed: `{name}`"),
+                tr!(
+                    "double-underscore access is not allowed: `{name}`",
+                    name = name
+                ),
             )),
         }
     }
@@ -73,7 +77,10 @@ impl PythonSyntax {
             return Err(error_at(
                 source,
                 offset,
-                format!("double-underscore access is not allowed: `{name}`"),
+                tr!(
+                    "double-underscore access is not allowed: `{name}`",
+                    name = name
+                ),
             ));
         }
         let first = |name: &str| name.split('.').next().unwrap_or_default().to_owned();
@@ -188,9 +195,16 @@ fn source_reads(text: &str) -> SourceScan {
         scan.others
             .push(match chains.others.iter().find(|(c, _)| *c == call) {
                 Some((_, method)) => {
-                    format!("{place}.{method}: only reads are replaced, and this is not one")
+                    tr!(
+                        "{place}.{method}: only reads are replaced, and this is not one",
+                        place = place,
+                        method = method
+                    )
                 }
-                None => format!("{place} is not a read of a source whose name is written out"),
+                None => tr!(
+                    "{place} is not a read of a source whose name is written out",
+                    place = place
+                ),
             });
     }
     scan

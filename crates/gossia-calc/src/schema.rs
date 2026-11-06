@@ -52,9 +52,9 @@ impl FieldKind {
     /// What the dialog says about a type that needs saying.
     pub fn hint(self) -> Option<&'static str> {
         match self {
-            FieldKind::Object => {
-                Some("An object with no fields yet: add them to it in the same way.")
-            }
+            FieldKind::Object => Some(tr!(
+                "An object with no fields yet: add them to it in the same way."
+            )),
             FieldKind::Array => {
                 Some("A list of objects with no fields yet: add an item, then add fields to it.")
             }
@@ -277,13 +277,15 @@ impl Calc {
     pub fn bind_schema(&mut self, sheet: &str, schema_sheet: &str) -> Result<(), EditError> {
         self.sheet_mut(sheet)?;
         if !self.is_schema_sheet(schema_sheet) {
-            return Err(EditError::Path(format!(
-                "{schema_sheet} is not a schema tab"
+            return Err(EditError::Path(tr!(
+                "{schema_sheet} is not a schema tab",
+                schema_sheet = schema_sheet
             )));
         }
         if self.is_schema_sheet(sheet) {
-            return Err(EditError::Path(format!(
-                "{sheet} is a schema tab, which is described by the built-in schema"
+            return Err(EditError::Path(tr!(
+                "{sheet} is a schema tab, which is described by the built-in schema",
+                sheet = sheet
             )));
         }
         if self.auto_update(schema_sheet)
@@ -292,9 +294,10 @@ impl Calc {
                 .iter()
                 .any(|user| user != sheet)
         {
-            return Err(EditError::Path(format!(
+            return Err(EditError::Path(tr!(
                 "{schema_sheet} has auto-update switched on, so only one tab may use it; \
-                 switch that off first"
+                 switch that off first",
+                schema_sheet = schema_sheet
             )));
         }
         let record = self.sheets.get(sheet).and_then(|s| s.record.clone());
@@ -378,14 +381,18 @@ impl Calc {
     /// reach that one tab.
     pub fn auto_update_blocker(&self, schema_sheet: &str) -> Option<String> {
         if !self.is_schema_sheet(schema_sheet) {
-            return Some(format!("{schema_sheet} is not a schema tab"));
+            return Some(tr!(
+                "{schema_sheet} is not a schema tab",
+                schema_sheet = schema_sheet
+            ));
         }
         match self.schema_users(schema_sheet).len() {
             1 => None,
-            0 => Some("no tab uses this schema, so there is nothing to update".to_owned()),
-            n => Some(format!(
+            0 => Some(tr!("no tab uses this schema, so there is nothing to update").to_owned()),
+            n => Some(tr!(
                 "{n} tabs use this schema; auto-update needs exactly one, so that a change \
-                 can never reach another tab"
+                 can never reach another tab",
+                n = n
             )),
         }
     }
@@ -394,8 +401,9 @@ impl Calc {
     /// undone.
     pub fn set_auto_update(&mut self, schema_sheet: &str, on: bool) -> Result<(), EditError> {
         if !self.is_schema_sheet(schema_sheet) {
-            return Err(EditError::Path(format!(
-                "{schema_sheet} is not a schema tab"
+            return Err(EditError::Path(tr!(
+                "{schema_sheet} is not a schema tab",
+                schema_sheet = schema_sheet
             )));
         }
         let before = self.auto_update(schema_sheet);
@@ -407,10 +415,17 @@ impl Calc {
         }
         self.store_auto_update(schema_sheet, on)?;
         self.history.record(
-            format!(
-                "Switch auto-update {} for {schema_sheet}",
-                if on { "on" } else { "off" }
-            ),
+            if on {
+                tr!(
+                    "Switch auto-update on for {schema_sheet}",
+                    schema_sheet = schema_sheet
+                )
+            } else {
+                tr!(
+                    "Switch auto-update off for {schema_sheet}",
+                    schema_sheet = schema_sheet
+                )
+            },
             vec![Op::AutoUpdate {
                 sheet: schema_sheet.to_owned(),
                 before,
@@ -424,7 +439,12 @@ impl Calc {
     pub(super) fn store_auto_update(&mut self, sheet: &str, on: bool) -> Result<(), EditError> {
         match &mut self.sheet_mut(sheet)?.schema {
             SchemaRole::Document { auto_update, .. } => *auto_update = on,
-            _ => return Err(EditError::Path(format!("{sheet} is not a schema tab"))),
+            _ => {
+                return Err(EditError::Path(tr!(
+                    "{sheet} is not a schema tab",
+                    sheet = sheet
+                )));
+            }
         }
         self.revision += 1;
         Ok(())
@@ -466,7 +486,11 @@ impl Calc {
             _ => jsonschema::lower(&s.data).map_err(|e| e.to_string()),
         };
         lowered.map_err(|e| {
-            EditError::Path(format!("the schema in {schema_sheet} cannot be used: {e}"))
+            EditError::Path(tr!(
+                "the schema in {schema_sheet} cannot be used: {e}",
+                schema_sheet = schema_sheet,
+                e = e
+            ))
         })
     }
 
@@ -529,26 +553,33 @@ impl Calc {
             .get(sheet)
             .ok_or_else(|| EditError::NoSheet(sheet.to_owned()))?;
         let SchemaRole::Bound(schema_sheet) = &s.schema else {
-            return Err(EditError::Path(format!(
+            return Err(EditError::Path(tr!(
                 "the type of {sheet} is not defined by a schema tab, so its fields cannot be \
-                 changed from here"
+                 changed from here",
+                sheet = sheet
             )));
         };
         let is_xsd = self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd);
         if self.schema_format(schema_sheet) == Some(SchemaFormat::Copybook) {
-            return Err(EditError::Path(format!(
+            return Err(EditError::Path(tr!(
                 "the fields of {sheet} are items of the copybook in {schema_sheet}, which are \
-                 changed there"
+                 changed there",
+                sheet = sheet,
+                schema_sheet = schema_sheet
             )));
         }
         if !self.auto_update(schema_sheet) {
-            return Err(EditError::Path(format!(
-                "switch on auto-update on {schema_sheet} to change the schema from {sheet}"
+            return Err(EditError::Path(tr!(
+                "switch on auto-update on {schema_sheet} to change the schema from {sheet}",
+                schema_sheet = schema_sheet,
+                sheet = sheet
             )));
         }
         if let Some(error) = self.schema_error(schema_sheet) {
-            return Err(EditError::Path(format!(
-                "the schema in {schema_sheet} has an error: {error}"
+            return Err(EditError::Path(tr!(
+                "the schema in {schema_sheet} has an error: {error}",
+                schema_sheet = schema_sheet,
+                error = error
             )));
         }
         let spec = &s.spec;
@@ -558,8 +589,9 @@ impl Calc {
             .ok_or_else(|| EditError::NotInSchema(at.clone()))?
             .ty;
         let Kind::Object { fields } = &spec.get(ty).kind else {
-            return Err(EditError::Path(format!(
-                "{at} is not a record, so it has no fields to change"
+            return Err(EditError::Path(tr!(
+                "{at} is not a record, so it has no fields to change",
+                at = at
             )));
         };
         let source = &spec.get(ty).source;
@@ -571,7 +603,10 @@ impl Calc {
             pointer_to_path(source)
         }
         .ok_or_else(|| {
-            EditError::Path(format!("cannot tell where {at} is written in the schema"))
+            EditError::Path(tr!(
+                "cannot tell where {at} is written in the schema",
+                at = at
+            ))
         })?;
         let document_ok = self
             .sheets
@@ -579,8 +614,10 @@ impl Calc {
             .and_then(|d| d.data.get(&document_path))
             .is_some_and(|n| n.value().as_object().is_some());
         if !document_ok {
-            return Err(EditError::Path(format!(
-                "cannot find the type of {at} in {schema_sheet}"
+            return Err(EditError::Path(tr!(
+                "cannot find the type of {at} in {schema_sheet}",
+                at = at,
+                schema_sheet = schema_sheet
             )));
         }
         let mut objects = Vec::new();
@@ -643,9 +680,9 @@ impl Calc {
                 });
             }
             if s.formulas.by_path.contains_key(place) {
-                return Err(EditError::Path(format!(
-                    "{} is computed by a formula, so its fields cannot be changed",
-                    Loc::new(sheet, place.clone())
+                return Err(EditError::Path(tr!(
+                    "{place} is computed by a formula, so its fields cannot be changed",
+                    place = Loc::new(sheet, place.clone())
                 )));
             }
         }
@@ -669,7 +706,7 @@ impl Calc {
         sorted_old.sort();
         if sorted_new != sorted_old {
             return Err(EditError::Path(
-                "the new order must name every field once".to_owned(),
+                tr!("the new order must name every field once").to_owned(),
             ));
         }
         if order == places.fields.as_slice() {
@@ -680,9 +717,9 @@ impl Calc {
             self.xsd_edited_type(&places, &XsdChange::Reorder { order })?;
         }
         self.check_objects_free(sheet, &places)?;
-        let what = format!(
-            "Reorder fields of {sheet}{}",
-            location_of(self.spec_of(sheet)?, object)
+        let what = tr!(
+            "Reorder fields of {place}",
+            place = format!("{sheet}{}", location_of(self.spec_of(sheet)?, object))
         );
         self.entry(&what, |calc| {
             let document = if places.xsd {
@@ -760,16 +797,18 @@ impl Calc {
             .force_type_source(sheet, path)
             .cloned()
             .ok_or_else(|| {
-                EditError::Path(format!(
-                    "{} is not a record with no fields whose formula returned records",
-                    Loc::new(sheet, path.clone())
+                EditError::Path(tr!(
+                    "{place} is not a record with no fields whose formula returned records",
+                    place = Loc::new(sheet, path.clone())
                 ))
             })?;
         let name = match path.segments().last().cloned() {
             Some(Segment::Key(name)) => Some(name),
             None => None,
             Some(_) => {
-                return Err(EditError::Path("only a field can be defined".to_owned()));
+                return Err(EditError::Path(
+                    tr!("only a field can be defined").to_owned(),
+                ));
             }
         };
         let parent = if name.is_some() {
@@ -779,9 +818,9 @@ impl Calc {
         };
         let places = self.field_places(sheet, &parent)?;
         if places.xsd {
-            return Err(EditError::Path(format!(
-                "the type of an XML element is defined on its XSD tab, {}",
-                places.schema_sheet
+            return Err(EditError::Path(tr!(
+                "the type of an XML element is defined on its XSD tab, {schema_sheet}",
+                schema_sheet = places.schema_sheet
             )));
         }
         let mut schema = gossia_core::infer::infer_json(&Node::new(value)).schema;
@@ -792,9 +831,9 @@ impl Calc {
         // One result does not show which fields every result has (a source
         // may answer differently each time), so every field found is optional.
         all_optional(&mut schema);
-        let what = format!(
-            "Force object definition of {}",
-            Loc::new(sheet, path.clone())
+        let what = tr!(
+            "Force object definition of {place}",
+            place = Loc::new(sheet, path.clone())
         );
         self.entry(&what, |calc| {
             let document = calc.edited_type(&places, |props, required| match &name {
@@ -831,11 +870,12 @@ impl Calc {
         let places = self.field_places(sheet, object)?;
         check_name(name)?;
         if places.fields.iter().any(|f| f == name) {
-            return Err(EditError::Path(format!(
-                "there is a field called {name} already"
+            return Err(EditError::Path(tr!(
+                "there is a field called {name} already",
+                name = name
             )));
         }
-        let what = format!("Add field \"{name}\"");
+        let what = tr!("Add field \"{name}\"", name = name);
         let change = XsdChange::Add {
             name,
             kind,
@@ -872,15 +912,19 @@ impl Calc {
     ) -> Result<(), EditError> {
         let places = self.field_places(sheet, object)?;
         if !places.fields.iter().any(|f| f == from) {
-            return Err(EditError::Path(format!("there is no field called {from}")));
+            return Err(EditError::Path(tr!(
+                "there is no field called {from}",
+                from = from
+            )));
         }
         check_name(to)?;
         if from == to {
             return Ok(());
         }
         if places.fields.iter().any(|f| f == to) {
-            return Err(EditError::Path(format!(
-                "there is a field called {to} already"
+            return Err(EditError::Path(tr!(
+                "there is a field called {to} already",
+                to = to
             )));
         }
         let xsd_document = if places.xsd {
@@ -889,7 +933,7 @@ impl Calc {
             None
         };
         self.check_objects_free(sheet, &places)?;
-        let what = format!("Rename field \"{from}\" to \"{to}\"");
+        let what = tr!("Rename field \"{from}\" to \"{to}\"", from = from, to = to);
         let renamed = |key: &String| {
             if key == from {
                 to.to_owned()
@@ -947,7 +991,10 @@ impl Calc {
     ) -> Result<(), EditError> {
         let places = self.field_places(sheet, object)?;
         if !places.fields.iter().any(|f| f == name) {
-            return Err(EditError::Path(format!("there is no field called {name}")));
+            return Err(EditError::Path(tr!(
+                "there is no field called {name}",
+                name = name
+            )));
         }
         let xsd_document = if places.xsd {
             Some(self.xsd_edited_type(&places, &XsdChange::Delete { name })?)
@@ -955,7 +1002,7 @@ impl Calc {
             None
         };
         self.check_objects_free(sheet, &places)?;
-        let what = format!("Delete field \"{name}\"");
+        let what = tr!("Delete field \"{name}\"", name = name);
         self.entry(&what, |calc| {
             let document = match xsd_document {
                 Some(document) => document,
@@ -1011,10 +1058,12 @@ impl Calc {
             .sheets
             .get(&places.schema_sheet)
             .and_then(|d| d.data.get(&places.document_path))
-            .ok_or_else(|| EditError::Path("the type is not in the schema any more".to_owned()))?;
+            .ok_or_else(|| {
+                EditError::Path(tr!("the type is not in the schema any more").to_owned())
+            })?;
         let Value::Object(map) = node.value() else {
             return Err(EditError::Path(
-                "the type is not a schema object".to_owned(),
+                tr!("the type is not a schema object").to_owned(),
             ));
         };
         let mut map = map.clone();
@@ -1043,14 +1092,14 @@ impl Calc {
             .data
             .get(path)
             .cloned()
-            .ok_or_else(|| EditError::Path(format!("there is no node at {path}")))?;
+            .ok_or_else(|| EditError::Path(tr!("there is no node at {path}", path = path)))?;
         s.data
             .set(path, value)
             .map_err(|e| EditError::Path(e.to_string()))?;
         let after = s.data.get(path).cloned().expect("it was just set");
         self.changed(sheet, path);
         self.history.record(
-            "Edit".to_owned(),
+            tr!("Edit").to_owned(),
             vec![Op::Replace {
                 sheet: sheet.to_owned(),
                 path: path.clone(),
@@ -1091,11 +1140,12 @@ fn replace_value(map: &mut IndexMap<String, Node>, key: &str, value: Value) {
 
 fn check_name(name: &str) -> Result<(), EditError> {
     if name.trim().is_empty() {
-        return Err(EditError::Path("a field needs a name".to_owned()));
+        return Err(EditError::Path(tr!("a field needs a name").to_owned()));
     }
     if name != name.trim() || name.chars().any(char::is_control) {
         return Err(EditError::Path(
-            "a field name cannot start or end with a space or hold control characters".to_owned(),
+            tr!("a field name cannot start or end with a space or hold control characters")
+                .to_owned(),
         ));
     }
     Ok(())

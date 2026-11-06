@@ -25,6 +25,7 @@
 
 use gossia_core::form::{ColumnDesign, Control, FormDesign, template};
 use gossia_core::report::ReportDesign;
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use super::control_exprs::Bindings;
@@ -373,9 +374,10 @@ impl Calc {
     /// planned one at a time, with [`Calc::plan_disconnect_report`].
     pub fn plan_disconnect(&mut self) -> Result<DisconnectPlan, String> {
         if !self.is_trusted() {
-            return Err(
-                "the workbook is not trusted, so what the sources give cannot be read".to_owned(),
-            );
+            return Err(tr!(
+                "the workbook is not trusted, so what the sources give cannot be read"
+            )
+            .to_owned());
         }
         self.sync_expressions();
         let mut targets: Vec<Target> = Vec::new();
@@ -459,16 +461,17 @@ impl Calc {
     /// values chosen now.
     pub fn plan_disconnect_report(&mut self, report: &str) -> Result<DisconnectPlan, String> {
         if !self.is_trusted() {
-            return Err(
-                "the workbook is not trusted, so what the sources give cannot be read".to_owned(),
-            );
+            return Err(tr!(
+                "the workbook is not trusted, so what the sources give cannot be read"
+            )
+            .to_owned());
         }
         if self.shown_report() != Some(report) {
-            return Err(format!("the report {report} is not shown"));
+            return Err(tr!("the report {report} is not shown", report = report));
         }
         self.sync_expressions();
         let Some(design) = self.reports.get(report) else {
-            return Err(format!("there is no report {report}"));
+            return Err(tr!("there is no report {report}", report = report));
         };
         let groups = self.exprs.instance_groups();
         let mut texts = design_texts(report, REPORT_FORM, &design.layout);
@@ -520,12 +523,12 @@ impl Calc {
         let scan = self.syntax.source_reads(&text);
         let mut problems = scan.others;
         if scan.reads.is_empty() && problems.is_empty() {
-            problems.push("it uses a data source but cannot be read".to_owned());
+            problems.push(tr!("it uses a data source but cannot be read").to_owned());
         }
         if !scan.reads.is_empty() && instances.is_empty() {
             problems.push(
-                "it has not run (it is in a repeater with no items, or on a control not shown), \
-                 so what it reads is not known"
+                tr!("it has not run (it is in a repeater with no items, or on a control not shown), \
+                 so what it reads is not known")
                     .to_owned(),
             );
         }
@@ -602,7 +605,7 @@ impl Calc {
                         let read_text = read.chains.first().map_or("", |r| &target.text[r.clone()]);
                         problems.push(format!(
                             "{read_text}: {}",
-                            why.unwrap_or_else(|| "it did not run".to_owned())
+                            why.unwrap_or_else(|| tr!("it did not run").to_owned())
                         ));
                     }
                 }
@@ -643,9 +646,10 @@ impl Calc {
                 continue;
             }
             if let Err(e) = self.syntax.check(&text) {
-                out.problems.push(format!(
-                    "{}: the new text does not parse ({e})",
-                    target.place
+                out.problems.push(tr!(
+                    "{place}: the new text does not parse ({e})",
+                    place = target.place,
+                    e = e
                 ));
                 continue;
             }
@@ -685,8 +689,9 @@ impl Calc {
             }
             let rebuilt = template::rebuild(&parts);
             if template::parts(&rebuilt).as_ref() != Ok(&parts) {
-                out.problems.push(format!(
-                    "{place}: the new template does not read back the same"
+                out.problems.push(tr!(
+                    "{place}: the new template does not read back the same",
+                    place = place
                 ));
                 out.replaced -= new_parts.len().min(out.replaced);
                 continue;
@@ -696,8 +701,9 @@ impl Calc {
         if plan.workbook {
             for name in self.module_names() {
                 if self.module_source(name).is_some_and(mentions_source) {
-                    out.problems.push(format!(
-                        "module {name}: it uses a data source; modules are not changed"
+                    out.problems.push(tr!(
+                        "module {name}: it uses a data source; modules are not changed",
+                        name = name
                     ));
                 }
             }
@@ -794,7 +800,7 @@ impl Calc {
             }
         }
         self.history
-            .record("Disconnect from data sources".to_owned(), ops, None);
+            .record(tr!("Disconnect from data sources").to_owned(), ops, None);
         if !forms.is_empty() {
             let store = self.forms_mut();
             for (tab, form, design) in forms {
@@ -942,35 +948,43 @@ fn same_literal<'a>(
         let text = match result {
             Ok(Value::Str(text)) => text.as_str(),
             Ok(Value::Error(e)) => return Err(literal_problem(&e.message)),
-            Ok(_) => return Err("it has no literal".to_owned()),
+            Ok(_) => return Err(no_literal().to_owned()),
             Err(e) => return Err(literal_problem(e)),
         };
         match first {
             None => first = Some(text),
             Some(f) if f == text => {}
             Some(_) => {
-                return Err(
+                return Err(tr!(
                     "it gives something different for each row or item, so no one literal can \
                      take its place"
-                        .to_owned(),
-                );
+                )
+                .to_owned());
             }
         }
     }
-    let literal = first.ok_or_else(|| "it did not run".to_owned())?;
+    let literal = first.ok_or_else(|| tr!("it did not run").to_owned())?;
     if literal.len() > MAX_LITERAL {
-        return Err(format!(
-            "what it gives is too big to write out ({} characters; at most {MAX_LITERAL})",
-            literal.len()
+        return Err(tr!(
+            "what it gives is too big to write out ({literal} characters; at most {MAX_LITERAL})",
+            literal = literal.len(),
+            MAX_LITERAL = MAX_LITERAL
         ));
     }
     Ok(literal.to_owned())
 }
 
+fn no_literal() -> &'static str {
+    tr!("it has no literal")
+}
+
 fn literal_problem(message: &str) -> String {
-    match message.find("has no literal") {
-        Some(_) => format!("what it gives cannot be written out ({message})"),
-        None => format!("it failed: {message}"),
+    match message.contains(no_literal()) {
+        true => tr!(
+            "what it gives cannot be written out ({message})",
+            message = message
+        ),
+        false => tr!("it failed: {message}", message = message),
     }
 }
 

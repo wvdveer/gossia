@@ -10,6 +10,7 @@ pub mod completion;
 mod convert;
 mod jsonpath;
 mod modules;
+pub(crate) use modules::no_module;
 mod node;
 mod shared;
 mod sources;
@@ -17,6 +18,7 @@ pub(crate) mod syntax;
 mod watchdog;
 mod xmlpath;
 
+use gossia_i18n::tr;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -411,8 +413,9 @@ impl PythonEngine {
         let missing = || {
             Failure::new(
                 ErrorKind::Name,
-                format!(
-                    "there is no procedure called {name}: it must be a function of a workbook module"
+                tr!(
+                    "there is no procedure called {name}: it must be a function of a workbook module",
+                    name = name
                 ),
             )
         };
@@ -592,7 +595,9 @@ impl Engine for PythonEngine {
             // Only a node's schema can read bytes (DESIGN.md, "Raw memory").
             Answer::Bytes(_) => Err(Failure::new(
                 ErrorKind::Type,
-                "this expression gave bytes, which only a formula on a node can give:                  the node's schema reads them",
+                tr!(
+                    "this expression gave bytes, which only a formula on a node can give: the node's schema reads them"
+                ),
             )),
         }
     }

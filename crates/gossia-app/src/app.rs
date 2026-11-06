@@ -4,6 +4,7 @@
 //! along the bottom, and the status bar (DESIGN.md, "Application structure",
 //! "UI"). The drawing of each part is in its own module.
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, HashSet};
 
 use gossia_calc::{Calc, Ceilings, Effective, Session, Setting};
@@ -316,9 +317,11 @@ impl GossiaApp {
     pub fn recalculate(&mut self) {
         if !self.calc().is_trusted() {
             self.notice = Some(
-                "This workbook is not trusted, so its formulas are not run. Trust it first to \
+                tr!(
+                    "This workbook is not trusted, so its formulas are not run. Trust it first to \
                  recalculate."
-                    .to_owned(),
+                )
+                .to_owned(),
             );
             return;
         }

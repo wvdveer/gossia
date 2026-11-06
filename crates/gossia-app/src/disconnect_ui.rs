@@ -30,9 +30,11 @@ impl GossiaApp {
     pub fn begin_disconnect(&mut self) {
         if !self.calc().is_trusted() {
             self.notice = Some(
-                "This workbook is not trusted, so what its data sources give cannot be read. \
+                tr!(
+                    "This workbook is not trusted, so what its data sources give cannot be read. \
                  Trust it first to disconnect it from them."
-                    .to_owned(),
+                )
+                .to_owned(),
             );
             return;
         }

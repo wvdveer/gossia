@@ -9,6 +9,7 @@
 //! nothing; it is added behind each family's own fonts, for the window's
 //! texts and for data in those scripts alike.
 
+use gossia_i18n::tr;
 use std::path::PathBuf;
 
 use gossia_i18n::Language;
@@ -59,9 +60,11 @@ impl GossiaApp {
             let found = system_font(language);
             if found.is_none() {
                 self.notice = Some(
-                    "No font for Japanese or Chinese was found on this system, so their \
+                    tr!(
+                        "No font for Japanese or Chinese was found on this system, so their \
                      characters show as boxes"
-                        .to_owned(),
+                    )
+                    .to_owned(),
                 );
             }
             found

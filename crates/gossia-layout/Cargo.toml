@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+gossia-i18n.workspace = true
 gossia-core.workspace = true
 # Fonts are read with skrifa and text is shaped with harfrust, at the versions
 # egui 0.37 uses, so that a report measures text as egui would draw it.

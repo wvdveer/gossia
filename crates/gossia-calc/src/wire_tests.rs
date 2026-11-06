@@ -219,3 +219,16 @@ fn bytes_that_are_not_a_message_are_refused() {
     let refused = decode::<Job>(b"not a job");
     assert!(refused.unwrap_err().contains("did not read"));
 }
+
+#[test]
+fn the_worker_takes_the_language_from_its_settings() {
+    // This thread's own language, so that the others are not changed.
+    gossia_i18n::set_thread_language(Some(gossia_i18n::Language::English));
+    let mut config = super::EngineConfig::new(&crate::python::PythonSettings::default(), None);
+    assert_eq!(config.language, "en");
+    config.language = "fr".to_owned();
+    let mut worker = super::Worker::default();
+    worker.handle(super::ToWorker::Configure(config), &mut |_| {});
+    assert_eq!(gossia_i18n::language(), gossia_i18n::Language::French);
+    gossia_i18n::set_thread_language(None);
+}

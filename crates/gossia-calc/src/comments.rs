@@ -7,6 +7,7 @@
 //! history that marks the workbook as modified.
 
 use gossia_core::CommentPlace;
+use gossia_i18n::tr;
 
 use super::*;
 
@@ -30,39 +31,43 @@ impl Calc {
     /// replaces what is inside on every run.
     pub fn comment_refusal(&self, sheet: &str, path: &Path) -> Option<String> {
         let Some(s) = self.sheets.get(sheet) else {
-            return Some(format!("there is no tab called {sheet}"));
+            return Some(tr!("there is no tab called {sheet}", sheet = sheet));
         };
         if !s.format.keeps_comments() {
-            return Some(format!(
-                "{} have no comments; every other tab can have them.",
-                s.format.label()
+            return Some(tr!(
+                "{kind} have no comments; every other tab can have them.",
+                kind = s.format.label()
             ));
         }
         let xml = s.spec.xml().is_some();
         if let Some(Segment::Key(key)) = path.segments().last().filter(|_| xml) {
             if key.starts_with('@') {
                 return Some(
-                    "An attribute cannot have a comment: XML has no place for one inside a tag."
-                        .to_owned(),
+                    tr!(
+                        "An attribute cannot have a comment: XML has no place for one inside a tag."
+                    )
+                    .to_owned(),
                 );
             }
             if key == "#text" {
                 return Some(
-                    "The text of an element cannot have a comment of its own; the element can."
-                        .to_owned(),
+                    tr!(
+                        "The text of an element cannot have a comment of its own; the element can."
+                    )
+                    .to_owned(),
                 );
             }
         }
         let Some(node) = s.data.get(path) else {
-            return Some("The node is not there, so it cannot have a comment.".to_owned());
+            return Some(tr!("The node is not there, so it cannot have a comment.").to_owned());
         };
         if xml && matches!(node.value(), Value::Array(_)) {
-            return Some("An array cannot have a comment; each of its items can.".to_owned());
+            return Some(tr!("An array cannot have a comment; each of its items can.").to_owned());
         }
         if let Some(formula) = s.formulas.computed_by(path) {
-            return Some(format!(
-                "The node is computed by the formula on {}, which replaces it.",
-                Loc::new(sheet, formula)
+            return Some(tr!(
+                "The node is computed by the formula on {place}, which replaces it.",
+                place = Loc::new(sheet, formula)
             ));
         }
         None
@@ -132,18 +137,19 @@ impl Calc {
         if ops.is_empty() {
             return Ok(());
         }
+        let place = Loc::new(sheet, path.clone());
         let what = if ops.iter().all(|(_, before, _)| before.is_none()) {
-            "Insert comment on"
+            tr!("Insert comment on {place}", place = place)
         } else if ops.iter().all(|(_, _, after)| after.is_none()) {
-            "Delete comment on"
+            tr!("Delete comment on {place}", place = place)
         } else {
-            "Edit comment on"
+            tr!("Edit comment on {place}", place = place)
         };
         for (place, _, after) in &ops {
             self.put_comment(sheet, path, *place, after.clone())?;
         }
         self.history.record(
-            format!("{what} {}", Loc::new(sheet, path.clone())),
+            what,
             ops.into_iter()
                 .map(|(place, before, after)| Op::Comment {
                     sheet: sheet.to_owned(),
@@ -171,7 +177,7 @@ impl Calc {
             .sheet_mut(sheet)?
             .data
             .get_mut(path)
-            .ok_or_else(|| EditError::Path(format!("there is no node at {path}")))?;
+            .ok_or_else(|| EditError::Path(tr!("there is no node at {path}", path = path)))?;
         node.set_comment_at(place, comment);
         self.revision += 1;
         Ok(())

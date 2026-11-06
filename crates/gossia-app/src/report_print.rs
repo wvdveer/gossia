@@ -35,9 +35,11 @@ impl GossiaApp {
     pub fn begin_print(&mut self, tab: &str) {
         if crate::host::current().is_some() {
             self.notice = Some(
-                "Printing is not available here: export the report as PDF or HTML and \
+                tr!(
+                    "Printing is not available here: export the report as PDF or HTML and \
                  print it from the program that opens it"
-                    .to_owned(),
+                )
+                .to_owned(),
             );
             return;
         }

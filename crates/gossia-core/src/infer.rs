@@ -9,6 +9,7 @@
 //! for the import report.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use crate::value::{Node, Value};
@@ -45,15 +46,27 @@ pub fn infer_json(original: &Node) -> JsonInference {
     let dropped: Vec<String> = nulls
         .into_iter()
         .map(|((path, item), n)| {
-            let (what, after) = if item {
-                (plural(n, "null item", "null items"), "")
-            } else {
-                (plural(n, "null", "nulls"), ", so it is optional")
-            };
-            format!(
-                "{}: {what} left out, since version 1 has no null{after}.",
-                place(&path)
-            )
+            let place = place(&path);
+            match (item, n) {
+                (true, 1) => tr!(
+                    "{place}: 1 null item left out, since version 1 has no null.",
+                    place = place
+                ),
+                (true, n) => tr!(
+                    "{place}: {n} null items left out, since version 1 has no null.",
+                    place = place,
+                    n = n
+                ),
+                (false, 1) => tr!(
+                    "{place}: 1 null left out, since version 1 has no null, so it is optional.",
+                    place = place
+                ),
+                (false, n) => tr!(
+                    "{place}: {n} nulls left out, since version 1 has no null, so it is optional.",
+                    place = place,
+                    n = n
+                ),
+            }
         })
         .collect();
     // The data with its nulls, so that a field that is only ever null is in
@@ -143,12 +156,12 @@ enum JsonKind {
 impl JsonKind {
     fn label(self) -> &'static str {
         match self {
-            JsonKind::Text => "text",
-            JsonKind::Number => "number",
-            JsonKind::Integer => "whole number",
-            JsonKind::Boolean => "yes or no",
-            JsonKind::Object => "object",
-            JsonKind::Array => "array",
+            JsonKind::Text => tr!("text"),
+            JsonKind::Number => tr!("number"),
+            JsonKind::Integer => tr!("whole number"),
+            JsonKind::Boolean => tr!("yes or no"),
+            JsonKind::Object => tr!("object"),
+            JsonKind::Array => tr!("array"),
         }
     }
 }
@@ -230,9 +243,9 @@ impl Shape {
             })
             .map(|(kind, _)| kind)
         else {
-            warnings.push(format!(
-                "{}: inferred from no data, so it is text.",
-                place(path)
+            warnings.push(tr!(
+                "{place}: inferred from no data, so it is text.",
+                place = place(path)
             ));
             return object(vec![("type", text_node("string"))]);
         };
@@ -241,14 +254,14 @@ impl Shape {
             by_count.sort_by_key(|c| std::cmp::Reverse(c.1));
             let seen: Vec<String> = by_count
                 .iter()
-                .map(|(k, n)| format!("{n} {}", k.label()))
+                .map(|(k, n)| tr!("{n} {kind}", n = n, kind = k.label()))
                 .collect();
-            warnings.push(format!(
-                "{}: the values are of different kinds ({}); the schema takes the most \
-                 common, {}, and the others are kept and flagged as invalid.",
-                place(path),
-                seen.join(", "),
-                kind.label()
+            warnings.push(tr!(
+                "{place}: the values are of different kinds ({seen}); the schema takes the most \
+                 common, {kind}, and the others are kept and flagged as invalid.",
+                place = place(path),
+                seen = seen.join(", "),
+                kind = kind.label()
             ));
         }
         match kind {
@@ -261,10 +274,10 @@ impl Shape {
                 let items = match &self.items {
                     Some(shape) if !shape.counts().is_empty() => shape.schema(&item_path, warnings),
                     _ => {
-                        warnings.push(format!(
-                            "{}: inferred from no data (the arrays are empty), so the items \
+                        warnings.push(tr!(
+                            "{place}: inferred from no data (the arrays are empty), so the items \
                              are text.",
-                            place(&item_path)
+                            place = place(&item_path)
                         ));
                         object(vec![("type", text_node("string"))])
                     }
@@ -307,17 +320,9 @@ fn field_path(path: &str, name: &str) -> String {
 /// Where a warning is about, as the report says it.
 fn place(path: &str) -> String {
     if path.is_empty() {
-        "The root".to_owned()
+        tr!("The root").to_owned()
     } else {
         path.to_owned()
-    }
-}
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
     }
 }
 
@@ -379,8 +384,10 @@ fn check_namespaces(
     root: bool,
     qualified: &mut Option<bool>,
 ) -> Result<(), String> {
-    let more =
-        || "the document uses more than one namespace, which version 1 does not support".to_owned();
+    let more = || {
+        tr!("the document uses more than one namespace, which version 1 does not support")
+            .to_owned()
+    };
     if !root {
         match (element.namespace.as_deref(), namespace) {
             (None, None) => {}
@@ -398,11 +405,11 @@ fn check_namespaces(
         }
     }
     if let Some(attribute) = element.attributes.iter().find(|a| a.prefix.is_some()) {
-        return Err(format!(
-            "the attribute {}:{} of <{}> is in a namespace, which version 1 does not support",
-            attribute.prefix.as_deref().unwrap_or_default(),
-            attribute.name,
-            element.name
+        return Err(tr!(
+            "the attribute {prefix}:{name} of <{name2}> is in a namespace, which version 1 does not support",
+            prefix = attribute.prefix.as_deref().unwrap_or_default(),
+            name = attribute.name,
+            name2 = element.name
         ));
     }
     for child in element.elements() {
@@ -550,9 +557,10 @@ impl ElementShape {
             self.text.observe(&element.text());
         } else {
             if element.has_text() {
-                return Err(format!(
+                return Err(tr!(
                     "<{path}> holds text next to elements (mixed content), which version 1 \
-                     does not support"
+                     does not support",
+                    path = path
                 ));
             }
             self.with_elements += 1;
@@ -604,9 +612,10 @@ impl ElementShape {
         let pad = "  ".repeat(depth);
         let name_attr = xmltree::escape_attribute(name);
         if self.order_differs {
-            warnings.push(format!(
+            warnings.push(tr!(
                 "<{path}>: the child elements are not always in the same order; the order \
-                 seen first is used, and the elements are written in it."
+                 seen first is used, and the elements are written in it.",
+                path = path
             ));
         }
         if self.with_elements == 0 && self.attributes.is_empty() {
@@ -622,9 +631,10 @@ impl ElementShape {
         let inner = format!("{pad}    ");
         if self.with_elements > 0 {
             if self.text.filled > 0 {
-                warnings.push(format!(
+                warnings.push(tr!(
                     "<{path}>: some elements hold text and others hold elements; the elements \
-                     are the schema, and the text is kept and flagged."
+                     are the schema, and the text is kept and flagged.",
+                    path = path
                 ));
             }
             out.push_str(&format!("{inner}<xs:sequence>\n"));

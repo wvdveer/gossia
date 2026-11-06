@@ -342,72 +342,78 @@ impl SourceDef {
         }
         match self.kind {
             SourceKind::Http => match filled(&self.url) {
-                None => problems.push("an HTTP source needs a base URL".to_owned()),
+                None => problems.push(tr!("an HTTP source needs a base URL").to_owned()),
                 Some(url) => {
                     if http_host_port(url).is_none() {
-                        problems.push(format!(
-                            "{url} is not a URL that starts with http:// or https://"
+                        problems.push(tr!(
+                            "{url} is not a URL that starts with http:// or https://",
+                            url = url
                         ));
                     }
                 }
             },
             SourceKind::Sqlite => {
                 if filled(&self.path).is_none() {
-                    problems.push("a SQLite source needs the path of its file".to_owned());
+                    problems.push(tr!("a SQLite source needs the path of its file").to_owned());
                 }
                 if self.pool.is_some() {
-                    problems.push("a SQLite source cannot pool connections".to_owned());
+                    problems.push(tr!("a SQLite source cannot pool connections").to_owned());
                 }
             }
             SourceKind::Postgres | SourceKind::Mariadb => {
                 let kind = self.kind.label();
                 if filled(&self.host).is_none() {
-                    problems.push(format!("a {kind} source needs a host"));
+                    problems.push(tr!("a {kind} source needs a host", kind = kind));
                 }
                 if filled(&self.database).is_none() {
-                    problems.push(format!("a {kind} source needs a database"));
+                    problems.push(tr!("a {kind} source needs a database", kind = kind));
                 }
                 if filled(&self.user).is_none() {
-                    problems.push(format!("a {kind} source needs a user name"));
+                    problems.push(tr!("a {kind} source needs a user name", kind = kind));
                 }
                 if self.port == Some(0) {
-                    problems.push("the port must be from 1 to 65535".to_owned());
+                    problems.push(tr!("the port must be from 1 to 65535").to_owned());
                 }
             }
             SourceKind::Beancount => {
                 if filled(&self.path).is_none() {
-                    problems.push("a Beancount source needs the path of its journal".to_owned());
+                    problems
+                        .push(tr!("a Beancount source needs the path of its journal").to_owned());
                 }
                 if self.pool.is_some() {
-                    problems.push("a Beancount source cannot pool connections".to_owned());
+                    problems.push(tr!("a Beancount source cannot pool connections").to_owned());
                 }
             }
             SourceKind::Odbc => match filled(&self.connection) {
-                None => {
-                    problems.push("an ODBC source needs a DSN or a connection string".to_owned())
-                }
+                None => problems
+                    .push(tr!("an ODBC source needs a DSN or a connection string").to_owned()),
                 Some(connection) => {
                     if odbc_has_password(connection) {
                         problems.push(
-                            "put the password in the Password field, not in the connection \
+                            tr!(
+                                "put the password in the Password field, not in the connection \
                              string, so that it is kept as a secret"
-                                .to_owned(),
+                            )
+                            .to_owned(),
                         );
                     }
                 }
             },
         }
         if !self.kind.is_database_server() && self.tls != TlsMode::Prefer {
-            problems.push(format!("a {} source has no TLS setting", self.kind.label()));
+            problems.push(tr!(
+                "a {kind} source has no TLS setting",
+                kind = self.kind.label()
+            ));
         }
         if self.kind == SourceKind::Http {
             match self.auth {
                 HttpAuth::Basic if filled(&self.user).is_none() => {
-                    problems.push("basic authentication needs a user name".to_owned());
+                    problems.push(tr!("basic authentication needs a user name").to_owned());
                 }
                 HttpAuth::KeyHeader | HttpAuth::KeyQuery if filled(&self.key_name).is_none() => {
                     problems.push(
-                        "an API key needs the name of the header or parameter that carries it"
+                        tr!("an API key needs the name of the header or parameter that carries it")
                             .to_owned(),
                     );
                 }
@@ -415,7 +421,7 @@ impl SourceDef {
             }
         }
         if self.pool == Some(0) {
-            problems.push("pooling needs at least 1 connection".to_owned());
+            problems.push(tr!("pooling needs at least 1 connection").to_owned());
         }
         problems
     }
@@ -450,12 +456,20 @@ impl SourceDef {
                 let db = filled(&self.database).unwrap_or("");
                 let tls = match self.tls {
                     TlsMode::Prefer => "",
-                    TlsMode::Require => ", TLS required",
-                    TlsMode::Unchecked => ", TLS without certificate check",
-                    TlsMode::Off => ", no TLS",
+                    TlsMode::Require => tr!(", TLS required"),
+                    TlsMode::Unchecked => tr!(", TLS without certificate check"),
+                    TlsMode::Off => tr!(", no TLS"),
                 };
                 match user {
-                    Some(user) => format!("{scheme}://{host}:{port}/{db} as {user}{tls}"),
+                    Some(user) => tr!(
+                        "{scheme}://{host}:{port}/{db} as {user}{tls}",
+                        scheme = scheme,
+                        host = host,
+                        port = port,
+                        db = db,
+                        user = user,
+                        tls = tls
+                    ),
                     None => format!("{scheme}://{host}:{port}/{db}{tls}"),
                 }
             }
@@ -486,18 +500,20 @@ impl SourceDef {
         settings: &Map<String, Json>,
     ) -> Result<SourceDef, String> {
         let kind = SourceKind::from_code(kind).ok_or_else(|| {
-            format!(
-                "{kind:?} is not a kind of data source: use {}",
-                SourceKind::ALL
+            tr!(
+                "{kind} is not a kind of data source: use {kinds}",
+                kind = format!("{kind:?}"),
+                kinds = SourceKind::ALL
                     .map(|k| format!("{:?}", k.code()))
                     .join(", ")
             )
         })?;
         for key in settings.keys() {
             if !SETTINGS.contains(&key.as_str()) {
-                return Err(format!(
-                    "{key} is not a setting of a data source: the settings are {}",
-                    SETTINGS.join(", ")
+                return Err(tr!(
+                    "{key} is not a setting of a data source: the settings are {SETTINGS}",
+                    key = key,
+                    SETTINGS = SETTINGS.join(", ")
                 ));
             }
         }
@@ -523,7 +539,7 @@ impl SourceDef {
         object.insert("name".to_owned(), Json::String(name.to_owned()));
         object.insert("kind".to_owned(), Json::String(kind.code().to_owned()));
         let def: SourceDef = serde_json::from_value(Json::Object(object))
-            .map_err(|e| format!("the settings of the data source do not fit: {e}"))?;
+            .map_err(|e| tr!("the settings of the data source do not fit: {e}", e = e))?;
         match def.problems().first() {
             Some(why) => Err(why.clone()),
             None => Ok(def),
@@ -545,16 +561,17 @@ pub fn odbc_has_password(connection: &str) -> bool {
 pub fn name_problem(name: &str) -> Option<String> {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
-        return Some("a data source needs a name".to_owned());
+        return Some(tr!("a data source needs a name").to_owned());
     };
     if !(first == '_' || first.is_alphabetic()) || !chars.all(|c| c == '_' || c.is_alphanumeric()) {
-        return Some(format!(
+        return Some(tr!(
             "{name} is not a valid data source name: use letters, digits and underscores, \
-             and do not start with a digit"
+             and do not start with a digit",
+            name = name
         ));
     }
     if name.chars().count() > 64 {
-        return Some("a data source name has at most 64 characters".to_owned());
+        return Some(tr!("a data source name has at most 64 characters").to_owned());
     }
     None
 }
@@ -686,10 +703,7 @@ impl SourceStore {
                     sources.remove(i);
                 }
                 Some(_) => {
-                    return Err(format!(
-                        "a data source called {} is already defined on this computer",
-                        def.name
-                    ));
+                    return Err(already_defined(&def.name));
                 }
                 None => {}
             }
@@ -753,19 +767,26 @@ fn read(inner: &Inner) -> Result<Document, String> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(empty()),
-        Err(e) => return Err(format!("{} cannot be read: {e}", file.display())),
+        Err(e) => {
+            return Err(tr!(
+                "{file} cannot be read: {e}",
+                file = file.display(),
+                e = e
+            ));
+        }
     };
     // A file that cannot be read is left alone, never overwritten: it holds
     // passwords the user may still want.
     let unreadable = |why: String| {
-        format!(
-            "{} cannot be read ({why}); fix or remove it to change the data sources",
-            file.display()
+        tr!(
+            "{file} cannot be read ({why}); fix or remove it to change the data sources",
+            file = file.display(),
+            why = why
         )
     };
     let mut object = match serde_json::from_str::<Json>(&text) {
         Ok(Json::Object(object)) => object,
-        Ok(_) => return Err(unreadable("it is not a JSON object".to_owned())),
+        Ok(_) => return Err(unreadable(tr!("it is not a JSON object").to_owned())),
         Err(e) => return Err(unreadable(e.to_string())),
     };
     let sources = match object.remove("sources") {
@@ -790,14 +811,20 @@ fn write(file: &std::path::Path, doc: Document) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Json::Object(object)).map_err(|e| e.to_string())?;
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)
-            .map_err(|e| format!("{} cannot be made: {e}", dir.display()))?;
+            .map_err(|e| tr!("{dir} cannot be made: {e}", dir = dir.display(), e = e))?;
     }
     // Written beside the file and moved over it, so that a crash leaves the
     // old file or the new one, never half of one.
     let temp = file.with_extension("json.saving");
     std::fs::write(&temp, text)
         .and_then(|()| std::fs::rename(&temp, file))
-        .map_err(|e| format!("{} cannot be written: {e}", file.display()))
+        .map_err(|e| {
+            tr!(
+                "{file} cannot be written: {e}",
+                file = file.display(),
+                e = e
+            )
+        })
 }
 
 /// What the Test found.
@@ -903,6 +930,14 @@ impl Drop for Waiting {
             }
         });
     }
+}
+
+/// Why a definition cannot be saved under a name that is taken.
+pub(crate) fn already_defined(name: &str) -> String {
+    tr!(
+        "a data source called {name} is already defined on this computer",
+        name = name
+    )
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! attempted.
 
 use gossia_core::{Kind, Path, Segment, TypeId, TypeSpec};
+use gossia_i18n::tr;
 
 use super::catalog::{Group, catalog};
 use crate::Calc;
@@ -153,7 +154,7 @@ fn module_functions(calc: &Calc, module: &str, prefix: &str) -> Vec<Completion> 
             insert: format!("{function}("),
             label: function,
             kind: CompletionKind::Function,
-            detail: format!("function in module {module}"),
+            detail: tr!("function in module {module}", module = module),
         })
         .collect()
 }
@@ -176,7 +177,7 @@ fn names(calc: &Calc, prefix: &str) -> Vec<Completion> {
                 label: module.to_owned(),
                 insert: format!("{module}."),
                 kind: CompletionKind::Module,
-                detail: "workbook module".to_owned(),
+                detail: tr!("workbook module").to_owned(),
             });
         }
         for function in calc.module_functions(module) {
@@ -185,15 +186,15 @@ fn names(calc: &Calc, prefix: &str) -> Vec<Completion> {
                     insert: format!("{function}("),
                     label: function,
                     kind: CompletionKind::Function,
-                    detail: format!("function in module {module}"),
+                    detail: tr!("function in module {module}", module = module),
                 });
             }
         }
     }
     for (name, detail) in [
-        ("this", "this node"),
-        ("parent", "the node that holds this one"),
-        ("root", "the root of this tab"),
+        ("this", tr!("this node")),
+        ("parent", tr!("the node that holds this one")),
+        ("root", tr!("the root of this tab")),
     ] {
         if starts_with_ignoring_case(name, prefix) {
             out.push(Completion {

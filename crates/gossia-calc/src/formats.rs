@@ -3,6 +3,7 @@
 
 use gossia_core::CommentPlace;
 use gossia_core::dataformat::DataFormat;
+use gossia_i18n::tr;
 
 use super::*;
 
@@ -36,11 +37,12 @@ impl Calc {
     /// be able to hold the tab's root.
     pub fn format_problem(&self, sheet: &str, format: DataFormat) -> Option<String> {
         let Some(s) = self.sheets.get(sheet) else {
-            return Some(format!("there is no tab called {sheet}"));
+            return Some(tr!("there is no tab called {sheet}", sheet = sheet));
         };
         if matches!(s.schema, SchemaRole::Document { .. }) {
-            return Some(format!(
-                "{sheet} is a schema tab, which is written as its schema language is"
+            return Some(tr!(
+                "{sheet} is a schema tab, which is written as its schema language is",
+                sheet = sheet
             ));
         }
         let fits = match SchemaFormat::of(&s.spec) {
@@ -49,10 +51,11 @@ impl Calc {
             SchemaFormat::Json => format.json_shaped(),
         };
         if !fits {
-            return Some(format!(
-                "{sheet} holds {}, so it cannot be {}",
-                SchemaFormat::of(&s.spec).data_label(),
-                format.label()
+            return Some(tr!(
+                "{sheet} holds {data}, so it cannot be {format}",
+                sheet = sheet,
+                data = SchemaFormat::of(&s.spec).data_label(),
+                format = format.label()
             ));
         }
         format.root_problem(&s.spec.get(s.spec.root()).kind)
@@ -127,8 +130,15 @@ impl Calc {
             before,
             after: format,
         });
-        self.history
-            .record(format!("Write {sheet} as {}", format.label()), ops, None);
+        self.history.record(
+            tr!(
+                "Write {sheet} as {format}",
+                sheet = sheet,
+                format = format.label()
+            ),
+            ops,
+            None,
+        );
         Ok(())
     }
 

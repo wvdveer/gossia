@@ -269,6 +269,16 @@ macro_rules! tr {
     };
 }
 
+/// Marks a text for the catalogues where it cannot be translated yet, as in
+/// a constant table: `tr_noop!("The sum.")` is the English itself, and
+/// `tr(text)` translates it where it is shown.
+#[macro_export]
+macro_rules! tr_noop {
+    ($english:literal) => {
+        $english
+    };
+}
+
 /// A count with its noun as a whole phrase, so that each language words it
 /// its own way: `one` for 1, as `tr!("1 value")`, and `many` otherwise, as
 /// `tr!("{n} values")`, with `{n}` filled in.

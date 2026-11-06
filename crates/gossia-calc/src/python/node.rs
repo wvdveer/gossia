@@ -13,6 +13,7 @@
 //! from it needs no second read. It is only trusted during the evaluation that
 //! made it (see `Shared::epoch`).
 
+use gossia_i18n::tr;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -146,7 +147,7 @@ pub(super) mod _gossia {
         super::decode(
             &text,
             "HEXDECODE",
-            "hex digits",
+            tr!("hex digits"),
             gossia_core::binary::from_hex,
             vm,
         )
@@ -312,7 +313,9 @@ pub(super) fn lazy_proxy(
 }
 
 fn no_context(vm: &VirtualMachine) -> rustpython::vm::builtins::PyBaseExceptionRef {
-    vm.new_runtime_error("a node can only be read while the formula that uses it is running")
+    vm.new_runtime_error(tr!(
+        "a node can only be read while the formula that uses it is running"
+    ))
 }
 
 /// The node a proxy stands for, read shallowly for the running evaluation.
@@ -333,7 +336,11 @@ fn resolve(zelf: &NodeProxy, vm: &VirtualMachine) -> PyResult<Node> {
         }
         Read::Missing | Read::NoSheet => {
             let loc = crate::Loc::new(&*zelf.sheet, zelf.path.clone());
-            Err(vm.new_key_error(vm.ctx.new_str(format!("there is nothing at {loc}")).into()))
+            Err(vm.new_key_error(
+                vm.ctx
+                    .new_str(tr!("there is nothing at {loc}", loc = loc))
+                    .into(),
+            ))
         }
     }
 }
@@ -370,7 +377,7 @@ fn child(zelf: &NodeProxy, segment: Segment, asked: Asked, vm: &VirtualMachine) 
         }
         None => {
             let loc = crate::Loc::new(&*zelf.sheet, path);
-            let message = format!("there is nothing at {loc}");
+            let message = tr!("there is nothing at {loc}", loc = loc);
             Err(match asked {
                 Asked::Attribute => vm.new_attribute_error(message),
                 Asked::Key => vm.new_key_error(vm.ctx.new_str(message).into()),
@@ -389,7 +396,9 @@ fn child(zelf: &NodeProxy, segment: Segment, asked: Asked, vm: &VirtualMachine) 
 // not what it has written so far.
 
 fn refuse_write(vm: &VirtualMachine) -> rustpython::vm::builtins::PyBaseExceptionRef {
-    vm.new_type_error("a formula cannot change data; only a button procedure can")
+    vm.new_type_error(tr!(
+        "a formula cannot change data; only a button procedure can"
+    ))
 }
 
 /// The field of an object that `proxy.name = value` is about.
@@ -399,9 +408,9 @@ fn field_segment(zelf: &Py<NodeProxy>, name: &str, vm: &VirtualMachine) -> PyRes
     }
     match resolve(zelf, vm)?.value() {
         Value::Object(_) => Ok(Segment::Key(name.to_owned())),
-        other => Err(vm.new_attribute_error(format!(
-            "a {} has no fields to set; use an index or append",
-            other.kind_name()
+        other => Err(vm.new_attribute_error(tr!(
+            "a {kind} has no fields to set; use an index or append",
+            kind = other.kind_name()
         ))),
     }
 }
@@ -415,16 +424,16 @@ fn key_segment(zelf: &Py<NodeProxy>, key: &PyObject, vm: &VirtualMachine) -> PyR
     match node.value() {
         Value::Object(_) => match key.downcast_ref::<PyStr>() {
             Some(text) => Ok(Segment::Key(text.expect_str().to_owned())),
-            None => Err(vm.new_type_error(format!(
-                "keys of an object are strings, not {}",
-                key.class().name()
+            None => Err(vm.new_type_error(tr!(
+                "keys of an object are strings, not {class}",
+                class = key.class().name()
             ))),
         },
         Value::Array(items) => {
             let Some(int) = key.downcast_ref::<PyInt>() else {
-                return Err(vm.new_type_error(format!(
-                    "indexes of an array are integers, not {}",
-                    key.class().name()
+                return Err(vm.new_type_error(tr!(
+                    "indexes of an array are integers, not {class}",
+                    class = key.class().name()
                 )));
             };
             let wanted: i64 = int.try_to_primitive(vm)?;
@@ -432,13 +441,16 @@ fn key_segment(zelf: &Py<NodeProxy>, key: &PyObject, vm: &VirtualMachine) -> PyR
             let index = if wanted < 0 { wanted + len } else { wanted };
             if index < 0 || index >= len {
                 let loc = crate::Loc::new(&*zelf.sheet, zelf.path.clone());
-                return Err(vm.new_index_error(format!(
-                    "{wanted} is outside {loc}, which has {len} items; use append to add one"
+                return Err(vm.new_index_error(tr!(
+                    "{wanted} is outside {loc}, which has {len} items; use append to add one",
+                    wanted = wanted,
+                    loc = loc,
+                    len = len
                 )));
             }
             Ok(Segment::Index(index as usize))
         }
-        _ => Err(vm.new_type_error("this node has no items")),
+        _ => Err(vm.new_type_error(tr!("this node has no items"))),
     }
 }
 
@@ -483,7 +495,7 @@ fn append(zelf: &Py<NodeProxy>, value: &PyObject, vm: &VirtualMachine) -> PyResu
         return Err(refuse_write(vm));
     }
     if !matches!(resolve(zelf, vm)?.value(), Value::Array(_)) {
-        return Err(vm.new_attribute_error("only an array has append"));
+        return Err(vm.new_attribute_error(tr!("only an array has append")));
     }
     let item = data_of(zelf, value, vm)?;
     push_write(zelf, zelf.path.clone(), WriteOp::Append(item), vm)
@@ -516,7 +528,10 @@ fn attribute(zelf: &Py<NodeProxy>, name: &str, vm: &VirtualMachine) -> PyResult 
             }
             Ok(vm.ctx.new_list(out).into())
         }
-        _ => Err(vm.new_attribute_error(format!("a {} has no fields", node.value().kind_name()))),
+        _ => Err(vm.new_attribute_error(tr!(
+            "a {kind} has no fields",
+            kind = node.value().kind_name()
+        ))),
     }
 }
 
@@ -532,7 +547,11 @@ fn item_attribute(
         Some(inner) => attribute(inner, name, vm),
         None => {
             let loc = crate::Loc::new(&*zelf.sheet, zelf.path.clone());
-            Err(vm.new_attribute_error(format!("an item of {loc} has no field {name}")))
+            Err(vm.new_attribute_error(tr!(
+                "an item of {loc} has no field {name}",
+                loc = loc,
+                name = name
+            )))
         }
     }
 }
@@ -548,9 +567,9 @@ fn subscript(zelf: &Py<NodeProxy>, key: &PyObject, vm: &VirtualMachine) -> PyRes
                 Asked::Key,
                 vm,
             ),
-            None => Err(vm.new_type_error(format!(
-                "keys of an object are strings, not {}",
-                key.class().name()
+            None => Err(vm.new_type_error(tr!(
+                "keys of an object are strings, not {class}",
+                class = key.class().name()
             ))),
         },
         Value::Array(items) => {
@@ -561,9 +580,9 @@ fn subscript(zelf: &Py<NodeProxy>, key: &PyObject, vm: &VirtualMachine) -> PyRes
                 return list.get_item(key, vm);
             }
             let Some(int) = key.downcast_ref::<PyInt>() else {
-                return Err(vm.new_type_error(format!(
-                    "indexes of an array are integers, not {}",
-                    key.class().name()
+                return Err(vm.new_type_error(tr!(
+                    "indexes of an array are integers, not {class}",
+                    class = key.class().name()
                 )));
             };
             let wanted: i64 = int.try_to_primitive(vm)?;
@@ -571,11 +590,15 @@ fn subscript(zelf: &Py<NodeProxy>, key: &PyObject, vm: &VirtualMachine) -> PyRes
             let index = if wanted < 0 { wanted + len } else { wanted };
             if index < 0 {
                 let loc = crate::Loc::new(&*zelf.sheet, zelf.path.clone());
-                return Err(vm.new_index_error(format!("{wanted} is before the start of {loc}")));
+                return Err(vm.new_index_error(tr!(
+                    "{wanted} is before the start of {loc}",
+                    wanted = wanted,
+                    loc = loc
+                )));
             }
             child(zelf, Segment::Index(index as usize), Asked::Index, vm)
         }
-        _ => Err(vm.new_type_error("this node has no items")),
+        _ => Err(vm.new_type_error(tr!("this node has no items"))),
     }
 }
 
@@ -597,7 +620,7 @@ fn iterate(zelf: &Py<NodeProxy>, vm: &VirtualMachine) -> PyResult {
                 .map(|k| vm.ctx.new_str(k.as_str()).into())
                 .collect(),
         ),
-        _ => return Err(vm.new_type_error("this node cannot be iterated")),
+        _ => return Err(vm.new_type_error(tr!("this node cannot be iterated"))),
     };
     list.as_object().get_iter(vm).map(Into::into)
 }
@@ -611,9 +634,9 @@ fn plain(zelf: &Py<NodeProxy>, vm: &VirtualMachine) -> PyResult {
         }
         Read::Missing | Read::NoSheet => Err(vm.new_key_error(
             vm.ctx
-                .new_str(format!(
-                    "there is nothing at {}",
-                    crate::Loc::new(&*zelf.sheet, zelf.path.clone())
+                .new_str(tr!(
+                    "there is nothing at {place}",
+                    place = crate::Loc::new(&*zelf.sheet, zelf.path.clone())
                 ))
                 .into(),
         )),
@@ -630,8 +653,10 @@ fn run_jsonpath(query: &str, base: &PyObject, vm: &VirtualMachine) -> PyResult {
         "JSONPATH takes a query and then a tab or a node, for example JSONPATH('$.items[*].price', Orders)",
     )?;
     let parsed = super::jsonpath::parse(query).map_err(|message| {
-        vm.new_value_error(format!(
-            "the JSONPath query {query:?} is not valid: {message}"
+        vm.new_value_error(tr!(
+            "the JSONPath query {query} is not valid: {message}",
+            query = format!("{query:?}"),
+            message = message
         ))
     })?;
     let root = read_deep(proxy, vm)?;
@@ -651,8 +676,10 @@ fn run_xmlpath(query: &str, base: &PyObject, vm: &VirtualMachine) -> PyResult {
         "XMLPATH takes a query and then a tab or a node, for example XMLPATH('line[qty > 1]/sku', Orders)",
     )?;
     let parsed = super::xmlpath::parse(query).map_err(|message| {
-        vm.new_value_error(format!(
-            "the XMLPATH query {query:?} is not valid: {message}"
+        vm.new_value_error(tr!(
+            "the XMLPATH query {query} is not valid: {message}",
+            query = format!("{query:?}"),
+            message = message
         ))
     })?;
     let root = read_deep(proxy, vm)?;
@@ -684,10 +711,7 @@ fn run_raw(shared: &Rc<Shared>, node: &PyObject, vm: &VirtualMachine) -> PyResul
             .map(|(_, sheet, path)| (Rc::clone(sheet), path.clone())),
     };
     let Some((sheet, path)) = place else {
-        return Err(vm.new_type_error(format!(
-            "RAW takes a node, such as RAW(Orders.items[0].price), not a {} worked out by the formula",
-            node.class().name()
-        )));
+        return Err(vm.new_type_error(tr!("RAW takes a node, such as RAW(Orders.items[0].price), not a {class} worked out by the formula", class = node.class().name())));
     };
     let ctx = shared.ctx().ok_or_else(|| no_context(vm))?;
     match ctx.raw(&sheet, &path) {
@@ -699,7 +723,7 @@ fn run_raw(shared: &Rc<Shared>, node: &PyObject, vm: &VirtualMachine) -> PyResul
             let raised = shared.classes().propagated.call((value,), vm)?;
             Err(raised
                 .downcast::<rustpython::vm::builtins::PyBaseException>()
-                .map_err(|_| vm.new_type_error("PropagatedError is not an exception"))?)
+                .map_err(|_| vm.new_type_error(tr!("PropagatedError is not an exception")))?)
         }
     }
 }
@@ -709,7 +733,11 @@ fn bytes_arg(data: &PyObject, name: &str, vm: &VirtualMachine) -> PyResult<Vec<u
     data.downcast_ref::<PyBytes>()
         .map(|b| b.as_bytes().to_vec())
         .ok_or_else(|| {
-            vm.new_type_error(format!("{name} takes bytes, not {}", data.class().name()))
+            vm.new_type_error(tr!(
+                "{name} takes bytes, not {class}",
+                name = name,
+                class = data.class().name()
+            ))
         })
 }
 
@@ -722,13 +750,23 @@ fn decode(
     vm: &VirtualMachine,
 ) -> PyResult {
     let Some(text) = text.downcast_ref::<PyStr>() else {
-        return Err(vm.new_type_error(format!("{name} takes text, not {}", text.class().name())));
+        return Err(vm.new_type_error(tr!(
+            "{name} takes text, not {class}",
+            name = name,
+            class = text.class().name()
+        )));
     };
     let text = text.to_string_lossy();
     let bytes = if text.trim().is_empty() {
         Vec::new()
     } else {
-        from(&text).ok_or_else(|| vm.new_value_error(format!("{name}: the text is not {what}")))?
+        from(&text).ok_or_else(|| {
+            vm.new_value_error(tr!(
+                "{name}: the text is not {what}",
+                name = name,
+                what = what
+            ))
+        })?
     };
     Ok(vm.ctx.new_bytes(bytes).into())
 }
@@ -740,9 +778,9 @@ fn read_deep(proxy: &NodeProxy, vm: &VirtualMachine) -> PyResult<gossia_core::No
         Read::Node(node) => Ok(node),
         Read::Missing | Read::NoSheet => Err(vm.new_key_error(
             vm.ctx
-                .new_str(format!(
-                    "there is nothing at {}",
-                    crate::Loc::new(&*proxy.sheet, proxy.path.clone())
+                .new_str(tr!(
+                    "there is nothing at {place}",
+                    place = crate::Loc::new(&*proxy.sheet, proxy.path.clone())
                 ))
                 .into(),
         )),

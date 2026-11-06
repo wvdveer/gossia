@@ -151,12 +151,16 @@ impl GossiaApp {
             BandKind::ReportHeader => tr!("Drawn once, at the start of the report."),
             BandKind::ReportFooter => tr!("Drawn once, at the end of the report."),
             BandKind::PageHeader => {
-                "Drawn at the top of every page. Its expressions can use page.number and \
+                tr!(
+                    "Drawn at the top of every page. Its expressions can use page.number and \
                  page.count."
+                )
             }
             BandKind::PageFooter => {
-                "Drawn at the bottom of every page. Its expressions can use page.number and \
+                tr!(
+                    "Drawn at the bottom of every page. Its expressions can use page.number and \
                  page.count."
+                )
             }
             BandKind::SectionHeader(_) => {
                 tr!("Drawn before each item of the section. The section's items are set here.")
@@ -219,9 +223,10 @@ impl GossiaApp {
             for name in [&edited.item_name, &edited.list_name].into_iter().flatten() {
                 if !is_name(name.trim()) && !name.trim().is_empty() {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{name:?} is not a name: use letters, digits and _, not starting \
-                             with a digit."
+                        egui::RichText::new(tr!(
+                            "{name} is not a name: use letters, digits and _, not starting \
+                             with a digit.",
+                            name = format!("{name:?}")
                         ))
                         .small()
                         .color(error_color(ui)),

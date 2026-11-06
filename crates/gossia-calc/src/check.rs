@@ -4,6 +4,7 @@
 
 use gossia_core::validate::validate_at;
 use gossia_core::{ErrorKind, ErrorValue, Kind, Node, Path, Segment, TypeId, TypeSpec, Value};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use crate::engine::Failure;
@@ -88,7 +89,7 @@ fn check(
         return (
             fail(
                 ErrorKind::Ref,
-                format!("the schema defines no node at {loc}"),
+                tr!("the schema defines no node at {loc}", loc = loc),
             ),
             None,
             None,
@@ -99,7 +100,10 @@ fn check(
             (
                 fail(
                     ErrorKind::Type,
-                    format!("the formula returned None, but {loc} is required"),
+                    tr!(
+                        "the formula returned None, but {loc} is required",
+                        loc = loc
+                    ),
                 ),
                 None,
                 None,
@@ -143,9 +147,18 @@ fn check(
         return (Computed::Value(fitted), None, None);
     };
     let message = if *at == loc.path {
-        format!("{loc} does not accept this result: {message}")
+        tr!(
+            "{loc} does not accept this result: {message}",
+            loc = loc,
+            message = message
+        )
     } else {
-        format!("{loc} does not accept this result: at {at}, {message}")
+        tr!(
+            "{loc} does not accept this result: at {at}, {message}",
+            loc = loc,
+            at = at,
+            message = message
+        )
     };
     let error = ErrorValue {
         kind: ErrorKind::Type,
@@ -187,9 +200,10 @@ fn fit(
                         let v = fit(spec, f.ty, node.value(), &here, misfits);
                         out.insert(name.clone(), Node::new(v));
                     }
-                    None => {
-                        misfits.push((path.clone(), format!("{name} is not one of its fields")))
-                    }
+                    None => misfits.push((
+                        path.clone(),
+                        tr!("{name} is not one of its fields", name = name),
+                    )),
                 }
             }
             for f in fields
@@ -197,7 +211,7 @@ fn fit(
                 .filter(|f| f.required && !map.contains_key(&f.name))
             {
                 let here = path.key(f.name.clone());
-                let message = "it is required, and the result has none".to_owned();
+                let message = tr!("it is required, and the result has none").to_owned();
                 out.insert(f.name.clone(), Node::new(misfit(&here, &message)));
                 misfits.push((here, message));
             }
@@ -266,7 +280,7 @@ fn fit(
 fn misfit(path: &Path, message: &str) -> Value {
     Value::Error(ErrorValue {
         kind: ErrorKind::Type,
-        message: format!("this does not fit: {message}"),
+        message: tr!("this does not fit: {message}", message = message),
         origin: Some(path.clone()),
     })
 }
@@ -298,8 +312,9 @@ pub(crate) fn store(
         if data.get(&prefix).is_none()
             && matches!(prefix.segments().last(), Some(Segment::Index(_)))
         {
-            return Err(format!(
-                "there is no item at {prefix}; a formula does not add items to an array"
+            return Err(tr!(
+                "there is no item at {prefix}; a formula does not add items to an array",
+                prefix = prefix
             ));
         }
     }
@@ -311,7 +326,12 @@ pub(crate) fn store(
         let empty = match spec.resolve(&prefix).map(|r| &spec.get(r.ty).kind) {
             Some(Kind::Object { .. } | Kind::Map { .. }) => Value::Object(IndexMap::new()),
             Some(Kind::Array { .. }) => Value::Array(Vec::new()),
-            _ => return Err(format!("there is no node at {prefix} to put this under")),
+            _ => {
+                return Err(tr!(
+                    "there is no node at {prefix} to put this under",
+                    prefix = prefix
+                ));
+            }
         };
         data.set(&prefix, empty).map_err(|e| e.to_string())?;
     }

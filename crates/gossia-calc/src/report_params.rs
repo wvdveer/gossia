@@ -14,6 +14,7 @@
 use chrono::NaiveDate;
 use gossia_core::report::{ParamKind, ReportParam, choice_values, param_is_empty, period};
 use gossia_core::{DateTimeValue, Node, Value};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use super::{Calc, ExprKey, ExprKind, REPORT_FORM};
@@ -73,7 +74,7 @@ pub fn today() -> NaiveDate {
 fn fitted(kind: ParamKind, value: Value) -> Result<Value, String> {
     let value = match (kind, value) {
         (ParamKind::Number, Value::Bool(_)) => {
-            return Err("the default is yes or no, not a number".to_owned());
+            return Err(tr!("the default is yes or no, not a number").to_owned());
         }
         (ParamKind::Date, Value::DateTime(dt)) => Value::Date(match dt {
             DateTimeValue::Naive(t) => t.date(),
@@ -85,10 +86,10 @@ fn fitted(kind: ParamKind, value: Value) -> Result<Value, String> {
     if kind.accepts(&value) {
         Ok(value)
     } else {
-        Err(format!(
-            "the default is a value of kind {}, which a {} parameter cannot hold",
-            value.kind_name(),
-            kind.label().to_lowercase()
+        Err(tr!(
+            "the default is a value of kind {kind}, which a {kind2} parameter cannot hold",
+            kind = value.kind_name(),
+            kind2 = kind.label().to_lowercase()
         ))
     }
 }
@@ -190,7 +191,8 @@ impl Calc {
         let choices = p.choices_expression().map(|_| {
             if !self.trusted {
                 return Err(
-                    "the list runs Python, so this workbook has to be trusted first".to_owned(),
+                    tr!("the list runs Python, so this workbook has to be trusted first")
+                        .to_owned(),
                 );
             }
             match state(ExprKind::Choices) {

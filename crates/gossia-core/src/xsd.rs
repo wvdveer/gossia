@@ -27,6 +27,7 @@
 //! - The text of an element with attributes is `#text` and is never required,
 //!   since an empty element is a valid way to write an empty string.
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -71,7 +72,9 @@ pub enum LoadError {
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LoadError::NotXml(e) => write!(f, "the schema is not well-formed XML: {e}"),
+            LoadError::NotXml(e) => {
+                f.write_str(&tr!("the schema is not well-formed XML: {e}", e = e))
+            }
             LoadError::Schema(e) => e.fmt(f),
         }
     }
@@ -165,36 +168,38 @@ fn err<T>(keyword: &str, location: &str, message: impl Into<String>) -> Res<T> {
 fn excluded_element(name: &str) -> Option<&'static str> {
     Some(match name {
         "choice" | "any" | "union" | "all" => {
-            "unions and alternatives are not supported in version 1"
+            tr!("unions and alternatives are not supported in version 1")
         }
         "group" | "attributeGroup" | "anyAttribute" => {
-            "groups and open content are not supported in version 1"
+            tr!("groups and open content are not supported in version 1")
         }
         "complexContent" | "extension" | "restriction" => {
-            "type extension and derivation of complex types are not supported in version 1"
+            tr!("type extension and derivation of complex types are not supported in version 1")
         }
         "import" | "include" | "redefine" | "override" => {
-            "imports, includes and non-local references are not supported in version 1"
+            tr!("imports, includes and non-local references are not supported in version 1")
         }
         "key" | "keyref" | "unique" | "selector" | "field" => {
-            "identity constraints are not supported in version 1"
+            tr!("identity constraints are not supported in version 1")
         }
-        "list" => "list types are not supported in version 1",
-        "appinfo" | "notation" => "only `documentation` is accepted as an annotation",
+        "list" => tr!("list types are not supported in version 1"),
+        "appinfo" | "notation" => tr!("only `documentation` is accepted as an annotation"),
         _ => return None,
     })
 }
 
 fn excluded_attribute(name: &str) -> Option<&'static str> {
     Some(match name {
-        "nillable" => "nullable elements are not supported in version 1",
-        "default" | "fixed" => "default and fixed values are not supported in version 1",
-        "mixed" => "mixed content is not supported in version 1",
+        "nillable" => tr!("nullable elements are not supported in version 1"),
+        "default" | "fixed" => tr!("default and fixed values are not supported in version 1"),
+        "mixed" => tr!("mixed content is not supported in version 1"),
         "substitutionGroup" | "abstract" | "block" | "final" | "blockDefault" | "finalDefault" => {
-            "substitution and derivation control are not supported in version 1"
+            tr!("substitution and derivation control are not supported in version 1")
         }
-        "form" | "attributeFormDefault" => "per-declaration forms are not supported in version 1",
-        "minExclusive" | "maxExclusive" => "exclusive ranges are not supported in version 1",
+        "form" | "attributeFormDefault" => {
+            tr!("per-declaration forms are not supported in version 1")
+        }
+        "minExclusive" | "maxExclusive" => tr!("exclusive ranges are not supported in version 1"),
         _ => return None,
     })
 }
@@ -211,7 +216,10 @@ fn resolve_names(
         return err(
             &element.name,
             "schema",
-            format!("constructs nested more than {MAX_DEPTH} levels deep are not supported"),
+            tr!(
+                "constructs nested more than {MAX_DEPTH} levels deep are not supported",
+                MAX_DEPTH = MAX_DEPTH
+            ),
         );
     }
     scopes.push(element.declarations.clone());
@@ -238,9 +246,9 @@ fn resolve_names(
             return err(
                 &attribute.name,
                 &element.name,
-                format!(
-                    "the prefix `{}` is not declared",
-                    prefix.unwrap_or_default()
+                tr!(
+                    "the prefix `{prefix}` is not declared",
+                    prefix = prefix.unwrap_or_default()
                 ),
             );
         }
@@ -303,13 +311,17 @@ fn xs_name<'e>(element: &'e Element, location: &str) -> Res<&'e str> {
         return err(
             &element.name,
             location,
-            format!(
-                "is not in the XML Schema namespace ({XSD_NS}){}",
-                match &element.namespace {
-                    Some(n) => format!(", but in {n}"),
-                    None => String::new(),
-                }
-            ),
+            match &element.namespace {
+                Some(n) => tr!(
+                    "is not in the XML Schema namespace ({namespace}), but in {n}",
+                    namespace = XSD_NS,
+                    n = n
+                ),
+                None => tr!(
+                    "is not in the XML Schema namespace ({namespace})",
+                    namespace = XSD_NS
+                ),
+            },
         );
     }
     Ok(&element.name)
@@ -322,7 +334,7 @@ fn check_attributes(element: &Element, allowed: &[&str], location: &str) -> Res<
             return err(
                 &format!("{}:{}", a.prefix.as_deref().unwrap_or_default(), a.name),
                 location,
-                "attributes from other namespaces are not supported in version 1",
+                tr!("attributes from other namespaces are not supported in version 1"),
             );
         }
         if !allowed.contains(&a.name.as_str()) {
@@ -331,9 +343,9 @@ fn check_attributes(element: &Element, allowed: &[&str], location: &str) -> Res<
                 None => err(
                     &a.name,
                     location,
-                    format!(
-                        "is not an attribute of `{}` that this version recognises",
-                        element.name
+                    tr!(
+                        "is not an attribute of `{name}` that this version recognises",
+                        name = element.name
                     ),
                 ),
             };
@@ -353,7 +365,7 @@ fn check_children(element: &Element, allowed: &[&str], location: &str) -> Res<()
                 return err(
                     &element.name,
                     location,
-                    "text is not allowed here (mixed content is not supported in version 1)",
+                    tr!("text is not allowed here (mixed content is not supported in version 1)"),
                 );
             }
             Child::Element(e) => {
@@ -364,7 +376,10 @@ fn check_children(element: &Element, allowed: &[&str], location: &str) -> Res<()
                         None => err(
                             name,
                             location,
-                            format!("is not allowed inside `{}` in this version", element.name),
+                            tr!(
+                                "is not allowed inside `{name}` in this version",
+                                name = element.name
+                            ),
                         ),
                     };
                 }
@@ -385,7 +400,11 @@ fn named_children<'e>(element: &'e Element, name: &str) -> Vec<&'e Element> {
 fn documentation(element: &Element, location: &str) -> Res<Option<String>> {
     let annotations = named_children(element, "annotation");
     if annotations.len() > 1 {
-        return err("annotation", location, "only one `annotation` is allowed");
+        return err(
+            "annotation",
+            location,
+            tr!("only one `annotation` is allowed"),
+        );
     }
     let Some(annotation) = annotations.first() else {
         return Ok(None);
@@ -409,7 +428,7 @@ fn occurs(element: &Element, location: &str) -> Res<(usize, Option<usize>)> {
                 err(
                     name,
                     location,
-                    format!("`{name}` must be a non-negative whole number"),
+                    tr!("`{name}` must be a non-negative whole number", name = name),
                 )
             }),
         }
@@ -424,7 +443,7 @@ fn occurs(element: &Element, location: &str) -> Res<(usize, Option<usize>)> {
                 return err(
                     "maxOccurs",
                     location,
-                    "`maxOccurs` must be a whole number or `unbounded`",
+                    tr!("`maxOccurs` must be a whole number or `unbounded`"),
                 );
             }
         },
@@ -433,13 +452,13 @@ fn occurs(element: &Element, location: &str) -> Res<(usize, Option<usize>)> {
         return err(
             "maxOccurs",
             location,
-            "an element that may occur 0 times is not supported",
+            tr!("an element that may occur 0 times is not supported"),
         );
     }
     if let Some(max) = max
         && min > max
     {
-        return err("minOccurs", location, "is more than `maxOccurs`");
+        return err("minOccurs", location, tr!("is more than `maxOccurs`"));
     }
     Ok((min, max))
 }
@@ -463,7 +482,7 @@ impl<'a> Lowerer<'a> {
             return err(
                 &root.name,
                 location,
-                "a schema document has `xs:schema` as its root",
+                tr!("a schema document has `xs:schema` as its root"),
             );
         }
         check_attributes(
@@ -479,7 +498,7 @@ impl<'a> Lowerer<'a> {
         )?;
         for banned in ["version", "id"] {
             if root.attribute(banned).is_some() {
-                return err(banned, location, "is not supported in version 1");
+                return err(banned, location, tr!("is not supported in version 1"));
             }
         }
         self.target = root.attribute("targetNamespace").map(str::to_string);
@@ -490,7 +509,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "elementFormDefault",
                     location,
-                    "must be `qualified` or `unqualified`",
+                    tr!("must be `qualified` or `unqualified`"),
                 );
             }
         };
@@ -500,7 +519,7 @@ impl<'a> Lowerer<'a> {
             return err(
                 "attributeFormDefault",
                 location,
-                "only `unqualified` is supported in version 1",
+                tr!("only `unqualified` is supported in version 1"),
             );
         }
         check_children(
@@ -515,7 +534,7 @@ impl<'a> Lowerer<'a> {
                 "element" => globals.push(child),
                 kind @ ("complexType" | "simpleType") => {
                     let Some(name) = child.attribute("name") else {
-                        return err(kind, location, "a global type needs a `name`");
+                        return err(kind, location, tr!("a global type needs a `name`"));
                     };
                     let table = if kind == "complexType" {
                         &mut self.complex
@@ -529,7 +548,7 @@ impl<'a> Lowerer<'a> {
                         return err(
                             kind,
                             location,
-                            format!("there are two types named `{name}`"),
+                            tr!("there are two types named `{name}`", name = name),
                         );
                     }
                     if kind == "complexType" {
@@ -547,19 +566,25 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "element",
                     location,
-                    "a schema needs one global `xs:element`, the root of its documents",
+                    tr!("a schema needs one global `xs:element`, the root of its documents"),
                 );
             }
             _ => {
                 return err(
                     "element",
                     location,
-                    "a schema has one global `xs:element`; the other global declarations must be types",
+                    tr!(
+                        "a schema has one global `xs:element`; the other global declarations must be types"
+                    ),
                 );
             }
         };
         let Some(root_name) = root_element.attribute("name") else {
-            return err("element", location, "the global element needs a `name`");
+            return err(
+                "element",
+                location,
+                tr!("the global element needs a `name`"),
+            );
         };
         self.root_name = root_name.to_string();
         let here = format!("{location}/element[{root_name}]");
@@ -593,7 +618,10 @@ impl<'a> Lowerer<'a> {
             return err(
                 "element",
                 location,
-                format!("constructs nested more than {MAX_DEPTH} levels deep are not supported"),
+                tr!(
+                    "constructs nested more than {MAX_DEPTH} levels deep are not supported",
+                    MAX_DEPTH = MAX_DEPTH
+                ),
             );
         }
         self.depth += 1;
@@ -616,13 +644,13 @@ impl<'a> Lowerer<'a> {
             (Some(_), 1) => err(
                 "type",
                 location,
-                "an element has `type` or a type written inside it, not both",
+                tr!("an element has `type` or a type written inside it, not both"),
             ),
             (Some(name), _) => self.resolve_type(name, location),
             (None, 0) => err(
                 "type",
                 location,
-                "an element needs a `type`, or a `complexType` or `simpleType` inside it",
+                tr!("an element needs a `type`, or a `complexType` or `simpleType` inside it"),
             ),
             (None, 1) => {
                 if let Some(ct) = complex.first() {
@@ -631,7 +659,7 @@ impl<'a> Lowerer<'a> {
                         return err(
                             "name",
                             &here,
-                            "a type written inside an element has no name",
+                            tr!("a type written inside an element has no name"),
                         );
                     }
                     let (kind, description) = self.complex_kind(ct, &here)?;
@@ -645,7 +673,7 @@ impl<'a> Lowerer<'a> {
                         return err(
                             "name",
                             &here,
-                            "a type written inside an element has no name",
+                            tr!("a type written inside an element has no name"),
                         );
                     }
                     let (kind, description) = self.simple_kind(st, &here)?;
@@ -654,7 +682,7 @@ impl<'a> Lowerer<'a> {
                     Ok(id)
                 }
             }
-            (None, _) => err("complexType", location, "an element has one type"),
+            (None, _) => err("complexType", location, tr!("an element has one type")),
         }
     }
 
@@ -674,8 +702,9 @@ impl<'a> Lowerer<'a> {
             return err(
                 "type",
                 location,
-                format!(
-                    "`{name}` is in another namespace; only one namespace is supported in version 1"
+                tr!(
+                    "`{name}` is in another namespace; only one namespace is supported in version 1",
+                    name = name
                 ),
             );
         }
@@ -696,14 +725,14 @@ impl<'a> Lowerer<'a> {
             return err(
                 "type",
                 location,
-                format!(
-                    "there is no type named `{name}`{}",
-                    if self.target.is_some() {
-                        " in the target namespace"
-                    } else {
-                        ""
-                    }
-                ),
+                if self.target.is_some() {
+                    tr!(
+                        "there is no type named `{name}` in the target namespace",
+                        name = name
+                    )
+                } else {
+                    tr!("there is no type named `{name}`", name = name)
+                },
             );
         };
         let id = self.push(Kind::Bool, &here);
@@ -736,7 +765,7 @@ impl<'a> Lowerer<'a> {
             return err(
                 "sequence",
                 location,
-                "a type has one `sequence` or one `simpleContent`",
+                tr!("a type has one `sequence` or one `simpleContent`"),
             );
         }
         // Attributes first, then the content.
@@ -747,7 +776,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "attribute",
                     location,
-                    "attributes of a `simpleContent` go inside its `extension`",
+                    tr!("attributes of a `simpleContent` go inside its `extension`"),
                 );
             }
             sc
@@ -763,21 +792,23 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "simpleContent",
                     &here,
-                    "needs an `extension` of a simple type (a `restriction` is not supported in version 1)",
+                    tr!(
+                        "needs an `extension` of a simple type (a `restriction` is not supported in version 1)"
+                    ),
                 );
             };
             let ext_here = format!("{here}/extension");
             check_attributes(ext, &["base"], &ext_here)?;
             check_children(ext, &["annotation", "attribute"], &ext_here)?;
             let Some(base) = ext.attribute("base") else {
-                return err("base", &ext_here, "an `extension` needs a `base`");
+                return err("base", &ext_here, tr!("an `extension` needs a `base`"));
             };
             let base_id = self.resolve_type(base, &ext_here)?;
             if matches!(self.types[base_id.0 as usize].kind, Kind::Object { .. }) {
                 return err(
                     "base",
                     &ext_here,
-                    "the base of a `simpleContent` must be a simple type",
+                    tr!("the base of a `simpleContent` must be a simple type"),
                 );
             }
             text_type = Some(base_id);
@@ -796,7 +827,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "attribute",
                     &owner_here,
-                    format!("there are two attributes named `{name}`"),
+                    tr!("there are two attributes named `{name}`", name = name),
                 );
             }
             fields.push(field);
@@ -815,7 +846,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "maxOccurs",
                     &here,
-                    "a `sequence` that repeats is not supported in version 1",
+                    tr!("a `sequence` that repeats is not supported in version 1"),
                 );
             }
             check_children(sequence, &["annotation", "element"], &here)?;
@@ -827,7 +858,7 @@ impl<'a> Lowerer<'a> {
                     return err(
                         "element",
                         &here,
-                        format!("there are two elements named `{name}`"),
+                        tr!("there are two elements named `{name}`", name = name),
                     );
                 }
                 fields.push(field);
@@ -842,7 +873,7 @@ impl<'a> Lowerer<'a> {
             return err(
                 "attribute",
                 parent,
-                "an attribute needs a `name` (`ref` is not supported in version 1)",
+                tr!("an attribute needs a `name` (`ref` is not supported in version 1)"),
             );
         };
         let here = format!("{parent}/attribute[{name}]");
@@ -853,9 +884,13 @@ impl<'a> Lowerer<'a> {
             None | Some("optional") => false,
             Some("required") => true,
             Some("prohibited") => {
-                return err("use", &here, "`prohibited` is not supported in version 1");
+                return err(
+                    "use",
+                    &here,
+                    tr!("`prohibited` is not supported in version 1"),
+                );
             }
-            Some(_) => return err("use", &here, "must be `optional` or `required`"),
+            Some(_) => return err("use", &here, tr!("must be `optional` or `required`")),
         };
         let inner = named_children(attribute, "simpleType");
         let ty = match (attribute.attribute("type"), inner.first()) {
@@ -863,7 +898,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "type",
                     &here,
-                    "an attribute has `type` or a `simpleType` inside it, not both",
+                    tr!("an attribute has `type` or a `simpleType` inside it, not both"),
                 );
             }
             (Some(type_name), None) => self.resolve_type(type_name, &here)?,
@@ -875,17 +910,17 @@ impl<'a> Lowerer<'a> {
                 id
             }
             (None, None) => {
-                return err("type", &here, "an attribute needs a `type`");
+                return err("type", &here, tr!("an attribute needs a `type`"));
             }
         };
         if matches!(
             self.types[ty.0 as usize].kind,
             Kind::Object { .. } | Kind::Array { .. }
         ) {
-            return err("type", &here, "an attribute has a simple type");
+            return err("type", &here, tr!("an attribute has a simple type"));
         }
         if name.contains(':') || name.is_empty() {
-            return err("name", &here, "is not a valid attribute name");
+            return err("name", &here, tr!("is not a valid attribute name"));
         }
         Ok((
             name.to_string(),
@@ -909,16 +944,20 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "ref",
                     &here,
-                    format!(
-                        "only the global element `{}` can be referred to",
-                        self.root_name
+                    tr!(
+                        "only the global element `{root_name}` can be referred to",
+                        root_name = self.root_name
                     ),
                 );
             }
             (local.to_string(), self.root_id, here)
         } else {
             let Some(name) = element.attribute("name") else {
-                return err("element", parent, "an element needs a `name` (or a `ref`)");
+                return err(
+                    "element",
+                    parent,
+                    tr!("an element needs a `name` (or a `ref`)"),
+                );
             };
             if name.contains(':')
                 || name.is_empty()
@@ -928,7 +967,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "name",
                     parent,
-                    format!("`{name}` is not a valid element name"),
+                    tr!("`{name}` is not a valid element name", name = name),
                 );
             }
             let here = format!("{parent}/element[{name}]");
@@ -964,7 +1003,7 @@ impl<'a> Lowerer<'a> {
             return err(
                 "simpleType",
                 location,
-                "needs a `restriction` (`list` and `union` are not supported in version 1)",
+                tr!("needs a `restriction` (`list` and `union` are not supported in version 1)"),
             );
         };
         let here = format!("{location}/restriction");
@@ -1017,14 +1056,20 @@ fn builtin(local: &str, location: &str) -> Res<Kind> {
             return err(
                 "type",
                 location,
-                format!("`{local}` allows any content, which is not supported in version 1"),
+                tr!(
+                    "`{local}` allows any content, which is not supported in version 1",
+                    local = local
+                ),
             );
         }
         other => {
             return err(
                 "type",
                 location,
-                format!("the built-in type `{other}` is not supported in version 1"),
+                tr!(
+                    "the built-in type `{other}` is not supported in version 1",
+                    other = other
+                ),
             );
         }
     })
@@ -1045,18 +1090,22 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
         check_attributes(facet, &["value"], &here)?;
         check_children(facet, &["annotation"], &here)?;
         let Some(value) = facet.attribute("value") else {
-            return err(&facet.name, &here, "a facet needs a `value`");
+            return err(&facet.name, &here, tr!("a facet needs a `value`"));
         };
         let once = |slot: &mut Option<String>| -> Res<()> {
             if slot.replace(value.to_string()).is_some() {
-                return err(&facet.name, &here, "is given twice");
+                return err(&facet.name, &here, tr!("is given twice"));
             }
             Ok(())
         };
         match facet.name.as_str() {
             "enumeration" => {
                 if enumerations.iter().any(|v| v == value) {
-                    return err("enumeration", &here, format!("`{value}` is listed twice"));
+                    return err(
+                        "enumeration",
+                        &here,
+                        tr!("`{value}` is listed twice", value = value),
+                    );
                 }
                 enumerations.push(value.to_string());
             }
@@ -1076,7 +1125,7 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
                 err(
                     name,
                     location,
-                    format!("`{name}` must be a non-negative whole number"),
+                    tr!("`{name}` must be a non-negative whole number", name = name),
                 )
             }),
         }
@@ -1089,13 +1138,17 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
         err(
             "restriction",
             location,
-            format!("{what} cannot be restricted by {facet} in version 1"),
+            tr!(
+                "{what} cannot be restricted by {facet} in version 1",
+                what = what,
+                facet = facet
+            ),
         )
     };
     match base {
         Kind::String(strings) => {
             if range_facets {
-                return refuse("a string", "`minInclusive` or `maxInclusive`");
+                return refuse("a string", tr!("`minInclusive` or `maxInclusive`"));
             }
             let strings = merge_strings(strings, pattern, min_len, max_len, location)?;
             if enumerations.is_empty() {
@@ -1109,7 +1162,7 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
         }
         Kind::Enum { values, strings } => {
             if range_facets {
-                return refuse("a string", "`minInclusive` or `maxInclusive`");
+                return refuse("a string", tr!("`minInclusive` or `maxInclusive`"));
             }
             let strings = merge_strings(strings, pattern, min_len, max_len, location)?;
             let values = if enumerations.is_empty() {
@@ -1120,7 +1173,7 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
                         return err(
                             "enumeration",
                             location,
-                            format!("`{v}` is not one of the values of the base type"),
+                            tr!("`{v}` is not one of the values of the base type", v = v),
                         );
                     }
                 }
@@ -1130,7 +1183,10 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
         }
         Kind::Integer(range) => {
             if !enumerations.is_empty() || string_facets {
-                return refuse("an integer", "an enumeration, a pattern or a length");
+                return refuse(
+                    tr!("an integer"),
+                    tr!("an enumeration, a pattern or a length"),
+                );
             }
             Ok(Kind::Integer(merge_range(
                 range, min_inc, max_inc, true, location,
@@ -1138,7 +1194,7 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
         }
         Kind::Number(range) => {
             if !enumerations.is_empty() || string_facets {
-                return refuse("a number", "an enumeration, a pattern or a length");
+                return refuse("a number", tr!("an enumeration, a pattern or a length"));
             }
             Ok(Kind::Number(merge_range(
                 range, min_inc, max_inc, false, location,
@@ -1146,7 +1202,7 @@ fn apply_facets(base: Kind, restriction: &Element, location: &str) -> Res<Kind> 
         }
         other => {
             if !enumerations.is_empty() || string_facets || range_facets {
-                return refuse("this type", "any facet");
+                return refuse(tr!("this type"), tr!("any facet"));
             }
             Ok(other)
         }
@@ -1167,7 +1223,9 @@ fn merge_strings(
             return err(
                 "pattern",
                 location,
-                "the base type already has a pattern; restricting it further is not supported in version 1",
+                tr!(
+                    "the base type already has a pattern; restricting it further is not supported in version 1"
+                ),
             );
         }
         strings.pattern = pattern;
@@ -1183,7 +1241,7 @@ fn merge_strings(
     if let (Some(lo), Some(hi)) = (strings.min_length, strings.max_length)
         && lo > hi
     {
-        return err("minLength", location, "is more than `maxLength`");
+        return err("minLength", location, tr!("is more than `maxLength`"));
     }
     Ok(strings)
 }
@@ -1207,9 +1265,9 @@ fn merge_range(
                 name,
                 location,
                 if whole {
-                    format!("`{name}` must be a whole number here")
+                    tr!("`{name}` must be a whole number here", name = name)
                 } else {
-                    format!("`{name}` must be a number")
+                    tr!("`{name}` must be a number", name = name)
                 },
             ),
         }
@@ -1231,7 +1289,7 @@ fn merge_range(
     if let (Some(lo), Some(hi)) = (range.min, range.max)
         && lo.compare(hi) == Some(std::cmp::Ordering::Greater)
     {
-        return err("minInclusive", location, "is more than `maxInclusive`");
+        return err("minInclusive", location, tr!("is more than `maxInclusive`"));
     }
     Ok(range)
 }
@@ -1251,7 +1309,7 @@ fn pattern_of(patterns: &[String], location: &str) -> Res<Option<Pattern>> {
         Err(e) => err(
             "pattern",
             location,
-            format!("this regular expression is not supported: {e}"),
+            tr!("this regular expression is not supported: {e}", e = e),
         ),
     }
 }

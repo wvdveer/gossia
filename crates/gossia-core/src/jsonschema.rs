@@ -19,6 +19,7 @@
 //! - A pattern must be accepted by the `regex` crate, which lacks look-around
 //!   and back-references.
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -65,24 +66,24 @@ const SUPPORTED: &[&str] = &[
 fn excluded_reason(keyword: &str) -> Option<&'static str> {
     Some(match keyword {
         "oneOf" | "anyOf" | "allOf" | "not" => {
-            "unions and combinators are not supported in version 1"
+            tr!("unions and combinators are not supported in version 1")
         }
         "if" | "then" | "else" | "dependentSchemas" | "dependentRequired" | "dependencies" => {
-            "conditional schemas are not supported in version 1"
+            tr!("conditional schemas are not supported in version 1")
         }
         "patternProperties" | "unevaluatedProperties" | "unevaluatedItems" | "propertyNames" => {
-            "open content is not supported in version 1"
+            tr!("open content is not supported in version 1")
         }
         "$id" | "$anchor" | "$dynamicRef" | "$dynamicAnchor" | "$recursiveRef"
         | "$recursiveAnchor" | "$vocabulary" => {
-            "identifiers, anchors, and non-local references are not supported in version 1"
+            tr!("identifiers, anchors, and non-local references are not supported in version 1")
         }
         "const" | "exclusiveMinimum" | "exclusiveMaximum" | "multipleOf" | "uniqueItems"
         | "prefixItems" | "contains" | "minContains" | "maxContains" | "minProperties"
-        | "maxProperties" => "this keyword is not supported in version 1",
+        | "maxProperties" => tr!("this keyword is not supported in version 1"),
         "$comment" | "default" | "examples" | "deprecated" | "readOnly" | "writeOnly"
         | "contentEncoding" | "contentMediaType" | "contentSchema" => {
-            "only `title` and `description` are accepted as annotations"
+            tr!("only `title` and `description` are accepted as annotations")
         }
         _ => return None,
     })
@@ -116,7 +117,7 @@ pub enum LoadError {
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LoadError::NotJson(e) => write!(f, "the schema is not valid JSON: {e}"),
+            LoadError::NotJson(e) => f.write_str(&tr!("the schema is not valid JSON: {e}", e = e)),
             LoadError::Schema(e) => e.fmt(f),
         }
     }
@@ -182,18 +183,25 @@ fn scan(schema: &Value, ptr: &str, depth: usize) -> Res<()> {
         return err(
             "type",
             ptr,
-            format!("schemas nested more than {MAX_DEPTH} levels deep are not supported"),
+            tr!(
+                "schemas nested more than {MAX_DEPTH} levels deep are not supported",
+                MAX_DEPTH = MAX_DEPTH
+            ),
         );
     }
     for key in obj.keys() {
         if !SUPPORTED.contains(&key.as_str()) {
             return match excluded_reason(key) {
                 Some(reason) => err(key, ptr, reason),
-                None => err(key, ptr, "is not a keyword that this version recognises"),
+                None => err(
+                    key,
+                    ptr,
+                    tr!("is not a keyword that this version recognises"),
+                ),
             };
         }
         if ptr != "#" && (key == "$defs" || key == "$schema") {
-            return err(key, ptr, "is only allowed at the root of the schema");
+            return err(key, ptr, tr!("is only allowed at the root of the schema"));
         }
     }
     for (key, node) in obj {
@@ -274,7 +282,10 @@ impl<'a> Lowerer<'a> {
             return err(
                 "$schema",
                 "#",
-                format!("a schema must be an object, not {}", root.kind_name()),
+                tr!(
+                    "a schema must be an object, not {kind}",
+                    kind = root.kind_name()
+                ),
             );
         };
         // Unsupported keywords anywhere in the document come first, so that
@@ -287,7 +298,10 @@ impl<'a> Lowerer<'a> {
                     return err(
                         "$schema",
                         "#",
-                        format!("only draft 2020-12 ({SCHEMA_URI}) is supported"),
+                        tr!(
+                            "only draft 2020-12 ({SCHEMA_URI}) is supported",
+                            SCHEMA_URI = SCHEMA_URI
+                        ),
                     );
                 }
             }
@@ -295,14 +309,14 @@ impl<'a> Lowerer<'a> {
         let mut def_names = Vec::new();
         if let Some(node) = obj.get("$defs") {
             let Some(defs) = node.value().as_object() else {
-                return err("$defs", "#", "`$defs` must be an object");
+                return err("$defs", "#", tr!("`$defs` must be an object"));
             };
             for (name, def) in defs {
                 if def.value().as_object().is_none() {
                     return err(
                         "$defs",
                         &child_ptr("#", &["$defs", name]),
-                        "a definition must be a schema object",
+                        tr!("a definition must be a schema object"),
                     );
                 }
                 def_names.push(name.clone());
@@ -338,14 +352,20 @@ impl<'a> Lowerer<'a> {
             return err(
                 "$ref",
                 at,
-                format!("`{target}` is not supported: use `#` or `#/$defs/Name`"),
+                tr!(
+                    "`{target}` is not supported: use `#` or `#/$defs/Name`",
+                    target = target
+                ),
             );
         };
         if name.contains('/') {
             return err(
                 "$ref",
                 at,
-                format!("`{target}` is not supported: use `#` or `#/$defs/Name`"),
+                tr!(
+                    "`{target}` is not supported: use `#` or `#/$defs/Name`",
+                    target = target
+                ),
             );
         }
         let name = unescape(name);
@@ -359,7 +379,10 @@ impl<'a> Lowerer<'a> {
                     err(
                         "$ref",
                         at,
-                        format!("there is no definition named `{name}` in `$defs`"),
+                        tr!(
+                            "there is no definition named `{name}` in `$defs`",
+                            name = name
+                        ),
                     )
                 },
                 Ok,
@@ -381,7 +404,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "$ref",
                     &location,
-                    "references form a cycle with no structure in it",
+                    tr!("references form a cycle with no structure in it"),
                 );
             }
             let id = self.resolve_ref(&next, &location);
@@ -407,7 +430,9 @@ impl<'a> Lowerer<'a> {
                 return err(
                     key,
                     ptr,
-                    "cannot be combined with `$ref`; only `title` and `description` may sit beside it",
+                    tr!(
+                        "cannot be combined with `$ref`; only `title` and `description` may sit beside it"
+                    ),
                 );
             }
         }
@@ -420,14 +445,20 @@ impl<'a> Lowerer<'a> {
             return err(
                 "type",
                 ptr,
-                format!("schemas nested more than {MAX_DEPTH} levels deep are not supported"),
+                tr!(
+                    "schemas nested more than {MAX_DEPTH} levels deep are not supported",
+                    MAX_DEPTH = MAX_DEPTH
+                ),
             );
         }
         let Some(obj) = schema.as_object() else {
             return err(
                 "type",
                 ptr,
-                format!("a schema must be an object, not {}", schema.kind_name()),
+                tr!(
+                    "a schema must be an object, not {kind}",
+                    kind = schema.kind_name()
+                ),
             );
         };
         self.depth += 1;
@@ -456,9 +487,9 @@ impl<'a> Lowerer<'a> {
                     ptr,
                     match ty {
                         Ty::Any => {
-                            "does not apply to a schema with no `type` (any value)".to_owned()
+                            tr!("does not apply to a schema with no `type` (any value)").to_owned()
                         }
-                        _ => format!("does not apply to a schema of type `{}`", ty.name()),
+                        _ => tr!("does not apply to a schema of type `{ty}`", ty = ty.name()),
                     },
                 );
             }
@@ -483,11 +514,11 @@ impl<'a> Lowerer<'a> {
                     return err(
                         "items",
                         ptr,
-                        "an array needs `items`, a schema for its elements",
+                        tr!("an array needs `items`, a schema for its elements"),
                     );
                 };
                 if items.value().as_object().is_none() {
-                    return err("items", ptr, "`items` must be a single schema");
+                    return err("items", ptr, tr!("`items` must be a single schema"));
                 }
                 let items = self.lower_sub(items.value(), &child_ptr(ptr, &["items"]))?;
                 Kind::Array {
@@ -517,7 +548,7 @@ impl<'a> Lowerer<'a> {
             None => None,
             Some(node) => {
                 let Some(source) = node.value().as_str() else {
-                    return err("pattern", ptr, "`pattern` must be a string");
+                    return err("pattern", ptr, tr!("`pattern` must be a string"));
                 };
                 match Pattern::new(source) {
                     Ok(p) => Some(p),
@@ -525,7 +556,7 @@ impl<'a> Lowerer<'a> {
                         return err(
                             "pattern",
                             ptr,
-                            format!("this regular expression is not supported: {e}"),
+                            tr!("this regular expression is not supported: {e}", e = e),
                         );
                     }
                 }
@@ -539,7 +570,7 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "format",
                     ptr,
-                    "only the formats `date` and `date-time` are supported",
+                    tr!("only the formats `date` and `date-time` are supported"),
                 );
             }
         };
@@ -556,7 +587,7 @@ impl<'a> Lowerer<'a> {
             None => None,
             Some(node) => match node.value().as_object() {
                 Some(props) => Some(props),
-                None => return err("properties", ptr, "`properties` must be an object"),
+                None => return err("properties", ptr, tr!("`properties` must be an object")),
             },
         };
         match obj.get("additionalProperties").map(Node::value) {
@@ -565,14 +596,16 @@ impl<'a> Lowerer<'a> {
                     return err(
                         "additionalProperties",
                         ptr,
-                        "an object has either `properties` or a schema-valued `additionalProperties`, not both",
+                        tr!(
+                            "an object has either `properties` or a schema-valued `additionalProperties`, not both"
+                        ),
                     );
                 }
                 if obj.contains_key("required") {
                     return err(
                         "required",
                         ptr,
-                        "does not apply to a map (an object with `additionalProperties`)",
+                        tr!("does not apply to a map (an object with `additionalProperties`)"),
                     );
                 }
                 let value = self.lower_sub(
@@ -589,10 +622,16 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "additionalProperties",
                     ptr,
-                    "`true` would allow any extra content; objects are closed",
+                    tr!("`true` would allow any extra content; objects are closed"),
                 );
             }
-            Some(_) => return err("additionalProperties", ptr, "must be a schema or `false`"),
+            Some(_) => {
+                return err(
+                    "additionalProperties",
+                    ptr,
+                    tr!("must be a schema or `false`"),
+                );
+            }
         }
         let required = required_names(obj, ptr)?;
         let Some(properties) = properties else {
@@ -602,7 +641,7 @@ impl<'a> Lowerer<'a> {
             return err(
                 "properties",
                 ptr,
-                "an object needs `properties` (or a schema-valued `additionalProperties`)",
+                tr!("an object needs `properties` (or a schema-valued `additionalProperties`)"),
             );
         };
         for name in &required {
@@ -610,7 +649,10 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "required",
                     ptr,
-                    format!("`{name}` is required but is not one of the `properties`"),
+                    tr!(
+                        "`{name}` is required but is not one of the `properties`",
+                        name = name
+                    ),
                 );
             }
         }
@@ -631,7 +673,7 @@ impl<'a> Lowerer<'a> {
 fn ref_target(obj: &IndexMap<String, Node>, ptr: &str) -> Res<String> {
     match obj.get("$ref").and_then(|n| n.value().as_str()) {
         Some(target) => Ok(target.to_string()),
-        None => err("$ref", ptr, "`$ref` must be a string"),
+        None => err("$ref", ptr, tr!("`$ref` must be a string")),
     }
 }
 
@@ -647,16 +689,16 @@ fn declared_type(obj: &IndexMap<String, Node>, ptr: &str) -> Res<Ty> {
             "null" => err(
                 "type",
                 ptr,
-                "`null` is not supported: there is no null in version 1 schemas",
+                tr!("`null` is not supported: there is no null in version 1 schemas"),
             ),
-            other => err("type", ptr, format!("`{other}` is not a type")),
+            other => err("type", ptr, tr!("`{other}` is not a type", other = other)),
         },
         Some(Value::Array(_)) => err(
             "type",
             ptr,
-            "type lists (unions, nullable types) are not supported in version 1",
+            tr!("type lists (unions, nullable types) are not supported in version 1"),
         ),
-        Some(_) => err("type", ptr, "`type` must be a type name"),
+        Some(_) => err("type", ptr, tr!("`type` must be a type name")),
         None if obj.contains_key("enum") => Ok(Ty::String),
         // No `type` is any value, as in JSON Schema.
         None => Ok(Ty::Any),
@@ -665,10 +707,10 @@ fn declared_type(obj: &IndexMap<String, Node>, ptr: &str) -> Res<Ty> {
 
 fn enum_values(value: &Value, ptr: &str) -> Res<Vec<String>> {
     let Some(items) = value.as_array() else {
-        return err("enum", ptr, "`enum` must be an array");
+        return err("enum", ptr, tr!("`enum` must be an array"));
     };
     if items.is_empty() {
-        return err("enum", ptr, "`enum` needs at least one value");
+        return err("enum", ptr, tr!("`enum` needs at least one value"));
     }
     let mut values: Vec<String> = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
@@ -676,14 +718,15 @@ fn enum_values(value: &Value, ptr: &str) -> Res<Vec<String>> {
             return err(
                 "enum",
                 ptr,
-                format!(
-                    "value {i} is {}: version 1 supports only string enumerations",
-                    item.value().kind_name()
+                tr!(
+                    "value {i} is {kind}: version 1 supports only string enumerations",
+                    i = i,
+                    kind = item.value().kind_name()
                 ),
             );
         };
         if values.iter().any(|v| v == text) {
-            return err("enum", ptr, format!("`{text}` is listed twice"));
+            return err("enum", ptr, tr!("`{text}` is listed twice", text = text));
         }
         values.push(text.to_string());
     }
@@ -695,15 +738,19 @@ fn required_names(obj: &IndexMap<String, Node>, ptr: &str) -> Res<Vec<String>> {
         return Ok(Vec::new());
     };
     let Some(items) = node.value().as_array() else {
-        return err("required", ptr, "`required` must be an array of names");
+        return err("required", ptr, tr!("`required` must be an array of names"));
     };
     let mut names: Vec<String> = Vec::with_capacity(items.len());
     for item in items {
         let Some(name) = item.value().as_str() else {
-            return err("required", ptr, "`required` must contain only strings");
+            return err("required", ptr, tr!("`required` must contain only strings"));
         };
         if names.iter().any(|n| n == name) {
-            return err("required", ptr, format!("`{name}` is listed twice"));
+            return err(
+                "required",
+                ptr,
+                tr!("`{name}` is listed twice", name = name),
+            );
         }
         names.push(name.to_string());
     }
@@ -729,7 +776,7 @@ fn count(obj: &IndexMap<String, Node>, key: &str, ptr: &str) -> Res<Option<usize
         None => err(
             key,
             ptr,
-            format!("`{key}` must be a non-negative whole number"),
+            tr!("`{key}` must be a non-negative whole number", key = key),
         ),
     }
 }
@@ -740,7 +787,7 @@ fn range(obj: &IndexMap<String, Node>, ptr: &str) -> Res<Range> {
             None => Ok(None),
             Some(Value::Int(i)) => Ok(Some(Num::Int(*i))),
             Some(Value::Float(x)) if x.is_finite() => Ok(Some(Num::Float(*x))),
-            Some(_) => err(key, ptr, format!("`{key}` must be a number")),
+            Some(_) => err(key, ptr, tr!("`{key}` must be a number", key = key)),
         }
     };
     Ok(Range {
@@ -753,7 +800,7 @@ fn annotation(obj: &IndexMap<String, Node>, key: &str, ptr: &str) -> Res<Option<
     match obj.get(key).map(Node::value) {
         None => Ok(None),
         Some(Value::Str(s)) => Ok(Some(s.clone())),
-        Some(_) => err(key, ptr, format!("`{key}` must be a string")),
+        Some(_) => err(key, ptr, tr!("`{key}` must be a string", key = key)),
     }
 }
 

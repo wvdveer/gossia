@@ -235,7 +235,10 @@ fn read_lines(text: &str) -> Result<Parsed, ParseError> {
         let parsed = json::parse(line).map_err(|e| ParseError {
             line: i + 1,
             column: e.column,
-            message: format!("this line is not a JSON value: {}", e.message),
+            message: tr!(
+                "this line is not a JSON value: {message}",
+                message = e.message
+            ),
         })?;
         let index = items.len();
         warnings.extend(parsed.warnings.into_iter().map(|mut w| {

@@ -1997,7 +1997,7 @@ impl GossiaApp {
                     match found.iter().find(|f| Some(f.name) == dialog.selected) {
                         Some(f) => {
                             ui.label(RichText::new(f.signature).monospace().strong());
-                            ui.label(f.description);
+                            ui.label(gossia_i18n::tr(f.description));
                             if ui.button(tr!("Insert")).clicked() {
                                 insert = Some(f.insert);
                             }
@@ -2023,11 +2023,15 @@ impl GossiaApp {
 pub(crate) fn untrusted_mark(ui: &mut egui::Ui, stale: bool) -> egui::Response {
     ui.label(RichText::new("#UNTRUSTED!").color(error_color(ui)).small())
         .on_hover_text(if stale {
-            "This workbook is not trusted, so the formula was not run. The value is \
+            tr!(
+                "This workbook is not trusted, so the formula was not run. The value is \
              out of date: something it uses has changed."
+            )
         } else {
-            "This workbook is not trusted, so the formula was not run. The value is \
+            tr!(
+                "This workbook is not trusted, so the formula was not run. The value is \
              the one that was stored."
+            )
         })
 }
 

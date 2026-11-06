@@ -8,6 +8,7 @@
 
 use gossia_core::xsd::{self, XSD_NS};
 use gossia_core::{Node, Path, Value};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use super::*;
@@ -165,7 +166,7 @@ fn object_of(node: &Node) -> Result<IndexMap<String, Node>, EditError> {
     match node.value() {
         Value::Object(map) => Ok(map.clone()),
         _ => Err(EditError::Path(
-            "the type is not written as a complexType".to_owned(),
+            tr!("the type is not written as a complexType").to_owned(),
         )),
     }
 }
@@ -173,16 +174,17 @@ fn object_of(node: &Node) -> Result<IndexMap<String, Node>, EditError> {
 /// A name XML allows for an element or an attribute, without a prefix.
 fn check_xml_name(name: &str) -> Result<(), EditError> {
     if name.is_empty() {
-        return Err(EditError::Path("a field needs a name".to_owned()));
+        return Err(EditError::Path(tr!("a field needs a name").to_owned()));
     }
     let mut chars = name.chars();
     let first_ok = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_');
     let rest_ok = chars.all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'));
     let reserved = name.len() >= 3 && name[..3].eq_ignore_ascii_case("xml");
     if !first_ok || !rest_ok || reserved {
-        return Err(EditError::Path(format!(
+        return Err(EditError::Path(tr!(
             "{name} is not a name XML allows: it starts with a letter or _, holds only \
-             letters, digits, _, - and ., and does not start with xml"
+             letters, digits, _, - and ., and does not start with xml",
+            name = name
         )));
     }
     Ok(())
@@ -214,7 +216,9 @@ impl Calc {
             .sheets
             .get(&places.schema_sheet)
             .and_then(|d| d.data.get(&places.document_path))
-            .ok_or_else(|| EditError::Path("the type is not in the schema any more".to_owned()))?;
+            .ok_or_else(|| {
+                EditError::Path(tr!("the type is not in the schema any more").to_owned())
+            })?;
         let mut complex = object_of(node)?;
         let simple_content = complex.contains_key("simpleContent");
         // Where the attributes are, and their list.
@@ -222,7 +226,7 @@ impl Calc {
             Some(sc) => {
                 let sc = object_of(sc)?;
                 Some(object_of(sc.get("extension").ok_or_else(|| {
-                    EditError::Path("the simpleContent has no extension".to_owned())
+                    EditError::Path(tr!("the simpleContent has no extension").to_owned())
                 })?)?)
             }
             None => None,
@@ -240,7 +244,10 @@ impl Calc {
             list.iter()
                 .position(|item| declared_name(item) == Some(name))
                 .ok_or_else(|| {
-                    EditError::Path(format!("cannot find {name} in the schema's complexType"))
+                    EditError::Path(tr!(
+                        "cannot find {name} in the schema's complexType",
+                        name = name
+                    ))
                 })
         };
 
@@ -258,9 +265,9 @@ impl Calc {
                 if let Some(attribute) = name.strip_prefix('@') {
                     check_xml_name(attribute)?;
                     if kind.is_structured() {
-                        return Err(EditError::Path(format!(
-                            "an attribute holds one value, so it cannot be an {}; add an                              element instead",
-                            kind.label()
+                        return Err(EditError::Path(tr!(
+                            "an attribute holds one value, so it cannot be an {kind}; add an element instead",
+                            kind = kind.label()
                         )));
                     }
                     let mut fields = vec![("@name", attribute.to_owned()), ("@type", ty)];
@@ -272,9 +279,11 @@ impl Calc {
                     check_xml_name(name)?;
                     if simple_content {
                         return Err(EditError::Path(
-                            "this element holds text, so it cannot have child elements; add an \
+                            tr!(
+                                "this element holds text, so it cannot have child elements; add an \
                              attribute instead"
-                                .to_owned(),
+                            )
+                            .to_owned(),
                         ));
                     }
                     if kind.is_structured() {
@@ -307,7 +316,7 @@ impl Calc {
             XsdChange::Rename { from, to } => {
                 if *from == "#text" {
                     return Err(EditError::Path(
-                        "the text of an element has no name to change".to_owned(),
+                        tr!("the text of an element has no name to change").to_owned(),
                     ));
                 }
                 match (from.strip_prefix('@'), to.strip_prefix('@')) {
@@ -320,29 +329,32 @@ impl Calc {
                         check_xml_name(to)?;
                         let i = find(&elements, from)?;
                         if attribute_value(&elements[i], "@ref").is_some() {
-                            return Err(EditError::Path(format!(
+                            return Err(EditError::Path(tr!(
                                 "{from} refers to the global element, so it takes that \
-                                 element's name; rename it on {}",
-                                places.schema_sheet
+                                 element's name; rename it on {schema_sheet}",
+                                from = from,
+                                schema_sheet = places.schema_sheet
                             )));
                         }
                         set_name(&mut elements[i], to);
                     }
                     _ => {
                         return Err(EditError::Path(
-                            "an attribute stays an attribute and an element an element: an \
+                            tr!(
+                                "an attribute stays an attribute and an element an element: an \
                              attribute's name starts with @"
-                                .to_owned(),
+                            )
+                            .to_owned(),
                         ));
                     }
                 }
             }
             XsdChange::Delete { name } => {
                 if *name == "#text" {
-                    return Err(EditError::Path(format!(
+                    return Err(EditError::Path(tr!(
                         "the text of an element is not a field that can be deleted; change \
-                         its type on {}",
-                        places.schema_sheet
+                         its type on {schema_sheet}",
+                        schema_sheet = places.schema_sheet
                     )));
                 }
                 match name.strip_prefix('@') {
@@ -374,9 +386,11 @@ impl Calc {
                         .all(|(new, old)| kind(new) == kind(old));
                 if !kept {
                     return Err(EditError::Path(
-                        "XSD keeps attributes apart from elements, so an attribute moves only \
+                        tr!(
+                            "XSD keeps attributes apart from elements, so an attribute moves only \
                          among the attributes and an element among the elements"
-                            .to_owned(),
+                        )
+                        .to_owned(),
                     ));
                 }
                 let mut reordered_attributes = Vec::new();

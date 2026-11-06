@@ -12,6 +12,7 @@
 //! dates as `{"$date": "2026-01-02"}`, which the prelude turns into `Decimal`
 //! and `date`.
 
+use gossia_i18n::tr;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -126,17 +127,17 @@ fn cache() -> &'static Mutex<HashMap<PathBuf, Loaded>> {
 
 fn main_path(def: &SourceDef) -> Result<PathBuf, String> {
     if def.kind != SourceKind::Beancount {
-        return Err(format!(
-            "{} is a {} source, not a Beancount journal",
-            def.name,
-            def.kind.label()
+        return Err(tr!(
+            "{name} is a {kind} source, not a Beancount journal",
+            name = def.name,
+            kind = def.kind.label()
         ));
     }
     let path = def.path.as_deref().unwrap_or_default().trim();
     if path.is_empty() {
-        return Err(format!(
-            "{}: a Beancount source needs the path of its journal",
-            def.name
+        return Err(tr!(
+            "{name}: a Beancount source needs the path of its journal",
+            name = def.name
         ));
     }
     Ok(PathBuf::from(path))
@@ -193,11 +194,17 @@ fn read(main: &Path, watched: &mut Vec<(PathBuf, Stamp)>) -> Result<Journal, Str
     watched.push((main.to_owned(), stamp(main)));
     match std::fs::metadata(main) {
         Ok(m) if m.is_file() => {}
-        Ok(_) => return Err(format!("{} is not a file", main.display())),
-        Err(e) => return Err(format!("{} cannot be opened: {e}", main.display())),
+        Ok(_) => return Err(tr!("{main} is not a file", main = main.display())),
+        Err(e) => {
+            return Err(tr!(
+                "{main} cannot be opened: {e}",
+                main = main.display(),
+                e = e
+            ));
+        }
     }
-    let canonical =
-        canonical(main).map_err(|e| format!("{} cannot be opened: {e}", main.display()))?;
+    let canonical = canonical(main)
+        .map_err(|e| tr!("{main} cannot be opened: {e}", main = main.display(), e = e))?;
     let root = canonical
         .parent()
         .map(Path::to_owned)
@@ -215,15 +222,16 @@ fn read(main: &Path, watched: &mut Vec<(PathBuf, Stamp)>) -> Result<Journal, Str
         }
         watched.push((path.clone(), stamp(&path)));
         let rel = relative(&root, &path);
-        let text =
-            std::fs::read_to_string(&path).map_err(|e| format!("{rel} cannot be read: {e}"))?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| tr!("{rel} cannot be read: {e}", rel = rel, e = e))?;
         for (i, line) in text.lines().enumerate() {
             if let Some(rest) = line.strip_prefix("plugin ") {
-                journal.errors.push(format!(
-                    "{rel}:{}: the plugin {} is not run by Gossia, so what it would add or \
+                journal.errors.push(tr!(
+                    "{rel}:{line}: the plugin {rest} is not run by Gossia, so what it would add or \
                      change is missing",
-                    i + 1,
-                    rest.trim()
+                    rel = rel,
+                    line = i + 1,
+                    rest = rest.trim()
                 ));
             }
         }
@@ -233,9 +241,10 @@ fn read(main: &Path, watched: &mut Vec<(PathBuf, Stamp)>) -> Result<Journal, Str
         for entry in parse_iter::<Decimal>(&text) {
             match entry {
                 Err(e) => {
-                    return Err(format!(
-                        "{rel}:{}: this is not Beancount syntax",
-                        e.line_number()
+                    return Err(tr!(
+                        "{rel}:{line}: this is not Beancount syntax",
+                        rel = rel,
+                        line = e.line_number()
                     ));
                 }
                 Ok(Entry::Directive(directive)) => {
@@ -261,8 +270,10 @@ fn read(main: &Path, watched: &mut Vec<(PathBuf, Stamp)>) -> Result<Journal, Str
         // The parser passes over a line it does not know without a word; a
         // mistyped transaction would then be missing from the books.
         if let Some(line) = unread_line(&text, &lines_read) {
-            return Err(format!(
-                "{rel}:{line}: this line is not Beancount that Gossia understands"
+            return Err(tr!(
+                "{rel}:{line}: this line is not Beancount that Gossia understands",
+                rel = rel,
+                line = line
             ));
         }
         // The first include is read first.
@@ -344,7 +355,7 @@ fn resolve(
     let mut dirs = Vec::new();
     let mut files = Vec::new();
     if !text.contains(['*', '?']) {
-        files.push(canonical(&joined).map_err(|e| format!("cannot be opened: {e}"))?);
+        files.push(canonical(&joined).map_err(|e| tr!("cannot be opened: {e}", e = e))?);
     } else {
         let mut places = vec![PathBuf::new()];
         for part in joined.components() {
@@ -379,9 +390,10 @@ fn resolve(
     }
     for file in &files {
         if !file.starts_with(root) {
-            return Err(
-                "an included file must be in the journal's folder or a folder below it".to_owned(),
-            );
+            return Err(tr!(
+                "an included file must be in the journal's folder or a folder below it"
+            )
+            .to_owned());
         }
     }
     Ok((files, dirs))
@@ -470,9 +482,11 @@ fn process(journal: &mut Journal, mut found: Vec<Found>) {
                 let name = open.account.as_str().to_owned();
                 let info = journal.accounts.entry(name.clone()).or_default();
                 if info.open.is_some() {
-                    journal
-                        .errors
-                        .push(format!("{at}: {name} is opened a second time"));
+                    journal.errors.push(tr!(
+                        "{at}: {name} is opened a second time",
+                        at = at,
+                        name = name
+                    ));
                 } else {
                     info.open = Some(date);
                     let mut currencies: Vec<String> = open
@@ -489,9 +503,11 @@ fn process(journal: &mut Journal, mut found: Vec<Found>) {
                 let name = close.account.as_str().to_owned();
                 match journal.accounts.get_mut(&name) {
                     Some(info) if info.open.is_some() => info.close = Some(date),
-                    _ => journal
-                        .errors
-                        .push(format!("{at}: {name} is closed but was never opened")),
+                    _ => journal.errors.push(tr!(
+                        "{at}: {name} is closed but was never opened",
+                        at = at,
+                        name = name
+                    )),
                 }
             }
             DirectiveContent::Price(price) => journal.prices.push(PriceRow {
@@ -574,9 +590,14 @@ fn process(journal: &mut Journal, mut found: Vec<Found>) {
                     .tolerance
                     .unwrap_or_else(|| half_unit(expected.scale()));
                 if (actual - expected).abs() > tolerance {
-                    journal.errors.push(format!(
+                    journal.errors.push(tr!(
                         "{at}: the balance of {account} is {actual} {currency}, not \
-                         {expected} {currency} as asserted"
+                         {expected} {currency} as asserted",
+                        at = at,
+                        account = account,
+                        actual = actual,
+                        currency = currency,
+                        expected = expected
                     ));
                 }
             }
@@ -696,14 +717,18 @@ fn apply(balances: &mut HashMap<String, HashMap<String, Decimal>>, txn: &Txn) {
 fn not_open(accounts: &BTreeMap<String, AccountInfo>, account: &str, date: &str) -> Option<String> {
     let info = accounts.get(account);
     match info.and_then(|i| i.open.as_deref()) {
-        None => Some(format!("{account} is used but never opened")),
-        Some(open) if date < open => {
-            Some(format!("{account} is used before it is opened on {open}"))
-        }
+        None => Some(tr!("{account} is used but never opened", account = account)),
+        Some(open) if date < open => Some(tr!(
+            "{account} is used before it is opened on {open}",
+            account = account,
+            open = open
+        )),
         _ => match info.and_then(|i| i.close.as_deref()) {
-            Some(close) if date > close => {
-                Some(format!("{account} is used after it was closed on {close}"))
-            }
+            Some(close) if date > close => Some(tr!(
+                "{account} is used after it was closed on {close}",
+                account = account,
+                close = close
+            )),
             _ => None,
         },
     }
@@ -751,9 +776,9 @@ fn complete(txn: &mut Txn) -> Result<(), String> {
         entry.1 = entry.1.max(half_unit(scale));
     }
     if open.len() > 1 {
-        return Err(format!(
-            "{} postings leave out their amount; only one may",
-            open.len()
+        return Err(tr!(
+            "{open} postings leave out their amount; only one may",
+            open = open.len()
         ));
     }
     if unknown {
@@ -788,9 +813,9 @@ fn complete(txn: &mut Txn) -> Result<(), String> {
     if off.is_empty() {
         Ok(())
     } else {
-        Err(format!(
-            "the postings do not balance: {} left over",
-            off.join(" and ")
+        Err(tr!(
+            "the postings do not balance: {off} left over",
+            off = gossia_i18n::and_list(&off)
         ))
     }
 }
@@ -896,7 +921,8 @@ pub fn read_call(def: &SourceDef, method: &str, args: &Json) -> Result<Json, Str
             Ok(Json::Array(found))
         }
         "balance" => {
-            let account = arg(args, "account").ok_or("balance() needs the name of an account")?;
+            let account =
+                arg(args, "account").ok_or(tr!("balance() needs the name of an account"))?;
             let until = arg(args, "until");
             let mut sums: BTreeMap<String, Decimal> = BTreeMap::new();
             for t in &j.transactions {
@@ -956,8 +982,9 @@ pub fn read_call(def: &SourceDef, method: &str, args: &Json) -> Result<Json, Str
                 .map(|(k, v)| (k.clone(), Json::String(v.clone())))
                 .collect(),
         )),
-        _ => Err(format!(
-            "{method} is not something a Beancount source can do"
+        _ => Err(tr!(
+            "{method} is not something a Beancount source can do",
+            method = method
         )),
     }
 }
@@ -998,11 +1025,17 @@ fn number(value: &Json, what: &str) -> Result<Option<Decimal>, String> {
         }
         Json::String(s) => s.trim().to_owned(),
         Json::Number(n) => n.to_string(),
-        other => return Err(format!("{what} is not a number: {other}")),
+        other => {
+            return Err(tr!(
+                "{what} is not a number: {other}",
+                what = what,
+                other = other
+            ));
+        }
     };
     text.parse::<Decimal>()
         .map(Some)
-        .map_err(|_| format!("{what} is not a number: {text}"))
+        .map_err(|_| tr!("{what} is not a number: {text}", what = what, text = text))
 }
 
 fn text_field<'a>(value: &'a Json, what: &str) -> Result<Option<&'a str>, String> {
@@ -1010,12 +1043,16 @@ fn text_field<'a>(value: &'a Json, what: &str) -> Result<Option<&'a str>, String
         Json::Null => Ok(None),
         Json::String(s) => {
             if s.contains(['\n', '\r']) {
-                Err(format!("{what} cannot have a line break in it"))
+                Err(tr!("{what} cannot have a line break in it", what = what))
             } else {
                 Ok(Some(s.as_str()))
             }
         }
-        other => Err(format!("{what} is not text: {other}")),
+        other => Err(tr!(
+            "{what} is not text: {other}",
+            what = what,
+            other = other
+        )),
     }
 }
 
@@ -1066,30 +1103,36 @@ fn valid_key(k: &str) -> bool {
 pub fn append(def: &SourceDef, request: &Json) -> Result<Json, String> {
     let name = &def.name;
     let j = journal(def)?;
-    let date = text_field(&request["date"], "the date")?.ok_or("a transaction needs a date")?;
+    let date =
+        text_field(&request["date"], tr!("the date"))?.ok_or(tr!("a transaction needs a date"))?;
     if !valid_date(date) {
-        return Err(format!("{date} is not a date written as YYYY-MM-DD"));
-    }
-    let flag = text_field(&request["flag"], "the flag")?.unwrap_or("*");
-    if flag != "*" && flag != "!" {
-        return Err(format!("the flag is * or !, not {flag}"));
-    }
-    let kind = text_field(&request["kind"], "the kind")?.unwrap_or("original");
-    if !GENERATED.contains(&kind) {
-        return Err(format!(
-            "the kind of a transaction is original, adjustment or reversal, not {kind}"
+        return Err(tr!(
+            "{date} is not a date written as YYYY-MM-DD",
+            date = date
         ));
     }
-    let narration = text_field(&request["narration"], "the narration")?.unwrap_or_default();
+    let flag = text_field(&request["flag"], tr!("the flag"))?.unwrap_or("*");
+    if flag != "*" && flag != "!" {
+        return Err(tr!("the flag is * or !, not {flag}", flag = flag));
+    }
+    let kind = text_field(&request["kind"], tr!("the kind"))?.unwrap_or("original");
+    if !GENERATED.contains(&kind) {
+        return Err(tr!(
+            "the kind of a transaction is original, adjustment or reversal, not {kind}",
+            kind = kind
+        ));
+    }
+    let narration = text_field(&request["narration"], tr!("the narration"))?.unwrap_or_default();
     if narration.contains(MARK_START) {
-        return Err(format!(
-            "the narration already says {MARK_START}...]: Gossia adds that itself"
+        return Err(tr!(
+            "the narration already says {MARK_START}...]: Gossia adds that itself",
+            MARK_START = MARK_START
         ));
     }
     // Every transaction Gossia writes says so, and what kind it is.
     let narration = &mark(narration, kind);
-    let payee = text_field(&request["payee"], "the payee")?;
-    let words = |key: &str, what: &str| -> Result<Vec<String>, String> {
+    let payee = text_field(&request["payee"], tr!("the payee"))?;
+    let words = |key: &str, bad: fn(&str) -> String| -> Result<Vec<String>, String> {
         let mut out = Vec::new();
         for w in request[key].as_array().into_iter().flatten() {
             let w = w
@@ -1097,21 +1140,22 @@ pub fn append(def: &SourceDef, request: &Json) -> Result<Json, String> {
                 .unwrap_or_default()
                 .trim_start_matches(['#', '^']);
             if !valid_word(w) {
-                return Err(format!("{w:?} cannot be a {what}"));
+                return Err(bad(&format!("{w:?}")));
             }
             out.push(w.to_owned());
         }
         Ok(out)
     };
-    let tags = words("tags", "tag")?;
-    let links = words("links", "link")?;
+    let tags = words("tags", |w| tr!("{w} cannot be a tag", w = w))?;
+    let links = words("links", |w| tr!("{w} cannot be a link", w = w))?;
     let mut meta_lines = Vec::new();
     if let Some(meta) = request["meta"].as_object() {
         for (k, v) in meta {
             if !valid_key(k) {
-                return Err(format!(
+                return Err(tr!(
                     "{k} cannot be a metadata key: it starts with a small letter and has \
-                     letters, digits, - and _"
+                     letters, digits, - and _",
+                    k = k
                 ));
             }
             let value = match v {
@@ -1129,48 +1173,64 @@ pub fn append(def: &SourceDef, request: &Json) -> Result<Json, String> {
         }
     }
     let Some(items) = request["postings"].as_array().filter(|p| p.len() >= 2) else {
-        return Err("a transaction needs at least two postings".to_owned());
+        return Err(tr!("a transaction needs at least two postings").to_owned());
     };
     let mut postings = Vec::new();
     for (i, p) in items.iter().enumerate() {
         let what = format!("posting {}", i + 1);
-        let account = text_field(&p["account"], &format!("the account of {what}"))?
+        let account = text_field(&p["account"], &tr!("the account of {what}", what = what))?
             .map(str::trim)
             .filter(|a| !a.is_empty())
-            .ok_or_else(|| format!("{what} needs an account"))?;
-        let amount = number(&p["amount"], &format!("the amount of {what}"))?;
+            .ok_or_else(|| tr!("{what} needs an account", what = what))?;
+        let amount = number(&p["amount"], &tr!("the amount of {what}", what = what))?;
         let currency =
-            text_field(&p["currency"], &format!("the currency of {what}"))?.map(str::trim);
+            text_field(&p["currency"], &tr!("the currency of {what}", what = what))?.map(str::trim);
         if amount.is_some() != currency.is_some() {
-            return Err(format!(
-                "{what} needs both an amount and a currency, or neither"
+            return Err(tr!(
+                "{what} needs both an amount and a currency, or neither",
+                what = what
             ));
         }
         if let Some(c) = currency
             && !valid_currency(c)
         {
-            return Err(format!("{c} cannot be a currency"));
+            return Err(tr!("{c} cannot be a currency", c = c));
         }
-        let cost = number(&p["cost"], &format!("the cost of {what}"))?;
-        let cost_currency = text_field(&p["cost_currency"], "the cost currency")?.map(str::trim);
-        let price = number(&p["price"], &format!("the price of {what}"))?;
-        let price_currency = text_field(&p["price_currency"], "the price currency")?.map(str::trim);
-        for (n, c, which) in [
-            (cost, cost_currency, "cost"),
-            (price, price_currency, "price"),
+        let cost = number(&p["cost"], &tr!("the cost of {what}", what = what))?;
+        let cost_currency =
+            text_field(&p["cost_currency"], tr!("the cost currency"))?.map(str::trim);
+        let price = number(&p["price"], &tr!("the price of {what}", what = what))?;
+        let price_currency =
+            text_field(&p["price_currency"], tr!("the price currency"))?.map(str::trim);
+        // Each message whole, since languages word them differently.
+        let cost_messages = [
+            tr!(
+                "the cost of {what} needs both a number and a currency",
+                what = what
+            ),
+            tr!("{what} has a cost but no amount", what = what),
+        ];
+        let price_messages = [
+            tr!(
+                "the price of {what} needs both a number and a currency",
+                what = what
+            ),
+            tr!("{what} has a price but no amount", what = what),
+        ];
+        for (n, c, [incomplete, no_amount]) in [
+            (cost, cost_currency, cost_messages),
+            (price, price_currency, price_messages),
         ] {
             if n.is_some() != c.is_some() {
-                return Err(format!(
-                    "the {which} of {what} needs both a number and a currency"
-                ));
+                return Err(incomplete);
             }
             if let Some(c) = c
                 && !valid_currency(c)
             {
-                return Err(format!("{c} cannot be a currency"));
+                return Err(tr!("{c} cannot be a currency", c = c));
             }
             if n.is_some() && amount.is_none() {
-                return Err(format!("{what} has a {which} but no amount"));
+                return Err(no_amount);
             }
         }
         postings.push(Post {
@@ -1200,19 +1260,31 @@ pub fn append(def: &SourceDef, request: &Json) -> Result<Json, String> {
         postings: postings.clone(),
         padding: false,
     };
-    complete(&mut txn).map_err(|why| format!("{name}: the transaction was not added: {why}"))?;
+    complete(&mut txn).map_err(|why| {
+        tr!(
+            "{name}: the transaction was not added: {why}",
+            name = name,
+            why = why
+        )
+    })?;
     for p in &postings {
         if let Some(why) = not_open(&j.accounts, &p.account, date) {
-            return Err(format!("{name}: the transaction was not added: {why}"));
+            return Err(tr!(
+                "{name}: the transaction was not added: {why}",
+                name = name,
+                why = why
+            ));
         }
         if let (Some(c), Some(info)) = (&p.currency, j.accounts.get(&p.account))
             && !info.currencies.is_empty()
             && !info.currencies.contains(c)
         {
-            return Err(format!(
-                "{name}: the transaction was not added: {} holds only {}, not {c}",
-                p.account,
-                info.currencies.join(", ")
+            return Err(tr!(
+                "{name}: the transaction was not added: {account} holds only {currencies}, not {c}",
+                name = name,
+                account = p.account,
+                currencies = info.currencies.join(", "),
+                c = c
             ));
         }
     }
@@ -1271,10 +1343,22 @@ pub fn append(def: &SourceDef, request: &Json) -> Result<Json, String> {
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(&main)
-        .map_err(|e| format!("{} cannot be written: {e}", main.display()))?;
+        .map_err(|e| {
+            tr!(
+                "{main} cannot be written: {e}",
+                main = main.display(),
+                e = e
+            )
+        })?;
     file.write_all(format!("{prefix}{text}").as_bytes())
         .and_then(|_| file.sync_all())
-        .map_err(|e| format!("{} cannot be written: {e}", main.display()))?;
+        .map_err(|e| {
+            tr!(
+                "{main} cannot be written: {e}",
+                main = main.display(),
+                e = e
+            )
+        })?;
     forget(&main);
     let shown = main
         .file_name()
@@ -1293,23 +1377,28 @@ pub fn test(def: &SourceDef) -> TestOutcome {
             let first = j.transactions.first().map(|t| t.date.clone());
             let last = j.transactions.last().map(|t| t.date.clone());
             let span = match (first, last) {
-                (Some(a), Some(b)) => format!(", from {a} to {b}"),
+                (Some(a), Some(b)) => tr!(", from {a} to {b}", a = a, b = b),
                 _ => String::new(),
             };
             let problems = match j.errors.len() {
                 0 => String::new(),
-                1 => format!("; 1 problem: {}", j.errors[0]),
-                n => format!("; {n} problems, the first: {}", j.errors[0]),
+                1 => tr!("; 1 problem: {problem}", problem = j.errors[0]),
+                n => tr!(
+                    "; {n} problems, the first: {first}",
+                    n = n,
+                    first = j.errors[0]
+                ),
             };
             TestOutcome {
                 ok: true,
-                message: format!(
-                    "{} transactions in {} accounts{span}, {} {}{problems}, in {} ms",
-                    j.transactions.iter().filter(|t| !t.padding).count(),
-                    j.accounts.len(),
-                    j.files,
-                    if j.files == 1 { "file" } else { "files" },
-                    start.elapsed().as_millis()
+                message: tr!(
+                    "{transactions} transactions in {accounts} accounts{span}, {files}{problems}, in {ms} ms",
+                    transactions = j.transactions.iter().filter(|t| !t.padding).count(),
+                    accounts = j.accounts.len(),
+                    span = span,
+                    files = gossia_i18n::counted(j.files, tr!("1 file"), tr!("{n} files")),
+                    problems = problems,
+                    ms = start.elapsed().as_millis()
                 ),
             }
         }

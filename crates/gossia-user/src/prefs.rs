@@ -138,8 +138,9 @@ impl Config {
             return match serde_json::from_str::<Json>(&text) {
                 Ok(Json::Object(object)) => Some(object),
                 _ => {
-                    warnings.push(format!(
-                        "The stored {name} cannot be read, so the defaults are used."
+                    warnings.push(tr!(
+                        "The stored {name} cannot be read, so the defaults are used.",
+                        name = name
                     ));
                     None
                 }
@@ -150,7 +151,11 @@ impl Config {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
             Err(e) => {
-                warnings.push(format!("{} cannot be read: {e}", path.display()));
+                warnings.push(tr!(
+                    "{path} cannot be read: {e}",
+                    path = path.display(),
+                    e = e
+                ));
                 return None;
             }
         };
@@ -159,19 +164,24 @@ impl Config {
             other => {
                 let why = match other {
                     Err(e) => e.to_string(),
-                    Ok(_) => "it is not a JSON object".to_owned(),
+                    Ok(_) => tr!("it is not a JSON object").to_owned(),
                 };
                 let aside = path.with_extension("json.unreadable");
                 let moved = std::fs::rename(&path, &aside).is_ok();
-                warnings.push(format!(
-                    "{} cannot be read ({why}), so the defaults are used{}.",
-                    path.display(),
-                    if moved {
-                        format!("; it was moved to {}", aside.display())
-                    } else {
-                        String::new()
-                    }
-                ));
+                warnings.push(if moved {
+                    tr!(
+                        "{file} cannot be read ({why}), so the defaults are used; it was moved to {aside}.",
+                        file = path.display(),
+                        why = why,
+                        aside = aside.display()
+                    )
+                } else {
+                    tr!(
+                        "{file} cannot be read ({why}), so the defaults are used.",
+                        file = path.display(),
+                        why = why
+                    )
+                });
                 None
             }
         }
@@ -218,9 +228,14 @@ fn number(
         Some(value) => match value.as_u64() {
             Some(n) if n >= minimum => n,
             _ => {
-                warnings.push(format!(
+                warnings.push(tr!(
                     "In {PREFERENCES_FILE}, {section}.{key} is {value}, which cannot be used; \
-                     the default {default} is used."
+                     the default {default} is used.",
+                    PREFERENCES_FILE = PREFERENCES_FILE,
+                    section = section,
+                    key = key,
+                    value = value,
+                    default = default
                 ));
                 default
             }
@@ -240,10 +255,15 @@ fn number_in(
 ) -> u64 {
     let n = number(object, section, key, range.0, default, warnings);
     if n > range.1 {
-        warnings.push(format!(
-            "In {PREFERENCES_FILE}, {section}.{key} is {n}, more than {}; the default \
+        warnings.push(tr!(
+            "In {PREFERENCES_FILE}, {section}.{key} is {n}, more than {max}; the default \
              {default} is used.",
-            range.1
+            PREFERENCES_FILE = PREFERENCES_FILE,
+            section = section,
+            key = key,
+            n = n,
+            max = range.1,
+            default = default
         ));
         return default;
     }
@@ -262,9 +282,14 @@ fn flag(
         None => default,
         Some(Json::Bool(b)) => *b,
         Some(value) => {
-            warnings.push(format!(
+            warnings.push(tr!(
                 "In {PREFERENCES_FILE}, {section}.{key} is {value}, which cannot be used; \
-                 the default {default} is used."
+                 the default {default} is used.",
+                PREFERENCES_FILE = PREFERENCES_FILE,
+                section = section,
+                key = key,
+                value = value,
+                default = default
             ));
             default
         }
@@ -431,16 +456,16 @@ impl DisplayPrefs {
         let s = "display";
         let density = match section.and_then(|o| o.get("row_density")) {
             None => d.density,
-            Some(value) => match value.as_str().and_then(Density::from_key) {
-                Some(density) => density,
-                None => {
-                    warnings.push(format!(
-                        "In {PREFERENCES_FILE}, display.row_density is {value}, which cannot be \
-                         used; the default normal is used."
-                    ));
-                    d.density
+            Some(value) => {
+                match value.as_str().and_then(Density::from_key) {
+                    Some(density) => density,
+                    None => {
+                        warnings.push(tr!("In {PREFERENCES_FILE}, display.row_density is {value}, which cannot be \
+                         used; the default normal is used.", PREFERENCES_FILE = PREFERENCES_FILE, value = value));
+                        d.density
+                    }
                 }
-            },
+            }
         };
         DisplayPrefs {
             indent: number_in(
@@ -710,9 +735,11 @@ impl Preferences {
             {
                 Some(kind) => kind,
                 None => {
-                    warnings.push(format!(
+                    warnings.push(tr!(
                         "In {PREFERENCES_FILE}, files.copy_records_as is {value}, which cannot \
-                         be used; records are copied as a hex dump."
+                         be used; records are copied as a hex dump.",
+                        PREFERENCES_FILE = PREFERENCES_FILE,
+                        value = value
                     ));
                     defaults.binary_copy
                 }
@@ -724,9 +751,11 @@ impl Preferences {
             Some(value) => match value.as_str().and_then(ThemeChoice::from_key) {
                 Some(theme) => theme,
                 None => {
-                    warnings.push(format!(
+                    warnings.push(tr!(
                         "In {PREFERENCES_FILE}, appearance.theme is {value}, which cannot be \
-                         used; the theme follows the system."
+                         used; the theme follows the system.",
+                        PREFERENCES_FILE = PREFERENCES_FILE,
+                        value = value
                     ));
                     ThemeChoice::default()
                 }
@@ -741,26 +770,28 @@ impl Preferences {
             warnings,
         );
         if scale_percent > SCALE_RANGE.1 {
-            warnings.push(format!(
+            warnings.push(tr!(
                 "In {PREFERENCES_FILE}, appearance.scale_percent is {scale_percent}, more than \
-                 {}; the default 100 is used.",
-                SCALE_RANGE.1
+                 {max}; the default 100 is used.",
+                PREFERENCES_FILE = PREFERENCES_FILE,
+                scale_percent = scale_percent,
+                max = SCALE_RANGE.1
             ));
             scale_percent = 100;
         }
         let language = match section.and_then(|o| o.get("language")) {
             None => None,
             Some(Json::String(tag)) if tag == "system" => None,
-            Some(value) => match value.as_str().and_then(gossia_i18n::Language::from_tag) {
-                Some(language) => Some(language),
-                None => {
-                    warnings.push(format!(
-                        "In {PREFERENCES_FILE}, appearance.language is {value}, which cannot be \
-                         used; the language follows the system."
-                    ));
-                    None
+            Some(value) => {
+                match value.as_str().and_then(gossia_i18n::Language::from_tag) {
+                    Some(language) => Some(language),
+                    None => {
+                        warnings.push(tr!("In {PREFERENCES_FILE}, appearance.language is {value}, which cannot be \
+                         used; the language follows the system.", PREFERENCES_FILE = PREFERENCES_FILE, value = value));
+                        None
+                    }
                 }
-            },
+            }
         };
         let undo = object_at(&raw, "undo");
         let history_entries = number(
@@ -943,9 +974,11 @@ fn trust_from_object(object: &Map<String, Json>, warnings: &mut Vec<String>) -> 
                     items,
                 },
             ),
-            _ => warnings.push(format!(
+            _ => warnings.push(tr!(
                 "In {TRUST_FILE}, the record of workbook {id} cannot be read, so it is not \
-                 trusted."
+                 trusted.",
+                TRUST_FILE = TRUST_FILE,
+                id = id
             )),
         }
     }
@@ -1016,9 +1049,11 @@ impl User {
         let mut warnings = Vec::new();
         if !config.keeps() {
             warnings.push(
-                "There is no folder for the preferences, so trust decisions and recent files \
+                tr!(
+                    "There is no folder for the preferences, so trust decisions and recent files \
                  are kept only until the application ends."
-                    .to_owned(),
+                )
+                .to_owned(),
             );
         }
         let sources = match &config.dir {

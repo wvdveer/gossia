@@ -14,6 +14,7 @@
 //!   place already logged (the run took another path) fails, and nothing
 //!   more is sent.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use crate::http::{FetchAnswer, FetchRequest};
@@ -64,11 +65,11 @@ impl Fetches {
         if in_order {
             if let Some((logged, answer)) = self.log.get(self.at) {
                 if *logged != key {
-                    return Some(Err(format!(
-                        "this run called {} {} where it called something else before it \
+                    return Some(Err(tr!(
+                        "this run called {method} {request} where it called something else before it \
                          stopped to wait for an answer, so nothing more is sent",
-                        request.method,
-                        request.shown_url()
+                        method = request.method,
+                        request = request.shown_url()
                     )));
                 }
                 self.at += 1;

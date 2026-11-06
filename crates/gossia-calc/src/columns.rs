@@ -8,6 +8,7 @@
 //! other items with ordinary formulas.
 
 use super::*;
+use gossia_i18n::tr;
 
 /// The rule: this field of every item of this array has this formula.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -143,7 +144,10 @@ impl Calc {
             ops.push(self.formula_op(sheet, &rule.place(index), text));
         }
         self.history.record(
-            format!("Set column formula at {}", Loc::new(sheet, array.clone())),
+            tr!(
+                "Set column formula at {place}",
+                place = Loc::new(sheet, array.clone())
+            ),
             ops,
             None,
         );
@@ -181,7 +185,10 @@ impl Calc {
             }
         }
         self.history.record(
-            format!("Clear column formula at {}", Loc::new(sheet, array.clone())),
+            tr!(
+                "Clear column formula at {place}",
+                place = Loc::new(sheet, array.clone())
+            ),
             ops,
             None,
         );
@@ -213,12 +220,13 @@ impl Calc {
             .any(|s| matches!(s, Segment::Index(_)))
         {
             return Err(EditError::Path(
-                "a column formula is for an array that is not inside another array".to_owned(),
+                tr!("a column formula is for an array that is not inside another array").to_owned(),
             ));
         }
         if field.is_empty() || field.contains(['.', '[', ']']) {
-            return Err(EditError::Path(format!(
-                "{field:?} is not the name of a field of the items"
+            return Err(EditError::Path(tr!(
+                "{field} is not the name of a field of the items",
+                field = format!("{field:?}")
             )));
         }
         let place = rule.place(0);
@@ -233,8 +241,14 @@ impl Calc {
         }
         match s.data.get(array).map(Node::value) {
             Some(Value::Array(items)) => Ok(items.len()),
-            Some(_) => Err(EditError::Path(format!("{array} is not an array"))),
-            None => Err(EditError::Path(format!("there is no array at {array}"))),
+            Some(_) => Err(EditError::Path(tr!(
+                "{array} is not an array",
+                array = array
+            ))),
+            None => Err(EditError::Path(tr!(
+                "there is no array at {array}",
+                array = array
+            ))),
         }
     }
 

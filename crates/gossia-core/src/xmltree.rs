@@ -12,6 +12,7 @@
 //! Reading is bounded: nesting deeper than [`MAX_DEPTH`] is refused, and the
 //! tree is built without recursion so that depth cannot overflow the stack.
 
+use gossia_i18n::tr;
 use std::fmt;
 
 use quick_xml::XmlVersion;
@@ -142,7 +143,11 @@ pub struct XmlError {
 impl fmt::Display for XmlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.position {
-            Some(at) => write!(f, "at byte {at}: {}", self.message),
+            Some(at) => f.write_str(&tr!(
+                "at byte {at}: {message}",
+                at = at,
+                message = self.message
+            )),
             None => f.write_str(&self.message),
         }
     }
@@ -221,13 +226,13 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
             match open.last_mut() {
                 Some(parent) => push_text(parent, run),
                 None if run.trim().is_empty() => {}
-                None => return fail(at, "text outside the root element"),
+                None => return fail(at, tr!("text outside the root element")),
             }
         }
         match event {
             Event::Decl(decl) => {
                 if doc.declaration.is_some() || root.is_some() || !open.is_empty() {
-                    return fail(at, "the XML declaration must be first");
+                    return fail(at, tr!("the XML declaration must be first"));
                 }
                 let version = decl
                     .version()
@@ -249,14 +254,16 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
             }
             Event::DocType(_) => {
                 doc.warnings.push(
-                    "the document type declaration was dropped; entities declared in it are \
+                    tr!(
+                        "the document type declaration was dropped; entities declared in it are \
                      not expanded and nothing external is fetched"
-                        .to_string(),
+                    )
+                    .to_string(),
                 );
             }
             Event::PI(_) => doc
                 .warnings
-                .push("a processing instruction was dropped".to_string()),
+                .push(tr!("a processing instruction was dropped").to_string()),
             Event::Comment(c) => {
                 let comment = c.xml_content(XmlVersion::Explicit1_0).into_owned();
                 match open.last_mut() {
@@ -267,13 +274,14 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
             }
             Event::Start(start) => {
                 if root.is_some() && open.is_empty() {
-                    return fail(at, "more than one root element");
+                    return fail(at, tr!("more than one root element"));
                 }
                 if open.len() >= MAX_DEPTH {
                     return fail(
                         at,
-                        format!(
-                            "elements nested more than {MAX_DEPTH} levels deep are not supported"
+                        tr!(
+                            "elements nested more than {MAX_DEPTH} levels deep are not supported",
+                            MAX_DEPTH = MAX_DEPTH
                         ),
                     );
                 }
@@ -285,9 +293,9 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
                 if element.prefix.is_some() && element.namespace.is_none() {
                     return fail(
                         at,
-                        format!(
-                            "the prefix `{}` is not declared",
-                            element.prefix.as_deref().unwrap_or_default()
+                        tr!(
+                            "the prefix `{prefix}` is not declared",
+                            prefix = element.prefix.as_deref().unwrap_or_default()
                         ),
                     );
                 }
@@ -295,7 +303,7 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
             }
             Event::End(_) => {
                 let Some(element) = open.pop() else {
-                    return fail(at, "a closing tag with nothing open");
+                    return fail(at, tr!("a closing tag with nothing open"));
                 };
                 scopes.pop();
                 match open.last_mut() {
@@ -327,7 +335,7 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
                         other => {
                             return fail(
                                 at,
-                                format!("the entity `&{other};` is not defined; only the five predefined entities and character references are"),
+                                tr!("the entity `&{other};` is not defined; only the five predefined entities and character references are", other = other),
                             );
                         }
                     });
@@ -338,10 +346,10 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
         }
     }
     if !open.is_empty() {
-        return fail(text.len(), "the document ends inside an element");
+        return fail(text.len(), tr!("the document ends inside an element"));
     }
     let Some(root) = root else {
-        return fail(text.len(), "there is no root element");
+        return fail(text.len(), tr!("there is no root element"));
     };
     doc.root = root;
     Ok(doc)

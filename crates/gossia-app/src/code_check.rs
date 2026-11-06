@@ -66,11 +66,11 @@ impl GossiaApp {
         ui.horizontal(|ui| {
             let summary = match (problems.len(), &status) {
                 (0, Some(ModuleStatus::Pending)) => "loading...".to_owned(),
-                (0, Some(ModuleStatus::Untrusted)) => {
+                (0, Some(ModuleStatus::Untrusted)) => tr!(
                     "no problems found without running it (the workbook is not trusted, so \
                      it is not loaded)"
-                        .to_owned()
-                }
+                )
+                .to_owned(),
                 (0, _) => tr!("no problems").to_owned(),
                 (1, _) => "1 problem".to_owned(),
                 (n, _) => format!("{n} problems"),
@@ -215,9 +215,12 @@ impl GossiaApp {
             .len();
         let limit = self.user.prefs.max_import_bytes;
         if size > limit {
-            return Err(format!(
+            return Err(tr!(
                 "{shown} is {size} bytes, more than the largest file imported ({limit} bytes; \
-                 Tools > Options, Files and import)"
+                 Tools > Options, Files and import)",
+                shown = shown,
+                size = size,
+                limit = limit
             ));
         }
         let bytes = std::fs::read(path).map_err(|e| format!("{shown}: {e}"))?;
@@ -234,10 +237,12 @@ impl GossiaApp {
         self.commit_code();
         let limit = self.user.prefs.max_import_bytes;
         if bytes.len() as u64 > limit {
-            return Err(format!(
-                "{file} is {} bytes, more than the largest file imported ({limit} bytes; \
+            return Err(tr!(
+                "{file} is {count} bytes, more than the largest file imported ({limit} bytes; \
                  Tools > Options, Files and import)",
-                bytes.len()
+                file = file,
+                count = bytes.len(),
+                limit = limit
             ));
         }
         let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);

@@ -2,6 +2,7 @@
 //! error kinds (DESIGN.md, "Result checking", "Scalar types", and the table in
 //! "Semantics: Python first, Excel second").
 
+use gossia_i18n::tr;
 use std::rc::Rc;
 
 use chrono::{
@@ -192,7 +193,7 @@ pub(super) fn to_value(
             Ok(n) => Ok(Value::Int(n)),
             Err(_) => Err(Bad::Value(
                 ErrorKind::Value,
-                "the integer does not fit in 64 bits".to_owned(),
+                tr!("the integer does not fit in 64 bits").to_owned(),
             )),
         };
     }
@@ -203,7 +204,10 @@ pub(super) fn to_value(
         } else {
             Err(Bad::Value(
                 ErrorKind::Value,
-                format!("{x} cannot be stored: NaN and infinity are not allowed"),
+                tr!(
+                    "{x} cannot be stored: NaN and infinity are not allowed",
+                    x = x
+                ),
             ))
         };
     }
@@ -213,14 +217,14 @@ pub(super) fn to_value(
     if let Some(proxy) = obj.downcast_ref::<NodeProxy>() {
         let ctx = shared
             .ctx()
-            .ok_or_else(|| Bad::Value(ErrorKind::Ref, "no formula is running".to_owned()))?;
+            .ok_or_else(|| Bad::Value(ErrorKind::Ref, tr!("no formula is running").to_owned()))?;
         return match ctx.read(&proxy.sheet, &proxy.path, Depth::Deep) {
             Read::Node(node) => Ok(fresh(&node)),
             Read::Missing | Read::NoSheet => Err(Bad::Value(
                 ErrorKind::Ref,
-                format!(
-                    "there is nothing at {}",
-                    crate::Loc::new(&*proxy.sheet, proxy.path.clone())
+                tr!(
+                    "there is nothing at {place}",
+                    place = crate::Loc::new(&*proxy.sheet, proxy.path.clone())
                 ),
             )),
         };
@@ -242,7 +246,10 @@ pub(super) fn to_value(
             let Some(name) = key.downcast_ref::<PyStr>() else {
                 return Err(Bad::Value(
                     ErrorKind::Type,
-                    format!("keys of an object are strings, not {}", key.class().name()),
+                    tr!(
+                        "keys of an object are strings, not {class}",
+                        class = key.class().name()
+                    ),
                 ));
             };
             let inner = to_value(shared, vm, &value)?;
@@ -269,12 +276,18 @@ pub(super) fn to_value(
         }
         return Err(Bad::Value(
             ErrorKind::Value,
-            format!("{x} cannot be stored: NaN and infinity are not allowed"),
+            tr!(
+                "{x} cannot be stored: NaN and infinity are not allowed",
+                x = x
+            ),
         ));
     }
     Err(Bad::Value(
         ErrorKind::Type,
-        format!("a {} cannot be stored in a node", obj.class().name()),
+        tr!(
+            "a {class} cannot be stored in a node",
+            class = obj.class().name()
+        ),
     ))
 }
 
@@ -300,7 +313,7 @@ fn array_of(shared: &Rc<Shared>, vm: &VirtualMachine, items: &[PyObjectRef]) -> 
         if matches!(value, Value::Null) {
             return Err(Bad::Value(
                 ErrorKind::Type,
-                "None cannot be an item of an array".to_owned(),
+                tr!("None cannot be an item of an array").to_owned(),
             ));
         }
         out.push(Node::new(value));
@@ -335,7 +348,12 @@ fn date_from_py(vm: &VirtualMachine, obj: &PyObject) -> Result<Value, Bad> {
     );
     NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32)
         .map(Value::Date)
-        .ok_or_else(|| Bad::Value(ErrorKind::Value, format!("{y}-{m}-{d} is not a date")))
+        .ok_or_else(|| {
+            Bad::Value(
+                ErrorKind::Value,
+                tr!("{y}-{m}-{d} is not a date", y = y, m = m, d = d),
+            )
+        })
 }
 
 fn datetime_from_py(vm: &VirtualMachine, obj: &PyObject) -> Result<Value, Bad> {
@@ -354,7 +372,7 @@ fn datetime_from_py(vm: &VirtualMachine, obj: &PyObject) -> Result<Value, Bad> {
     let (Some(date), Some(time)) = (date, time) else {
         return Err(Bad::Value(
             ErrorKind::Value,
-            "that is not a date and time".to_owned(),
+            tr!("that is not a date and time").to_owned(),
         ));
     };
     let naive = NaiveDateTime::new(date, time);
@@ -373,7 +391,7 @@ fn datetime_from_py(vm: &VirtualMachine, obj: &PyObject) -> Result<Value, Bad> {
         .ok_or_else(|| {
             Bad::Value(
                 ErrorKind::Value,
-                "that time zone offset is not valid".to_owned(),
+                tr!("that time zone offset is not valid").to_owned(),
             )
         })
 }
@@ -450,7 +468,7 @@ pub(super) fn failure(
         return Failure {
             error: ErrorValue {
                 kind: ErrorKind::Na,
-                message: "not available".to_owned(),
+                message: tr!("not available").to_owned(),
                 origin: None,
             },
             traceback: Some(traceback),
@@ -476,7 +494,7 @@ pub(super) fn failure(
         return Failure {
             error: ErrorValue {
                 kind: ErrorKind::Timeout,
-                message: "the formula ran out of time".to_owned(),
+                message: tr!("the formula ran out of time").to_owned(),
                 origin: None,
             },
             traceback: Some(traceback),
@@ -491,7 +509,7 @@ pub(super) fn failure(
         return Failure {
             error: ErrorValue {
                 kind: ErrorKind::Timeout,
-                message: "the formula ran out of time".to_owned(),
+                message: tr!("the formula ran out of time").to_owned(),
                 origin: None,
             },
             traceback: Some(traceback),

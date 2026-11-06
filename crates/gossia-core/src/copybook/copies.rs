@@ -3,6 +3,7 @@
 //! changed.
 
 use super::{Copybook, ParseError, Token, literal_words, parse_tokens, tokens};
+use gossia_i18n::tr;
 
 /// How deep members may copy in members.
 const DEPTH: usize = 10;
@@ -58,16 +59,22 @@ fn expand(
         let error = |message: String| ParseError { line, message };
         let end = (i..tokens.len())
             .find(|&k| tokens[k].ends)
-            .ok_or_else(|| error("this COPY statement has no period at its end".into()))?;
+            .ok_or_else(|| error(tr!("this COPY statement has no period at its end").into()))?;
         let statement = &tokens[i + 1..=end];
         let (name, pairs) = statement_of(statement).map_err(error)?;
         if depth >= DEPTH {
-            return Err(error(format!(
-                "COPY {name}: members copy in members more than {DEPTH} deep"
+            return Err(error(tr!(
+                "COPY {name}: members copy in members more than {DEPTH} deep",
+                name = name,
+                DEPTH = DEPTH
             )));
         }
-        let text = load(&name)
-            .ok_or_else(|| error(format!("COPY {name}: there is no member {name} to copy in")))?;
+        let text = load(&name).ok_or_else(|| {
+            error(tr!(
+                "COPY {name}: there is no member {name} to copy in",
+                name = name
+            ))
+        })?;
         let (member, end_comment) =
             super::tokens(&text).map_err(|e| error(format!("COPY {name}: {e}")))?;
         let member = expand(member, load, depth + 1)?;
@@ -123,7 +130,13 @@ fn statement_of(words: &[Token]) -> Result<(String, Vec<Pair>), String> {
             let text: Vec<&str> = rest[k + 1..].iter().map(|t| t.text.as_str()).collect();
             pairs = pairs_of(&text.join(" "))?;
         }
-        Some(word) => return Err(format!("COPY {name}: {word} is not understood here")),
+        Some(word) => {
+            return Err(tr!(
+                "COPY {name}: {word} is not understood here",
+                name = name,
+                word = word
+            ));
+        }
     }
     Ok((name, pairs))
 }
@@ -153,14 +166,14 @@ fn pairs_of(text: &str) -> Result<Vec<Pair>, String> {
         }
         let by = scan.operand()?;
         if by.1 != Some(false) || !by.0[0].eq_ignore_ascii_case("BY") {
-            return Err("REPLACING is a list of pairs, such as ==A== BY ==B==".into());
+            return Err(tr!("REPLACING is a list of pairs, such as ==A== BY ==B==").into());
         }
         let to = scan.operand()?;
         if from.0.is_empty() {
-            return Err("REPLACING looks for at least one word".into());
+            return Err(tr!("REPLACING looks for at least one word").into());
         }
         if mode != Mode::Words && (from.0.len() != 1 || to.0.len() > 1) {
-            return Err("LEADING and TRAILING replace part of one word".into());
+            return Err(tr!("LEADING and TRAILING replace part of one word").into());
         }
         pairs.push(Pair {
             from: from.0,
@@ -193,12 +206,12 @@ impl Scan<'_> {
         self.skip();
         let rest = &self.text[self.at..];
         if rest.is_empty() {
-            return Err("REPLACING ends before its pair does".into());
+            return Err(tr!("REPLACING ends before its pair does").into());
         }
         if let Some(inner) = rest.strip_prefix("==") {
             let end = inner
                 .find("==")
-                .ok_or("a pseudo-text of REPLACING has no == at its end")?;
+                .ok_or(tr!("a pseudo-text of REPLACING has no == at its end"))?;
             self.at += 2 + end + 2;
             return Ok((literal_words(&inner[..end]), Some(true)));
         }

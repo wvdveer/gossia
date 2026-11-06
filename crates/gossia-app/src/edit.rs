@@ -447,7 +447,9 @@ impl GossiaApp {
             .filter(|f| {
                 needle.is_empty()
                     || f.name.to_lowercase().contains(&needle)
-                    || f.description.to_lowercase().contains(&needle)
+                    || gossia_i18n::tr(f.description)
+                        .to_lowercase()
+                        .contains(&needle)
             })
             .collect()
     }

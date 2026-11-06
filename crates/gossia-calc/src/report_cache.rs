@@ -19,6 +19,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use gossia_core::report::ReportDesign;
 use gossia_core::{DateTimeValue, ErrorKind, ErrorValue, Node, Value};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 use serde_json::{Map, Value as Json, json};
 use sha2::{Digest, Sha256};
@@ -127,7 +128,7 @@ pub fn value_from_json(json: &Json) -> Result<Value, String> {
         Json::Bool(b) => Value::Bool(*b),
         Json::Number(n) => match n.as_i64() {
             Some(i) => Value::Int(i),
-            None => Value::Float(n.as_f64().ok_or("a number that does not fit")?),
+            None => Value::Float(n.as_f64().ok_or(tr!("a number that does not fit"))?),
         },
         Json::String(s) => Value::Str(s.clone()),
         Json::Array(items) => Value::Array(
@@ -141,7 +142,7 @@ pub fn value_from_json(json: &Json) -> Result<Value, String> {
                 .then(|| object.iter().next())
                 .flatten()
                 .filter(|(k, _)| k.starts_with('$'));
-            let text = |v: &Json| v.as_str().map(str::to_owned).ok_or("a tag of no text");
+            let text = |v: &Json| v.as_str().map(str::to_owned).ok_or(tr!("a tag of no text"));
             match tag {
                 Some((k, v)) if k == "$date" => {
                     Value::Date(text(v)?.parse::<NaiveDate>().map_err(|e| e.to_string())?)
@@ -161,8 +162,9 @@ pub fn value_from_json(json: &Json) -> Result<Value, String> {
                 Some((k, v)) if k == "$error" => {
                     let code = v.get("kind").and_then(Json::as_str).unwrap_or_default();
                     Value::Error(ErrorValue {
-                        kind: ErrorKind::from_code(code)
-                            .ok_or_else(|| format!("{code:?} is not an error"))?,
+                        kind: ErrorKind::from_code(code).ok_or_else(|| {
+                            tr!("{code} is not an error", code = format!("{code:?}"))
+                        })?,
                         message: v
                             .get("message")
                             .and_then(Json::as_str)
@@ -175,7 +177,7 @@ pub fn value_from_json(json: &Json) -> Result<Value, String> {
                     let inner = v.as_object().ok_or("$object holds no object")?;
                     object_of(inner)?
                 }
-                Some((k, _)) => return Err(format!("{k} is not a tag this version knows")),
+                Some((k, _)) => return Err(tr!("{k} is not a tag this version knows", k = k)),
                 None => object_of(object)?,
             }
         }
@@ -207,7 +209,7 @@ fn values_from_json(json: Option<&Json>) -> Result<IndexMap<String, Value>, Stri
             .iter()
             .map(|(k, j)| value_from_json(j).map(|v| (k.clone(), v)))
             .collect(),
-        Some(_) => Err("parameters are an object".to_owned()),
+        Some(_) => Err(tr!("parameters are an object").to_owned()),
     }
 }
 
@@ -262,8 +264,9 @@ impl ReportCache {
         let json: Json = serde_json::from_str(text).map_err(|e| e.to_string())?;
         let version = json.get("version").and_then(Json::as_u64).unwrap_or(0);
         if version > CACHE_VERSION {
-            return Err(format!(
-                "it was written by a newer version (cache version {version})"
+            return Err(tr!(
+                "it was written by a newer version (cache version {version})",
+                version = version
             ));
         }
         let text_of = |k: &str| {
@@ -280,10 +283,10 @@ impl ReportCache {
                     .map(|i| {
                         i.as_u64()
                             .map(|n| n as usize)
-                            .ok_or_else(|| "a place is a whole number".to_owned())
+                            .ok_or_else(|| tr!("a place is a whole number").to_owned())
                     })
                     .collect(),
-                Some(_) => Err("a place is a list".to_owned()),
+                Some(_) => Err(tr!("a place is a list").to_owned()),
             }
         };
         let mut results = IndexMap::new();
@@ -297,7 +300,7 @@ impl ReportCache {
                 .get("kind")
                 .and_then(Json::as_str)
                 .and_then(kind_of)
-                .ok_or("a result of no kind this version knows")?;
+                .ok_or(tr!("a result of no kind this version knows"))?;
             let key = (
                 indices(entry.get("at"))?,
                 entry

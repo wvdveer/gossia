@@ -7,6 +7,7 @@
 //! as `#SOURCE!`.
 
 use gossia_core::Path;
+use gossia_i18n::tr;
 use serde_json::{Map, Value as Json, json};
 
 use super::shared::Shared;
@@ -22,7 +23,10 @@ pub(super) fn access(shared: &Shared, op: &str, payload: &str) -> String {
             note_read(shared, op, &payload);
             cached(shared, op, &payload)
         }
-        Err(e) => Err(format!("a request to the data sources did not parse: {e}")),
+        Err(e) => Err(tr!(
+            "a request to the data sources did not parse: {e}",
+            e = e
+        )),
     };
     if shared.waiting.get() {
         // The prelude stops what runs; it runs again with the answer.
@@ -91,8 +95,8 @@ fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
             let replace = payload["replace"].as_bool().unwrap_or(false);
             let def = SourceDef::from_settings(name, kind, settings)?;
             store.save(def, None, replace).map_err(|e| match replace {
-                false if e.contains("already defined") => {
-                    format!("{e}: pass replace=True to replace it")
+                false if e == crate::sources::already_defined(name) => {
+                    tr!("{e}: pass replace=True to replace it", e = e)
                 }
                 _ => e,
             })?;
@@ -122,7 +126,7 @@ fn run(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         "query" | "execute" => call_sql(shared, op, payload),
         "journal" => call_journal(shared, payload),
         "xml" => read_xml(payload["text"].as_str().unwrap_or_default()),
-        _ => Err(format!("{op} is not a request the data sources know")),
+        _ => Err(tr!("{op} is not a request the data sources know", op = op)),
     }
 }
 
@@ -132,15 +136,17 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
     let name = payload["name"].as_str().unwrap_or_default();
     let def = store.get(name)?.ok_or_else(|| missing(name))?;
     if def.kind == SourceKind::Beancount {
-        return Err(format!(
+        return Err(tr!(
             "{name} is a Beancount journal: it is read with transactions(), balance(), \
-             accounts() and prices(), not with HTTP methods"
+             accounts() and prices(), not with HTTP methods",
+            name = name
         ));
     }
     if def.kind != SourceKind::Http {
-        return Err(format!(
-            "{name} is a {} source: it is read with query(), not with HTTP methods",
-            def.kind.label()
+        return Err(tr!(
+            "{name} is a {kind} source: it is read with query(), not with HTTP methods",
+            name = name,
+            kind = def.kind.label()
         ));
     }
     let method = payload["method"]
@@ -149,15 +155,18 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
         .to_ascii_uppercase();
     if method != "GET" {
         if !def.writes {
-            return Err(format!(
+            return Err(tr!(
                 "{name} does not allow writes, so {method} is refused: tick Allow writes in its \
-                 definition (Tools > Data sources...)"
+                 definition (Tools > Data sources...)",
+                name = name,
+                method = method
             ));
         }
         if !shared.side_effects.get() {
-            return Err(format!(
+            return Err(tr!(
                 "{method} changes data, so it can be used only in a button procedure or the \
-                 Immediate window, not in a formula"
+                 Immediate window, not in a formula",
+                method = method
             ));
         }
     }
@@ -247,7 +256,8 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
 /// and the text of an element that has attributes too is `#text`.
 fn read_xml(text: &str) -> Result<Json, String> {
     use gossia_core::{infer, xml, xmltree, xsd};
-    let doc = xmltree::parse(text).map_err(|e| format!("the body is not well-formed XML: {e}"))?;
+    let doc =
+        xmltree::parse(text).map_err(|e| tr!("the body is not well-formed XML: {e}", e = e))?;
     let inference = infer::infer_xsd(&doc)?;
     let spec = xsd::lower_str(&inference.text).map_err(|e| e.to_string())?;
     let parsed = xml::parse(text, &spec).map_err(|e| e.to_string())?;
@@ -261,14 +271,18 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
     let name = payload["name"].as_str().unwrap_or_default();
     let def = store.get(name)?.ok_or_else(|| missing(name))?;
     if def.kind == SourceKind::Http {
-        return Err(format!(
-            "{name} is an HTTP source: it is read with get(), not with {op}()"
+        return Err(tr!(
+            "{name} is an HTTP source: it is read with get(), not with {op}()",
+            name = name,
+            op = op
         ));
     }
     if def.kind == SourceKind::Beancount {
-        return Err(format!(
+        return Err(tr!(
             "{name} is a Beancount journal: it is read with transactions(), balance(), \
-             accounts() and prices(), not with {op}()"
+             accounts() and prices(), not with {op}()",
+            name = name,
+            op = op
         ));
     }
     let server = def.kind.is_database();
@@ -289,17 +303,18 @@ fn call_sql(shared: &Shared, op: &str, payload: &Json) -> Result<Json, String> {
         });
     }
     if !def.writes {
-        return Err(format!(
+        return Err(tr!(
             "{name} does not allow writes, so execute() is refused: tick Allow writes in its \
-             definition (Tools > Data sources...)"
+             definition (Tools > Data sources...)",
+            name = name
         ));
     }
     if !shared.side_effects.get() {
-        return Err(
+        return Err(tr!(
             "execute() changes data, so it can be used only in a button procedure or \
              the Immediate window, not in a formula"
-                .to_owned(),
-        );
+        )
+        .to_owned());
     }
     let changed = unwatched(shared, || match server {
         true => database::execute(&def, sql, params, limits),
@@ -319,9 +334,11 @@ fn call_journal(shared: &Shared, payload: &Json) -> Result<Json, String> {
             SourceKind::Http => "get()",
             _ => "query()",
         };
-        return Err(format!(
-            "{name} is a {} source, not a Beancount journal: it is read with {how}",
-            def.kind.label()
+        return Err(tr!(
+            "{name} is a {kind} source, not a Beancount journal: it is read with {how}",
+            name = name,
+            kind = def.kind.label(),
+            how = how
         ));
     }
     let method = payload["method"].as_str().unwrap_or_default();
@@ -330,17 +347,18 @@ fn call_journal(shared: &Shared, payload: &Json) -> Result<Json, String> {
         return unwatched(shared, || journal::read_call(&def, method, args));
     }
     if !def.writes {
-        return Err(format!(
+        return Err(tr!(
             "{name} does not allow writes, so add() is refused: tick Allow writes in its \
-             definition (Tools > Data sources...)"
+             definition (Tools > Data sources...)",
+            name = name
         ));
     }
     if !shared.side_effects.get() {
-        return Err(
+        return Err(tr!(
             "add() changes the journal, so it can be used only in a button procedure or \
              the Immediate window, not in a formula"
-                .to_owned(),
-        );
+        )
+        .to_owned());
     }
     unwatched(shared, || journal::append(&def, args))
 }
@@ -365,7 +383,7 @@ fn send(
         Some(answer) => answer,
         None => {
             shared.waiting.set(true);
-            Err("waiting for the host's answer".to_owned())
+            Err(tr!("waiting for the host's answer").to_owned())
         }
     }
 }
@@ -391,7 +409,10 @@ fn info(def: &SourceDef) -> Json {
 }
 
 fn missing(name: &str) -> String {
-    format!("no data source called {name} is defined on this computer")
+    tr!(
+        "no data source called {name} is defined on this computer",
+        name = name
+    )
 }
 
 /// `define` and `check` change things or wait, so they are for button
@@ -401,8 +422,9 @@ fn side_effects_allowed(shared: &Shared, what: &str) -> Result<(), String> {
     if shared.side_effects.get() {
         Ok(())
     } else {
-        Err(format!(
-            "{what} can be used only in a button procedure or the Immediate window, not in a formula"
+        Err(tr!(
+            "{what} can be used only in a button procedure or the Immediate window, not in a formula",
+            what = what
         ))
     }
 }

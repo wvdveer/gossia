@@ -282,16 +282,22 @@ impl GossiaApp {
                         tr!("Each page on the paper of the page setup, as the page view shows it.")
                     }
                     (true, true) => {
-                        "Each page as the page view shows it, in one file with no scripts; \
+                        tr!(
+                            "Each page as the page view shows it, in one file with no scripts; \
                          printed, each page goes on a sheet of the paper of the page setup."
+                        )
                     }
                     (false, false) => {
-                        "One page, as wide as the paper of the page setup less its margins, \
+                        tr!(
+                            "One page, as wide as the paper of the page setup less its margins, \
                          and as tall as the report."
+                        )
                     }
                     (false, true) => {
-                        "The report as it is shown, in one file with no scripts, as wide as \
+                        tr!(
+                            "The report as it is shown, in one file with no scripts, as wide as \
                          the paper of the page setup less its margins."
+                        )
                     }
                 });
                 if has_params {

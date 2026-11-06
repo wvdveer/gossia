@@ -5,6 +5,7 @@
 //! `2026-10-29`, a number as `12.5`, bytes as `\x...`. Results come back in
 //! PostgreSQL's binary form and are read here by their type.
 
+use gossia_i18n::tr;
 use std::error::Error as StdError;
 use std::time::Duration;
 
@@ -16,7 +17,7 @@ use bytes::BytesMut;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
 use serde_json::Value as Json;
 
-use super::{Rows, bytes_json, decimal_json, json_bytes, plural};
+use super::{Rows, bytes_json, count_mismatch, decimal_json, json_bytes};
 use crate::sources::{SourceDef, TlsMode};
 
 pub(super) fn open(def: &SourceDef, timeout: Duration) -> Result<Client, String> {
@@ -52,7 +53,7 @@ pub(super) fn open(def: &SourceDef, timeout: Duration) -> Result<Client, String>
         .danger_accept_invalid_certs(unchecked)
         .danger_accept_invalid_hostnames(unchecked)
         .build()
-        .map_err(|e| format!("{}: TLS cannot be set up: {e}", def.name))?;
+        .map_err(|e| tr!("{name}: TLS cannot be set up: {e}", name = def.name, e = e))?;
     let tls = postgres_native_tls::MakeTlsConnector::new(connector);
     // The driver's connect timeout covers only the TCP connect: a server that
     // accepts and then says nothing would hold the sign-in forever. So it
@@ -68,9 +69,11 @@ pub(super) fn open(def: &SourceDef, timeout: Duration) -> Result<Client, String>
     match receiver.recv_timeout(timeout.max(Duration::from_millis(1))) {
         Ok(Ok(client)) => Ok(client),
         Ok(Err(e)) => Err(format!("{}: {host}:{port}: {}", def.name, describe(&e))),
-        Err(_) => Err(format!(
-            "{}: {host}:{port}: the server did not answer within the call timeout",
-            def.name
+        Err(_) => Err(tr!(
+            "{name}: {host}:{port}: the server did not answer within the call timeout",
+            name = def.name,
+            host = host,
+            port = port
         )),
     }
 }
@@ -143,29 +146,21 @@ fn bind(def: &SourceDef, params: &Json, wanted: usize) -> Result<Vec<Text>, Stri
         Json::Null => Vec::new(),
         Json::Array(values) => values.clone(),
         Json::Object(_) => {
-            return Err(format!(
-                "{}: PostgreSQL takes the parameters as a list, for $1, $2 and so on, \
+            return Err(tr!(
+                "{name}: PostgreSQL takes the parameters as a list, for $1, $2 and so on, \
                  not as a dict",
-                def.name
+                name = def.name
             ));
         }
         _ => {
-            return Err(format!(
-                "{}: the parameters are a list, for $1, $2 and so on",
-                def.name
+            return Err(tr!(
+                "{name}: the parameters are a list, for $1, $2 and so on",
+                name = def.name
             ));
         }
     };
     if values.len() != wanted {
-        return Err(format!(
-            "{}: the SQL has {}, and {} given",
-            def.name,
-            plural(wanted, "parameter", "parameters"),
-            match values.len() {
-                1 => "1 value was".to_owned(),
-                n => format!("{n} values were"),
-            }
-        ));
+        return Err(count_mismatch(&def.name, wanted, values.len()));
     }
     values.iter().map(|v| Text::of(def, v)).collect()
 }
@@ -188,7 +183,11 @@ impl Text {
                     bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
                 )),
                 None => {
-                    return Err(format!("{}: {other} cannot be passed to SQL", def.name));
+                    return Err(tr!(
+                        "{name}: {other} cannot be passed to SQL",
+                        name = def.name,
+                        other = other
+                    ));
                 }
             },
         }))
@@ -280,9 +279,10 @@ fn read(def: &SourceDef, column: &str, ty: &Type, raw: Option<&[u8]>) -> Result<
         return Ok(Json::Null);
     };
     let bad = || {
-        format!(
-            "{}: the value of column {column} did not arrive whole",
-            def.name
+        tr!(
+            "{name}: the value of column {column} did not arrive whole",
+            name = def.name,
+            column = column
         )
     };
     let be = |n: usize| -> Result<[u8; 8], String> {
@@ -366,11 +366,12 @@ fn read(def: &SourceDef, column: &str, ty: &Type, raw: Option<&[u8]>) -> Result<
         }
         _ if matches!(ty.kind(), Kind::Enum(_)) || ty.name() == "citext" => text(),
         _ => {
-            return Err(format!(
-                "{}: column {column} is of type {}, which cannot be read yet: cast it in the \
+            return Err(tr!(
+                "{name}: column {column} is of type {ty}, which cannot be read yet: cast it in the \
                  SQL, for example {column}::text",
-                def.name,
-                ty.name()
+                name = def.name,
+                column = column,
+                ty = ty.name()
             ));
         }
     })

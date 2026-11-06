@@ -652,6 +652,11 @@ impl GossiaApp {
         // the preferences, or the host's); here it follows a change.
         if want.language != before.language {
             gossia_i18n::set_language(self.language_for(want.language));
+            // The worker of the web version is told the language with the
+            // engine's settings, so they are given again.
+            if cfg!(target_family = "wasm") {
+                self.applied = None;
+            }
         }
         self.apply_cjk_font(ctx);
         self.appearance_applied = Some(want);

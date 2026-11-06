@@ -17,6 +17,7 @@
 //! worker together. Until then nothing else is started, and the time waited
 //! does not count against a formula's limit.
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
@@ -346,18 +347,18 @@ impl Evaluator {
             self.finished_immediate.push_back(ImmediateResult {
                 id: immediate.id,
                 text: immediate.text,
-                result: Err(
+                result: Err(tr!(
                     "#TIMEOUT!: the expression did not stop when its time ran out and was \
                      ended"
-                        .to_owned(),
-                ),
+                )
+                .to_owned()),
             });
             return;
         }
         if let Some(call) = running.call {
             let failure = Failure::new(
                 ErrorKind::Timeout,
-                "the procedure did not stop when its time ran out and was ended",
+                tr!("the procedure did not stop when its time ran out and was ended"),
             );
             self.finished_calls
                 .push_back(ProcedureResult::failed(running.version, call, failure));
@@ -365,7 +366,7 @@ impl Evaluator {
         }
         let error = ErrorValue {
             kind: ErrorKind::Timeout,
-            message: "the formula did not stop when its time ran out and was ended".to_owned(),
+            message: tr!("the formula did not stop when its time ran out and was ended").to_owned(),
             origin: Some(loc.path.clone()),
         };
         self.done.push_back(Evaluation {

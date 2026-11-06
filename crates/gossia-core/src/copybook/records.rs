@@ -7,6 +7,7 @@
 //! message ends with the bytes (`X'4040'`), and such a value is written back
 //! as those bytes, so a record goes in and comes out unchanged.
 
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use super::FloatFormat;
@@ -40,11 +41,11 @@ pub fn read(bytes: &[u8], layout: &Layout, choices: &[usize]) -> Result<Parsed, 
         &padded[..]
     } else if bytes.len() != layout.length {
         return Err(ReadError {
-            message: format!(
-                "the file has {} bytes, and a record of {} has {}",
-                bytes.len(),
-                layout.record,
-                layout.length
+            message: tr!(
+                "the file has {bytes} bytes, and a record of {record} has {length}",
+                bytes = bytes.len(),
+                record = layout.record,
+                length = layout.length
             ),
         });
     } else {
@@ -96,11 +97,12 @@ fn variable_record(record: &[u8], layout: &Layout) -> Result<Vec<u8>, ReadError>
     let used = used_length(&padded, layout);
     if record.len() != used && record.len() != layout.length {
         return Err(ReadError {
-            message: format!(
-                "the record descriptor word says the record has {} bytes, and a record of {} \
+            message: tr!(
+                "the record descriptor word says the record has {count} bytes, and a record of {record} \
                  with the items its tables say they hold has {used}",
-                record.len(),
-                layout.record
+                count = record.len(),
+                record = layout.record,
+                used = used
             ),
         });
     }
@@ -329,10 +331,7 @@ impl Reader<'_> {
         if usize::try_from(value).ok() != Some(count) {
             self.warnings.push(Warning {
                 path: path.clone(),
-                message: format!(
-                    "{} says {value} items, but the table holds {min} to {max}, so {count} were read",
-                    counter.name
-                ),
+                message: tr!("{name} says {value} items, but the table holds {min} to {max}, so {count} were read", name = counter.name, value = value, min = min, max = max, count = count),
             });
         }
         count
@@ -343,9 +342,10 @@ impl Reader<'_> {
 fn bad_bytes(name: &str, bytes: &[u8]) -> Value {
     Value::Error(ErrorValue {
         kind: ErrorKind::Value,
-        message: format!(
-            "{name} holds bytes that are not a number: X'{}'",
-            hex(bytes)
+        message: tr!(
+            "{name} holds bytes that are not a number: X'{bytes}'",
+            name = name,
+            bytes = hex(bytes)
         ),
         origin: None,
     })
@@ -436,13 +436,13 @@ pub fn decode_float(bytes: &[u8], format: FloatFormat) -> Option<Value> {
 /// Writes a floating point number into its 4 or 8 bytes.
 pub fn encode_float(value: f64, format: FloatFormat, field: &mut [u8]) -> Result<(), String> {
     if !value.is_finite() {
-        return Err("it is not a finite number".into());
+        return Err(tr!("it is not a finite number").into());
     }
     match (format, field.len()) {
         (FloatFormat::Ieee, 4) => {
             let single = value as f32;
             if !single.is_finite() {
-                return Err(format!("{value} is too large for a COMP-1"));
+                return Err(tr!("{value} is too large for a COMP-1", value = value));
             }
             field.copy_from_slice(&single.to_be_bytes());
         }
@@ -471,7 +471,10 @@ pub fn encode_float(value: f64, format: FloatFormat, field: &mut [u8]) -> Result
                 exponent += 1;
             }
             if exponent + 64 > 127 {
-                return Err(format!("{value} is too large for its floating point bytes"));
+                return Err(tr!(
+                    "{value} is too large for its floating point bytes",
+                    value = value
+                ));
             }
             if exponent + 64 < 0 {
                 // Too small to hold: zero.
@@ -483,7 +486,7 @@ pub fn encode_float(value: f64, format: FloatFormat, field: &mut [u8]) -> Result
                 *b = ((mantissa >> (8 * i)) & 0xFF) as u8;
             }
         }
-        _ => return Err("a floating point item has 4 or 8 bytes".into()),
+        _ => return Err(tr!("a floating point item has 4 or 8 bytes").into()),
     }
     Ok(())
 }
@@ -581,7 +584,10 @@ pub fn write_record(record: &Node, layout: &Layout, path: &Path) -> Result<Vec<u
     let Value::Object(fields) = record.value() else {
         return Err(WriteError {
             path: path.clone(),
-            message: format!("a {} record is a table of its fields", layout.record),
+            message: tr!(
+                "a {record} record is a table of its fields",
+                record = layout.record
+            ),
         });
     };
     let writer = Writer { layout };
@@ -633,18 +639,21 @@ impl Writer<'_> {
                         Some(_) => {
                             return Err(WriteError {
                                 path: here,
-                                message: format!("{} is a table, a list of items", slot.name),
+                                message: tr!(
+                                    "{name} is a table, a list of items",
+                                    name = slot.name
+                                ),
                             });
                         }
                     };
                     if items.len() > occurs.max {
                         return Err(WriteError {
                             path: here,
-                            message: format!(
-                                "{} has {} items, more than the {} it has room for",
-                                slot.name,
-                                items.len(),
-                                occurs.max
+                            message: tr!(
+                                "{name} has {items} items, more than the {max} it has room for",
+                                name = slot.name,
+                                items = items.len(),
+                                max = occurs.max
                             ),
                         });
                     }
@@ -693,9 +702,9 @@ impl Writer<'_> {
                     field.copy_from_slice(&kept);
                     Ok(())
                 }
-                None => Err(refuse(format!(
-                    "it holds an error ({}), which cannot be written",
-                    e.kind.code()
+                None => Err(refuse(tr!(
+                    "it holds an error ({kind}), which cannot be written",
+                    kind = e.kind.code()
                 ))),
             };
         }
@@ -707,7 +716,7 @@ impl Writer<'_> {
                 None | Some(Value::Null) => {
                     self.group(children, &IndexMap::new(), bytes, start, path)?;
                 }
-                Some(_) => return Err(refuse("it is a group, a table of fields".into())),
+                Some(_) => return Err(refuse(tr!("it is a group, a table of fields").into())),
             },
             Element::Text => {
                 let text = match value {
@@ -717,19 +726,20 @@ impl Writer<'_> {
                     Some(Value::Float(x)) => x.to_string(),
                     Some(Value::Bool(b)) => b.to_string(),
                     Some(Value::Date(d)) => d.format("%Y-%m-%d").to_string(),
-                    Some(_) => return Err(refuse("it is text".into())),
+                    Some(_) => return Err(refuse(tr!("it is text").into())),
                 };
                 let encoded = self.layout.code_page.encode(&text).map_err(|c| {
-                    refuse(format!(
-                        "code page {} has no {c:?}",
-                        self.layout.code_page.code()
+                    refuse(tr!(
+                        "code page {code_page} has no {c}",
+                        code_page = self.layout.code_page.code(),
+                        c = format!("{c:?}")
                     ))
                 })?;
                 if encoded.len() > field.len() {
-                    return Err(refuse(format!(
-                        "the text has {} characters, more than its {}",
-                        encoded.len(),
-                        field.len()
+                    return Err(refuse(tr!(
+                        "the text has {encoded} characters, more than its {field}",
+                        encoded = encoded.len(),
+                        field = field.len()
                     )));
                 }
                 field.fill(self.layout.code_page.space());
@@ -743,11 +753,11 @@ impl Writer<'_> {
                     Some(Value::Float(x)) => {
                         let v = (x * unit).round();
                         if !v.is_finite() || v.abs() >= 1e36 {
-                            return Err(refuse("the number is too large".into()));
+                            return Err(refuse(tr!("the number is too large").into()));
                         }
                         v as i128
                     }
-                    Some(_) => return Err(refuse("it is a number".into())),
+                    Some(_) => return Err(refuse(tr!("it is a number").into())),
                 };
                 encode(scaled, n, field).map_err(refuse)?;
             }
@@ -756,7 +766,7 @@ impl Writer<'_> {
                     None | Some(Value::Null) => 0.0,
                     Some(Value::Int(v)) => *v as f64,
                     Some(Value::Float(x)) => *x,
-                    Some(_) => return Err(refuse("it is a number".into())),
+                    Some(_) => return Err(refuse(tr!("it is a number").into())),
                 };
                 encode_float(x, self.layout.float, field).map_err(refuse)?;
             }
@@ -769,14 +779,14 @@ impl Writer<'_> {
 /// the bytes of its field.
 fn encode(value: i128, n: &Numeric, field: &mut [u8]) -> Result<(), String> {
     if value < 0 && !n.signed {
-        return Err("it has no sign, so it cannot be negative".into());
+        return Err(tr!("it has no sign, so it cannot be negative").into());
     }
     let limit = 10_i128.pow(n.digits);
     if n.usage != NumUsage::Native && value.abs() >= limit {
-        return Err(format!(
-            "{} is too large for its {} digits",
-            value_text(value, n.scale),
-            n.digits
+        return Err(tr!(
+            "{value} is too large for its {digits} digits",
+            value = value_text(value, n.scale),
+            digits = n.digits
         ));
     }
     let negative = value < 0;
@@ -839,10 +849,10 @@ fn encode(value: i128, n: &Numeric, field: &mut [u8]) -> Result<(), String> {
                 (0, (1_i128 << bits) - 1)
             };
             if value < low || value > high {
-                return Err(format!(
-                    "{} does not fit in its {} bytes",
-                    value_text(value, n.scale),
-                    field.len()
+                return Err(tr!(
+                    "{value} does not fit in its {count} bytes",
+                    value = value_text(value, n.scale),
+                    count = field.len()
                 ));
             }
             let mut v = value;

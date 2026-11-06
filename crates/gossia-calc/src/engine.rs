@@ -13,6 +13,7 @@
 //! be moved between threads, so it is made on the thread that evaluates and is
 //! not required to be `Send`.
 
+use gossia_i18n::tr;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -352,7 +353,7 @@ pub trait Engine {
         let _ = (call, ctx);
         Err(Failure::new(
             ErrorKind::Name,
-            "this engine cannot run button procedures",
+            tr!("this engine cannot run button procedures"),
         ))
     }
 

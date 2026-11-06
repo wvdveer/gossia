@@ -4,6 +4,7 @@
 //! trusted too. A chart on a report becomes one expression: its chart
 //! function called with the expression of each parameter.
 
+use gossia_i18n::tr;
 use std::sync::OnceLock;
 
 use gossia_core::form::{CHART_SIZE, Control, ControlKind};
@@ -109,10 +110,14 @@ impl Calc {
                 if let Some(t) = taken {
                     let by = match &t.module {
                         _ if t.module.as_deref() == Some(module) => {
-                            format!("{} in this module", t.function)
+                            tr!("{function} in this module", function = t.function)
                         }
-                        Some(other) => format!("{} of module {other}", t.function),
-                        None => "a built-in chart type".to_owned(),
+                        Some(other) => tr!(
+                            "{function} of module {other}",
+                            function = t.function,
+                            other = other
+                        ),
+                        None => tr!("a built-in chart type").to_owned(),
                     };
                     clashes.push((module.clone(), i, by));
                     clashed = true;
@@ -154,9 +159,10 @@ impl Calc {
                 (
                     c.at.0,
                     c.at.1,
-                    format!(
-                        "the chart type name {} is taken by {by}, so the module is not loaded",
-                        c.name
+                    tr!(
+                        "the chart type name {name} is taken by {by}, so the module is not loaded",
+                        name = c.name,
+                        by = by
                     ),
                 )
             })
@@ -174,7 +180,7 @@ impl Calc {
         }
         let name = control.chart.as_deref()?;
         let Some(chart) = self.chart_type(name) else {
-            return Some(Err(format!("there is no chart type named {name}")));
+            return Some(Err(tr!("there is no chart type named {name}", name = name)));
         };
         let mut args: Vec<String> = Vec::new();
         let mut missing: Vec<&str> = Vec::new();
@@ -187,7 +193,11 @@ impl Calc {
             match text {
                 Some(text) => {
                     if let Err(e) = self.syntax.check(text) {
-                        return Some(Err(format!("syntax error in {}: {e}", p.name)));
+                        return Some(Err(tr!(
+                            "syntax error in {name}: {e}",
+                            name = p.name,
+                            e = e
+                        )));
                     }
                     // On lines of their own, so a comment at the end of one
                     // does not swallow the rest.
@@ -201,7 +211,7 @@ impl Calc {
             return None;
         }
         if !missing.is_empty() {
-            return Some(Err(format!("fill in {}", missing.join(", "))));
+            return Some(Err(tr!("fill in {missing}", missing = missing.join(", "))));
         }
         let width = control.width.unwrap_or(CHART_SIZE.0);
         let height = control.height.unwrap_or(CHART_SIZE.1);

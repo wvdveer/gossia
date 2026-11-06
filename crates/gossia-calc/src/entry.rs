@@ -8,6 +8,7 @@
 //! text `=total`. A literal that does not fit the type or its constraints is
 //! refused here, so the editors never put invalid data in.
 
+use gossia_i18n::tr;
 use std::fmt;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
@@ -41,7 +42,7 @@ pub enum EntryError {
 impl fmt::Display for EntryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EntryError::NotInSchema => f.write_str("the schema defines no node here"),
+            EntryError::NotInSchema => f.write_str(tr!("the schema defines no node here")),
             EntryError::Invalid(message) => f.write_str(message),
             EntryError::Refused(e) => e.fmt(f),
         }
@@ -95,14 +96,14 @@ pub fn classify(spec: &TypeSpec, path: &Path, text: &str) -> Result<Entered, Ent
 
 /// Reads `text` as a value of the given kind, without checking constraints.
 pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
-    let invalid = |what: &str| EntryError::Invalid(format!("{what} is expected here"));
+    let invalid = |what: &str| EntryError::Invalid(tr!("{what} is expected here", what = what));
     match kind {
         Kind::String(_) | Kind::Enum { .. } => Ok(Value::Str(text.to_owned())),
         Kind::Integer(_) => text
             .trim()
             .parse::<i64>()
             .map(Value::Int)
-            .map_err(|_| invalid("a whole number")),
+            .map_err(|_| invalid(tr!("a whole number"))),
         Kind::Number(_) => {
             let t = text.trim();
             if let Ok(n) = t.parse::<i64>() {
@@ -116,11 +117,11 @@ pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
         Kind::Bool => match text.trim().to_ascii_lowercase().as_str() {
             "true" => Ok(Value::Bool(true)),
             "false" => Ok(Value::Bool(false)),
-            _ => Err(invalid("true or false")),
+            _ => Err(invalid(tr!("true or false"))),
         },
         Kind::Date => NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
             .map(Value::Date)
-            .map_err(|_| invalid("a date such as 2026-10-23")),
+            .map_err(|_| invalid(tr!("a date such as 2026-10-23"))),
         Kind::DateTime => {
             let t = text.trim();
             if let Ok(z) = DateTime::parse_from_rfc3339(t) {
@@ -128,7 +129,7 @@ pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
             }
             NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
                 .map(|n| Value::DateTime(DateTimeValue::Naive(n)))
-                .map_err(|_| invalid("a date and time such as 2026-10-23T14:30:00"))
+                .map_err(|_| invalid(tr!("a date and time such as 2026-10-23T14:30:00")))
         }
         // Any value: a whole number, a number, true or false, or else text.
         Kind::Any => {
@@ -149,8 +150,10 @@ pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
             })
         }
         Kind::Array { .. } | Kind::Object { .. } | Kind::Map { .. } => Err(EntryError::Invalid(
-            "this holds other values: edit them, or enter a formula that gives the whole value"
-                .to_owned(),
+            tr!(
+                "this holds other values: edit them, or enter a formula that gives the whole value"
+            )
+            .to_owned(),
         )),
     }
 }
@@ -254,7 +257,7 @@ fn enter_column_with(
         }
         Entered::Literal(_) => {
             return Err(EntryError::Invalid(
-                "a whole column holds a formula: start it with =".to_owned(),
+                tr!("a whole column holds a formula: start it with =").to_owned(),
             ));
         }
     }
@@ -267,7 +270,10 @@ fn enter_column_with(
 /// empty, because that would move the others; a text item becomes empty text.
 fn clear(calc: &mut Calc, sheet: &str, path: &Path) -> Result<(), EditError> {
     let in_array = matches!(path.segments().last(), Some(Segment::Index(_)));
-    calc.begin_entry(&format!("Clear {}", crate::Loc::new(sheet, path.clone())));
+    calc.begin_entry(&tr!(
+        "Clear {place}",
+        place = crate::Loc::new(sheet, path.clone())
+    ));
     let result = (|| {
         calc.remove_formula(sheet, path)?;
         if in_array {
@@ -280,7 +286,7 @@ fn clear(calc: &mut Calc, sheet: &str, path: &Path) -> Result<(), EditError> {
                 calc.set_value(sheet, path, Value::Str(String::new()))?;
             } else {
                 return Err(EditError::Path(
-                    "an item cannot be left empty; remove it instead".to_owned(),
+                    tr!("an item cannot be left empty; remove it instead").to_owned(),
                 ));
             }
         } else if calc.data(sheet).is_some_and(|d| d.get(path).is_some()) {

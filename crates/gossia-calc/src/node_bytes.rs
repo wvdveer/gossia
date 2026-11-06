@@ -11,6 +11,7 @@ use gossia_core::copybook::records;
 use gossia_core::dataformat::DataFormat;
 use gossia_core::xml::{self, XmlDocument};
 use gossia_core::{ErrorKind, ErrorValue, Kind, Node, Path, Segment, TypeSpec, Value};
+use gossia_i18n::tr;
 
 use crate::ColumnFormula;
 
@@ -46,7 +47,7 @@ pub(crate) fn raw(
 ) -> Result<Vec<u8>, ErrorValue> {
     let node = data
         .get(path)
-        .ok_or_else(|| value_error("there is no node there"))?;
+        .ok_or_else(|| value_error(tr!("there is no node there")))?;
     if let Value::Error(error) = node.value() {
         return Err(error.clone());
     }
@@ -58,13 +59,13 @@ pub(crate) fn raw(
             return Ok(records::with_rdw(&record, layout));
         }
         let (start, length) = records::place(layout, path)
-            .ok_or_else(|| value_error("the copybook has no field there"))?;
+            .ok_or_else(|| value_error(tr!("the copybook has no field there")))?;
         return Ok(record[start..start + length].to_vec());
     }
     let format = info.format.unwrap_or(DataFormat::Json);
     let ty = spec
         .resolve(path)
-        .ok_or_else(|| value_error("the schema defines no node there"))?
+        .ok_or_else(|| value_error(tr!("the schema defines no node there")))?
         .ty;
     let kind = &spec.get(ty).kind;
     let text = if !is_container(kind) {
@@ -105,22 +106,24 @@ pub(crate) fn read(
             // A record, or a variable-length record.
             return records::read(bytes, layout, &info.redefines)
                 .map(|parsed| parsed.node.value().clone())
-                .map_err(|e| value_error(format!("the formula gave {e}")));
+                .map_err(|e| value_error(tr!("the formula gave {e}", e = e)));
         }
         let (start, length) = records::place(layout, path)
-            .ok_or_else(|| value_error("the copybook has no field there"))?;
+            .ok_or_else(|| value_error(tr!("the copybook has no field there")))?;
         if bytes.len() != length {
-            return Err(value_error(format!(
-                "the formula gave {} bytes, and this field takes {length}",
-                bytes.len()
+            return Err(value_error(tr!(
+                "the formula gave {bytes} bytes, and this field takes {length}",
+                bytes = bytes.len(),
+                length = length
             )));
         }
         // The field's bytes, put in the record as the rest of it is now.
         let mut rest = data.clone();
         let _ = rest.remove(path);
         let mut record = records::write(&rest, layout).map_err(|e| {
-            value_error(format!(
-                "the record around this field cannot be written: {e}"
+            value_error(tr!(
+                "the record around this field cannot be written: {e}",
+                e = e
             ))
         })?;
         record[start..start + length].copy_from_slice(bytes);
@@ -128,15 +131,15 @@ pub(crate) fn read(
         return node
             .get(path)
             .map(|n| n.value().clone())
-            .ok_or_else(|| value_error("the bytes hold no value for this field"));
+            .ok_or_else(|| value_error(tr!("the bytes hold no value for this field")));
     }
     let text = std::str::from_utf8(bytes)
-        .map_err(|e| value_error(format!("the bytes are not UTF-8 text: {e}")))?;
+        .map_err(|e| value_error(tr!("the bytes are not UTF-8 text: {e}", e = e)))?;
     let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
     let format = info.format.unwrap_or(DataFormat::Json);
     let ty = spec
         .resolve(path)
-        .ok_or_else(|| value_error("the schema defines no node there"))?
+        .ok_or_else(|| value_error(tr!("the schema defines no node there")))?
         .ty;
     let kind = &spec.get(ty).kind;
     if !is_container(kind) {
@@ -155,7 +158,13 @@ pub(crate) fn read(
         let format = piece_format(format, kind, path);
         format
             .read(text)
-            .map_err(|e| value_error(format!("the bytes are not {}: {e}", format.label())))?
+            .map_err(|e| {
+                value_error(tr!(
+                    "the bytes are not {format}: {e}",
+                    format = format.label(),
+                    e = e
+                ))
+            })?
             .node
     };
     Ok(node.value().clone())

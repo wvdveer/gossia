@@ -6,6 +6,7 @@
 //! a loaded file that fails is kept and flagged, while a formula result that
 //! fails becomes an error value.
 
+use gossia_i18n::tr;
 use std::cmp::Ordering;
 
 use chrono::{DateTime, NaiveDate};
@@ -98,9 +99,10 @@ fn check(spec: &TypeSpec, ty: TypeId, node: &Node, path: &Path, issues: &mut Vec
             if !values.iter().any(|v| v == s) {
                 push(
                     IssueKind::Constraint,
-                    format!(
-                        "`{s}` is not one of the allowed values: {}",
-                        values.join(", ")
+                    tr!(
+                        "`{s}` is not one of the allowed values: {values}",
+                        s = s,
+                        values = values.join(", ")
                     ),
                 );
             }
@@ -123,20 +125,20 @@ fn check(spec: &TypeSpec, ty: TypeId, node: &Node, path: &Path, issues: &mut Vec
             if min_items.is_some_and(|m| nodes.len() < m) {
                 push(
                     IssueKind::Constraint,
-                    format!(
-                        "{} items, but at least {} are required",
-                        nodes.len(),
-                        min_items.unwrap_or(0)
+                    tr!(
+                        "{count} items, but at least {min_items} are required",
+                        count = nodes.len(),
+                        min_items = min_items.unwrap_or(0)
                     ),
                 );
             }
             if max_items.is_some_and(|m| nodes.len() > m) {
                 push(
                     IssueKind::Constraint,
-                    format!(
-                        "{} items, but at most {} are allowed",
-                        nodes.len(),
-                        max_items.unwrap_or(0)
+                    tr!(
+                        "{count} items, but at most {max_items} are allowed",
+                        count = nodes.len(),
+                        max_items = max_items.unwrap_or(0)
                     ),
                 );
             }
@@ -153,7 +155,7 @@ fn check(spec: &TypeSpec, ty: TypeId, node: &Node, path: &Path, issues: &mut Vec
                     None if field.required => issues.push(Issue {
                         path: path.clone(),
                         kind: IssueKind::MissingRequired,
-                        message: format!("the required field `{}` is missing", field.name),
+                        message: tr!("the required field `{name}` is missing", name = field.name),
                     }),
                     None => {}
                 }
@@ -163,7 +165,7 @@ fn check(spec: &TypeSpec, ty: TypeId, node: &Node, path: &Path, issues: &mut Vec
                     issues.push(Issue {
                         path: path.key(key.clone()),
                         kind: IssueKind::UndeclaredField,
-                        message: format!("`{key}` is not a field of this object"),
+                        message: tr!("`{key}` is not a field of this object", key = key),
                     });
                 }
             }
@@ -184,13 +186,21 @@ fn check_string(c: &StringConstraints, s: &str, push: &mut dyn FnMut(IssueKind, 
         if let Some(min) = c.min_length.filter(|min| len < *min) {
             push(
                 IssueKind::Constraint,
-                format!("{len} characters, but at least {min} are required"),
+                tr!(
+                    "{len} characters, but at least {min} are required",
+                    len = len,
+                    min = min
+                ),
             );
         }
         if let Some(max) = c.max_length.filter(|max| len > *max) {
             push(
                 IssueKind::Constraint,
-                format!("{len} characters, but at most {max} are allowed"),
+                tr!(
+                    "{len} characters, but at most {max} are allowed",
+                    len = len,
+                    max = max
+                ),
             );
         }
     }
@@ -199,20 +209,23 @@ fn check_string(c: &StringConstraints, s: &str, push: &mut dyn FnMut(IssueKind, 
     {
         push(
             IssueKind::Constraint,
-            format!("does not match the pattern `{}`", pattern.source()),
+            tr!(
+                "does not match the pattern `{pattern}`",
+                pattern = pattern.source()
+            ),
         );
     }
     match c.format {
         Some(StringFormat::Date) if !is_date(s) => {
             push(
                 IssueKind::Constraint,
-                "is not a date (expected YYYY-MM-DD)".to_string(),
+                tr!("is not a date (expected YYYY-MM-DD)").to_string(),
             );
         }
         Some(StringFormat::DateTime) if !is_date_time(s) => {
             push(
                 IssueKind::Constraint,
-                "is not a date and time (expected YYYY-MM-DDThh:mm:ssZ)".to_string(),
+                tr!("is not a date and time (expected YYYY-MM-DDThh:mm:ssZ)").to_string(),
             );
         }
         _ => {}
@@ -221,7 +234,10 @@ fn check_string(c: &StringConstraints, s: &str, push: &mut dyn FnMut(IssueKind, 
 
 fn check_number(r: &Range, x: f64, push: &mut dyn FnMut(IssueKind, String)) {
     if !x.is_finite() {
-        push(IssueKind::Constraint, "is not a finite number".to_string());
+        push(
+            IssueKind::Constraint,
+            tr!("is not a finite number").to_string(),
+        );
         return;
     }
     check_range(r, Num::Float(x), push);
@@ -231,7 +247,7 @@ fn check_range(r: &Range, n: Num, push: &mut dyn FnMut(IssueKind, String)) {
     if let Some(min) = r.min.filter(|min| n.compare(*min) == Some(Ordering::Less)) {
         push(
             IssueKind::Constraint,
-            format!("{n} is below the minimum {min}"),
+            tr!("{n} is below the minimum {min}", n = n, min = min),
         );
     }
     if let Some(max) = r
@@ -240,7 +256,7 @@ fn check_range(r: &Range, n: Num, push: &mut dyn FnMut(IssueKind, String)) {
     {
         push(
             IssueKind::Constraint,
-            format!("{n} is above the maximum {max}"),
+            tr!("{n} is above the maximum {max}", n = n, max = max),
         );
     }
 }

@@ -12,6 +12,7 @@ use super::*;
 use crate::engine::{Write, WriteOp};
 use crate::eval::ProcedureResult;
 use gossia_core::validate::validate_at;
+use gossia_i18n::tr;
 
 impl Calc {
     /// Applies the writes of a procedure that started from workbook version
@@ -30,9 +31,9 @@ impl Calc {
         // changed since the procedure started, and the procedure wrote.
         for write in writes {
             if self.edited_since(base, &write.loc, false) {
-                return Err(EditError::Path(format!(
-                    "{} was edited while the procedure ran, so none of its writes were applied",
-                    write.loc
+                return Err(EditError::Path(tr!(
+                    "{loc} was edited while the procedure ran, so none of its writes were applied",
+                    loc = write.loc
                 )));
             }
         }
@@ -54,7 +55,7 @@ impl Calc {
     /// without failing, all or nothing. The message of a failure, or of a
     /// refused write, is what the user is shown.
     pub fn apply_procedure(&mut self, result: ProcedureResult) -> Result<(), String> {
-        let label = format!("Run {}", result.call.button);
+        let label = tr!("Run {button}", button = result.call.button);
         match result.result {
             Ok(writes) => self
                 .apply_writes(result.base, &label, &writes)
@@ -89,9 +90,9 @@ impl Calc {
             WriteOp::Remove => {
                 let in_array = matches!(path.segments().last(), Some(Segment::Index(_)));
                 if !in_array && !self.is_optional(sheet, path) {
-                    return Err(EditError::Path(format!(
-                        "{} is required, so it cannot be removed",
-                        write.loc
+                    return Err(EditError::Path(tr!(
+                        "{loc} is required, so it cannot be removed",
+                        loc = write.loc
                     )));
                 }
                 self.remove_node(sheet, path)
@@ -101,13 +102,16 @@ impl Calc {
                     Some(node) => match node.value() {
                         Value::Array(items) => items.len(),
                         _ => {
-                            return Err(EditError::Path(format!("{} is not an array", write.loc)));
+                            return Err(EditError::Path(tr!(
+                                "{loc} is not an array",
+                                loc = write.loc
+                            )));
                         }
                     },
                     None => {
-                        return Err(EditError::Path(format!(
-                            "there is nothing at {}",
-                            write.loc
+                        return Err(EditError::Path(tr!(
+                            "there is nothing at {loc}",
+                            loc = write.loc
                         )));
                     }
                 };

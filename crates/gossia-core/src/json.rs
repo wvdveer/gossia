@@ -5,6 +5,7 @@
 //! `1e3` reads as the float `1000`, and `1.0` stays a float. An integer beyond
 //! the signed 64-bit range reads as a float, with a warning.
 
+use gossia_i18n::tr;
 use std::fmt;
 
 use crate::path::Path;
@@ -53,7 +54,11 @@ pub struct WriteError {
 
 impl fmt::Display for WriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cannot write `{}`: {}", self.path, self.message)
+        f.write_str(&tr!(
+            "cannot write `{path}`: {message}",
+            path = self.path,
+            message = self.message
+        ))
     }
 }
 
@@ -81,23 +86,26 @@ pub fn parse_lenient(text: &str) -> Result<Parsed, ParseError> {
     if !commas.is_empty() {
         let lines: Vec<String> = commas.iter().map(ToString::to_string).collect();
         notes.push(if commas.len() == 1 {
-            format!(
-                "a comma before a closing bracket, on line {}, was ignored",
-                lines[0]
+            tr!(
+                "a comma before a closing bracket, on line {line}, was ignored",
+                line = lines[0]
             )
         } else {
-            format!(
-                "{} commas before a closing bracket were ignored (lines {})",
-                commas.len(),
-                lines.join(", ")
+            tr!(
+                "{count} commas before a closing bracket were ignored (lines {lines})",
+                count = commas.len(),
+                lines = lines.join(", ")
             )
         });
     }
     if comments > 0 {
         notes.push(if comments == 1 {
-            "a comment was left out, since JSON has none".to_owned()
+            tr!("a comment was left out, since JSON has none").to_owned()
         } else {
-            format!("{comments} comments were left out, since JSON has none")
+            tr!(
+                "{comments} comments were left out, since JSON has none",
+                comments = comments
+            )
         });
     }
     let mut warnings: Vec<Warning> = notes
@@ -200,7 +208,7 @@ fn convert(json: &serde_json::Value, path: &Path, warnings: &mut Vec<Warning>) -
                 if n.is_u64() {
                     warnings.push(Warning {
                         path: path.clone(),
-                        message: "integer beyond the signed 64-bit range was read as a floating-point number".into(),
+                        message: tr!("integer beyond the signed 64-bit range was read as a floating-point number").into(),
                     });
                 }
                 Value::Float(n.as_f64().unwrap_or(f64::NAN))
@@ -231,7 +239,7 @@ fn convert(json: &serde_json::Value, path: &Path, warnings: &mut Vec<Warning>) -
 pub fn to_string(node: &Node, pretty: bool) -> Result<String, WriteError> {
     let json = to_json(node, &Path::root())?.ok_or_else(|| WriteError {
         path: Path::root(),
-        message: "the root holds an error value".into(),
+        message: tr!("the root holds an error value").into(),
     })?;
     Ok(if pretty {
         serde_json::to_string_pretty(&json)
@@ -251,7 +259,7 @@ fn to_json(node: &Node, path: &Path) -> Result<Option<serde_json::Value>, WriteE
         Value::Float(x) => {
             J::Number(serde_json::Number::from_f64(*x).ok_or_else(|| WriteError {
                 path: path.clone(),
-                message: "NaN and infinity are not JSON numbers".into(),
+                message: tr!("NaN and infinity are not JSON numbers").into(),
             })?)
         }
         Value::Str(s) => J::String(s.clone()),

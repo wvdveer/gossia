@@ -12,6 +12,7 @@
 //! generation is dropped like one that an edit overtook. A module and a tab
 //! never share a name, so the names cannot be confused.
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -148,7 +149,7 @@ impl Calc {
             .iter()
             .filter(|_| self.trusted)
             .filter_map(|(name, m)| match (&m.info, &m.status) {
-                (Err(e), _) => Some((name.clone(), format!("syntax error: {e}"))),
+                (Err(e), _) => Some((name.clone(), tr!("syntax error: {e}", e = e))),
                 (_, ModuleStatus::Failed(why)) => Some((name.clone(), why.clone())),
                 _ => None,
             })
@@ -169,22 +170,17 @@ impl Calc {
                 return Some(vec![ModuleProblem::at(
                     e.line,
                     e.column,
-                    format!("syntax error: {}", e.message),
+                    tr!("syntax error: {message}", message = e.message),
                 )]);
             }
         };
         let mut problems = Vec::new();
         let cycle = self.import_cycles().remove(name);
         // The module this one imports on the way round the cycle.
-        let next = cycle.as_ref().and_then(|message| {
-            message
-                .trim_start_matches("import cycle: ")
-                .split(" -> ")
-                .nth(1)
-                .map(str::to_owned)
-        });
+        let next = cycle.as_ref().and_then(|way| way.get(1).cloned());
+        let cycle = cycle.map(|way| cycle_message(&way));
         let standard = self.syntax.standard_modules();
-        let mut unknown = false;
+        let mut unknown: Vec<String> = Vec::new();
         for (i, import) in info.imports.iter().enumerate() {
             let (line, column) = info.import_at.get(i).copied().unwrap_or((1, 1));
             if self.modules.contains_key(import) {
@@ -194,15 +190,9 @@ impl Calc {
                     problems.push(ModuleProblem::at(line, column, message.clone()));
                 }
             } else if standard.is_some_and(|known| !known.contains(&import.as_str())) {
-                unknown = true;
-                problems.push(ModuleProblem::at(
-                    line,
-                    column,
-                    format!(
-                        "no module named {import} is available: only the workbook's modules \
-                         and the standard library modules formulas can use can be imported"
-                    ),
-                ));
+                let message = crate::python::no_module(import);
+                unknown.push(message.clone());
+                problems.push(ModuleProblem::at(line, column, message));
             }
         }
         let charts = self.chart_problems(name);
@@ -213,7 +203,7 @@ impl Calc {
         if let ModuleStatus::Failed(why) = &module.status
             && cycle.is_none()
             && !clash
-            && !(unknown && why.contains("no module named"))
+            && !unknown.iter().any(|m| why.contains(m.as_str()))
         {
             problems.push(ModuleProblem {
                 line: line_in(why),
@@ -245,7 +235,7 @@ impl Calc {
         let position = self.modules.len();
         self.store_add_module(name, source, position);
         self.history.record(
-            format!("Insert module {name}"),
+            tr!("Insert module {name}", name = name),
             vec![Op::AddModule {
                 name: name.to_owned(),
                 source: source.to_owned(),
@@ -286,7 +276,7 @@ impl Calc {
         }
         self.store_module_source(name, source)?;
         self.history.record(
-            format!("Edit module {name}"),
+            tr!("Edit module {name}", name = name),
             vec![Op::ModuleSource {
                 name: name.to_owned(),
                 before,
@@ -306,7 +296,7 @@ impl Calc {
         let source = self.modules[position].source.to_string();
         self.store_remove_module(name)?;
         self.history.record(
-            format!("Remove module {name}"),
+            tr!("Remove module {name}", name = name),
             vec![Op::RemoveModule {
                 name: name.to_owned(),
                 source,
@@ -330,7 +320,7 @@ impl Calc {
         self.check_module_name(to, Some(from))?;
         self.store_rename_module(from, to)?;
         self.history.record(
-            format!("Rename module {from} to {to}"),
+            tr!("Rename module {from} to {to}", from = from, to = to),
             vec![Op::RenameModule {
                 from: from.to_owned(),
                 to: to.to_owned(),
@@ -395,13 +385,15 @@ impl Calc {
             .keys()
             .any(|m| Some(m.as_str()) != renaming && m.to_lowercase() == lower)
         {
-            return Err(EditError::BadName(format!(
-                "a module called {name} exists already (names ignore case)"
+            return Err(EditError::BadName(tr!(
+                "a module called {name} exists already (names ignore case)",
+                name = name
             )));
         }
         if self.sheets.keys().any(|s| s.to_lowercase() == lower) {
-            return Err(EditError::BadName(format!(
-                "{name} is the name of a tab, and a module cannot share it"
+            return Err(EditError::BadName(tr!(
+                "{name} is the name of a tab, and a module cannot share it",
+                name = name
             )));
         }
         Ok(())
@@ -499,8 +491,8 @@ impl Calc {
                 .iter()
                 .map(|(name, m)| {
                     let refused = match &m.info {
-                        Err(e) => Some(format!("syntax error: {e}")),
-                        Ok(_) => cycles.get(name).cloned().or_else(|| {
+                        Err(e) => Some(tr!("syntax error: {e}", e = e)),
+                        Ok(_) => cycles.get(name).map(|way| cycle_message(way)).or_else(|| {
                             self.chart_problems(name)
                                 .into_iter()
                                 .next()
@@ -519,9 +511,9 @@ impl Calc {
         )
     }
 
-    /// For each module on a cycle of imports, the message that names the
-    /// cycle (`A -> B -> A`). None of the modules on it is loaded.
-    fn import_cycles(&self) -> HashMap<String, String> {
+    /// For each module on a cycle of imports, the modules on the way round
+    /// (`A`, `B`, `A`). None of the modules on it is loaded.
+    fn import_cycles(&self) -> HashMap<String, Vec<String>> {
         let edges = |name: &str| -> Vec<&str> {
             self.modules
                 .get(name)
@@ -535,7 +527,7 @@ impl Calc {
                 })
                 .unwrap_or_default()
         };
-        let mut found: HashMap<String, String> = HashMap::new();
+        let mut found: HashMap<String, Vec<String>> = HashMap::new();
         for start in self.modules.keys() {
             // A path that leads back to `start`: depth first, remembering the way.
             let mut stack: Vec<(&str, Vec<&str>)> = vec![(start.as_str(), vec![start.as_str()])];
@@ -547,7 +539,7 @@ impl Calc {
                         named.push(next);
                         found
                             .entry(start.clone())
-                            .or_insert_with(|| format!("import cycle: {}", named.join(" -> ")));
+                            .or_insert_with(|| named.iter().map(|n| n.to_string()).collect());
                     } else if seen.insert(next) {
                         let mut longer = way.clone();
                         longer.push(next);
@@ -595,4 +587,8 @@ impl Calc {
 fn line_in(message: &str) -> Option<usize> {
     let rest = message.rsplit_once("(line ")?.1;
     rest.strip_suffix(')')?.trim().parse().ok()
+}
+/// The message that names a cycle of imports (`A -> B -> A`).
+fn cycle_message(way: &[String]) -> String {
+    tr!("import cycle: {way}", way = way.join(" -> "))
 }

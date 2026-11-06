@@ -17,6 +17,7 @@
 //! abandoned threads still running is limited; at the limit, evaluation is
 //! suspended.
 
+use gossia_i18n::tr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -70,6 +71,7 @@ impl Default for EvalSettings {
 /// instead (`session_web.rs`).
 #[cfg(not(target_family = "wasm"))]
 mod thread {
+    use gossia_i18n::tr;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -432,18 +434,18 @@ mod thread {
                 self.finished_immediate.push_back(ImmediateResult {
                     id: immediate.id,
                     text: immediate.text,
-                    result: Err(
+                    result: Err(tr!(
                         "#TIMEOUT!: the expression did not stop when its time ran out and was \
                          abandoned"
-                            .to_owned(),
-                    ),
+                    )
+                    .to_owned()),
                 });
                 return;
             }
             if let Some(call) = call {
                 let failure = Failure::new(
                     ErrorKind::Timeout,
-                    "the procedure did not stop when its time ran out and was abandoned",
+                    tr!("the procedure did not stop when its time ran out and was abandoned"),
                 );
                 self.finished_calls
                     .push_back(ProcedureResult::failed(version, call, failure));
@@ -451,7 +453,7 @@ mod thread {
             }
             let error = ErrorValue {
                 kind: ErrorKind::Timeout,
-                message: "the formula did not stop when its time ran out and was abandoned"
+                message: tr!("the formula did not stop when its time ran out and was abandoned")
                     .to_owned(),
                 origin: Some(loc.path.clone()),
             };
@@ -604,18 +606,18 @@ impl Session {
     /// [`Session::take_immediate`]. Gives the number that tells the answer.
     pub fn run_immediate(&mut self, text: &str, sheet: &str, path: &Path) -> Result<u64, String> {
         if !self.calc.is_trusted() {
-            return Err(
+            return Err(tr!(
                 "the Immediate window runs Python, so the workbook has to be trusted first"
-                    .to_owned(),
-            );
+            )
+            .to_owned());
         }
         if self.running_immediate().is_some() {
-            return Err("an expression is running; wait for it to finish".to_owned());
+            return Err(tr!("an expression is running; wait for it to finish").to_owned());
         }
         self.calc
             .syntax()
             .check(text)
-            .map_err(|e| format!("syntax error: {e}"))?;
+            .map_err(|e| tr!("syntax error: {e}", e = e))?;
         self.next_immediate += 1;
         self.queued_immediate = Some(Immediate {
             id: self.next_immediate,
@@ -644,10 +646,12 @@ impl Session {
     /// they are. One runs at a time; the answer is in [`Session::take_finished`].
     pub fn run_procedure(&mut self, mut call: Call) -> Result<(), String> {
         if !self.calc.is_trusted() {
-            return Err("buttons run Python, so the workbook has to be trusted first".to_owned());
+            return Err(
+                tr!("buttons run Python, so the workbook has to be trusted first").to_owned(),
+            );
         }
         if self.running_procedure().is_some() {
-            return Err("a button procedure is running; wait for it to finish".to_owned());
+            return Err(tr!("a button procedure is running; wait for it to finish").to_owned());
         }
         call.time_limit = self.evaluator.settings().procedure_limit;
         self.queued = Some(call);
@@ -711,9 +715,10 @@ impl Session {
             } else if let Some(call) = self.queued.take() {
                 if !self.calc.is_trusted() {
                     // Trust was taken back while the procedure waited.
-                    let outcome = Err(
-                        "the workbook is no longer trusted, so the button did not run".to_owned(),
-                    );
+                    let outcome = Err(tr!(
+                        "the workbook is no longer trusted, so the button did not run"
+                    )
+                    .to_owned());
                     self.finished.push(Finished { call, outcome });
                     changed = true;
                 } else if let Err(_snapshot) = self
@@ -728,7 +733,7 @@ impl Session {
                         id: immediate.id,
                         text: immediate.text,
                         result: Err(
-                            "the workbook is no longer trusted, so it did not run".to_owned()
+                            tr!("the workbook is no longer trusted, so it did not run").to_owned()
                         ),
                     });
                     changed = true;

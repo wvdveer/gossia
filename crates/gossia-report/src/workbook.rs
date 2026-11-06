@@ -3,6 +3,7 @@
 //! PDF, as the application and `bidwillii` write it, or as HTML, as the
 //! application writes it.
 
+use gossia_i18n::tr;
 use std::cell::RefCell;
 
 use gossia_calc::{Calc, ExprKind, ExprState};
@@ -114,7 +115,7 @@ pub fn pdf(calc: &Calc, name: &str) -> Result<Vec<u8>, String> {
 pub fn html(calc: &Calc, name: &str) -> Result<String, String> {
     let design = calc
         .report(name)
-        .ok_or_else(|| format!("there is no report {name}"))?;
+        .ok_or_else(|| tr!("there is no report {name}", name = name))?;
     let source = CalcSource { calc, report: name };
     Ok(match lay_out(calc, design, &source) {
         Layout::Single(laid) => crate::html::single_page(&laid, name),
@@ -149,7 +150,7 @@ fn lay_out(calc: &Calc, design: &gossia_core::report::ReportDesign, source: &dyn
 pub fn run(calc: &Calc, name: &str) -> Result<Run, String> {
     let design = calc
         .report(name)
-        .ok_or_else(|| format!("there is no report {name}"))?;
+        .ok_or_else(|| tr!("there is no report {name}", name = name))?;
     let source = Recording {
         inner: CalcSource { calc, report: name },
         errors: RefCell::new(Vec::new()),

@@ -278,8 +278,12 @@ impl TryFrom<String> for TrackSize {
     type Error = String;
 
     fn try_from(text: String) -> Result<TrackSize, String> {
-        let wrong =
-            || format!("`{text}` is not a size: auto, points such as 120, or a share such as 2fr");
+        let wrong = || {
+            tr!(
+                "`{text}` is not a size: auto, points such as 120, or a share such as 2fr",
+                text = text
+            )
+        };
         if text == "auto" {
             Ok(TrackSize::Auto)
         } else if let Some(share) = text.strip_suffix("fr") {
@@ -454,12 +458,12 @@ impl Anchor {
 
     pub fn label(self, across: bool) -> &'static str {
         match (self, across) {
-            (Anchor::Start, true) => "Left",
-            (Anchor::End, true) => "Right",
-            (Anchor::Both, true) => "Left and right",
-            (Anchor::Start, false) => "Top",
-            (Anchor::End, false) => "Bottom",
-            (Anchor::Both, false) => "Top and bottom",
+            (Anchor::Start, true) => tr!("Left"),
+            (Anchor::End, true) => tr!("Right"),
+            (Anchor::Both, true) => tr!("Left and right"),
+            (Anchor::Start, false) => tr!("Top"),
+            (Anchor::End, false) => tr!("Bottom"),
+            (Anchor::Both, false) => tr!("Top and bottom"),
         }
     }
 }
@@ -1458,15 +1462,18 @@ pub fn colour_of(value: &crate::Value) -> Result<Option<[u8; 4]>, String> {
 }
 
 fn not_a_colour(value: &crate::Value) -> String {
-    format!(
-        "a {} is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)",
-        value.kind_name()
+    tr!(
+        "a {kind} is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)",
+        kind = value.kind_name()
     )
 }
 
 fn named_colour(text: &str) -> Result<[u8; 4], String> {
     let bad = || {
-        format!("\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)")
+        tr!(
+            "\"{text}\" is not a colour; give a name such as \"red\", \"#rrggbb\" or (r, g, b)",
+            text = text
+        )
     };
     if let Some(hex) = text.strip_prefix('#') {
         let digits: Option<Vec<u8>> = hex
@@ -1638,11 +1645,11 @@ impl FormDesign {
     /// schema; the reason is given in words if it does not. Whether its paths
     /// exist in a tab is a different question, see [`FormDesign::broken`].
     pub fn from_json(text: &str) -> Result<FormDesign, String> {
-        let parsed = json::parse(text).map_err(|e| format!("not valid JSON: {e}"))?;
+        let parsed = json::parse(text).map_err(|e| tr!("not valid JSON: {e}", e = e))?;
         let issues = validate(form_schema(), &parsed.node);
         if let Some(issue) = issues.first() {
             let at = if issue.path.is_root() {
-                "the document".to_owned()
+                tr!("the document").to_owned()
             } else {
                 issue.path.to_string()
             };
@@ -1650,9 +1657,10 @@ impl FormDesign {
         }
         let design: FormDesign = serde_json::from_str(text).map_err(|e| e.to_string())?;
         if design.version > DESIGN_VERSION {
-            return Err(format!(
-                "this form was made by a newer version (design version {}, this build reads up to {DESIGN_VERSION})",
-                design.version
+            return Err(tr!(
+                "this form was made by a newer version (design version {version}, this build reads up to {DESIGN_VERSION})",
+                version = design.version,
+                DESIGN_VERSION = DESIGN_VERSION
             ));
         }
         Ok(design)
@@ -2013,12 +2021,13 @@ impl FormDesign {
         let repeater = self.get(&scope)?;
         if !repeater.is_stacked() {
             return Some(
-                "its repeater shows a table, so the design of its items is not used".to_owned(),
+                tr!("its repeater shows a table, so the design of its items is not used")
+                    .to_owned(),
             );
         }
         if self.item_scope(&scope).is_some() {
             return Some(
-                "a repeater inside an item shows its items as generated, so they are not designed"
+                tr!("a repeater inside an item shows its items as generated, so they are not designed")
                     .to_owned(),
             );
         }
@@ -2027,7 +2036,7 @@ impl FormDesign {
                 .is_some_and(|r| matches!(spec.get(r.ty).kind, Kind::Array { .. }))
         });
         let Some(array) = array else {
-            return Some("its repeater is broken".to_owned());
+            return Some(tr!("its repeater is broken").to_owned());
         };
         control_problem_at(spec, control, &array.index(0))
     }
@@ -2080,10 +2089,10 @@ pub fn control_problem_at(spec: &TypeSpec, control: &Control, base: &Path) -> Op
     // A field has a path or a value; with a value, and a repeater over an
     // expression, there is no path to check.
     if control.shows_value() && control.path.is_some() {
-        return Some("a field has a path or a value, not both".to_owned());
+        return Some(tr!("a field has a path or a value, not both").to_owned());
     }
     if control.write_procedure.is_some() && !control.shows_value() {
-        return Some("a write procedure needs a value".to_owned());
+        return Some(tr!("a write procedure needs a value").to_owned());
     }
     if control.shows_value() || control.lists_items() {
         return None;
@@ -2110,24 +2119,27 @@ pub fn control_problem_at(spec: &TypeSpec, control: &Control, base: &Path) -> Op
     }
     let path: Path = match text.parse() {
         Ok(path) => base.join(&path),
-        Err(e) => return Some(format!("the path {text:?} is not a path: {e}")),
+        Err(e) => {
+            return Some(tr!(
+                "the path {text} is not a path: {e}",
+                text = format!("{text:?}"),
+                e = e
+            ));
+        }
     };
     let Some(resolved) = spec.resolve(&path) else {
-        return Some(format!(
-            "the schema has nothing at {}",
-            match (text.is_empty(), base.is_root()) {
-                (true, true) => "the root",
-                (true, false) => "the item",
-                _ => text,
-            }
-        ));
+        return Some(match (text.is_empty(), base.is_root()) {
+            (true, true) => tr!("the schema has nothing at the root").to_owned(),
+            (true, false) => tr!("the schema has nothing at the item").to_owned(),
+            _ => tr!("the schema has nothing at {path}", path = text),
+        });
     };
     let kind = &spec.get(resolved.ty).kind;
     match (control.kind, kind) {
         (ControlKind::Repeater, Kind::Array { .. }) => None,
-        (ControlKind::Repeater, _) => Some(format!("{text} is not an array")),
+        (ControlKind::Repeater, _) => Some(tr!("{text} is not an array", text = text)),
         (ControlKind::Group, Kind::Object { .. }) => None,
-        (ControlKind::Group, _) => Some(format!("{text} is not an object")),
+        (ControlKind::Group, _) => Some(tr!("{text} is not an object", text = text)),
         _ => None,
     }
 }

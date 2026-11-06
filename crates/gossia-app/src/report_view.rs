@@ -277,14 +277,16 @@ impl GossiaApp {
         let calc = self.calc();
         let cache = calc.report_cache(name);
         let note = match (calc.is_trusted(), cache) {
-            (false, Some(c)) => format!(
+            (false, Some(c)) => tr!(
                 "This workbook is not trusted, so nothing runs: the report is as it was \
-                 calculated on {}.",
-                local_time(&c.calculated)
+                 calculated on {time}.",
+                time = local_time(&c.calculated)
             ),
-            (false, None) => "This workbook is not trusted, so nothing runs, and no results \
+            (false, None) => tr!(
+                "This workbook is not trusted, so nothing runs, and no results \
                               of the report were kept."
-                .to_owned(),
+            )
+            .to_owned(),
             (true, Some(c)) if calc.pending_expressions() > 0 => tr!(
                 "Showing the results calculated on {time} until the new ones are in.",
                 time = local_time(&c.calculated)

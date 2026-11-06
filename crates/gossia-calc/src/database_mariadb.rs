@@ -4,6 +4,7 @@
 //! Statements are prepared, so parameters travel apart from the SQL, and
 //! results come back typed. `?` takes a list and `:name` a dict.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use mysql::prelude::Queryable;
 use mysql::{Conn, DriverError, Error, OptsBuilder, Params, SslOpts, Value};
 use serde_json::Value as Json;
 
-use super::{Rows, bytes_json, decimal_json, json_bytes, plural};
+use super::{Rows, bytes_json, count_mismatch, decimal_json, json_bytes, parameters};
 use crate::sources::{SourceDef, TlsMode};
 
 /// The character set number of binary data.
@@ -142,21 +143,17 @@ fn bind(def: &SourceDef, params: &Json, wanted: usize) -> Result<Params, String>
             Json::String(s) => Value::Bytes(s.clone().into_bytes()),
             other => match json_bytes(other) {
                 Some(bytes) => Value::Bytes(bytes),
-                None => return Err(format!("{}: {other} cannot be passed to SQL", def.name)),
+                None => {
+                    return Err(tr!(
+                        "{name}: {other} cannot be passed to SQL",
+                        name = def.name,
+                        other = other
+                    ));
+                }
             },
         })
     };
-    let count = |given: usize| {
-        format!(
-            "{}: the SQL has {}, and {} given",
-            def.name,
-            plural(wanted, "parameter", "parameters"),
-            match given {
-                1 => "1 value was".to_owned(),
-                n => format!("{n} values were"),
-            }
-        )
-    };
+    let count = |given: usize| count_mismatch(&def.name, wanted, given);
     match params {
         Json::Null if wanted == 0 => Ok(Params::Empty),
         Json::Null => Err(count(0)),
@@ -179,9 +176,9 @@ fn bind(def: &SourceDef, params: &Json, wanted: usize) -> Result<Params, String>
             }
             Ok(Params::Named(map))
         }
-        _ => Err(format!(
-            "{}: the parameters are a list (for ?) or a dict (for :name)",
-            def.name
+        _ => Err(tr!(
+            "{name}: the parameters are a list (for ?) or a dict (for :name)",
+            name = def.name
         )),
     }
 }
@@ -271,14 +268,15 @@ fn describe(error: &Error) -> String {
             text
         }
         Error::DriverError(DriverError::TlsNotSupported) => {
-            "the server does not offer TLS, and the definition requires it".to_owned()
+            tr!("the server does not offer TLS, and the definition requires it").to_owned()
         }
-        Error::DriverError(DriverError::MismatchedStmtParams(wanted, given)) => format!(
-            "the SQL has {}, and {given} were given",
-            plural(*wanted as usize, "parameter", "parameters")
+        Error::DriverError(DriverError::MismatchedStmtParams(wanted, given)) => tr!(
+            "the SQL has {parameters}, and {given} were given",
+            parameters = parameters(*wanted as usize),
+            given = given
         ),
         Error::DriverError(DriverError::MixedParams) => {
-            "the SQL mixes ? and :name parameters; use one or the other".to_owned()
+            tr!("the SQL mixes ? and :name parameters; use one or the other").to_owned()
         }
         Error::DriverError(e) => e.to_string(),
         Error::IoError(e)
@@ -287,10 +285,10 @@ fn describe(error: &Error) -> String {
                 std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
             ) =>
         {
-            "the server did not answer within the call timeout".to_owned()
+            tr!("the server did not answer within the call timeout").to_owned()
         }
         Error::IoError(e) => e.to_string(),
-        Error::TlsError(e) => format!("TLS failed: {e}"),
+        Error::TlsError(e) => tr!("TLS failed: {e}", e = e),
         other => other.to_string(),
     }
 }

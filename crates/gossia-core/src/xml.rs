@@ -20,6 +20,7 @@
 //! What is not kept: see [`crate::xmltree`] and DESIGN.md, "Not preserved
 //! (accepted)".
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
@@ -73,26 +74,30 @@ pub fn parse(text: &str, spec: &TypeSpec) -> Result<Parsed, XmlError> {
     let Some(info) = spec.xml() else {
         return Err(XmlError {
             position: None,
-            message: "the schema is not an XSD, so it cannot describe XML data".to_string(),
+            message: tr!("the schema is not an XSD, so it cannot describe XML data").to_string(),
         });
     };
     let doc = xmltree::parse(text)?;
     if doc.root.name != info.root {
         return Err(XmlError {
             position: None,
-            message: format!(
-                "the root element is `{}`, but the schema describes `{}`",
-                doc.root.name, info.root
+            message: tr!(
+                "the root element is `{name}`, but the schema describes `{root}`",
+                name = doc.root.name,
+                root = info.root
             ),
         });
     }
     if doc.root.namespace != info.target_namespace {
         return Err(XmlError {
             position: None,
-            message: format!(
-                "the root element is in {}, but the schema's namespace is {}",
-                doc.root.namespace.as_deref().unwrap_or("no namespace"),
-                info.target_namespace.as_deref().unwrap_or("no namespace"),
+            message: tr!(
+                "the root element is in {namespace}, but the schema's namespace is {target}",
+                namespace = doc.root.namespace.as_deref().unwrap_or(tr!("no namespace")),
+                target = info
+                    .target_namespace
+                    .as_deref()
+                    .unwrap_or(tr!("no namespace")),
             ),
         });
     }
@@ -158,7 +163,7 @@ impl Reader<'_> {
                 if !element.attributes.is_empty() {
                     self.warn(
                         path,
-                        "attributes on an element of a simple type were dropped",
+                        tr!("attributes on an element of a simple type were dropped"),
                     );
                 }
                 Node::new(scalar_of(&kind, &element.text()))
@@ -199,7 +204,7 @@ impl Reader<'_> {
         if moved {
             self.warn(
                 path,
-                "a comment inside the text was moved to the end of the element",
+                tr!("a comment inside the text was moved to the end of the element"),
             );
         }
         let joined = |list: Vec<&str>| (!list.is_empty()).then(|| list.join("\n"));
@@ -244,7 +249,7 @@ impl Reader<'_> {
         match text_field {
             Some(field) => {
                 if has_children && element.has_text() {
-                    self.warn(path, "text next to child elements was kept as text");
+                    self.warn(path, tr!("text next to child elements was kept as text"));
                 }
                 if !text.is_empty() || field.required {
                     let kind = self.spec.get(field.ty).kind.clone();
@@ -457,13 +462,13 @@ pub fn to_string(
     let Some(info) = spec.xml() else {
         return Err(WriteError {
             path: Path::root(),
-            message: "the schema is not an XSD, so it cannot describe XML data".to_string(),
+            message: tr!("the schema is not an XSD, so it cannot describe XML data").to_string(),
         });
     };
     if matches!(node.value(), Value::Error(_)) {
         return Err(WriteError {
             path: Path::root(),
-            message: "the root holds an error value".to_string(),
+            message: tr!("the root holds an error value").to_string(),
         });
     }
     // Which prefix the elements are written with, and what is declared.

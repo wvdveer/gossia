@@ -23,6 +23,7 @@
 pub mod html;
 pub mod workbook;
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use gossia_layout::fonts::{BOLD_WEIGHT, FILES, REGULAR_WEIGHT};
@@ -106,7 +107,13 @@ pub fn write(title: &str, pages: &[Page]) -> Result<Vec<u8>, String> {
     let mut fonts = FontCache::default();
     for page in pages {
         let settings = PageSettings::from_wh(page.width.max(1.0), page.height.max(1.0))
-            .ok_or_else(|| format!("a page cannot be {} by {}", page.width, page.height))?;
+            .ok_or_else(|| {
+                tr!(
+                    "a page cannot be {width} by {height}",
+                    width = page.width,
+                    height = page.height
+                )
+            })?;
         let mut pdf_page = document.start_page_with(settings);
         let mut surface = pdf_page.surface();
         draw(&mut surface, page.laid, &mut fonts);
@@ -120,7 +127,7 @@ pub fn write(title: &str, pages: &[Page]) -> Result<Vec<u8>, String> {
     );
     document
         .finish()
-        .map_err(|e| format!("the PDF could not be written: {e:?}"))
+        .map_err(|e| tr!("the PDF could not be written: {e}", e = format!("{e:?}")))
 }
 
 /// The fonts of the PDF, each read once at the weight it is used in.

@@ -66,8 +66,8 @@ fn literal(s: &str) -> Option<(String, &str)> {
     None
 }
 
-/// Every text given to `tr!` in the workspace's sources, with the file it
-/// is first in.
+/// Every text given to `tr!` (or marked with `tr_noop!`) in the workspace's
+/// sources, with the file it is first in.
 fn texts() -> Vec<(String, PathBuf)> {
     let mut files = Vec::new();
     rust_files(&crates(), &mut files);
@@ -81,7 +81,7 @@ fn texts() -> Vec<(String, PathBuf)> {
         }
         let source = std::fs::read_to_string(&file).unwrap();
         let mut rest = source.as_str();
-        while let Some(i) = rest.find("tr!(") {
+        while let Some((i, len)) = next_macro(rest) {
             // Not the end of another macro's name, such as `include_str!(`.
             let word = rest[..i]
                 .chars()
@@ -90,7 +90,7 @@ fn texts() -> Vec<(String, PathBuf)> {
             // Nor in a comment, where examples name it.
             let line = &rest[rest[..i].rfind('\n').map_or(0, |n| n + 1)..i];
             let comment = line.trim_start().starts_with("//");
-            rest = &rest[i + 4..];
+            rest = &rest[i + len..];
             if word || comment {
                 continue;
             }
@@ -107,6 +107,14 @@ fn texts() -> Vec<(String, PathBuf)> {
         }
     }
     out
+}
+
+/// Where the next `tr!(` or `tr_noop!(` starts, and its length.
+fn next_macro(text: &str) -> Option<(usize, usize)> {
+    ["tr!(", "tr_noop!("]
+        .iter()
+        .filter_map(|m| text.find(m).map(|i| (i, m.len())))
+        .min()
 }
 
 #[test]

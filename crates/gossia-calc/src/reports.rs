@@ -7,6 +7,7 @@
 //! workbook names a report, so a rename or a delete recalculates nothing.
 
 use gossia_core::report::ReportDesign;
+use gossia_i18n::tr;
 
 use super::{Calc, EditError};
 use crate::history::Op;
@@ -102,7 +103,7 @@ impl Calc {
         };
         self.store_insert_report(&saved);
         self.history.record(
-            format!("New report {name}"),
+            tr!("New report {name}", name = name),
             vec![Op::AddReport(Box::new(saved))],
             None,
         );
@@ -139,7 +140,7 @@ impl Calc {
         };
         self.store_insert_report(&saved);
         self.history.record(
-            format!("Duplicate report {name}"),
+            tr!("Duplicate report {name}", name = name),
             vec![Op::AddReport(Box::new(saved))],
             None,
         );
@@ -153,7 +154,7 @@ impl Calc {
             .store_remove_report(name)
             .ok_or_else(|| EditError::NoSheet(name.to_owned()))?;
         self.history.record(
-            format!("Delete tab {name}"),
+            tr!("Delete tab {name}", name = name),
             vec![Op::RemoveReport(Box::new(saved))],
             None,
         );

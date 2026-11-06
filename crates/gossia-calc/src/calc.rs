@@ -8,6 +8,7 @@
 //! an edit has overtaken (DESIGN.md, "Evaluation and scheduling",
 //! "Consistency").
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::Arc;
@@ -182,28 +183,25 @@ pub enum EditError {
 impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EditError::NoSheet(name) => write!(f, "there is no tab called {name}"),
+            EditError::NoSheet(name) => f.write_str(&tr!("there is no tab called {name}", name = name)),
             EditError::DuplicateSheet(name) => {
-                write!(f, "a tab called {name} exists already (names ignore case)")
+                f.write_str(&tr!("a tab called {name} exists already (names ignore case)", name = name))
             }
             EditError::NotInSchema(loc) => {
-                write!(
-                    f,
-                    "the schema defines no node at {loc}, so it cannot hold a formula"
-                )
+                f.write_str(&tr!("the schema defines no node at {loc}, so it cannot hold a formula", loc = loc))
             }
-            EditError::InsideComputed { node, formula } => write!(
-                f,
-                "{node} is computed by the formula at {}; edit or clear that formula instead",
-                Loc::new(node.sheet.clone(), formula.clone())
-            ),
-            EditError::ContainsFormulas { node, formula } => write!(
-                f,
-                "{node} cannot take a formula because the formula at {} is inside it",
-                Loc::new(node.sheet.clone(), formula.clone())
-            ),
+            EditError::InsideComputed { node, formula } => f.write_str(&tr!(
+                "{node} is computed by the formula at {formula}; edit or clear that formula instead",
+                node = node,
+                formula = Loc::new(node.sheet.clone(), formula.clone())
+            )),
+            EditError::ContainsFormulas { node, formula } => f.write_str(&tr!(
+                "{node} cannot take a formula because the formula at {formula} is inside it",
+                node = node,
+                formula = Loc::new(node.sheet.clone(), formula.clone())
+            )),
             EditError::Path(message) | EditError::BadName(message) => f.write_str(message),
-            EditError::NoModule(name) => write!(f, "there is no module called {name}"),
+            EditError::NoModule(name) => f.write_str(&tr!("there is no module called {name}", name = name)),
         }
     }
 }
@@ -579,10 +577,9 @@ impl Calc {
         self.refuse_inside_computed(sheet, path)?;
         let formula = self.formula_text(sheet, path);
         let s = self.sheet_mut(sheet)?;
-        let position = s
-            .data
-            .position_of(path)
-            .ok_or_else(|| EditError::Path(format!("there is no node at {path} to remove")))?;
+        let position = s.data.position_of(path).ok_or_else(|| {
+            EditError::Path(tr!("there is no node at {path} to remove", path = path))
+        })?;
         let node = s
             .data
             .remove(path)
@@ -636,25 +633,33 @@ impl Calc {
         let old = map.key(from);
         self.refuse_inside_computed(sheet, &old)?;
         if to.is_empty() {
-            return Err(EditError::Path("a key cannot be empty".to_owned()));
+            return Err(EditError::Path(tr!("a key cannot be empty").to_owned()));
         }
         let s = self.sheet_mut(sheet)?;
         let before = s
             .data
             .get(map)
             .cloned()
-            .ok_or_else(|| EditError::Path(format!("there is no node at {map}")))?;
+            .ok_or_else(|| EditError::Path(tr!("there is no node at {map}", map = map)))?;
         let Value::Object(fields) = before.value() else {
-            return Err(EditError::Path(format!("{map} is not a map")));
+            return Err(EditError::Path(tr!("{map} is not a map", map = map)));
         };
         if !fields.contains_key(from) {
-            return Err(EditError::Path(format!("{map} has no entry {from}")));
+            return Err(EditError::Path(tr!(
+                "{map} has no entry {from}",
+                map = map,
+                from = from
+            )));
         }
         if from == to {
             return Ok(());
         }
         if fields.contains_key(to) {
-            return Err(EditError::Path(format!("{map} already has an entry {to}")));
+            return Err(EditError::Path(tr!(
+                "{map} already has an entry {to}",
+                map = map,
+                to = to
+            )));
         }
         let mut after = before.clone();
         if let Value::Object(fields) = after.value_mut() {
@@ -780,19 +785,21 @@ impl Calc {
     ) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, array)?;
         if self.formula_text(sheet, array).is_some() {
-            return Err(EditError::Path(format!(
-                "{} is computed by a formula, so its order cannot be changed",
-                Loc::new(sheet, array.clone())
+            return Err(EditError::Path(tr!(
+                "{place} is computed by a formula, so its order cannot be changed",
+                place = Loc::new(sheet, array.clone())
             )));
         }
         let s = self.sheet_mut(sheet)?;
-        let before = s
-            .data
-            .get(array)
-            .cloned()
-            .ok_or_else(|| EditError::Path(format!("there is no node at {array}")))?;
+        let before =
+            s.data.get(array).cloned().ok_or_else(|| {
+                EditError::Path(tr!("there is no node at {array}", array = array))
+            })?;
         let Value::Array(items) = before.value() else {
-            return Err(EditError::Path(format!("{array} is not an array")));
+            return Err(EditError::Path(tr!(
+                "{array} is not an array",
+                array = array
+            )));
         };
         let mut seen = vec![false; items.len()];
         let valid = order.len() == items.len()
@@ -801,7 +808,7 @@ impl Calc {
                 .all(|&i| i < seen.len() && !std::mem::replace(&mut seen[i], true));
         if !valid {
             return Err(EditError::Path(
-                "the new order must name every item once".to_owned(),
+                tr!("the new order must name every item once").to_owned(),
             ));
         }
         if order.iter().enumerate().all(|(place, &i)| place == i) {
@@ -869,7 +876,7 @@ impl Calc {
         }
         ops.push(self.formula_op(sheet, path, text));
         self.history
-            .record(format!("Set formula at {loc}"), ops, None);
+            .record(tr!("Set formula at {loc}", loc = loc), ops, None);
         Ok(())
     }
 
@@ -1035,7 +1042,10 @@ impl Calc {
             value: None,
         });
         self.history.record(
-            format!("Clear formula at {}", Loc::new(sheet, path.clone())),
+            tr!(
+                "Clear formula at {place}",
+                place = Loc::new(sheet, path.clone())
+            ),
             ops,
             None,
         );
@@ -1088,7 +1098,7 @@ impl Calc {
     fn refuse_history_while_grouping(&self) -> Result<(), EditError> {
         if self.history.is_grouping() {
             Err(EditError::Path(
-                "an edit is in progress; finish it before undoing".to_owned(),
+                tr!("an edit is in progress; finish it before undoing").to_owned(),
             ))
         } else {
             Ok(())
@@ -1333,7 +1343,9 @@ impl Calc {
         node: Node,
     ) -> Result<(), EditError> {
         let Some(segment) = path.segments().last().cloned() else {
-            return Err(EditError::Path("the root cannot be inserted".to_owned()));
+            return Err(EditError::Path(
+                tr!("the root cannot be inserted").to_owned(),
+            ));
         };
         let parent = path.parent().unwrap_or_default();
         self.sheet_mut(sheet)?

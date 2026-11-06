@@ -6,6 +6,7 @@
 //! are never rewritten (DESIGN.md, "Renames do not rewrite formulas"), so they
 //! are calculated again and find the tab, or not, by the name they say.
 
+use gossia_i18n::tr;
 use std::sync::Arc;
 
 use gossia_core::form::FormDesign;
@@ -71,13 +72,15 @@ impl Calc {
             .chain(self.reports.keys())
             .find(|s| Some(s.as_str()) != renaming && s.to_lowercase() == lower)
         {
-            return Some(format!(
-                "a tab called {other} exists already (names ignore case)"
+            return Some(tr!(
+                "a tab called {other} exists already (names ignore case)",
+                other = other
             ));
         }
         if let Some(module) = self.modules.keys().find(|m| m.to_lowercase() == lower) {
-            return Some(format!(
-                "{module} is the name of a module, and a tab cannot share it"
+            return Some(tr!(
+                "{module} is the name of a module, and a tab cannot share it",
+                module = module
             ));
         }
         None
@@ -97,7 +100,7 @@ impl Calc {
         }
         self.store_rename(from, to);
         self.history.record(
-            format!("Rename tab {from} to {to}"),
+            tr!("Rename tab {from} to {to}", from = from, to = to),
             vec![Op::RenameSheet {
                 from: from.to_owned(),
                 to: to.to_owned(),
@@ -225,8 +228,9 @@ impl Calc {
     ) -> Result<(), EditError> {
         self.refuse_tab_name(name)?;
         if !self.is_schema_sheet(schema_sheet) {
-            return Err(EditError::Path(format!(
-                "{schema_sheet} is not a schema tab"
+            return Err(EditError::Path(tr!(
+                "{schema_sheet} is not a schema tab",
+                schema_sheet = schema_sheet
             )));
         }
         self.refuse_auto_update_in_use(schema_sheet, name)?;
@@ -290,9 +294,10 @@ impl Calc {
                 .iter()
                 .any(|user| user != sheet)
         {
-            return Err(EditError::Path(format!(
+            return Err(EditError::Path(tr!(
                 "{schema_sheet} has auto-update switched on, so only one tab may use it; \
-                 switch that off first"
+                 switch that off first",
+                schema_sheet = schema_sheet
             )));
         }
         Ok(())
@@ -306,14 +311,14 @@ impl Calc {
         let from = names
             .iter()
             .position(|n| n == name)
-            .ok_or_else(|| EditError::Path(format!("there is no tab called {name}")))?;
+            .ok_or_else(|| EditError::Path(tr!("there is no tab called {name}", name = name)))?;
         let to = to.min(names.len() - 1);
         if from == to {
             return Ok(());
         }
         self.put_sheet_move(from, to);
         self.history.record(
-            format!("Move tab {name}"),
+            tr!("Move tab {name}", name = name),
             vec![Op::MoveSheet { from, to }],
             None,
         );
@@ -336,7 +341,7 @@ impl Calc {
             return;
         };
         self.history.record(
-            format!("New tab {name}"),
+            tr!("New tab {name}", name = name),
             vec![Op::AddSheet(Box::new(saved))],
             None,
         );
@@ -367,22 +372,24 @@ impl Calc {
             return None;
         }
         if !self.sheets.contains_key(name) {
-            return Some(format!("there is no tab called {name}"));
+            return Some(tr!("there is no tab called {name}", name = name));
         }
         if self.sheets.len() == 1 {
-            return Some("a workbook keeps at least one tab".to_owned());
+            return Some(tr!("a workbook keeps at least one tab").to_owned());
         }
         let users = self.schema_users(name);
         if !users.is_empty() {
-            let (verb, them, it) = if users.len() == 1 {
-                ("uses", "that tab", "it")
-            } else {
-                ("use", "those tabs", "them")
-            };
-            return Some(format!(
-                "{} {verb} this schema; delete {them} or give {it} another schema first",
-                users.join(", "),
-            ));
+            let tabs = users.join(", ");
+            return Some(match users.len() {
+                1 => tr!(
+                    "{tabs} uses this schema; delete that tab or give it another schema first",
+                    tabs = tabs
+                ),
+                _ => tr!(
+                    "{tabs} use this schema; delete those tabs or give them another schema first",
+                    tabs = tabs
+                ),
+            });
         }
         None
     }
@@ -402,7 +409,7 @@ impl Calc {
         }
         let saved = self.store_remove_tab(name).expect("the tab exists");
         self.history.record(
-            format!("Delete tab {name}"),
+            tr!("Delete tab {name}", name = name),
             vec![Op::RemoveSheet(Box::new(saved))],
             None,
         );
@@ -477,7 +484,11 @@ impl Calc {
         let spec = self.lowered_for(schema_sheet, record.as_deref())?;
         self.store_binding(sheet, Some(schema_sheet.to_owned()), Arc::new(spec))?;
         self.history.record(
-            format!("Bind {sheet} to {schema_sheet}"),
+            tr!(
+                "Bind {sheet} to {schema_sheet}",
+                sheet = sheet,
+                schema_sheet = schema_sheet
+            ),
             vec![Op::Bind {
                 sheet: sheet.to_owned(),
                 before,
@@ -492,21 +503,27 @@ impl Calc {
     /// Why `sheet` cannot be bound to `schema_sheet`, or None.
     pub fn rebind_problem(&self, sheet: &str, schema_sheet: &str) -> Option<String> {
         let Some(s) = self.sheets.get(sheet) else {
-            return Some(format!("there is no tab called {sheet}"));
+            return Some(tr!("there is no tab called {sheet}", sheet = sheet));
         };
         if self.is_schema_sheet(sheet) {
-            return Some(format!(
-                "{sheet} is a schema tab, which is described by the built-in schema"
+            return Some(tr!(
+                "{sheet} is a schema tab, which is described by the built-in schema",
+                sheet = sheet
             ));
         }
         let Some(format) = self.schema_format(schema_sheet) else {
-            return Some(format!("{schema_sheet} is not a schema tab"));
+            return Some(tr!(
+                "{schema_sheet} is not a schema tab",
+                schema_sheet = schema_sheet
+            ));
         };
         let own = SchemaFormat::of(&s.spec);
         if own != format {
-            return Some(format!(
-                "{sheet} holds {}, so it cannot be bound to {schema_sheet}",
-                own.data_label()
+            return Some(tr!(
+                "{sheet} holds {own}, so it cannot be bound to {schema_sheet}",
+                sheet = sheet,
+                own = own.data_label(),
+                schema_sheet = schema_sheet
             ));
         }
         if let Err(e) = self.refuse_auto_update_in_use(schema_sheet, sheet) {
@@ -517,7 +534,12 @@ impl Calc {
             Err(e) => return Some(e.to_string()),
         };
         if let Some(why) = s.format.root_problem(&spec.get(spec.root()).kind) {
-            return Some(format!("{sheet} is written as {}: {why}", s.format.label()));
+            return Some(tr!(
+                "{sheet} is written as {kind}: {why}",
+                sheet = sheet,
+                kind = s.format.label(),
+                why = why
+            ));
         }
         None
     }

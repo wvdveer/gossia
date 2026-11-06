@@ -379,7 +379,7 @@ fn continue_literal(out: &mut [Token], code: &str, line: usize) -> Result<(), Pa
     let Some(last) = out.last_mut() else {
         return Err(ParseError {
             line,
-            message: "a continuation line has nothing before it to go on with".into(),
+            message: tr!("a continuation line has nothing before it to go on with").into(),
         });
     };
     let code = code.trim();
@@ -411,7 +411,7 @@ fn parse_tokens(tokens: Vec<Token>, end_comment: Option<String>) -> Result<Copyb
         if i == tokens.len() {
             return Err(ParseError {
                 line: tokens[start].line,
-                message: "this entry has no period at its end".into(),
+                message: tr!("this entry has no period at its end").into(),
             });
         }
         let sentence = &tokens[start..=i];
@@ -419,9 +419,9 @@ fn parse_tokens(tokens: Vec<Token>, end_comment: Option<String>) -> Result<Copyb
         let line = sentence[0].line;
         let level: u8 = sentence[0].text.parse().map_err(|_| ParseError {
             line,
-            message: format!(
-                "an entry starts with its level number, not {}",
-                sentence[0].text
+            message: tr!(
+                "an entry starts with its level number, not {text}",
+                text = sentence[0].text
             ),
         })?;
         let comment = sentence[0].comment.clone();
@@ -430,7 +430,7 @@ fn parse_tokens(tokens: Vec<Token>, end_comment: Option<String>) -> Result<Copyb
                 let Some((last, _)) = entries.last_mut() else {
                     return Err(ParseError {
                         line,
-                        message: "a level 88 entry must follow an item".into(),
+                        message: tr!("a level 88 entry must follow an item").into(),
                     });
                 };
                 last.conditions
@@ -446,7 +446,7 @@ fn parse_tokens(tokens: Vec<Token>, end_comment: Option<String>) -> Result<Copyb
                     .or((!entries.is_empty()).then_some(0))
                     .ok_or_else(|| ParseError {
                         line,
-                        message: "a level 66 entry must follow a record".into(),
+                        message: tr!("a level 66 entry must follow a record").into(),
                     })?;
                 entries[at].0.renames.push(renames);
                 continue;
@@ -455,7 +455,7 @@ fn parse_tokens(tokens: Vec<Token>, end_comment: Option<String>) -> Result<Copyb
             _ => {
                 return Err(ParseError {
                     line,
-                    message: format!("{level} is not a level number"),
+                    message: tr!("{level} is not a level number", level = level),
                 });
             }
         }
@@ -478,7 +478,8 @@ fn renames(words: &[Token], comment: Option<String>, line: usize) -> Result<Rena
     let upper: Vec<String> = words.iter().map(|w| w.text.to_ascii_uppercase()).collect();
     let error = || ParseError {
         line,
-        message: "a level 66 entry is NAME RENAMES item, or NAME RENAMES item THRU item".into(),
+        message: tr!("a level 66 entry is NAME RENAMES item, or NAME RENAMES item THRU item")
+            .into(),
     };
     let text = |k: usize| words.get(k).map(|t| t.text.clone()).ok_or_else(error);
     if upper.get(1).map(String::as_str) != Some("RENAMES") {
@@ -506,7 +507,7 @@ fn condition(
 ) -> Result<ConditionName, ParseError> {
     let (name, rest) = words.split_first().ok_or_else(|| ParseError {
         line,
-        message: "a level 88 entry names a condition".into(),
+        message: tr!("a level 88 entry names a condition").into(),
     })?;
     let mut rest = rest;
     for skip in [["VALUE", "VALUES"], ["IS", "ARE"]] {
@@ -520,7 +521,7 @@ fn condition(
     if rest.is_empty() {
         return Err(ParseError {
             line,
-            message: format!("the condition {} has no VALUE", name.text),
+            message: tr!("the condition {text} has no VALUE", text = name.text),
         });
     }
     let values: Vec<&str> = rest.iter().map(|t| t.text.as_str()).collect();
@@ -671,7 +672,7 @@ fn entry(words: &[Token], line: usize) -> Result<Item, ParseError> {
 }
 
 fn usage_of(word: &str) -> Result<Usage, String> {
-    Usage::from_word(word).ok_or_else(|| format!("{word} is not a usage Gossia reads"))
+    Usage::from_word(word).ok_or_else(|| tr!("{word} is not a usage Gossia reads", word = word))
 }
 
 /// Nests the entries by their level numbers.
@@ -1009,16 +1010,16 @@ fn conditions_of(
     let mut conditions = Vec::new();
     if let Some(list) = f.get("conditions") {
         let Value::Array(list) = list.value() else {
-            return Err(format!("{at}.conditions is a list of condition names"));
+            return Err(tr!("{at}.conditions is a list of condition names", at = at));
         };
         for (i, node) in list.iter().enumerate() {
             let here = format!("{at}.conditions[{i}]");
             let Value::Object(c) = node.value() else {
-                return Err(format!("{here} is a table of name and values"));
+                return Err(tr!("{here} is a table of name and values", here = here));
             };
             let text = |key: &str| match c.get(key).map(Node::value) {
                 Some(Value::Str(s)) if !s.trim().is_empty() => Ok(s.trim().to_owned()),
-                _ => Err(format!("{here}.{key} is text")),
+                _ => Err(tr!("{here}.{key} is text", here = here, key = key)),
             };
             conditions.push(ConditionName {
                 name: text("name")?,
@@ -1030,22 +1031,22 @@ fn conditions_of(
     let mut renames = Vec::new();
     if let Some(list) = f.get("renames") {
         let Value::Array(list) = list.value() else {
-            return Err(format!("{at}.renames is a list of RENAMES entries"));
+            return Err(tr!("{at}.renames is a list of RENAMES entries", at = at));
         };
         for (i, node) in list.iter().enumerate() {
             let here = format!("{at}.renames[{i}]");
             let Value::Object(r) = node.value() else {
-                return Err(format!("{here} is a table of name, from and thru"));
+                return Err(tr!("{here} is a table of name, from and thru", here = here));
             };
             let text = |key: &str| match r.get(key).map(Node::value) {
                 None | Some(Value::Null) => Ok(None),
                 Some(Value::Str(s)) if s.trim().is_empty() => Ok(None),
                 Some(Value::Str(s)) => Ok(Some(s.trim().to_owned())),
-                _ => Err(format!("{here}.{key} is text")),
+                _ => Err(tr!("{here}.{key} is text", here = here, key = key)),
             };
             renames.push(Renames {
-                name: text("name")?.ok_or_else(|| format!("{here}.name is text"))?,
-                from: text("from")?.ok_or_else(|| format!("{here}.from is text"))?,
+                name: text("name")?.ok_or_else(|| tr!("{here}.name is text", here = here))?,
+                from: text("from")?.ok_or_else(|| tr!("{here}.from is text", here = here))?,
                 thru: text("thru")?,
                 comment: node.comment().map(str::to_owned),
             });
@@ -1098,19 +1099,23 @@ fn conditions_of(
 /// The copybook a schema tab's tree holds, and its code page.
 pub fn from_node(node: &Node) -> Result<(Copybook, CodePage), String> {
     let Value::Object(fields) = node.value() else {
-        return Err("a copybook schema is a table of codePage and items".into());
+        return Err(tr!("a copybook schema is a table of codePage and items").into());
     };
     let code_page = match fields.get("codePage").map(Node::value) {
         None => CodePage::default(),
         Some(Value::Str(code)) => CodePage::from_code(code)
-            .ok_or_else(|| format!("{code} is not a code page Gossia knows"))?,
-        Some(_) => return Err("codePage is text, such as 037".into()),
+            .ok_or_else(|| tr!("{code} is not a code page Gossia knows", code = code))?,
+        Some(_) => return Err(tr!("codePage is text, such as 037").into()),
     };
     let float = match fields.get("floatFormat").map(Node::value) {
         None | Some(Value::Null) => FloatFormat::default(),
-        Some(Value::Str(code)) => FloatFormat::from_code(code)
-            .ok_or_else(|| format!("{code} is not a floating point format: hex or ieee"))?,
-        Some(_) => return Err("floatFormat is text: hex or ieee".into()),
+        Some(Value::Str(code)) => FloatFormat::from_code(code).ok_or_else(|| {
+            tr!(
+                "{code} is not a floating point format: hex or ieee",
+                code = code
+            )
+        })?,
+        Some(_) => return Err(tr!("floatFormat is text: hex or ieee").into()),
     };
     let mut items = match fields.get("items") {
         Some(items) => items_of(items, "items")?,
@@ -1144,7 +1149,7 @@ fn take_renames(item: &mut Item, out: &mut Vec<Renames>) {
 
 fn items_of(node: &Node, at: &str) -> Result<Vec<Item>, String> {
     let Value::Array(items) = node.value() else {
-        return Err(format!("{at} is a list of items"));
+        return Err(tr!("{at} is a list of items", at = at));
     };
     items
         .iter()
@@ -1155,14 +1160,14 @@ fn items_of(node: &Node, at: &str) -> Result<Vec<Item>, String> {
 
 fn item_of(node: &Node, at: &str) -> Result<Item, String> {
     let Value::Object(f) = node.value() else {
-        return Err(format!("{at} is a table of the item's clauses"));
+        return Err(tr!("{at} is a table of the item's clauses", at = at));
     };
     let text = |key: &str| -> Result<Option<String>, String> {
         match f.get(key).map(Node::value) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::Str(s)) if s.trim().is_empty() => Ok(None),
             Some(Value::Str(s)) => Ok(Some(s.trim().to_owned())),
-            Some(_) => Err(format!("{at}.{key} is text")),
+            Some(_) => Err(tr!("{at}.{key} is text", at = at, key = key)),
         }
     };
     let number = |key: &str| -> Result<Option<u32>, String> {
@@ -1170,15 +1175,15 @@ fn item_of(node: &Node, at: &str) -> Result<Item, String> {
             None | Some(Value::Null) => Ok(None),
             Some(Value::Int(n)) => u32::try_from(*n)
                 .map(Some)
-                .map_err(|_| format!("{at}.{key} is a whole number from 0")),
-            Some(_) => Err(format!("{at}.{key} is a whole number")),
+                .map_err(|_| tr!("{at}.{key} is a whole number from 0", at = at, key = key)),
+            Some(_) => Err(tr!("{at}.{key} is a whole number", at = at, key = key)),
         }
     };
-    let level = number("level")?.ok_or_else(|| format!("{at} has no level"))?;
+    let level = number("level")?.ok_or_else(|| tr!("{at} has no level", at = at))?;
     let level = u8::try_from(level)
         .ok()
         .filter(|l| (1..=49).contains(l) || *l == 77)
-        .ok_or_else(|| format!("{at}.level is 1 to 49, or 77"))?;
+        .ok_or_else(|| tr!("{at}.level is 1 to 49, or 77", at = at))?;
     let name = text("name")?.unwrap_or_else(|| "FILLER".to_owned());
     let usage = match text("usage")? {
         None => None,
@@ -1186,10 +1191,13 @@ fn item_of(node: &Node, at: &str) -> Result<Item, String> {
     };
     let sign = match text("sign")? {
         None => None,
-        Some(s) => Some(
-            Sign::from_code(&s)
-                .ok_or_else(|| format!("{at}.sign is one of {}", Sign::CODES.join(", ")))?,
-        ),
+        Some(s) => Some(Sign::from_code(&s).ok_or_else(|| {
+            tr!(
+                "{at}.sign is one of {codes}",
+                at = at,
+                codes = Sign::CODES.join(", ")
+            )
+        })?),
     };
     let occurs = match number("occurs")? {
         None => None,
@@ -1207,7 +1215,7 @@ fn item_of(node: &Node, at: &str) -> Result<Item, String> {
     let sync = match f.get("sync").map(Node::value) {
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,
-        Some(_) => return Err(format!("{at}.sync is true or false")),
+        Some(_) => return Err(tr!("{at}.sync is true or false", at = at)),
     };
     Ok(Item {
         level,

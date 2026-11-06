@@ -7,6 +7,7 @@
 //! the driver has transactions. Drivers that ignore both are protected only by
 //! the account in the definition. Parameters are `?` with a list.
 
+use gossia_i18n::tr;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -18,13 +19,13 @@ use odbc_api::{
 };
 use serde_json::Value as Json;
 
-use super::{Rows, bytes_json, decimal_json, json_bytes, plural};
+use super::{Rows, bytes_json, count_mismatch, decimal_json, json_bytes};
 use crate::sources::SourceDef;
 
 /// The ODBC environment, made once for the whole program.
 fn environment() -> Result<&'static Environment, String> {
     static ENV: OnceLock<Result<Environment, String>> = OnceLock::new();
-    ENV.get_or_init(|| Environment::new().map_err(|e| format!("ODBC cannot be set up: {e}")))
+    ENV.get_or_init(|| Environment::new().map_err(|e| tr!("ODBC cannot be set up: {e}", e = e)))
         .as_ref()
         .map_err(Clone::clone)
 }
@@ -87,9 +88,9 @@ pub(super) fn open(def: &SourceDef, timeout: Duration) -> Result<Connection<'sta
     match receiver.recv_timeout(timeout.max(Duration::from_millis(1))) {
         Ok(Ok(conn)) => Ok(conn),
         Ok(Err(why)) => Err(format!("{}: {}", def.name, why)),
-        Err(_) => Err(format!(
-            "{}: the data source did not answer within the call timeout",
-            def.name
+        Err(_) => Err(tr!(
+            "{name}: the data source did not answer within the call timeout",
+            name = def.name
         )),
     }
 }
@@ -182,27 +183,22 @@ fn bind(
         Json::Null => &[],
         Json::Array(values) => values,
         Json::Object(_) => {
-            return Err(format!(
-                "{}: ODBC parameters are ? with a list, not :name with a dict",
-                def.name
+            return Err(tr!(
+                "{name}: ODBC parameters are ? with a list, not :name with a dict",
+                name = def.name
             ));
         }
         _ => {
-            return Err(format!("{}: the parameters are a list, for ?", def.name));
+            return Err(tr!(
+                "{name}: the parameters are a list, for ?",
+                name = def.name
+            ));
         }
     };
     if let Some(wanted) = wanted
         && wanted != values.len()
     {
-        return Err(format!(
-            "{}: the SQL has {}, and {} given",
-            def.name,
-            plural(wanted, "parameter", "parameters"),
-            match values.len() {
-                1 => "1 value was".to_owned(),
-                n => format!("{n} values were"),
-            }
-        ));
+        return Err(count_mismatch(&def.name, wanted, values.len()));
     }
     values
         .iter()
@@ -223,7 +219,11 @@ fn bind(
                 other => match json_bytes(other) {
                     Some(bytes) => Box::new(bytes.into_parameter()),
                     None => {
-                        return Err(format!("{}: {other} cannot be passed to SQL", def.name));
+                        return Err(tr!(
+                            "{name}: {other} cannot be passed to SQL",
+                            name = def.name,
+                            other = other
+                        ));
                     }
                 },
             })

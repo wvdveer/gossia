@@ -143,14 +143,16 @@ impl Setting {
 fn number(setting: Setting, value: &Json) -> Result<u64, String> {
     match value.as_u64() {
         Some(n) if n >= setting.minimum() => Ok(n),
-        Some(n) => Err(format!(
-            "{} is {n}, below the smallest allowed value {}",
-            setting.key(),
-            setting.minimum()
+        Some(n) => Err(tr!(
+            "{setting} is {n}, below the smallest allowed value {minimum}",
+            setting = setting.key(),
+            n = n,
+            minimum = setting.minimum()
         )),
-        None => Err(format!(
-            "{} is {value}, which is not a whole number",
-            setting.key()
+        None => Err(tr!(
+            "{setting} is {value}, which is not a whole number",
+            setting = setting.key(),
+            value = value
         )),
     }
 }
@@ -244,15 +246,18 @@ impl WorkbookSettings {
             Ok(Json::Object(object)) => object,
             Ok(_) => {
                 warnings.push(
-                    "settings.json is not a JSON object, so the workbook has the default \
+                    tr!(
+                        "settings.json is not a JSON object, so the workbook has the default \
                      settings."
-                        .to_owned(),
+                    )
+                    .to_owned(),
                 );
                 return (settings, warnings);
             }
             Err(e) => {
-                warnings.push(format!(
-                    "settings.json cannot be read ({e}), so the workbook has the default settings."
+                warnings.push(tr!(
+                    "settings.json cannot be read ({e}), so the workbook has the default settings.",
+                    e = e
                 ));
                 return (settings, warnings);
             }
@@ -261,9 +266,11 @@ impl WorkbookSettings {
             if key == KEEP_REPORT_RESULTS {
                 match value.as_bool() {
                     Some(keep) => settings.discard_report_results = !keep,
-                    None => warnings.push(format!(
+                    None => warnings.push(tr!(
                         "In settings.json, {KEEP_REPORT_RESULTS} is {value}, which is not true \
-                         or false; report results are kept."
+                         or false; report results are kept.",
+                        KEEP_REPORT_RESULTS = KEEP_REPORT_RESULTS,
+                        value = value
                     )),
                 }
                 continue;
@@ -271,9 +278,10 @@ impl WorkbookSettings {
             match Setting::from_key(&key) {
                 Some(setting) => match number(setting, &value) {
                     Ok(n) => settings.set(setting, n),
-                    Err(why) => warnings.push(format!(
-                        "In settings.json, {why}; the default {} is used.",
-                        setting.default_value()
+                    Err(why) => warnings.push(tr!(
+                        "In settings.json, {why}; the default {setting} is used.",
+                        why = why,
+                        setting = setting.default_value()
                     )),
                 },
                 None => {
@@ -383,7 +391,7 @@ impl Calc {
         let before = std::mem::replace(&mut self.settings, settings.clone());
         self.revision += 1;
         self.history.record(
-            "Change the workbook settings".to_owned(),
+            tr!("Change the workbook settings").to_owned(),
             vec![Op::Settings {
                 before: Box::new(before),
                 after: Box::new(settings),

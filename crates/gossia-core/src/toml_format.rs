@@ -7,6 +7,7 @@
 //! objects.
 
 use chrono::{FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use gossia_i18n::tr;
 use toml_edit::{DocumentMut, Item, RawString, Table, Value as Toml};
 
 use crate::json::{ParseError, Parsed, Warning, WriteError};
@@ -148,8 +149,9 @@ fn value(v: &Toml, path: &Path, warnings: &mut Vec<Warning>) -> Result<Node, Par
         Toml::Float(x) => {
             let x = *x.value();
             if !x.is_finite() {
-                return Err(refused(format!(
-                    "{x} cannot be read: Gossia holds only finite numbers"
+                return Err(refused(tr!(
+                    "{x} cannot be read: Gossia holds only finite numbers",
+                    x = x
                 )));
             }
             Node::new(Value::Float(x))
@@ -210,7 +212,7 @@ fn datetime(
             t.nanosecond.unwrap_or(0),
         )
     });
-    let bad = || format!("{d} is not a date and time Gossia can hold");
+    let bad = || tr!("{d} is not a date and time Gossia can hold", d = d);
     Ok(match (date, time) {
         (Some(date), None) => Value::Date(date.ok_or_else(bad)?),
         (Some(date), Some(time)) => {
@@ -231,8 +233,9 @@ fn datetime(
         (None, _) => {
             warnings.push(Warning {
                 path: path.clone(),
-                message: format!(
-                    "the time of day {d} has no type of its own in Gossia, so it was read as text"
+                message: tr!(
+                    "the time of day {d} has no type of its own in Gossia, so it was read as text",
+                    d = d
                 ),
             });
             Value::Str(d.to_string())
@@ -373,7 +376,7 @@ fn inline(out: &mut String, node: &Node, path: &Path, indent: &str) -> Result<()
             if !x.is_finite() {
                 return Err(WriteError {
                     path: path.clone(),
-                    message: "NaN and infinity cannot be written".into(),
+                    message: tr!("NaN and infinity cannot be written").into(),
                 });
             }
             out.push_str(&serde_json::to_string(x).expect("a finite float serializes"));

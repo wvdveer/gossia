@@ -6,6 +6,7 @@
 //! consistent snapshot by cloning the root, while the editing thread, when it
 //! changes a node, copies only the nodes on the path from the root to it.
 
+use gossia_i18n::tr;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -259,9 +260,9 @@ pub enum PathError {
 impl fmt::Display for PathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PathError::Missing(p) => write!(f, "no node at `{p}`"),
-            PathError::WrongKind(p) => write!(f, "cannot step into `{p}` this way"),
-            PathError::OutOfRange(p) => write!(f, "index out of range at `{p}`"),
+            PathError::Missing(p) => f.write_str(&tr!("no node at `{p}`", p = p)),
+            PathError::WrongKind(p) => f.write_str(&tr!("cannot step into `{p}` this way", p = p)),
+            PathError::OutOfRange(p) => f.write_str(&tr!("index out of range at `{p}`", p = p)),
         }
     }
 }

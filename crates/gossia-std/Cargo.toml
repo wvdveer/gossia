@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 gossia-core.workspace = true
+gossia-i18n.workspace = true
 
 [lints]
 workspace = true

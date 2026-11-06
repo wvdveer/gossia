@@ -271,9 +271,9 @@ pub fn choice_values(list: &Value) -> Result<Vec<(Value, Option<Value>)>, String
         Value::Null => return Ok(Vec::new()),
         Value::Array(items) => items,
         other => {
-            return Err(format!(
-                "a list of choices is expected, not a value of kind {}",
-                other.kind_name()
+            return Err(tr!(
+                "a list of choices is expected, not a value of kind {kind}",
+                kind = other.kind_name()
             ));
         }
     };
@@ -283,8 +283,9 @@ pub fn choice_values(list: &Value) -> Result<Vec<(Value, Option<Value>)>, String
         .enumerate()
         .map(|(i, item)| {
             let wrong = || {
-                format!(
-                    "item {i} is not a value, a (value, label) pair or a dict with value and label"
+                tr!(
+                    "item {i} is not a value, a (value, label) pair or a dict with value and label",
+                    i = i
                 )
             };
             match item.value() {

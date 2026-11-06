@@ -6,12 +6,14 @@
 //! error, not a new empty database. Without *Allow writes*, and always in a
 //! formula, the file is opened read-only, so SQLite itself refuses a change.
 
+use gossia_i18n::tr;
 use std::time::{Duration, Instant};
 
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, ErrorCode, OpenFlags, Statement};
 use serde_json::{Map, Value as Json, json};
 
+use crate::database::count_mismatch;
 use crate::http::Limits;
 use crate::sources::{SourceDef, SourceKind, TestOutcome};
 
@@ -28,9 +30,9 @@ pub fn query(
     let conn = open(def, writable, limits.timeout)?;
     let mut stmt = prepare(&conn, def, sql)?;
     if !stmt.readonly() {
-        return Err(format!(
-            "{}: query() is for reading; use execute() for a statement that changes data",
-            def.name
+        return Err(tr!(
+            "{name}: query() is for reading; use execute() for a statement that changes data",
+            name = def.name
         ));
     }
     bind(&mut stmt, def, params)?;
@@ -65,9 +67,10 @@ pub fn query(
             values.push(to_json(value));
         }
         if size > limits.max_bytes {
-            return Err(format!(
-                "{}: the rows are larger than the maximum response size of {} bytes",
-                def.name, limits.max_bytes
+            return Err(tr!(
+                "{name}: the rows are larger than the maximum response size of {max_bytes} bytes",
+                name = def.name,
+                max_bytes = limits.max_bytes
             ));
         }
         rows.push(Json::Array(values));
@@ -103,10 +106,12 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
     match found {
         Ok((version, tables)) => TestOutcome {
             ok: true,
-            message: format!(
-                "SQLite {version}: {path} opened read-only, {tables} {}, in {} ms",
-                if tables == 1 { "table" } else { "tables" },
-                start.elapsed().as_millis()
+            message: tr!(
+                "SQLite {version}: {path} opened read-only, {tables}, in {ms} ms",
+                version = version,
+                path = path,
+                tables = gossia_i18n::counted(tables as usize, tr!("1 table"), tr!("{n} tables")),
+                ms = start.elapsed().as_millis()
             ),
         },
         Err(e) => TestOutcome::failed(format!("{path}: {}", plain(&e))),
@@ -115,32 +120,38 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
 
 fn open(def: &SourceDef, writable: bool, timeout: Duration) -> Result<Connection, String> {
     if def.kind != SourceKind::Sqlite {
-        return Err(format!(
-            "{} is a {} source, not a SQLite one",
-            def.name,
-            def.kind.label()
+        return Err(tr!(
+            "{name} is a {kind} source, not a SQLite one",
+            name = def.name,
+            kind = def.kind.label()
         ));
     }
     let path = def.path.as_deref().unwrap_or_default().trim();
     if path.is_empty() {
-        return Err(format!(
-            "{}: a SQLite source needs the path of its file",
-            def.name
+        return Err(tr!(
+            "{name}: a SQLite source needs the path of its file",
+            name = def.name
         ));
     }
     // Opening a missing file without SQLITE_OPEN_CREATE fails, but with a
     // message that does not say which file; say it first.
     match std::fs::metadata(path) {
         Ok(m) if m.is_file() => {}
-        Ok(_) => return Err(format!("{path} is not a file")),
-        Err(e) => return Err(format!("{path} cannot be opened: {e}")),
+        Ok(_) => return Err(tr!("{path} is not a file", path = path)),
+        Err(e) => return Err(tr!("{path} cannot be opened: {e}", path = path, e = e)),
     }
     let access = match writable {
         true => OpenFlags::SQLITE_OPEN_READ_WRITE,
         false => OpenFlags::SQLITE_OPEN_READ_ONLY,
     };
     let mut conn = Connection::open_with_flags(path, access | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-        .map_err(|e| format!("{path} cannot be opened: {}", plain(&e)))?;
+        .map_err(|e| {
+            tr!(
+                "{path} cannot be opened: {message}",
+                path = path,
+                message = plain(&e)
+            )
+        })?;
     // A locked database is waited for, and a long statement stopped, within
     // the call timeout.
     conn.busy_timeout(timeout)
@@ -154,9 +165,9 @@ fn open(def: &SourceDef, writable: bool, timeout: Duration) -> Result<Connection
 fn prepare<'c>(conn: &'c Connection, def: &SourceDef, sql: &str) -> Result<Statement<'c>, String> {
     match conn.prepare(sql) {
         Ok(stmt) => Ok(stmt),
-        Err(rusqlite::Error::MultipleStatement) => Err(format!(
-            "{}: one statement at a time, please: the SQL goes on after its first ;",
-            def.name
+        Err(rusqlite::Error::MultipleStatement) => Err(tr!(
+            "{name}: one statement at a time, please: the SQL goes on after its first ;",
+            name = def.name
         )),
         Err(e) => Err(format!("{}: {}", def.name, plain(&e))),
     }
@@ -168,26 +179,12 @@ fn bind(stmt: &mut Statement<'_>, def: &SourceDef, params: &Json) -> Result<(), 
     match params {
         Json::Null => {
             if wanted > 0 {
-                return Err(format!(
-                    "{}: the SQL has {wanted} {}, and no values were given",
-                    def.name,
-                    parameters(wanted)
-                ));
+                return Err(count_mismatch(&def.name, wanted, 0));
             }
         }
         Json::Array(values) => {
             if values.len() != wanted {
-                return Err(format!(
-                    "{}: the SQL has {wanted} {}, and {} {} given",
-                    def.name,
-                    parameters(wanted),
-                    values.len(),
-                    if values.len() == 1 {
-                        "value was"
-                    } else {
-                        "values were"
-                    }
-                ));
+                return Err(count_mismatch(&def.name, wanted, values.len()));
             }
             for (i, value) in values.iter().enumerate() {
                 let value = from_json(value).map_err(|e| format!("{}: {e}", def.name))?;
@@ -205,37 +202,30 @@ fn bind(stmt: &mut Statement<'_>, def: &SourceDef, params: &Json) -> Result<(), 
                 let index = stmt
                     .parameter_index(&key)
                     .map_err(|e| format!("{}: {}", def.name, plain(&e)))?
-                    .ok_or_else(|| format!("{}: the SQL has no parameter {key}", def.name))?;
+                    .ok_or_else(|| {
+                        tr!(
+                            "{name}: the SQL has no parameter {key}",
+                            name = def.name,
+                            key = key
+                        )
+                    })?;
                 let value = from_json(value).map_err(|e| format!("{}: {e}", def.name))?;
                 stmt.raw_bind_parameter(index, value)
                     .map_err(|e| format!("{}: {}", def.name, plain(&e)))?;
                 bound += 1;
             }
             if bound < wanted {
-                return Err(format!(
-                    "{}: the SQL has {wanted} {}, and {bound} {} given",
-                    def.name,
-                    parameters(wanted),
-                    if bound == 1 {
-                        "value was"
-                    } else {
-                        "values were"
-                    }
-                ));
+                return Err(count_mismatch(&def.name, wanted, bound));
             }
         }
         _ => {
-            return Err(format!(
-                "{}: the parameters are a list (for ?) or a dict (for :name)",
-                def.name
+            return Err(tr!(
+                "{name}: the parameters are a list (for ?) or a dict (for :name)",
+                name = def.name
             ));
         }
     }
     Ok(())
-}
-
-fn parameters(n: usize) -> &'static str {
-    if n == 1 { "parameter" } else { "parameters" }
 }
 
 /// A value from the prelude: JSON, with bytes as `{"$bytes": "<hex>"}`.
@@ -251,9 +241,9 @@ fn from_json(value: &Json) -> Result<SqlValue, String> {
         Json::String(s) => SqlValue::Text(s.clone()),
         Json::Object(o) if o.len() == 1 && o.contains_key("$bytes") => {
             let hex = o["$bytes"].as_str().unwrap_or_default();
-            SqlValue::Blob(from_hex(hex).ok_or("bytes that did not arrive whole")?)
+            SqlValue::Blob(from_hex(hex).ok_or(tr!("bytes that did not arrive whole"))?)
         }
-        other => return Err(format!("{other} cannot be passed to SQL")),
+        other => return Err(tr!("{other} cannot be passed to SQL", other = other)),
     })
 }
 
@@ -289,20 +279,20 @@ fn from_hex(text: &str) -> Option<Vec<u8>> {
 /// A failed call in words, with the timeout named when that was the cause.
 fn describe(def: &SourceDef, error: &rusqlite::Error, limits: Limits) -> String {
     match error.sqlite_error_code() {
-        Some(ErrorCode::OperationInterrupted) => format!(
-            "{}: the statement did not finish within {} s",
-            def.name,
-            limits.timeout.as_secs_f32()
+        Some(ErrorCode::OperationInterrupted) => tr!(
+            "{name}: the statement did not finish within {timeout} s",
+            name = def.name,
+            timeout = limits.timeout.as_secs_f32()
         ),
-        Some(ErrorCode::DatabaseBusy) | Some(ErrorCode::DatabaseLocked) => format!(
-            "{}: the database stayed locked by another program for {} s",
-            def.name,
-            limits.timeout.as_secs_f32()
+        Some(ErrorCode::DatabaseBusy) | Some(ErrorCode::DatabaseLocked) => tr!(
+            "{name}: the database stayed locked by another program for {timeout} s",
+            name = def.name,
+            timeout = limits.timeout.as_secs_f32()
         ),
-        Some(ErrorCode::ReadOnly) => format!(
-            "{}: the database is open read-only: {}",
-            def.name,
-            plain(error)
+        Some(ErrorCode::ReadOnly) => tr!(
+            "{name}: the database is open read-only: {message}",
+            name = def.name,
+            message = plain(error)
         ),
         _ => format!("{}: {}", def.name, plain(error)),
     }

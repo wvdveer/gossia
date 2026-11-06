@@ -4,12 +4,13 @@
 //! not available here, and its Test says the same.
 
 use crate::sources::{SourceDef, TestOutcome};
+use gossia_i18n::tr;
 
 fn unavailable(def: &SourceDef) -> String {
-    format!(
-        "{}: {} sources are not available here",
-        def.name,
-        def.kind.label()
+    tr!(
+        "{name}: {kind} sources are not available here",
+        name = def.name,
+        kind = def.kind.label()
     )
 }
 

@@ -11,6 +11,7 @@
 use crate::json::{ParseError, Parsed, Warning, WriteError};
 use crate::path::Path;
 use crate::value::{CommentPlace, DateTimeValue, Node, Value};
+use gossia_i18n::tr;
 
 /// How deep objects and arrays may nest, as for JSON.
 const MAX_DEPTH: usize = 128;
@@ -36,12 +37,12 @@ pub fn parse(text: &str) -> Result<Parsed, ParseError> {
     };
     let lead = reader.space()?;
     if reader.peek().is_none() {
-        return Err(reader.error("the text holds no value"));
+        return Err(reader.error(tr!("the text holds no value")));
     }
     let mut node = reader.value(&Path::root(), 0)?;
     let tail = reader.space()?;
     if reader.peek().is_some() {
-        return Err(reader.error("only one value may be at the top"));
+        return Err(reader.error(tr!("only one value may be at the top")));
     }
     if let Some(text) = join(lead.into_iter().map(|c| c.text)) {
         node.set_comment(Some(text));
@@ -108,8 +109,15 @@ impl Reader {
                 self.last_line = self.line;
                 Ok(())
             }
-            Some(c) => Err(self.error(format!("expected `{wanted}`, found `{c}`"))),
-            None => Err(self.error(format!("expected `{wanted}`, but the text ended"))),
+            Some(c) => Err(self.error(tr!(
+                "expected `{wanted}`, found `{c}`",
+                wanted = wanted,
+                c = c
+            ))),
+            None => Err(self.error(tr!(
+                "expected `{wanted}`, but the text ended",
+                wanted = wanted
+            ))),
         }
     }
 
@@ -151,7 +159,8 @@ impl Reader {
                                 return Err(ParseError {
                                     line,
                                     column,
-                                    message: "a comment begun with /* is not ended with */".into(),
+                                    message: tr!("a comment begun with /* is not ended with */")
+                                        .into(),
                                 });
                             }
                             Some('*') if self.peek_at(1) == Some('/') => {
@@ -194,8 +203,9 @@ impl Reader {
                         return Err(ParseError {
                             line,
                             column,
-                            message: format!(
-                                "{word} cannot be read: Gossia holds only finite numbers"
+                            message: tr!(
+                                "{word} cannot be read: Gossia holds only finite numbers",
+                                word = word
                             ),
                         });
                     }
@@ -203,13 +213,13 @@ impl Reader {
                         return Err(ParseError {
                             line,
                             column,
-                            message: format!("`{word}` is not a value"),
+                            message: tr!("`{word}` is not a value", word = word),
                         });
                     }
                 }
             }
-            Some(c) => return Err(self.error(format!("`{c}` cannot begin a value"))),
-            None => return Err(self.error("a value was expected, but the text ended")),
+            Some(c) => return Err(self.error(tr!("`{c}` cannot begin a value", c = c))),
+            None => return Err(self.error(tr!("a value was expected, but the text ended"))),
         };
         self.last_line = self.line;
         Ok(Node::new(value))
@@ -217,7 +227,7 @@ impl Reader {
 
     fn object(&mut self, path: &Path, depth: usize) -> Result<Node, ParseError> {
         if depth >= MAX_DEPTH {
-            return Err(self.error("the data nests too deep"));
+            return Err(self.error(tr!("the data nests too deep")));
         }
         self.expect('{')?;
         let mut fields: indexmap::IndexMap<String, Node> = indexmap::IndexMap::new();
@@ -245,8 +255,8 @@ impl Reader {
             let key = match self.peek() {
                 Some('"' | '\'') => self.string()?,
                 Some(c) if is_identifier_start(c) || c == '\\' => self.identifier()?,
-                Some(c) => return Err(self.error(format!("`{c}` cannot begin a key"))),
-                None => return Err(self.error("the object is not closed with `}`")),
+                Some(c) => return Err(self.error(tr!("`{c}` cannot begin a key", c = c))),
+                None => return Err(self.error(tr!("the object is not closed with `}`"))),
             };
             let more = self.space()?;
             pending.extend(more.into_iter().map(|c| c.text));
@@ -260,9 +270,10 @@ impl Reader {
             if fields.contains_key(&key) {
                 self.warnings.push(Warning {
                     path: path.key(key.clone()),
-                    message: format!(
-                        "the key {key:?} is there twice (line {}); the last is kept",
-                        key_line.0
+                    message: tr!(
+                        "the key {key} is there twice (line {line}); the last is kept",
+                        key = format!("{key:?}"),
+                        line = key_line.0
                     ),
                 });
             }
@@ -283,7 +294,7 @@ impl Reader {
 
     fn array(&mut self, path: &Path, depth: usize) -> Result<Node, ParseError> {
         if depth >= MAX_DEPTH {
-            return Err(self.error("the data nests too deep"));
+            return Err(self.error(tr!("the data nests too deep")));
         }
         self.expect('[')?;
         let mut items: Vec<Node> = Vec::new();
@@ -346,8 +357,12 @@ impl Reader {
                 self.last_line = self.line;
                 Ok(false)
             }
-            Some(c) => Err(self.error(format!("expected `,` or `{close}`, found `{c}`"))),
-            None => Err(self.error(format!("the text ended before `{close}`"))),
+            Some(c) => Err(self.error(tr!(
+                "expected `,` or `{close}`, found `{c}`",
+                close = close,
+                c = c
+            ))),
+            None => Err(self.error(tr!("the text ended before `{close}`", close = close))),
         }
     }
 
@@ -380,14 +395,14 @@ impl Reader {
                     return Err(ParseError {
                         line,
                         column,
-                        message: "the string is not closed".into(),
+                        message: tr!("the string is not closed").into(),
                     });
                 }
                 Some(c) if c == quote => break,
                 Some('\n' | '\r') => {
-                    return Err(self.error(
-                        "a string cannot hold a line break; write \\n, or end the line with \\",
-                    ));
+                    return Err(self.error(tr!(
+                        "a string cannot hold a line break; write \\n, or end the line with \\"
+                    )));
                 }
                 Some('\\') => self.escape(&mut out)?,
                 Some(c) => out.push(c),
@@ -399,7 +414,7 @@ impl Reader {
 
     fn escape(&mut self, out: &mut String) -> Result<(), ParseError> {
         match self.bump() {
-            None => Err(self.error("the text ended inside an escape")),
+            None => Err(self.error(tr!("the text ended inside an escape"))),
             Some('b') => {
                 out.push('\u{8}');
                 Ok(())
@@ -462,9 +477,9 @@ impl Reader {
                 Ok(())
             }
             Some('\n' | '\u{2028}' | '\u{2029}') => Ok(()),
-            Some(c) if c.is_ascii_digit() => {
-                Err(self.error("a digit cannot be escaped (octal escapes are not JSON5)"))
-            }
+            Some(c) if c.is_ascii_digit() => Err(self.error(tr!(
+                "a digit cannot be escaped (octal escapes are not JSON5)"
+            ))),
             Some(c) => {
                 out.push(c);
                 Ok(())
@@ -475,10 +490,12 @@ impl Reader {
     fn hex_digits(&mut self, count: usize) -> Result<u32, ParseError> {
         let mut n = 0;
         for _ in 0..count {
-            let d = self
-                .peek()
-                .and_then(|c| c.to_digit(16))
-                .ok_or_else(|| self.error(format!("{count} hexadecimal digits were expected")))?;
+            let d = self.peek().and_then(|c| c.to_digit(16)).ok_or_else(|| {
+                self.error(tr!(
+                    "{count} hexadecimal digits were expected",
+                    count = count
+                ))
+            })?;
             self.bump();
             n = n * 16 + d;
         }
@@ -491,7 +508,7 @@ impl Reader {
             if c == '\\' {
                 self.bump();
                 if self.bump() != Some('u') {
-                    return Err(self.error("only \\u escapes may be in a key"));
+                    return Err(self.error(tr!("only \\u escapes may be in a key")));
                 }
                 let n = self.hex_digits(4)?;
                 out.push(char::from_u32(n).unwrap_or('\u{FFFD}'));
@@ -505,7 +522,7 @@ impl Reader {
             }
         }
         if out.is_empty() {
-            return Err(self.error("a key was expected"));
+            return Err(self.error(tr!("a key was expected")));
         }
         self.last_line = self.line;
         Ok(out)
@@ -531,9 +548,12 @@ impl Reader {
                 line,
                 column,
                 message: if word == "Infinity" || word == "NaN" {
-                    format!("{word} cannot be read: Gossia holds only finite numbers")
+                    tr!(
+                        "{word} cannot be read: Gossia holds only finite numbers",
+                        word = word
+                    )
                 } else {
-                    format!("`{word}` is not a number")
+                    tr!("`{word}` is not a number", word = word)
                 },
             });
         }
@@ -546,7 +566,7 @@ impl Reader {
                 self.bump();
             }
             if digits.is_empty() {
-                return Err(self.error("hexadecimal digits were expected after 0x"));
+                return Err(self.error(tr!("hexadecimal digits were expected after 0x")));
             }
             self.last_line = self.line;
             return Ok(match i64::from_str_radix(&digits, 16) {
@@ -554,9 +574,9 @@ impl Reader {
                 Err(_) => {
                     self.warnings.push(Warning {
                         path: path.clone(),
-                        message: "integer beyond the signed 64-bit range was read as a \
-                                  floating-point number"
-                            .into(),
+                        message: tr!("integer beyond the signed 64-bit range was read as a \
+                                  floating-point number")
+                        .into(),
                     });
                     let x = digits.chars().fold(0f64, |n, c| {
                         n * 16.0 + f64::from(c.to_digit(16).unwrap_or(0))
@@ -582,7 +602,7 @@ impl Reader {
         let bad = || ParseError {
             line,
             column,
-            message: format!("`{text}` is not a number"),
+            message: tr!("`{text}` is not a number", text = text),
         };
         let digits = text.trim_start_matches('-');
         if digits.is_empty() || digits == "." {
@@ -594,7 +614,10 @@ impl Reader {
                 return Err(ParseError {
                     line,
                     column,
-                    message: format!("`{text}` has a leading zero, which JSON5 does not allow"),
+                    message: tr!(
+                        "`{text}` has a leading zero, which JSON5 does not allow",
+                        text = text
+                    ),
                 });
             }
             if let Ok(n) = text.parse::<i64>() {
@@ -602,9 +625,11 @@ impl Reader {
             }
             self.warnings.push(Warning {
                 path: path.clone(),
-                message: "integer beyond the signed 64-bit range was read as a floating-point \
+                message: tr!(
+                    "integer beyond the signed 64-bit range was read as a floating-point \
                           number"
-                    .into(),
+                )
+                .into(),
             });
         }
         // Rust reads `.5` and `5.` as JSON5 does.
@@ -613,7 +638,7 @@ impl Reader {
             return Err(ParseError {
                 line,
                 column,
-                message: format!("`{text}` is too large to be a number"),
+                message: tr!("`{text}` is too large to be a number", text = text),
             });
         }
         Ok(Value::Float(x))
@@ -692,7 +717,7 @@ pub fn to_string(node: &Node, style: Style, pretty: bool) -> Result<String, Writ
     if matches!(node.value(), Value::Error(_)) {
         return Err(WriteError {
             path: Path::root(),
-            message: "the root holds an error value".into(),
+            message: tr!("the root holds an error value").into(),
         });
     }
     writer.comment(&mut out, node.comment(), 0);
@@ -763,7 +788,7 @@ impl Writer {
                 if !x.is_finite() {
                     return Err(WriteError {
                         path: path.clone(),
-                        message: "NaN and infinity cannot be written".into(),
+                        message: tr!("NaN and infinity cannot be written").into(),
                     });
                 }
                 out.push_str(&serde_json::to_string(x).expect("a finite float serializes"));

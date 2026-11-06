@@ -10,6 +10,7 @@
 //! module fail, with a message that names both. Loading happens between
 //! evaluations (`Engine::sync_modules`), never during one.
 
+use gossia_i18n::tr;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -150,14 +151,14 @@ impl PythonEngine {
         }
         let code = match vm.compile(&spec.source, Mode::Exec, format!("<module {}>", spec.name)) {
             Ok(code) => code,
-            Err(e) => return fail(format!("syntax error: {e}")),
+            Err(e) => return fail(tr!("syntax error: {e}", e = e)),
         };
         let globals = vm.ctx.new_dict();
         let set = |key: &str, value: PyObjectRef| globals.set_item(key, value, vm);
         if set("__name__", vm.ctx.new_str(spec.name.as_str()).into()).is_err()
             || set("__builtins__", self.globals.clone().into()).is_err()
         {
-            return fail("the module could not be set up".to_owned());
+            return fail(tr!("the module could not be set up").to_owned());
         }
         let module = vm.new_module(&spec.name, globals.clone(), None);
 
@@ -238,25 +239,36 @@ impl PythonEngine {
     /// take the place of something.
     fn clash(&self, module: &str, function: &str) -> Option<String> {
         if is_reserved(function) {
-            return Some(format!(
-                "function {function} in module {module} clashes with a built-in name"
+            return Some(tr!(
+                "function {function} in module {module} clashes with a built-in name",
+                function = function,
+                module = module
             ));
         }
         if self.tabs.borrow().iter().any(|s| s == function) {
-            return Some(format!(
-                "function {function} in module {module} clashes with the tab {function}"
+            return Some(tr!(
+                "function {function} in module {module} clashes with the tab {function}",
+                function = function,
+                module = module
             ));
         }
         for (other, loaded) in self.modules.borrow().iter() {
             if other != module && loaded.published.iter().any(|p| p == function) {
-                return Some(format!(
-                    "function {function} in module {module} clashes with {} in module {other}",
-                    if other == function {
-                        format!("the module {function}")
-                    } else {
-                        format!("function {function}")
-                    }
-                ));
+                return Some(if other == function {
+                    tr!(
+                        "function {function} in module {module} clashes with the module {function} in module {other}",
+                        function = function,
+                        module = module,
+                        other = other
+                    )
+                } else {
+                    tr!(
+                        "function {function} in module {module} clashes with function {function} in module {other}",
+                        function = function,
+                        module = module,
+                        other = other
+                    )
+                });
             }
         }
         None
@@ -290,7 +302,12 @@ impl PythonEngine {
         };
         Some(Failure::new(
             ErrorKind::Name,
-            format!("{name} comes from module {owner}, which failed to load: {why}"),
+            tr!(
+                "{name} comes from module {owner}, which failed to load: {why}",
+                name = name,
+                owner = owner,
+                why = why
+            ),
         ))
     }
 }
@@ -344,7 +361,7 @@ fn import_order(specs: &[ModuleSpec]) -> Vec<usize> {
 /// and the line of the module it came from.
 fn describe(vm: &VirtualMachine, exc: &rustpython::vm::builtins::PyBaseExceptionRef) -> String {
     if exc.fast_isinstance(vm.ctx.exceptions.keyboard_interrupt) {
-        return "the module ran out of time while loading".to_owned();
+        return tr!("the module ran out of time while loading").to_owned();
     }
     let class = exc.class().name().to_string();
     let detail = exc
@@ -377,16 +394,20 @@ pub(super) fn import(shared: &Rc<Shared>, args: &FuncArgs, vm: &VirtualMachine) 
         .first()
         .and_then(|a| a.downcast_ref::<PyStr>())
         .map(|s| s.expect_str().to_owned())
-        .ok_or_else(|| vm.new_type_error("the name of a module is text"))?;
+        .ok_or_else(|| vm.new_type_error(tr!("the name of a module is text")))?;
     if let Some(slot) = shared.modules.borrow().get(&name) {
         return match (&slot.object, &slot.failed) {
             (Some(module), _) => Ok(module.clone()),
             (None, Some(why)) => Err(vm.new_import_error(
-                format!("the module {name} failed to load: {why}"),
+                tr!(
+                    "the module {name} failed to load: {why}",
+                    name = name,
+                    why = why
+                ),
                 vm.ctx.new_str(name.as_str()),
             )),
             (None, None) => Err(vm.new_import_error(
-                format!("the module {name} is not loaded"),
+                tr!("the module {name} is not loaded", name = name),
                 vm.ctx.new_str(name.as_str()),
             )),
         };
@@ -394,8 +415,12 @@ pub(super) fn import(shared: &Rc<Shared>, args: &FuncArgs, vm: &VirtualMachine) 
     if let Some(module) = shared.stdlib.borrow().get(&name) {
         return Ok(module.clone());
     }
-    Err(vm.new_import_error(
-        format!("no module named {name} is available: only the workbook's modules and the standard library modules formulas can use can be imported"),
-        vm.ctx.new_str(name.as_str()),
-    ))
+    Err(vm.new_import_error(no_module(&name), vm.ctx.new_str(name.as_str())))
+}
+/// Why an import of a module that is not available fails.
+pub(crate) fn no_module(name: &str) -> String {
+    tr!(
+        "no module named {name} is available: only the workbook's modules and the standard library modules formulas can use can be imported",
+        name = name
+    )
 }

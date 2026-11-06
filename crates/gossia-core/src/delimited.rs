@@ -9,6 +9,7 @@
 //! if every value is `true` or `false`, and text otherwise, so a column of
 //! codes such as `007` stays text. An empty cell leaves the field out.
 
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use crate::infer::{JsonInference, infer_json};
@@ -164,20 +165,22 @@ pub fn infer_delimited(text: &str, separator: char) -> JsonInference {
             }
             names.push(name);
         }
-        notes.push("The first row is taken as the names of the columns.".to_owned());
+        notes.push(tr!("The first row is taken as the names of the columns.").to_owned());
     } else if !rows.is_empty() {
         notes.push(
-            "The first row holds a number or a yes or no, so it is data, not names; the \
+            tr!(
+                "The first row holds a number or a yes or no, so it is data, not names; the \
              columns are named column_1, column_2, ..."
-                .to_owned(),
+            )
+            .to_owned(),
         );
     }
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     if header && width > names.len() {
-        notes.push(format!(
+        notes.push(tr!(
             "Some rows have more cells than the header has names; the extra columns are \
-             named {} and on.",
-            column_name(names.len())
+             named {column} and on.",
+            column = column_name(names.len())
         ));
     }
     while names.len() < width {

@@ -11,6 +11,7 @@
 //! if it uses them.
 
 use gossia_core::{Node, Num, Value};
+use gossia_i18n::tr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Query {
@@ -80,19 +81,23 @@ pub(super) fn parse(text: &str) -> Result<Query, String> {
     };
     p.skip_space();
     if !p.eat(b'$') {
-        return Err("a JSONPath query starts with `$`".to_owned());
+        return Err(tr!("a JSONPath query starts with `$`").to_owned());
     }
     let query = p.segments()?;
     p.skip_space();
     if p.pos < p.text.len() {
-        return Err(p.error("unexpected text after the query"));
+        return Err(p.error(tr!("unexpected text after the query")));
     }
     Ok(query)
 }
 
 impl Parser<'_> {
     fn error(&self, message: &str) -> String {
-        format!("{message} (at position {})", self.pos + 1)
+        tr!(
+            "{message} (at position {position})",
+            message = message,
+            position = self.pos + 1
+        )
     }
 
     fn peek(&self) -> Option<u8> {
@@ -211,7 +216,7 @@ impl Parser<'_> {
         loop {
             let c = self
                 .peek()
-                .ok_or_else(|| self.error("the string is not closed"))?;
+                .ok_or_else(|| self.error(tr!("the string is not closed")))?;
             self.pos += 1;
             if c == quote {
                 break;
@@ -219,7 +224,7 @@ impl Parser<'_> {
             if c == b'\\' {
                 let e = self
                     .peek()
-                    .ok_or_else(|| self.error("the string is not closed"))?;
+                    .ok_or_else(|| self.error(tr!("the string is not closed")))?;
                 self.pos += 1;
                 out.push(match e {
                     b'n' => b'\n',
@@ -231,7 +236,7 @@ impl Parser<'_> {
                 out.push(c);
             }
         }
-        String::from_utf8(out).map_err(|_| self.error("the string is not valid text"))
+        String::from_utf8(out).map_err(|_| self.error(tr!("the string is not valid text")))
     }
 
     fn integer(&mut self) -> Result<Option<i64>, String> {
@@ -249,7 +254,7 @@ impl Parser<'_> {
             .ok()
             .and_then(|t| t.parse().ok())
             .map(Some)
-            .ok_or_else(|| self.error("expected an integer"))
+            .ok_or_else(|| self.error(tr!("expected an integer")))
     }
 
     fn selector(&mut self) -> Result<Selector, String> {
@@ -347,7 +352,7 @@ impl Parser<'_> {
         } else {
             return match left {
                 Operand::Relative(query) => Ok(Expr::Exists(query)),
-                Operand::Literal(_) => Err(self.error("a filter needs a comparison here")),
+                Operand::Literal(_) => Err(self.error(tr!("a filter needs a comparison here"))),
             };
         };
         let right = self.operand()?;
@@ -361,7 +366,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 Ok(Operand::Relative(self.segments()?))
             }
-            Some(b'$') => Err(self.error("`$` inside a filter is not supported")),
+            Some(b'$') => Err(self.error(tr!("`$` inside a filter is not supported"))),
             Some(b'\'' | b'"') => Ok(Operand::Literal(Literal::Str(self.string()?))),
             Some(c) if c.is_ascii_digit() || c == b'-' => {
                 let start = self.pos;
@@ -388,7 +393,7 @@ impl Parser<'_> {
                 } else if self.eat_str("null") {
                     Ok(Operand::Literal(Literal::Null))
                 } else {
-                    Err(self.error("expected `@`, a number, a string, true, false or null"))
+                    Err(self.error(tr!("expected `@`, a number, a string, true, false or null")))
                 }
             }
         }

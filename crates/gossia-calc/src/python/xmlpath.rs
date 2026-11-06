@@ -21,6 +21,7 @@
 //! and arithmetic are refused with a message.
 
 use gossia_core::{Node, Segment, Value};
+use gossia_i18n::tr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Query {
@@ -93,7 +94,7 @@ pub(super) fn parse(text: &str) -> Result<Query, String> {
     let query = p.query(true)?;
     p.blanks();
     if p.pos < p.text.len() {
-        return Err(p.fail("unexpected text"));
+        return Err(p.fail(tr!("unexpected text")));
     }
     Ok(query)
 }
@@ -108,7 +109,11 @@ fn is_name_char(c: u8) -> bool {
 
 impl Parser<'_> {
     fn fail(&self, message: &str) -> String {
-        format!("{message} at position {}", self.pos)
+        tr!(
+            "{message} at position {pos}",
+            message = message,
+            pos = self.pos
+        )
     }
 
     fn peek(&self) -> Option<u8> {
@@ -178,7 +183,7 @@ impl Parser<'_> {
 
     fn step(&mut self, anywhere: bool) -> Result<Step, String> {
         let test = if self.eat("..") {
-            return Err(self.fail("the parent axis `..` is not supported"));
+            return Err(self.fail(tr!("the parent axis `..` is not supported")));
         } else if self.eat(".") {
             Test::This
         } else if self.eat("@*") {
@@ -186,7 +191,7 @@ impl Parser<'_> {
         } else if self.eat("@") {
             match self.name() {
                 Some(n) => Test::Attribute(n),
-                None => return Err(self.fail("expected an attribute name after @")),
+                None => return Err(self.fail(tr!("expected an attribute name after @"))),
             }
         } else if self.eat("*") {
             Test::Any
@@ -195,10 +200,10 @@ impl Parser<'_> {
                 if n == "text" && self.eat("()") {
                     Test::Text
                 } else {
-                    return Err(self.fail(&format!("the node test `{n}()` is not supported")));
+                    return Err(self.fail(&tr!("the node test `{n}()` is not supported", n = n)));
                 }
             } else if self.text[self.pos..].starts_with(b"::") {
-                return Err(self.fail(&format!("the axis `{n}::` is not supported")));
+                return Err(self.fail(&tr!("the axis `{n}::` is not supported", n = n)));
             } else {
                 Test::Name(n)
             }
@@ -276,7 +281,7 @@ impl Parser<'_> {
     fn operand(&mut self) -> Result<Expr, String> {
         self.blanks();
         let Some(c) = self.peek() else {
-            return Err(self.fail("the query ends early"));
+            return Err(self.fail(tr!("the query ends early")));
         };
         match c {
             b'(' => {
@@ -295,7 +300,7 @@ impl Parser<'_> {
                     self.pos += 1;
                 }
                 if self.peek() != Some(c) {
-                    return Err(self.fail("a string is not closed"));
+                    return Err(self.fail(tr!("a string is not closed")));
                 }
                 let s = String::from_utf8_lossy(&self.text[start..self.pos]).into_owned();
                 self.pos += 1;
@@ -342,7 +347,7 @@ impl Parser<'_> {
                 let a = self.or()?;
                 self.blanks();
                 if !self.eat(",") {
-                    return Err(self.fail("expected a comma between the arguments"));
+                    return Err(self.fail(tr!("expected a comma between the arguments")));
                 }
                 let b = self.or()?;
                 if name == "contains" {
@@ -352,7 +357,10 @@ impl Parser<'_> {
                 }
             }
             other => {
-                return Err(self.fail(&format!("the function `{other}()` is not supported")));
+                return Err(self.fail(&tr!(
+                    "the function `{other}()` is not supported",
+                    other = other
+                )));
             }
         };
         self.blanks();

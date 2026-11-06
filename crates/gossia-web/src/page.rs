@@ -28,6 +28,7 @@
 //! Such a host also hands the page a workbook while it runs
 //! ([`open_workbook`], for Revert).
 
+use gossia_i18n::tr;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -185,10 +186,15 @@ impl JsHost {
         let f = Reflect::get(&self.object, &JsValue::from_str(name))
             .ok()
             .and_then(|f| f.dyn_into::<Function>().ok())
-            .ok_or_else(|| format!("the host has no {name}()"))?;
+            .ok_or_else(|| tr!("the host has no {name}()", name = name))?;
         let args: js_sys::Array = args.iter().collect();
-        f.apply(&self.object, &args)
-            .map_err(|e| format!("the host's {name}() failed: {e:?}"))
+        f.apply(&self.object, &args).map_err(|e| {
+            tr!(
+                "the host's {name}() failed: {e}",
+                name = name,
+                e = format!("{e:?}")
+            )
+        })
     }
 
     fn call_logged(&self, name: &str, args: &[JsValue]) -> JsValue {
@@ -392,7 +398,10 @@ impl PageApp {
                             let bytes = Uint8Array::from(bytes.as_slice());
                             self.host.call_logged("backupWorkbook", &[bytes.into()]);
                         }),
-                        other => Err(format!("{other} is not a kind of bytes to ask for")),
+                        other => Err(tr!(
+                            "{other} is not a kind of bytes to ask for",
+                            other = other
+                        )),
                     };
                     if let Err(e) = result {
                         self.host.call_logged(

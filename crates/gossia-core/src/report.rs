@@ -394,10 +394,10 @@ impl ReportDesign {
     /// Reads a report document. It must be JSON that conforms to
     /// `builtin:report`; the reason is given in words if it does not.
     pub fn from_json(text: &str) -> Result<ReportDesign, String> {
-        let parsed = json::parse(text).map_err(|e| format!("not valid JSON: {e}"))?;
+        let parsed = json::parse(text).map_err(|e| tr!("not valid JSON: {e}", e = e))?;
         if let Some(issue) = validate(report_schema(), &parsed.node).first() {
             let at = if issue.path.is_root() {
-                "the document".to_owned()
+                tr!("the document").to_owned()
             } else {
                 issue.path.to_string()
             };
@@ -405,10 +405,11 @@ impl ReportDesign {
         }
         let design: ReportDesign = serde_json::from_str(text).map_err(|e| e.to_string())?;
         if design.version > REPORT_VERSION || design.layout.version > DESIGN_VERSION {
-            return Err(format!(
-                "this report was made by a newer version (report version {}, this build reads \
+            return Err(tr!(
+                "this report was made by a newer version (report version {version}, this build reads \
                  up to {REPORT_VERSION})",
-                design.version
+                version = design.version,
+                REPORT_VERSION = REPORT_VERSION
             ));
         }
         Ok(design)
@@ -424,10 +425,12 @@ impl ReportDesign {
             match self.bands() {
                 None => out.push((
                     Vec::new(),
-                    "the controls of a multipage report are its bands: report header, page \
+                    tr!(
+                        "the controls of a multipage report are its bands: report header, page \
                      header, a header and a footer for each section, detail, page footer and \
                      report footer, each a Free group"
-                        .to_owned(),
+                    )
+                    .to_owned(),
                 )),
                 Some(n) => {
                     for k in 0..n {
@@ -435,10 +438,10 @@ impl ReportDesign {
                         if !has_text(&self.layout.controls[at].items) {
                             out.push((
                                 vec![at],
-                                format!(
-                                    "section {} has no items: give its header band an items \
+                                tr!(
+                                    "section {section} has no items: give its header band an items \
                                      expression",
-                                    k + 1
+                                    section = k + 1
                                 ),
                             ));
                         }
@@ -466,16 +469,18 @@ impl ReportDesign {
     fn param_problem(&self, i: usize, p: &ReportParam) -> Option<String> {
         let name = p.name.trim();
         if !is_identifier(name) || is_keyword(name) {
-            return Some(format!(
-                "the parameter {name:?} needs a name of letters, digits and _, not starting with                  a digit"
+            return Some(tr!(
+                "the parameter {name} needs a name of letters, digits and _, not starting with a digit",
+                name = format!("{name:?}")
             ));
         }
         if self.params[..i].iter().any(|q| q.name.trim() == name) {
-            return Some(format!("two parameters are named {name}"));
+            return Some(tr!("two parameters are named {name}", name = name));
         }
         if p.kind.has_choices() && p.choices_expression().is_none() {
-            return Some(format!(
-                "the parameter {name} is chosen from a list: give it choices"
+            return Some(tr!(
+                "the parameter {name} is chosen from a list: give it choices",
+                name = name
             ));
         }
         None
@@ -494,48 +499,56 @@ fn has_text(text: &Option<String>) -> bool {
 fn control_problem(c: &Control) -> Option<String> {
     let kind = c.kind.label().to_lowercase();
     if c.kind == ControlKind::Button {
-        return Some("a report has no buttons".to_owned());
+        return Some(tr!("a report has no buttons").to_owned());
     }
     // A list is the detail band of a multipage report (owner, 2026-11-03).
     if c.kind == ControlKind::Repeater {
         return Some(
-            "a report has no repeaters: a list of rows is the detail band of a multipage report"
-                .to_owned(),
+            tr!(
+                "a report has no repeaters: a list of rows is the detail band of a multipage report"
+            )
+            .to_owned(),
         );
     }
     if c.path.is_some() {
-        let instead = match c.kind {
-            ControlKind::Field => "it shows a value",
-            _ => "it has no path",
-        };
-        return Some(format!(
-            "a report is not bound to a tab, so this {kind} has a path; in a report {instead}"
-        ));
+        return Some(match c.kind {
+            ControlKind::Field => tr!(
+                "a report is not bound to a tab, so this {kind} has a path; in a report it shows a value",
+                kind = kind
+            ),
+            _ => tr!(
+                "a report is not bound to a tab, so this {kind} has a path; in a report it has no path",
+                kind = kind
+            ),
+        });
     }
     let editing = [
-        (c.editor.is_some(), "an editor"),
+        (c.editor.is_some(), tr!("an editor")),
         (has_text(&c.choices), "choices"),
-        (c.masked, "a masked box"),
-        (has_text(&c.enabled_when), "enabled when"),
-        (has_text(&c.write_procedure), "a write procedure"),
+        (c.masked, tr!("a masked box")),
+        (has_text(&c.enabled_when), tr!("enabled when")),
+        (has_text(&c.write_procedure), tr!("a write procedure")),
         (has_text(&c.procedure), "a procedure"),
     ];
     if let Some((_, what)) = editing.iter().find(|(has, _)| *has) {
-        return Some(format!(
-            "a report does not edit, so this {kind} cannot have {what}"
+        return Some(tr!(
+            "a report does not edit, so this {kind} cannot have {what}",
+            kind = kind,
+            what = what
         ));
     }
     for column in &c.table_columns {
         let editing = [
-            (column.editor.is_some(), "an editor"),
+            (column.editor.is_some(), tr!("an editor")),
             (has_text(&column.choices), "choices"),
-            (has_text(&column.enabled_when), "enabled when"),
-            (has_text(&column.write_procedure), "a write procedure"),
+            (has_text(&column.enabled_when), tr!("enabled when")),
+            (has_text(&column.write_procedure), tr!("a write procedure")),
         ];
         if let Some((_, what)) = editing.iter().find(|(has, _)| *has) {
-            return Some(format!(
-                "a report does not edit, so the column {} cannot have {what}",
-                column.name
+            return Some(tr!(
+                "a report does not edit, so the column {name} cannot have {what}",
+                name = column.name,
+                what = what
             ));
         }
     }

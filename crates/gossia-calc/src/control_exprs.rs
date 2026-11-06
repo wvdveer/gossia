@@ -44,6 +44,7 @@
 use gossia_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template, truthy};
 use gossia_core::report::{BandKind, ReportDesign, paginate};
 use gossia_core::{Kind, Node, Path, Value};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use super::*;
@@ -115,9 +116,9 @@ impl ExprKind {
                     Ok(parts) if parts.iter().all(|p| matches!(p, template::Part::Text(_))) => None,
                     Ok(_) => Some(
                         template::expression_of(text)
-                            .map_err(|e| format!("the template cannot be read: {e}")),
+                            .map_err(|e| tr!("the template cannot be read: {e}", e = e)),
                     ),
-                    Err(e) => Some(Err(format!("the template cannot be read: {e}"))),
+                    Err(e) => Some(Err(tr!("the template cannot be read: {e}", e = e))),
                 };
             }
             // Made by `Calc::chart_text`, which knows the chart types.
@@ -705,7 +706,7 @@ impl Calc {
                     Ok(text) => self
                         .syntax
                         .check(text)
-                        .map_err(|e| format!("syntax error: {e}")),
+                        .map_err(|e| tr!("syntax error: {e}", e = e)),
                     Err(problem) => Err(problem.clone()),
                 };
                 match checked {

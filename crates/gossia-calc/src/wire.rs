@@ -9,6 +9,7 @@
 //! field names, so that fields a type leaves out when it is saved as JSON do
 //! not throw the reading out of step.
 
+use gossia_i18n::tr;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -56,7 +57,8 @@ pub enum FromWorker {
 }
 
 /// The settings an engine is made with, as the worker receives them: the
-/// user's settings of the engine and the formula time limit. The data source
+/// user's settings of the engine, the formula time limit, and the language
+/// of the interface, which the engine's messages are in. The data source
 /// definitions travel as a list and are kept in memory in the worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
@@ -65,6 +67,9 @@ pub struct EngineConfig {
     pub source_timeout: Duration,
     pub max_response: u64,
     pub formula_limit: Option<Duration>,
+    /// The tag of the interface's language (`fr`), from the page.
+    #[serde(default)]
+    pub language: String,
 }
 
 impl EngineConfig {
@@ -75,6 +80,7 @@ impl EngineConfig {
             source_timeout: settings.source_timeout,
             max_response: settings.max_response,
             formula_limit,
+            language: gossia_i18n::language().tag().to_owned(),
         }
     }
 
@@ -160,6 +166,11 @@ impl Worker {
     pub fn handle(&mut self, message: ToWorker, send: &mut dyn FnMut(FromWorker)) {
         match message {
             ToWorker::Configure(config) => {
+                // The worker is a thread of its own: its messages follow the
+                // page's language.
+                gossia_i18n::set_language(
+                    gossia_i18n::Language::from_tag(&config.language).unwrap_or_default(),
+                );
                 let (engine, sources) = config.engine_and_sources();
                 engine.ask_host_for_requests();
                 self.engine = Some((engine, sources));
@@ -273,7 +284,7 @@ pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
 /// Decodes a job or a result.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
     rmp_serde::from_slice(bytes)
-        .map_err(|e| format!("a message to or from the worker did not read: {e}"))
+        .map_err(|e| tr!("a message to or from the worker did not read: {e}", e = e))
 }
 
 #[cfg(test)]

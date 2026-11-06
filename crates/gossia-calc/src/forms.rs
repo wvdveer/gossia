@@ -7,6 +7,7 @@
 //! its undo history and recalculates nothing.
 
 use gossia_core::form::FormDesign;
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use crate::names::{self, Subject};
@@ -100,7 +101,13 @@ impl FormStore {
         let taken = self.all_names(tab).into_iter().any(|n| {
             n.eq_ignore_ascii_case(name) && renaming.is_none_or(|own| !n.eq_ignore_ascii_case(own))
         });
-        taken.then(|| format!("the tab {tab} has a form called {name} already"))
+        taken.then(|| {
+            tr!(
+                "the tab {tab} has a form called {name} already",
+                tab = tab,
+                name = name
+            )
+        })
     }
 
     /// Moves the forms of a tab to its new name, keeping their order and the
@@ -120,16 +127,16 @@ impl FormStore {
     /// Renames a stored form, which keeps its place. Default cannot be renamed.
     pub fn rename(&mut self, tab: &str, from: &str, to: &str) -> Result<(), String> {
         if from == DEFAULT_FORM {
-            return Err("the Default form cannot be renamed".to_owned());
+            return Err(tr!("the Default form cannot be renamed").to_owned());
         }
         if let Some(why) = self.name_problem(tab, to, Some(from)) {
             return Err(why);
         }
         let Some(forms) = self.by_tab.get_mut(tab) else {
-            return Err(format!("{tab} has no form {from}"));
+            return Err(tr!("{tab} has no form {from}", tab = tab, from = from));
         };
         let Some(at) = forms.get_index_of(from) else {
-            return Err(format!("{tab} has no form {from}"));
+            return Err(tr!("{tab} has no form {from}", tab = tab, from = from));
         };
         let (_, design) = forms.shift_remove_index(at).expect("the index was found");
         forms.insert(to.to_owned(), design);

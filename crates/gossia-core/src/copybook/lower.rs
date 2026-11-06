@@ -2,6 +2,7 @@
 //! first 01 record becomes the type of an item of a data tab, which is an
 //! array of records, and the [`Layout`] says where each field's bytes are.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
@@ -157,9 +158,9 @@ fn picture(text: &str) -> Result<Picture, String> {
             let count: usize = count
                 .trim()
                 .parse()
-                .map_err(|_| format!("PIC {text} has a count that is not a number"))?;
+                .map_err(|_| tr!("PIC {text} has a count that is not a number", text = text))?;
             if count > 100_000 {
-                return Err(format!("PIC {text} is too long"));
+                return Err(tr!("PIC {text} is too long", text = text));
             }
             expanded.extend(std::iter::repeat_n(c, count));
         } else {
@@ -168,8 +169,9 @@ fn picture(text: &str) -> Result<Picture, String> {
     }
     let upper = expanded.to_ascii_uppercase();
     if upper.contains('P') {
-        return Err(format!(
-            "PIC {text}: scaling positions (P) are not supported"
+        return Err(tr!(
+            "PIC {text}: scaling positions (P) are not supported",
+            text = text
         ));
     }
     let signed = upper.starts_with('S');
@@ -196,7 +198,7 @@ fn picture(text: &str) -> Result<Picture, String> {
         }
     }
     if numeric && digits == 0 {
-        return Err(format!("PIC {text} has no digits or characters"));
+        return Err(tr!("PIC {text} has no digits or characters", text = text));
     }
     Ok(Picture {
         numeric,
@@ -255,9 +257,10 @@ impl Builder {
                         .iter()
                         .position(|s| s.name.eq_ignore_ascii_case(target))
                     else {
-                        return Err(format!(
-                            "{} redefines {target}, which is not an item before it at its level",
-                            item.name
+                        return Err(tr!(
+                            "{name} redefines {target}, which is not an item before it at its level",
+                            name = item.name,
+                            target = target
                         ));
                     };
                     let set = match slots[t].redefines {
@@ -283,15 +286,18 @@ impl Builder {
             let (element, size) = if item.items.is_empty() {
                 match (usage, &item.picture) {
                     (Some(Usage::Comp1 | Usage::Comp2), Some(_)) => {
-                        return Err(format!(
-                            "{}: a floating point item (COMP-1, COMP-2) has no PIC",
-                            item.name
+                        return Err(tr!(
+                            "{name}: a floating point item (COMP-1, COMP-2) has no PIC",
+                            name = item.name
                         ));
                     }
                     (Some(Usage::Comp1), None) => (Element::Float, 4),
                     (Some(Usage::Comp2), None) => (Element::Float, 8),
                     (_, None) => {
-                        return Err(format!("{} has no PIC and no items below it", item.name));
+                        return Err(tr!(
+                            "{name} has no PIC and no items below it",
+                            name = item.name
+                        ));
                     }
                     (_, Some(text)) => {
                         elementary(text, usage, sign).map_err(|e| format!("{}: {e}", item.name))?
@@ -299,9 +305,9 @@ impl Builder {
                 }
             } else {
                 if item.picture.is_some() {
-                    return Err(format!(
-                        "{} is a group, with items below it, so it has no PIC",
-                        item.name
+                    return Err(tr!(
+                        "{name} is a group, with items below it, so it has no PIC",
+                        name = item.name
                     ));
                 }
                 let (slots, size) = self.group(
@@ -325,7 +331,10 @@ impl Builder {
                 None => None,
                 Some(o) => {
                     if o.max == 0 || o.min.is_some_and(|m| m > o.max) {
-                        return Err(format!("{}: OCCURS has no room for any items", item.name));
+                        return Err(tr!(
+                            "{name}: OCCURS has no room for any items",
+                            name = item.name
+                        ));
                     }
                     let max = o.max as usize;
                     let min = o
@@ -386,28 +395,32 @@ impl Builder {
                     .names
                     .get(&counter.name.to_ascii_uppercase())
                     .ok_or_else(|| {
-                        format!(
-                            "{} depends on {}, which is not in the record",
-                            slot.name, counter.name
+                        tr!(
+                            "{name} depends on {name2}, which is not in the record",
+                            name = slot.name,
+                            name2 = counter.name
                         )
                     })?
                     .clone()
                     .ok_or_else(|| {
-                        format!(
-                            "{} depends on {}, a name used twice in the record",
-                            slot.name, counter.name
+                        tr!(
+                            "{name} depends on {name2}, a name used twice in the record",
+                            name = slot.name,
+                            name2 = counter.name
                         )
                     })?;
                 let numeric = found.numeric.ok_or_else(|| {
-                    format!(
-                        "{} depends on {}, which is not a number",
-                        slot.name, counter.name
+                    tr!(
+                        "{name} depends on {name2}, which is not a number",
+                        name = slot.name,
+                        name2 = counter.name
                     )
                 })?;
                 if found.in_table {
-                    return Err(format!(
-                        "{} depends on {}, which is inside a table: a counter must be in the same place in every record",
-                        slot.name, counter.name
+                    return Err(tr!(
+                        "{name} depends on {name2}, which is inside a table: a counter must be in the same place in every record",
+                        name = slot.name,
+                        name2 = counter.name
                     ));
                 }
                 counter.offset = found.offset;
@@ -461,10 +474,23 @@ fn apply_renames(
     record: &str,
 ) -> Result<(), String> {
     for r in renames {
-        let error = |why: &str| format!("{} renames {}: {why}", r.name, run_name(r));
+        let error = |why: &str| {
+            tr!(
+                "{name} renames {run}: {why}",
+                name = r.name,
+                run = run_name(r),
+                why = why
+            )
+        };
         let list = siblings_of(slots, &r.from, false)
             .map_err(|e| error(&e))?
-            .ok_or_else(|| error(&format!("{} is not an item of {record}", r.from)))?;
+            .ok_or_else(|| {
+                error(&tr!(
+                    "{from} is not an item of {record}",
+                    from = r.from,
+                    record = record
+                ))
+            })?;
         let first = list
             .iter()
             .position(|s| s.name.eq_ignore_ascii_case(&r.from))
@@ -475,23 +501,24 @@ fn apply_renames(
                 .iter()
                 .position(|s| s.name.eq_ignore_ascii_case(thru))
                 .ok_or_else(|| {
-                    error(&format!(
-                        "{thru} is not an item beside {} at its level",
-                        r.from
+                    error(&tr!(
+                        "{thru} is not an item beside {from} at its level",
+                        thru = thru,
+                        from = r.from
                     ))
                 })?,
         };
         if last < first {
-            return Err(error("the last item comes before the first"));
+            return Err(error(tr!("the last item comes before the first")));
         }
         let run = &list[first..=last];
         if run.iter().any(|s| s.occurs.is_some()) {
-            return Err(error("an item renamed has OCCURS"));
+            return Err(error(tr!("an item renamed has OCCURS")));
         }
         if run.iter().any(|s| s.redefines.is_some()) {
-            return Err(error(
-                "an item renamed is in a REDEFINES, or renamed already",
-            ));
+            return Err(error(tr!(
+                "an item renamed is in a REDEFINES, or renamed already"
+            )));
         }
         let start = run[0].offset;
         let end = run
@@ -549,7 +576,7 @@ fn siblings_of<'a>(
 ) -> Result<Option<&'a mut Vec<Slot>>, String> {
     if slots.iter().any(|s| s.name.eq_ignore_ascii_case(name)) {
         if in_table {
-            return Err(format!("{name} is inside a table"));
+            return Err(tr!("{name} is inside a table", name = name));
         }
         return Ok(Some(slots));
     }
@@ -589,8 +616,10 @@ fn check_keys(slots: &[Slot], path: &str) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for key in all {
         if !seen.insert(key.to_ascii_uppercase()) {
-            return Err(format!(
-                "{path} has two items named {key} (a - in a name counts as _)"
+            return Err(tr!(
+                "{path} has two items named {key} (a - in a name counts as _)",
+                path = path,
+                key = key
             ));
         }
     }
@@ -606,16 +635,18 @@ fn elementary(
     let usage = usage.unwrap_or(Usage::Display);
     if !picture.numeric {
         if usage != Usage::Display {
-            return Err(format!(
-                "PIC {text} is characters, so it cannot be {}",
-                usage.code()
+            return Err(tr!(
+                "PIC {text} is characters, so it cannot be {code}",
+                text = text,
+                code = usage.code()
             ));
         }
         return Ok((Element::Text, picture.length));
     }
     if picture.digits > 18 {
-        return Err(format!(
-            "PIC {text} has more than 18 digits, which Gossia cannot hold"
+        return Err(tr!(
+            "PIC {text} has more than 18 digits, which Gossia cannot hold",
+            text = text
         ));
     }
     let sign_place = match sign {
@@ -651,9 +682,9 @@ fn elementary(
             (usage, size)
         }
         Usage::Comp1 | Usage::Comp2 => {
-            return Err(format!(
-                "a floating point item ({}) has no PIC",
-                usage.code()
+            return Err(tr!(
+                "a floating point item ({usage}) has no PIC",
+                usage = usage.code()
             ));
         }
     };
@@ -693,11 +724,11 @@ pub fn lower_record(
     let record = record
         .and_then(|name| ones().find(|i| i.name.eq_ignore_ascii_case(name)))
         .or_else(|| ones().next())
-        .ok_or("the copybook has no record")?;
+        .ok_or(tr!("the copybook has no record"))?;
     if record.redefines.is_some() {
-        return Err(format!(
-            "{} is a record, which has no REDEFINES",
-            record.name
+        return Err(tr!(
+            "{name} is a record, which has no REDEFINES",
+            name = record.name
         ));
     }
     let mut builder = Builder {
@@ -724,7 +755,7 @@ pub fn lower_record(
     builder.counters(&mut slots)?;
     apply_renames(&mut builder, &mut slots, &record.renames, &record.name)?;
     if length == 0 {
-        return Err(format!("{} takes no bytes", record.name));
+        return Err(tr!("{name} takes no bytes", name = record.name));
     }
     let table = record
         .occurs

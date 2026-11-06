@@ -18,6 +18,7 @@ use gossia_core::form::{
     template,
 };
 use gossia_core::report::{BandKind, ReportDesign, ReportKind, new_band, paginate};
+use gossia_i18n::tr;
 
 use crate::text::{Fonts, TextStyle};
 
@@ -522,7 +523,10 @@ pub fn pages(design: &ReportDesign, source: &dyn Source, limit: usize) -> Paged 
         if p == last && paging.limited {
             placer.text(
                 &mut page,
-                &format!("The report stops here: it has reached the limit of {limit} detail rows."),
+                &tr!(
+                    "The report stops here: it has reached the limit of {limit} detail rows.",
+                    limit = limit
+                ),
                 Style::body().text_style(),
                 Ink::Error,
                 (left, top + paging.end + 4.0, width),
@@ -532,16 +536,17 @@ pub fn pages(design: &ReportDesign, source: &dyn Source, limit: usize) -> Paged 
         out.pages.push(page);
     }
     for band in &paging.cut {
-        out.warnings.push(format!(
-            "The band {} is taller than the space between the page header and the page \
+        out.warnings.push(tr!(
+            "The band {design} is taller than the space between the page header and the page \
              footer, so it is cut at the end of the page.",
-            design.band_name(*band)
+            design = design.band_name(*band)
         ));
     }
     out.limited = paging.limited;
     if paging.limited {
-        out.warnings.push(format!(
-            "The report stops after {limit} detail rows, the limit for a report."
+        out.warnings.push(tr!(
+            "The report stops after {limit} detail rows, the limit for a report.",
+            limit = limit
         ));
     }
     out
@@ -718,7 +723,9 @@ fn shown(got: &Got, format: &Format) -> (String, Option<Ink>, Option<String>) {
         Got::Untrusted => (
             UNTRUSTED.to_owned(),
             Some(Ink::Error),
-            Some("The report runs Python, so this workbook has to be trusted first.".to_owned()),
+            Some(
+                tr!("The report runs Python, so this workbook has to be trusted first.").to_owned(),
+            ),
         ),
     }
 }
@@ -812,16 +819,16 @@ impl Placer<'_> {
         let mut style = outer.of(c);
         let mut why: Vec<String> = Vec::new();
         if let Got::Error(e) = &visible {
-            why.push(format!("Visible when: {e}"));
+            why.push(tr!("Visible when: {e}", e = e));
         }
         let text_got = source.control(at, rows, Prop::TextColour);
         let fill_got = source.control(at, rows, Prop::FillColour);
         let text = colour(c.text_colour.as_deref(), &text_got).unwrap_or_else(|e| {
-            why.push(format!("Text colour: {e}"));
+            why.push(tr!("Text colour: {e}", e = e));
             None
         });
         let fill = colour(c.fill_colour.as_deref(), &fill_got).unwrap_or_else(|e| {
-            why.push(format!("Fill colour: {e}"));
+            why.push(tr!("Fill colour: {e}", e = e));
             None
         });
         // A group's fill is drawn by the group, inside its border.
@@ -914,9 +921,9 @@ impl Placer<'_> {
             Got::Value(other, _) => Some((
                 "#TYPE!".to_owned(),
                 Ink::Error,
-                Some(format!(
-                    "#TYPE!: a chart function returns SVG as text, not a value of kind {}",
-                    other.kind_name()
+                Some(tr!(
+                    "#TYPE!: a chart function returns SVG as text, not a value of kind {kind}",
+                    kind = other.kind_name()
                 )),
             )),
             Got::Error(e) => {
@@ -931,14 +938,17 @@ impl Placer<'_> {
             Got::Untrusted => Some((
                 UNTRUSTED.to_owned(),
                 Ink::Error,
-                Some("The chart runs Python, so this workbook has to be trusted first.".to_owned()),
+                Some(
+                    tr!("The chart runs Python, so this workbook has to be trusted first.")
+                        .to_owned(),
+                ),
             )),
             Got::Waiting => Some((String::new(), Ink::Weak, None)),
             Got::None => Some((
                 if c.chart.is_some() {
-                    "Fill in the chart's values".to_owned()
+                    tr!("Fill in the chart's values").to_owned()
                 } else {
-                    "Choose a chart type".to_owned()
+                    tr!("Choose a chart type").to_owned()
                 },
                 Ink::Weak,
                 None,
@@ -990,7 +1000,7 @@ impl Placer<'_> {
                     template_text(fixed, Some(UNTRUSTED)),
                     style.ink(),
                     Some(
-                        "The template runs Python, so this workbook has to be trusted first."
+                        tr!("The template runs Python, so this workbook has to be trusted first.")
                             .to_owned(),
                     ),
                 ),
@@ -1096,7 +1106,7 @@ impl Placer<'_> {
         if let Some(why) = why {
             laid.hovers.push(Hover {
                 rect: value_rect,
-                text: format!("Value: {why}"),
+                text: tr!("Value: {why}", why = why),
             });
         }
         laid
@@ -1465,8 +1475,10 @@ impl Placer<'_> {
         laid.cuts.push(rect);
         laid.hovers.push(Hover {
             rect,
-            text: "Cut: what it shows is taller than its box. Make it taller to show all of it."
-                .to_owned(),
+            text: tr!(
+                "Cut: what it shows is taller than its box. Make it taller to show all of it."
+            )
+            .to_owned(),
         });
     }
 }

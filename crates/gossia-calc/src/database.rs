@@ -12,6 +12,7 @@
 //! a date, a time or JSON, and the rows as lists of JSON values, with bytes as
 //! `{"$bytes": "<hex>"}`.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -72,9 +73,10 @@ impl Rows {
             };
         }
         if self.size > self.max {
-            return Err(format!(
-                "{}: the rows are larger than the maximum response size of {} bytes",
-                self.name, self.max
+            return Err(tr!(
+                "{name}: the rows are larger than the maximum response size of {max} bytes",
+                name = self.name,
+                max = self.max
             ));
         }
         self.rows.push(Json::Array(values));
@@ -139,7 +141,7 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
     if def.kind == SourceKind::Odbc {
         return match open(def, timeout).and_then(|conn| match conn {
             Conn::Odbc(conn) => odbc::about(&conn),
-            _ => Err("not an ODBC connection".to_owned()),
+            _ => Err(tr!("not an ODBC connection").to_owned()),
         }) {
             Ok(dbms) => TestOutcome {
                 ok: true,
@@ -161,7 +163,7 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
         Conn::Postgres(mut client) => postgres::about(&mut client),
         Conn::Mariadb(mut conn) => mariadb::about(&mut conn),
         #[cfg(windows)]
-        Conn::Odbc(_) => Err("not a database server".to_owned()),
+        Conn::Odbc(_) => Err(tr!("not a database server").to_owned()),
     });
     match found {
         Ok((version, encrypted)) => {
@@ -181,11 +183,11 @@ pub fn test(def: &SourceDef, timeout: Duration) -> TestOutcome {
                 message: format!(
                     "{server} {version} at {host}:{port}/{db} as {user}, {}, in {} ms",
                     if encrypted && def.tls == TlsMode::Unchecked {
-                        "encrypted (certificate not checked)"
+                        tr!("encrypted (certificate not checked)")
                     } else if encrypted {
                         "encrypted"
                     } else {
-                        "not encrypted"
+                        tr!("not encrypted")
                     },
                     start.elapsed().as_millis()
                 ),
@@ -204,10 +206,10 @@ fn open(def: &SourceDef, timeout: Duration) -> Result<Conn, String> {
     } else if def.kind == SourceKind::Odbc {
         open_odbc(def, timeout)
     } else {
-        Err(format!(
-            "{} is a {} source, not a database server",
-            def.name,
-            def.kind.label()
+        Err(tr!(
+            "{name} is a {kind} source, not a database server",
+            name = def.name,
+            kind = def.kind.label()
         ))
     }
 }
@@ -220,9 +222,9 @@ fn open_odbc(def: &SourceDef, timeout: Duration) -> Result<Conn, String> {
 /// ODBC needs the driver manager that comes with Windows.
 #[cfg(not(windows))]
 fn open_odbc(def: &SourceDef, _timeout: Duration) -> Result<Conn, String> {
-    Err(format!(
-        "{}: ODBC data sources are available on Windows only",
-        def.name
+    Err(tr!(
+        "{name}: ODBC data sources are available on Windows only",
+        name = def.name
     ))
 }
 
@@ -340,11 +342,11 @@ fn take(def: &SourceDef, timeout: Duration) -> Result<Lease, String> {
         }
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err(format!(
-                "{}: all {} connections of its pool stayed in use for {} s",
-                def.name,
-                pool.max,
-                timeout.as_secs_f32()
+            return Err(tr!(
+                "{name}: all {max} connections of its pool stayed in use for {timeout} s",
+                name = def.name,
+                max = pool.max,
+                timeout = timeout.as_secs_f32()
             ));
         }
         state = pool
@@ -426,8 +428,24 @@ pub(crate) fn decimal_json(text: &str) -> Json {
         .map_or_else(|| Json::String(text.to_owned()), Json::Number)
 }
 
-pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+/// "1 parameter" or "3 parameters".
+pub(crate) fn parameters(n: usize) -> String {
+    gossia_i18n::counted(n, tr!("1 parameter"), tr!("{n} parameters"))
+}
+
+/// Why the values given do not fit the parameters of the SQL.
+pub(crate) fn count_mismatch(source: &str, wanted: usize, given: usize) -> String {
+    let given = match given {
+        0 => tr!("no values were given").to_owned(),
+        1 => tr!("1 value was given").to_owned(),
+        n => tr!("{n} values were given", n = n),
+    };
+    tr!(
+        "{source}: the SQL has {parameters}, and {given}",
+        source = source,
+        parameters = parameters(wanted),
+        given = given
+    )
 }
 
 #[cfg(test)]

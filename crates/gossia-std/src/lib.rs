@@ -6,6 +6,8 @@
 //! the Insert Function dialog and for name completion. The engine in
 //! `gossia-calc` runs the source.
 
+use gossia_i18n::{tr, tr_noop};
+
 /// The version of this crate, as set in the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -68,14 +70,14 @@ pub enum Group {
 impl Group {
     pub fn title(self) -> &'static str {
         match self {
-            Group::Math => "Math",
-            Group::Logic => "Logic",
-            Group::Lookup => "Lookup and lists",
-            Group::Text => "Text",
-            Group::Errors => "Errors",
-            Group::Data => "Data",
+            Group::Math => tr!("Math"),
+            Group::Logic => tr!("Logic"),
+            Group::Lookup => tr!("Lookup and lists"),
+            Group::Text => tr!("Text"),
+            Group::Errors => tr!("Errors"),
+            Group::Data => tr!("Data"),
             Group::Python => "Python",
-            Group::Modules => "Standard library modules",
+            Group::Modules => tr!("Standard library modules"),
         }
     }
 
@@ -113,133 +115,135 @@ const FUNCTIONS: &[Function] = &[
         "SUM",
         "SUM(",
         "SUM(*values)",
-        "The sum of the numbers in the arguments; lists and arrays are opened one level.",
+        tr_noop!("The sum of the numbers in the arguments; lists and arrays are opened one level."),
         Group::Math,
     ),
     f(
         "AVERAGE",
         "AVERAGE(",
         "AVERAGE(*values)",
-        "The mean of the numbers in the arguments; none gives #DIV/0!.",
+        tr_noop!("The mean of the numbers in the arguments; none gives #DIV/0!."),
         Group::Math,
     ),
     f(
         "MIN",
         "MIN(",
         "MIN(*values, default=...)",
-        "The smallest element: numbers, text and dates all compare.",
+        tr_noop!("The smallest element: numbers, text and dates all compare."),
         Group::Math,
     ),
     f(
         "MAX",
         "MAX(",
         "MAX(*values, default=...)",
-        "The largest element.",
+        tr_noop!("The largest element."),
         Group::Math,
     ),
     f(
         "COUNT",
         "COUNT(",
         "COUNT(*values)",
-        "How many elements are not None. An error among them is raised.",
+        tr_noop!("How many elements are not None. An error among them is raised."),
         Group::Math,
     ),
     f(
         "IF",
         "IF(",
         "IF(condition, then, otherwise=None)",
-        "then if condition is true, else otherwise. Both are worked out first.",
+        tr_noop!("then if condition is true, else otherwise. Both are worked out first."),
         Group::Logic,
     ),
     f(
         "LOOKUP",
         "LOOKUP(",
         "LOOKUP(key, items, key_field, result_field=None)",
-        "A field of the first item whose key field equals key, or without          result_field the whole item; none gives #REF!.",
+        tr_noop!(
+            "A field of the first item whose key field equals key, or without result_field the whole item; none gives #REF!."
+        ),
         Group::Lookup,
     ),
     f(
         "FILTER",
         "FILTER(",
         "FILTER(items, condition)",
-        "The items for which a function of one item, or a list of flags, is true.",
+        tr_noop!("The items for which a function of one item, or a list of flags, is true."),
         Group::Lookup,
     ),
     f(
         "SORT",
         "SORT(",
         "SORT(items, key=None, reverse=False)",
-        "The items in order, as a list. key is a function or a field name.",
+        tr_noop!("The items in order, as a list. key is a function or a field name."),
         Group::Lookup,
     ),
     f(
         "UNIQUE",
         "UNIQUE(",
         "UNIQUE(items)",
-        "The items without repeats, each at its first place.",
+        tr_noop!("The items without repeats, each at its first place."),
         Group::Lookup,
     ),
     f(
         "CONCAT",
         "CONCAT(",
         "CONCAT(*arrays)",
-        "One list with the items of each array in turn; not text joining.",
+        tr_noop!("One list with the items of each array in turn; not text joining."),
         Group::Lookup,
     ),
     f(
         "TEXTJOIN",
         "TEXTJOIN(",
         "TEXTJOIN(delimiter, *values)",
-        "The text elements joined with the delimiter.",
+        tr_noop!("The text elements joined with the delimiter."),
         Group::Text,
     ),
     f(
         "TEXT",
         "TEXT(",
         "TEXT(value, spec='')",
-        "A value as text by a Python format spec, as in TEXT(3.14159, '.2f').",
+        tr_noop!("A value as text by a Python format spec, as in TEXT(3.14159, '.2f')."),
         Group::Text,
     ),
     f(
         "NA",
         "NA()",
         "NA()",
-        "Gives #N/A, for a value that is not available.",
+        tr_noop!("Gives #N/A, for a value that is not available."),
         Group::Errors,
     ),
     f(
         "RAW",
         "RAW(",
         "RAW(node)",
-        "The bytes of a node as its tab holds them: a COBOL field's own bytes, or text.",
+        tr_noop!("The bytes of a node as its tab holds them: a COBOL field's own bytes, or text."),
         Group::Data,
     ),
     f(
         "BASE64ENCODE",
         "BASE64ENCODE(",
         "BASE64ENCODE(data)",
-        "Bytes as Base64 text.",
+        tr_noop!("Bytes as Base64 text."),
         Group::Text,
     ),
     f(
         "BASE64DECODE",
         "BASE64DECODE(",
         "BASE64DECODE(text)",
-        "The bytes of Base64 text; a formula on a node reads them as the node.",
+        tr_noop!("The bytes of Base64 text; a formula on a node reads them as the node."),
         Group::Text,
     ),
     f(
         "HEXENCODE",
         "HEXENCODE(",
         "HEXENCODE(data)",
-        "Bytes as hex digits, two a byte.",
+        tr_noop!("Bytes as hex digits, two a byte."),
         Group::Text,
     ),
     f(
         "HEXDECODE",
         "HEXDECODE(",
         "HEXDECODE(text)",
-        "The bytes of hex digits; spaces between them are passed over.",
+        tr_noop!("The bytes of hex digits; spaces between them are passed over."),
         Group::Text,
     ),
 ];

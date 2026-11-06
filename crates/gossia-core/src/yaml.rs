@@ -8,6 +8,7 @@
 //! with a warning. An empty line before an entry is kept on its node.
 //! Writing is Gossia's own: block style, two spaces of indentation.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -293,7 +294,7 @@ impl Builder<'_> {
                     documents.push(self.document(&path)?);
                 }
                 Event::StreamEnd => break,
-                _ => return Err(self.error("this is not where a YAML document can start")),
+                _ => return Err(self.error(tr!("this is not where a YAML document can start"))),
             }
         }
         // What is left after the last document is the end of it.
@@ -335,7 +336,7 @@ impl Builder<'_> {
         self.trailing(&mut node);
         node.set_comment(joined(before, node.comment().map(str::to_owned)));
         if !matches!(self.event(), Event::DocumentEnd) {
-            return Err(self.error("a YAML document holds one value"));
+            return Err(self.error(tr!("a YAML document holds one value")));
         }
         let end = self.ending(0);
         add(&mut node, CommentPlace::End, end);
@@ -365,22 +366,20 @@ impl Builder<'_> {
         let line = self.span().map_or(0, |s| s.start.line());
         self.warnings.push(Warning {
             path: path.clone(),
-            message: format!(
-                "the tag {name} on line {line} was dropped: the value is read without it, and written back without it"
-            ),
+            message: tr!("the tag {name} on line {line} was dropped: the value is read without it, and written back without it", name = name, line = line),
         });
         Ok(None)
     }
 
     fn node(&mut self, path: &Path, depth: usize) -> Result<Node, ParseError> {
         if depth > MAX_DEPTH {
-            return Err(self.error("the lists and tables are nested too deeply"));
+            return Err(self.error(tr!("the lists and tables are nested too deeply")));
         }
         let (event, span) = self
             .events
             .get(self.at)
             .cloned()
-            .ok_or_else(|| self.error("the text ends too soon"))?;
+            .ok_or_else(|| self.error(tr!("the text ends too soon")))?;
         match event {
             Event::Scalar(text, style, anchor, tag) => {
                 let tag = self.tag(tag.as_deref(), path)?;
@@ -392,16 +391,16 @@ impl Builder<'_> {
             }
             Event::Alias(anchor) => {
                 let Some(mut node) = self.anchors.get(&anchor).cloned() else {
-                    return Err(self.error("this alias names no anchor before it"));
+                    return Err(self.error(tr!("this alias names no anchor before it")));
                 };
                 self.copied += size(&node);
                 if self.copied > MAX_COPIED {
-                    return Err(self.error("the aliases copy in too much data"));
+                    return Err(self.error(tr!("the aliases copy in too much data")));
                 }
                 node.set_comment(None);
                 self.warnings.push(Warning {
                     path: path.clone(),
-                    message: "a copy of an anchored value (a YAML alias) was read; it is written out in full when saved".into(),
+                    message: tr!("a copy of an anchored value (a YAML alias) was read; it is written out in full when saved").into(),
                 });
                 self.at += 1;
                 Ok(node)
@@ -411,7 +410,7 @@ impl Builder<'_> {
                     self.tag(tag.as_deref(), path)?.as_deref(),
                     None | Some("seq")
                 ) {
-                    return Err(self.error("this tag does not go with a list"));
+                    return Err(self.error(tr!("this tag does not go with a list")));
                 }
                 self.at += 1;
                 let node = self.sequence(path, depth, span.start.col())?;
@@ -423,14 +422,14 @@ impl Builder<'_> {
                     self.tag(tag.as_deref(), path)?.as_deref(),
                     None | Some("map")
                 ) {
-                    return Err(self.error("this tag does not go with a table"));
+                    return Err(self.error(tr!("this tag does not go with a table")));
                 }
                 self.at += 1;
                 let node = self.mapping(path, depth, span.start.col())?;
                 self.anchor(anchor, &node);
                 Ok(node)
             }
-            _ => Err(self.error("a value was expected here")),
+            _ => Err(self.error(tr!("a value was expected here"))),
         }
     }
 
@@ -477,13 +476,13 @@ impl Builder<'_> {
                     (text.to_string(), merge)
                 }
                 _ => {
-                    return Err(self.error(
-                        "a key that is a list, a table or an alias cannot be read: keys are text",
-                    ));
+                    return Err(self.error(tr!(
+                        "a key that is a list, a table or an alias cannot be read: keys are text"
+                    )));
                 }
             };
             if fields.contains_key(&key) {
-                return Err(self.error(format!("the key {key} is in this table twice")));
+                return Err(self.error(tr!("the key {key} is in this table twice", key = key)));
             }
             self.at += 1;
             let mut after_key = Node::new(Value::Null);
@@ -515,7 +514,7 @@ impl Builder<'_> {
             }
             self.warnings.push(Warning {
                 path: path.clone(),
-                message: "the fields of a merge key (<<) were copied in; they are written out in full when saved".into(),
+                message: tr!("the fields of a merge key (<<) were copied in; they are written out in full when saved").into(),
             });
         }
         let place = if fields.is_empty() {
@@ -535,19 +534,25 @@ impl Builder<'_> {
         tag: Option<&str>,
         path: &Path,
     ) -> Result<Value, ParseError> {
-        let wrong = |b: &Self, what: &str| b.error(format!("{text:?} is not {what}"));
+        let wrong = |b: &Self, what: &str| {
+            b.error(tr!(
+                "{text} is not {what}",
+                text = format!("{text:?}"),
+                what = what
+            ))
+        };
         match tag {
             Some("str") => return Ok(Value::Str(text.to_owned())),
             Some("null") => return Ok(Value::Null),
             Some("bool") => {
                 return bool_of(text)
                     .map(Value::Bool)
-                    .ok_or_else(|| wrong(self, "a boolean"));
+                    .ok_or_else(|| wrong(self, tr!("a boolean")));
             }
             Some("int") => {
                 return match self.int(text, path)? {
                     Some(n) => Ok(n),
-                    None => Err(wrong(self, "an integer")),
+                    None => Err(wrong(self, tr!("an integer"))),
                 };
             }
             Some("float") => {
@@ -556,11 +561,11 @@ impl Builder<'_> {
                     Some(v) => Ok(v),
                     None => match self.float(text)? {
                         Some(x) => Ok(x),
-                        None => Err(wrong(self, "a number")),
+                        None => Err(wrong(self, tr!("a number"))),
                     },
                 };
             }
-            Some(_) => return Err(self.error("this tag does not go with a single value")),
+            Some(_) => return Err(self.error(tr!("this tag does not go with a single value"))),
             None => {}
         }
         if style != ScalarStyle::Plain {
@@ -598,9 +603,10 @@ impl Builder<'_> {
             Some(Err(_)) => {
                 self.warnings.push(Warning {
                     path: path.clone(),
-                    message:
+                    message: tr!(
                         "integer beyond the signed 64-bit range was read as a floating-point number"
-                            .into(),
+                    )
+                    .into(),
                 });
                 let x = text.parse::<f64>().unwrap_or(f64::MAX);
                 Some(Value::Float(x))
@@ -610,8 +616,9 @@ impl Builder<'_> {
 
     fn float(&self, text: &str) -> Result<Option<Value>, ParseError> {
         if INFINITE.is_match(text) {
-            return Err(self.error(format!(
-                "{text} cannot be read: Gossia holds only finite numbers"
+            return Err(self.error(tr!(
+                "{text} cannot be read: Gossia holds only finite numbers",
+                text = text
             )));
         }
         Ok(FLOAT
@@ -644,7 +651,7 @@ pub fn to_string(node: &Node) -> Result<String, WriteError> {
     if matches!(node.value(), Value::Error(_)) {
         return Err(WriteError {
             path: Path::root(),
-            message: "the root holds an error value".into(),
+            message: tr!("the root holds an error value").into(),
         });
     }
     let mut out = String::new();
@@ -818,7 +825,7 @@ fn scalar(node: &Node, path: &Path, indent: usize) -> Result<String, WriteError>
             if !x.is_finite() {
                 return Err(WriteError {
                     path: path.clone(),
-                    message: "NaN and infinity are not written".into(),
+                    message: tr!("NaN and infinity are not written").into(),
                 });
             }
             format!("{x:?}")

@@ -9,6 +9,7 @@
 //! per-save (a time, a counter) is recorded, so saving a workbook that has not
 //! changed gives the same bytes.
 
+use gossia_i18n::tr;
 use std::collections::{BTreeMap, HashSet};
 
 use gossia_core::dataformat::DataFormat;
@@ -93,7 +94,7 @@ impl Package {
                     .map(Some)
                     .map_err(|_| PackageError::BadEntry {
                         path: path.to_owned(),
-                        message: "it is not UTF-8 text".to_owned(),
+                        message: tr!("it is not UTF-8 text").to_owned(),
                     })
             }
         }
@@ -103,17 +104,26 @@ impl Package {
 /// Whether `path` is safe as the path of an archive entry.
 pub fn safe_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
-        return Err("an entry has no path".to_owned());
+        return Err(tr!("an entry has no path").to_owned());
     }
     if path.starts_with('/') || path.contains('\\') || path.contains(':') {
-        return Err(format!("the path {path:?} is not relative"));
+        return Err(tr!(
+            "the path {path} is not relative",
+            path = format!("{path:?}")
+        ));
     }
     for part in path.split('/') {
         if part.is_empty() || part == "." || part == ".." {
-            return Err(format!("the path {path:?} has a part that is not a name"));
+            return Err(tr!(
+                "the path {path} has a part that is not a name",
+                path = format!("{path:?}")
+            ));
         }
         if part.chars().any(char::is_control) {
-            return Err(format!("the path {path:?} has a control character"));
+            return Err(tr!(
+                "the path {path} has a control character",
+                path = format!("{path:?}")
+            ));
         }
     }
     Ok(())
@@ -337,17 +347,18 @@ pub enum PackageError {
 impl std::fmt::Display for PackageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PackageError::NoManifest => {
-                f.write_str("the file has no manifest.json, so it is not a Gossia workbook")
-            }
-            PackageError::BadManifest(message) => {
-                write!(f, "the manifest cannot be read: {message}")
-            }
-            PackageError::TooNew { needed } => write!(
-                f,
+            PackageError::NoManifest => f.write_str(tr!(
+                "the file has no manifest.json, so it is not a Gossia workbook"
+            )),
+            PackageError::BadManifest(message) => f.write_str(&tr!(
+                "the manifest cannot be read: {message}",
+                message = message
+            )),
+            PackageError::TooNew { needed } => f.write_str(&tr!(
                 "the file was written by a newer version of Gossia (it needs the format \
-                 version {needed}, which this version cannot read)"
-            ),
+                 version {needed}, which this version cannot read)",
+                needed = needed
+            )),
             PackageError::BadEntry { path, message } => write!(f, "{path}: {message}"),
             PackageError::Tab { tab, message } => write!(f, "tab {tab}: {message}"),
             PackageError::Unsavable(message) => f.write_str(message),
@@ -382,15 +393,17 @@ impl Calc {
         let mut tabs = Vec::new();
         for (name, sheet) in &self.sheets {
             if !safe_part(name) {
-                return Err(unsavable(format!(
-                    "the tab name {name:?} cannot be used as a file name"
+                return Err(unsavable(tr!(
+                    "the tab name {name} cannot be used as a file name",
+                    name = format!("{name:?}")
                 )));
             }
             let (schema, auto_update) = match &sheet.schema {
                 SchemaRole::Free => {
-                    return Err(unsavable(format!(
+                    return Err(unsavable(tr!(
                         "tab {name} has no schema tab (its type was given directly), so it \
-                         cannot be saved"
+                         cannot be saved",
+                        name = name
                     )));
                 }
                 SchemaRole::Document {
@@ -454,8 +467,10 @@ impl Calc {
                 .collect();
             for form in &form_names {
                 if !safe_part(form) {
-                    return Err(unsavable(format!(
-                        "the form name {form:?} of tab {name} cannot be used as a file name"
+                    return Err(unsavable(tr!(
+                        "the form name {form} of tab {name} cannot be used as a file name",
+                        form = format!("{form:?}"),
+                        name = name
                     )));
                 }
                 if let Some(design) = self.forms.get(name, form) {
@@ -481,8 +496,9 @@ impl Calc {
         // The reports: a directory each, with the design in it.
         for (name, design) in &self.reports {
             if !safe_part(name) {
-                return Err(unsavable(format!(
-                    "the report name {name:?} cannot be used as a file name"
+                return Err(unsavable(tr!(
+                    "the report name {name} cannot be used as a file name",
+                    name = format!("{name:?}")
                 )));
             }
             files.push((format!("reports/{name}/design.json"), lf(design.to_json())));
@@ -519,8 +535,9 @@ impl Calc {
 
         for (name, module) in &self.modules {
             if !safe_part(name) {
-                return Err(unsavable(format!(
-                    "the module name {name:?} cannot be used as a file name"
+                return Err(unsavable(tr!(
+                    "the module name {name} cannot be used as a file name",
+                    name = format!("{name:?}")
                 )));
             }
             files.push((format!("modules/{name}.py"), lf(module.source.to_string())));
@@ -636,9 +653,9 @@ impl Calc {
         let manifest: Manifest = serde_json::from_str(manifest_text)
             .map_err(|e| PackageError::BadManifest(e.to_string()))?;
         let (major, minor) = parse_version(&manifest.format_version).ok_or_else(|| {
-            PackageError::BadManifest(format!(
-                "the format version {:?} is not major.minor",
-                manifest.format_version
+            PackageError::BadManifest(tr!(
+                "the format version {format_version} is not major.minor",
+                format_version = format!("{:?}", manifest.format_version)
             ))
         })?;
         if major > FORMAT_MAJOR {
@@ -648,45 +665,37 @@ impl Calc {
         }
         let mut warnings = Vec::new();
         if major == FORMAT_MAJOR && minor > FORMAT_MINOR {
-            warnings.push(format!(
-                "The file was written by a newer version of Gossia (format {}); what this \
-                 version does not know is kept as it is.",
-                manifest.format_version
-            ));
+            warnings.push(tr!("The file was written by a newer version of Gossia (format {format_version}); what this \
+                 version does not know is kept as it is.", format_version = manifest.format_version));
         }
         if manifest.engine.name != ENGINE_NAME || manifest.engine.version != ENGINE_REVISION {
-            warnings.push(format!(
-                "The file was written against {} {}, and this version runs {} {}; results \
-                 may differ.",
-                manifest.engine.name,
-                short(&manifest.engine.version),
-                ENGINE_NAME,
-                short(ENGINE_REVISION),
-            ));
+            warnings.push(tr!("The file was written against {engine} {version}, and this version runs {ours} {revision}; results \
+                 may differ.", engine = manifest.engine.name, version = short(&manifest.engine.version), ours = ENGINE_NAME, revision = short(ENGINE_REVISION)));
         }
 
         let mut seen = HashSet::new();
         for tab in &manifest.tabs {
             if !safe_part(&tab.name) {
-                return Err(PackageError::BadManifest(format!(
-                    "the tab name {:?} cannot be used as a file name",
-                    tab.name
+                return Err(PackageError::BadManifest(tr!(
+                    "the tab name {name} cannot be used as a file name",
+                    name = format!("{:?}", tab.name)
                 )));
             }
             if !seen.insert(tab.name.to_lowercase()) {
-                return Err(PackageError::BadManifest(format!(
-                    "two tabs are called {} (names ignore case)",
-                    tab.name
+                return Err(PackageError::BadManifest(tr!(
+                    "two tabs are called {name} (names ignore case)",
+                    name = tab.name
                 )));
             }
             if tab.kind != "data" && tab.kind != "report" {
-                warnings.push(format!(
-                    "Tab {} is a {} tab, which this version cannot show; it is kept as it is.",
-                    tab.name, tab.kind
-                ));
+                warnings.push(tr!("Tab {name} is a {kind} tab, which this version cannot show; it is kept as it is.", name = tab.name, kind = tab.kind));
             }
             if let Some(problem) = crate::names::problem(&tab.name, crate::names::Subject::Tab) {
-                warnings.push(format!("Tab {}: {problem}", tab.name));
+                warnings.push(tr!(
+                    "Tab {name}: {problem}",
+                    name = tab.name,
+                    problem = problem
+                ));
             }
         }
 
@@ -698,7 +707,10 @@ impl Calc {
             for tab in manifest.tabs.iter().filter(|t| t.kind == "data") {
                 let binding = Binding::parse(&tab.schema).ok_or_else(|| PackageError::Tab {
                     tab: tab.name.clone(),
-                    message: format!("{:?} is not a schema binding", tab.schema),
+                    message: tr!(
+                        "{schema} is not a schema binding",
+                        schema = format!("{:?}", tab.schema)
+                    ),
                 })?;
                 if matches!(binding, Binding::Sheet(_)) == schema_pass {
                     continue;
@@ -710,7 +722,11 @@ impl Calc {
         // counted.
         for tab in manifest.tabs.iter().filter(|t| t.auto_update) {
             if let Some(why) = calc.auto_update_blocker(&tab.name) {
-                warnings.push(format!("Auto-update of {} is off: {why}.", tab.name));
+                warnings.push(tr!(
+                    "Auto-update of {name} is off: {why}.",
+                    name = tab.name,
+                    why = why
+                ));
             } else if let Some(SchemaRole::Document { auto_update, .. }) =
                 calc.sheets.get_mut(&tab.name).map(|s| &mut s.schema)
             {
@@ -734,25 +750,25 @@ impl Calc {
         for tab in manifest.tabs.iter().filter(|t| t.kind == "data") {
             for form in &tab.forms {
                 if !safe_part(form) {
-                    return Err(PackageError::BadManifest(format!(
-                        "the form name {form:?} of tab {} cannot be used as a file name",
-                        tab.name
+                    return Err(PackageError::BadManifest(tr!(
+                        "the form name {form} of tab {name} cannot be used as a file name",
+                        form = format!("{form:?}"),
+                        name = tab.name
                     )));
                 }
                 let path = format!("sheets/{}/forms/{form}.json", tab.name);
                 let Some(text) = package.text(&path)? else {
-                    warnings.push(format!(
-                        "The manifest lists the form {form} of tab {}, but the file has no {path}.",
-                        tab.name
-                    ));
+                    warnings.push(tr!("The manifest lists the form {form} of tab {name}, but the file has no {path}.", form = form, name = tab.name, path = path));
                     continue;
                 };
                 used.insert(path.clone());
                 match FormDesign::from_json(text) {
                     Ok(design) => calc.forms.set(&tab.name, form, design),
-                    Err(e) => warnings.push(format!(
-                        "The form {form} of tab {} is not used: {e}",
-                        tab.name
+                    Err(e) => warnings.push(tr!(
+                        "The form {form} of tab {name} is not used: {e}",
+                        form = form,
+                        name = tab.name,
+                        e = e
                     )),
                 }
             }
@@ -763,9 +779,10 @@ impl Calc {
         for tab in manifest.tabs.iter().filter(|t| t.kind == "report") {
             let path = format!("reports/{}/design.json", tab.name);
             let Some(text) = package.text(&path)? else {
-                warnings.push(format!(
-                    "The manifest lists the report {}, but the file has no {path}.",
-                    tab.name
+                warnings.push(tr!(
+                    "The manifest lists the report {name}, but the file has no {path}.",
+                    name = tab.name,
+                    path = path
                 ));
                 continue;
             };
@@ -775,7 +792,11 @@ impl Calc {
                     calc.reports.insert(tab.name.clone(), design);
                 }
                 Err(e) => {
-                    warnings.push(format!("The report {} is not used: {e}", tab.name));
+                    warnings.push(tr!(
+                        "The report {name} is not used: {e}",
+                        name = tab.name,
+                        e = e
+                    ));
                     continue;
                 }
             }
@@ -786,10 +807,11 @@ impl Calc {
                 used.insert(cache_path);
                 match super::ReportCache::from_json(text) {
                     Ok(cache) => calc.set_report_cache(&tab.name, cache),
-                    Err(e) => warnings.push(format!(
-                        "The results of the report {} were not read ({e}), so it is drawn as \
+                    Err(e) => warnings.push(tr!(
+                        "The results of the report {name} were not read ({e}), so it is drawn as \
                          never calculated.",
-                        tab.name
+                        name = tab.name,
+                        e = e
                     )),
                 }
             }
@@ -803,20 +825,23 @@ impl Calc {
 
         for name in &manifest.modules {
             if !safe_part(name) {
-                return Err(PackageError::BadManifest(format!(
-                    "the module name {name:?} cannot be used as a file name"
+                return Err(PackageError::BadManifest(tr!(
+                    "the module name {name} cannot be used as a file name",
+                    name = format!("{name:?}")
                 )));
             }
             let path = format!("modules/{name}.py");
             let Some(source) = package.text(&path)? else {
-                warnings.push(format!(
-                    "The manifest lists the module {name}, but the file has no {path}."
+                warnings.push(tr!(
+                    "The manifest lists the module {name}, but the file has no {path}.",
+                    name = name,
+                    path = path
                 ));
                 continue;
             };
             used.insert(path);
             if let Err(e) = calc.add_module(name, source) {
-                warnings.push(format!("Module {name} is not used: {e}"));
+                warnings.push(tr!("Module {name} is not used: {e}", name = name, e = e));
             }
         }
 
@@ -834,9 +859,7 @@ impl Calc {
             used.insert(VIEW.to_owned());
             match serde_json::from_str::<Json>(text) {
                 Ok(view @ Json::Object(_)) => workbook_view = Some(view),
-                _ => warnings.push(format!(
-                    "{VIEW} is not a JSON object, so the workbook's view settings are the defaults."
-                )),
+                _ => warnings.push(tr!("{VIEW} is not a JSON object, so the workbook's view settings are the defaults.", VIEW = VIEW)),
             }
         }
 
@@ -880,8 +903,9 @@ impl Calc {
             Binding::Xsd => SchemaFormat::Xsd,
             Binding::Sheet(schema_sheet) => {
                 if !self.is_schema_sheet(schema_sheet) {
-                    return Err(fail(format!(
-                        "the schema tab {schema_sheet} is not in the file"
+                    return Err(fail(tr!(
+                        "the schema tab {schema_sheet} is not in the file",
+                        schema_sheet = schema_sheet
                     )));
                 }
                 self.schema_format(schema_sheet)
@@ -904,16 +928,17 @@ impl Calc {
                     format
                 }
                 _ => {
-                    return Err(fail(format!(
-                        "the manifest gives it the format {code:?}, which this version cannot \
-                         use for it"
+                    return Err(fail(tr!(
+                        "the manifest gives it the format {code}, which this version cannot \
+                         use for it",
+                        code = format!("{code:?}")
                     )));
                 }
             },
         };
         let path = format!("sheets/{name}/data.{}", format.extension());
         if package.get(&path).is_none() {
-            return Err(fail(format!("the file has no {path}")));
+            return Err(fail(tr!("the file has no {path}", path = path)));
         }
         used.insert(path.clone());
         // COBOL records are bytes, not text.
@@ -943,8 +968,10 @@ impl Calc {
                 let spec = self
                     .lowered_for(schema_sheet, tab.record.as_deref())
                     .map_err(|e| {
-                        fail(format!(
-                            "its schema tab {schema_sheet} cannot be used as a type: {e}"
+                        fail(tr!(
+                            "its schema tab {schema_sheet} cannot be used as a type: {e}",
+                            schema_sheet = schema_sheet,
+                            e = e
                         ))
                     })?;
                 let (node, document) = if spec.xml().is_some() {
@@ -995,24 +1022,32 @@ impl Calc {
             }
             for comment in overlay.comments {
                 if let Err(message) = self.restore_comment(name, &comment) {
-                    warnings.push(format!(
-                        "Tab {name}: the comment on {} is dropped: {message}",
-                        comment.path
+                    warnings.push(tr!(
+                        "Tab {name}: the comment on {path} is dropped: {message}",
+                        name = name,
+                        path = comment.path,
+                        message = message
                     ));
                 }
             }
             for column in overlay.columns {
                 if let Err(message) = self.restore_column(name, &column) {
-                    warnings.push(format!(
-                        "Tab {name}: the column formula on {}[].{} is dropped: {message}",
-                        column.array, column.field
+                    warnings.push(tr!(
+                        "Tab {name}: the column formula on {array}[].{field} is dropped: {message}",
+                        name = name,
+                        array = column.array,
+                        field = column.field,
+                        message = message
                     ));
                 }
             }
             for (path_text, entry) in overlay.formulas {
                 if let Err(message) = self.restore_formula(name, &path_text, entry) {
-                    warnings.push(format!(
-                        "Tab {name}: the formula at {path_text} is dropped: {message}"
+                    warnings.push(tr!(
+                        "Tab {name}: the formula at {path_text} is dropped: {message}",
+                        name = name,
+                        path_text = path_text,
+                        message = message
                     ));
                 }
             }
@@ -1029,10 +1064,10 @@ impl Calc {
             None | Some("before") => CommentPlace::Before,
             Some("start") => CommentPlace::Start,
             Some("end") => CommentPlace::End,
-            Some(other) => return Err(format!("{other} is not a place for a comment")),
+            Some(other) => return Err(tr!("{other} is not a place for a comment", other = other)),
         };
         let s = self.sheet_mut(sheet).map_err(|e| e.to_string())?;
-        let node = s.data.get_mut(&path).ok_or("the node is not there")?;
+        let node = s.data.get_mut(&path).ok_or(tr!("the node is not there"))?;
         node.set_comment_at(place, Some(comment.text.clone()));
         Ok(())
     }
@@ -1092,15 +1127,15 @@ impl Calc {
             None => self
                 .column_of(sheet, &path)
                 .map(|c| c.text.clone())
-                .ok_or("it has no formula and is not in a column")?,
+                .ok_or(tr!("it has no formula and is not in a column"))?,
         };
         let syntax = self.syntax.check(&text);
-        let s = self.sheets.get_mut(sheet).ok_or("no such tab")?;
+        let s = self.sheets.get_mut(sheet).ok_or(tr!("no such tab"))?;
         if s.spec.resolve(&path).is_none() {
-            return Err("the schema defines no node there".to_owned());
+            return Err(tr!("the schema defines no node there").to_owned());
         }
         if s.formulas.computed_by(&path).is_some() || !s.formulas.below(&path).is_empty() {
-            return Err("it overlaps another formula".to_owned());
+            return Err(tr!("it overlaps another formula").to_owned());
         }
         let mut formula = Formula {
             text,
@@ -1119,8 +1154,12 @@ impl Calc {
                 origin: Some(path.clone()),
             });
         } else if let OverlayStatus::Error(e) = entry.status {
-            let kind = ErrorKind::from_code(&e.kind)
-                .ok_or_else(|| format!("{:?} is not an error kind", e.kind))?;
+            let kind = ErrorKind::from_code(&e.kind).ok_or_else(|| {
+                tr!(
+                    "{kind} is not an error kind",
+                    kind = format!("{:?}", e.kind)
+                )
+            })?;
             formula.error = Some(ErrorValue {
                 kind,
                 message: e.message,

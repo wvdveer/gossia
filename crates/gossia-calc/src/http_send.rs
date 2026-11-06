@@ -2,6 +2,7 @@
 //! desktop. The wasm version has none of this: its requests are made by the
 //! host (DESIGN.md, Web port, 0.3.0).
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -83,7 +84,7 @@ pub fn send(
     let body = request.body.clone().unwrap_or_default();
     let http = builder
         .body(body)
-        .map_err(|e| format!("the request to {url} cannot be made: {e}"))?;
+        .map_err(|e| tr!("the request to {url} cannot be made: {e}", url = url, e = e))?;
     let _waiting = crate::sources::Waiting::begin();
     let mut response = agent(def, limits)
         .run(http)
@@ -118,14 +119,17 @@ pub fn send(
 fn describe(error: &ureq::Error, url: &str, limits: Limits) -> String {
     let shown = url.split('?').next().unwrap_or(url);
     match error {
-        ureq::Error::Timeout(_) => format!(
-            "{shown} did not answer within {} s",
-            limits.timeout.as_secs_f32()
+        ureq::Error::Timeout(_) => tr!(
+            "{shown} did not answer within {timeout} s",
+            shown = shown,
+            timeout = limits.timeout.as_secs_f32()
         ),
-        ureq::Error::HostNotFound => format!("the host of {shown} cannot be found"),
-        ureq::Error::ConnectionFailed => format!("{shown} cannot be reached"),
-        ureq::Error::BodyExceedsLimit(limit) => format!(
-            "the response from {shown} is larger than the maximum response size of {limit} bytes"
+        ureq::Error::HostNotFound => tr!("the host of {shown} cannot be found", shown = shown),
+        ureq::Error::ConnectionFailed => tr!("{shown} cannot be reached", shown = shown),
+        ureq::Error::BodyExceedsLimit(limit) => tr!(
+            "the response from {shown} is larger than the maximum response size of {limit} bytes",
+            shown = shown,
+            limit = limit
         ),
         other => format!("{shown}: {other}"),
     }

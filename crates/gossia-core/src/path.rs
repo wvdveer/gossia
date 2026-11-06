@@ -5,6 +5,7 @@
 //! the path. Paths are literal: they mean exactly what they say, whatever the
 //! data does (see DESIGN.md, "References are literal").
 
+use gossia_i18n::tr;
 use std::fmt;
 use std::str::FromStr;
 
@@ -30,11 +31,11 @@ pub struct ParsePathError {
 
 impl fmt::Display for ParsePathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "invalid path at position {}: {}",
-            self.position, self.message
-        )
+        f.write_str(&tr!(
+            "invalid path at position {position}: {message}",
+            position = self.position,
+            message = self.message
+        ))
     }
 }
 
@@ -168,7 +169,7 @@ impl FromStr for Path {
                         let mut key = String::new();
                         loop {
                             match chars.get(i) {
-                                None => return Err(err(i, "unterminated quoted key")),
+                                None => return Err(err(i, tr!("unterminated quoted key"))),
                                 Some('\\') => match chars.get(i + 1) {
                                     Some(&c @ ('"' | '\\')) => {
                                         key.push(c);
@@ -177,7 +178,7 @@ impl FromStr for Path {
                                     _ => {
                                         return Err(err(
                                             i,
-                                            "only a quote or a backslash may be escaped",
+                                            tr!("only a quote or a backslash may be escaped"),
                                         ));
                                     }
                                 },
@@ -202,13 +203,15 @@ impl FromStr for Path {
                             i += 1;
                         }
                         if i == start {
-                            return Err(err(i, "expected an index or a quoted key"));
+                            return Err(err(i, tr!("expected an index or a quoted key")));
                         }
                         if chars.get(i) != Some(&']') {
                             return Err(err(i, "expected ]"));
                         }
                         let digits: String = chars[start..i].iter().collect();
-                        let index = digits.parse().map_err(|_| err(start, "index too large"))?;
+                        let index = digits
+                            .parse()
+                            .map_err(|_| err(start, tr!("index too large")))?;
                         i += 1;
                         segments.push(Segment::Index(index));
                     }
@@ -218,7 +221,7 @@ impl FromStr for Path {
                     let start = i;
                     i = identifier_end(&chars, i);
                     if i == start {
-                        return Err(err(i, "expected a name after ."));
+                        return Err(err(i, tr!("expected a name after .")));
                     }
                     segments.push(Segment::Key(chars[start..i].iter().collect()));
                 }
@@ -227,7 +230,7 @@ impl FromStr for Path {
                     i = identifier_end(&chars, i);
                     segments.push(Segment::Key(chars[start..i].iter().collect()));
                 }
-                _ => return Err(err(i, "unexpected character")),
+                _ => return Err(err(i, tr!("unexpected character"))),
             }
         }
         Ok(Path(segments))

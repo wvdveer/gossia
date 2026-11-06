@@ -2482,6 +2482,7 @@ version = "0.3.0"
 dependencies = [
  "epaint_default_fonts",
  "gossia-core",
+ "gossia-i18n",
  "harfrust",
  "skrifa 0.44.0",
  "usvg",
@@ -2494,6 +2495,7 @@ dependencies = [
  "base64 0.22.1",
  "gossia-calc",
  "gossia-core",
+ "gossia-i18n",
  "gossia-layout",
  "krilla",
  "krilla-svg",
@@ -2506,6 +2508,7 @@ name = "gossia-std"
 version = "0.3.0"
 dependencies = [
  "gossia-core",
+ "gossia-i18n",
 ]
 
 [[package]]
@@ -2529,6 +2532,7 @@ dependencies = [
  "gossia-app",
  "gossia-calc",
  "gossia-core",
+ "gossia-i18n",
  "js-sys",
  "serde_json",
  "wasm-bindgen",

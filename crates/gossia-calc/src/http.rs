@@ -11,6 +11,7 @@
 //!   trusts it.
 //! - Every request has the call timeout and the maximum response size.
 
+use gossia_i18n::tr;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -70,15 +71,20 @@ pub fn url(def: &SourceDef, request: &HttpRequest) -> Result<String, String> {
         .as_deref()
         .map(str::trim)
         .filter(|u| !u.is_empty())
-        .ok_or("the data source has no base URL")?;
+        .ok_or(tr!("the data source has no base URL"))?;
     let path = request.path.trim();
     if path.contains("://") || path.starts_with("//") {
-        return Err(format!(
-            "{path} is a full URL: a data source is called with a path below its base URL, {base}"
+        return Err(tr!(
+            "{path} is a full URL: a data source is called with a path below its base URL, {base}",
+            path = path,
+            base = base
         ));
     }
     if path.split(['/', '?', '#']).any(|segment| segment == "..") {
-        return Err(format!("{path} goes above the base URL with \"..\""));
+        return Err(tr!(
+            "{path} goes above the base URL with \"..\"",
+            path = path
+        ));
     }
     // Without a path, the base URL as it was typed: some servers answer
     // `/api/` and `/api` differently, and a redirect is not followed.
@@ -152,16 +158,17 @@ pub type Prepared = (String, String, Vec<(String, String)>);
 /// or why it cannot be made.
 pub fn prepare(def: &SourceDef, request: &HttpRequest) -> Result<Prepared, String> {
     if def.kind != SourceKind::Http {
-        return Err(format!(
-            "{} is a {} source, not an HTTP one",
-            def.name,
-            def.kind.label()
+        return Err(tr!(
+            "{name} is a {kind} source, not an HTTP one",
+            name = def.name,
+            kind = def.kind.label()
         ));
     }
     let method = request.method.to_ascii_uppercase();
     if !METHODS.contains(&method.as_str()) {
-        return Err(format!(
-            "{method} is not a method a data source can be called with"
+        return Err(tr!(
+            "{method} is not a method a data source can be called with",
+            method = method
         ));
     }
     Ok((method, url(def, request)?, headers(def, request)))
@@ -212,10 +219,10 @@ impl FetchRequest {
     pub fn checked(&self, answer: FetchAnswer) -> FetchAnswer {
         let response = answer?;
         if response.body.len() as u64 > self.max_bytes {
-            return Err(format!(
-                "the response from {} is larger than the maximum response size of {} bytes",
-                self.shown_url(),
-                self.max_bytes
+            return Err(tr!(
+                "the response from {url} is larger than the maximum response size of {limit} bytes",
+                url = self.shown_url(),
+                limit = self.max_bytes
             ));
         }
         Ok(response)
@@ -249,16 +256,25 @@ pub fn test_outcome(answer: FetchAnswer, ms: Option<u128>) -> TestOutcome {
     };
     let status = format!("{} {}", response.status, response.reason);
     let status = status.trim();
-    let took = ms.map(|ms| format!(" in {ms} ms")).unwrap_or_default();
     match response.status {
         200..=399 => TestOutcome {
             ok: true,
-            message: format!("answered {status}{took}"),
+            message: match ms {
+                Some(ms) => tr!("answered {status} in {ms} ms", status = status, ms = ms),
+                None => tr!("answered {status}", status = status),
+            },
         },
-        401 | 403 => TestOutcome::failed(format!("signing in was refused: {status}")),
+        401 | 403 => TestOutcome::failed(tr!("signing in was refused: {status}", status = status)),
         _ => TestOutcome {
             ok: true,
-            message: format!("reached{took}, but the server answered {status}"),
+            message: match ms {
+                Some(ms) => tr!(
+                    "reached in {ms} ms, but the server answered {status}",
+                    ms = ms,
+                    status = status
+                ),
+                None => tr!("reached, but the server answered {status}", status = status),
+            },
         },
     }
 }

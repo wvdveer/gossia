@@ -5,6 +5,7 @@
 
 use gossia_core::Value;
 use gossia_core::copybook::{Layout, records};
+use gossia_i18n::tr;
 
 use super::*;
 
@@ -26,7 +27,9 @@ impl Calc {
             .ok_or_else(|| EditError::NoSheet(sheet.to_owned()))?
             .spec
             .copybook()
-            .ok_or_else(|| EditError::Path(format!("{sheet} does not hold COBOL records")))
+            .ok_or_else(|| {
+                EditError::Path(tr!("{sheet} does not hold COBOL records", sheet = sheet))
+            })
     }
 
     /// The tab's data as a `.blk` file: its record, in its copybook's
@@ -60,14 +63,11 @@ impl Calc {
         }
         self.store_variable(sheet, on)?;
         self.history.record(
-            format!(
-                "Write {sheet} as a {} record",
-                if on {
-                    "variable-length"
-                } else {
-                    "fixed-length"
-                }
-            ),
+            if on {
+                tr!("Write {sheet} as a variable-length record", sheet = sheet)
+            } else {
+                tr!("Write {sheet} as a fixed-length record", sheet = sheet)
+            },
             vec![Op::Variable {
                 sheet: sheet.to_owned(),
                 before,
@@ -100,7 +100,7 @@ impl Calc {
                     new.length, layout.record, layout.length
                 )),
                 Some(_) => None,
-                None => Some(format!("{schema} is not a copybook")),
+                None => Some(tr!("{schema} is not a copybook", schema = schema)),
             },
         }
     }
@@ -122,7 +122,7 @@ impl Calc {
         let new = spec.copybook().expect("checked above").clone();
         let data = self.sheets[sheet].data.clone();
         let bytes = records::write_record(&data, &old, &Path::root())
-            .map_err(|e| EditError::Path(format!("the record cannot be converted: {e}")))?;
+            .map_err(|e| EditError::Path(tr!("the record cannot be converted: {e}", e = e)))?;
         let read = records::read_record(&bytes, &new, &[]);
         let mut ops = Vec::new();
         if let Some(text) = self.formula_text(sheet, &Path::root()) {
@@ -169,8 +169,15 @@ impl Calc {
             before: data,
             after: read,
         });
-        self.history
-            .record(format!("Hold {} in {sheet}", new.record), ops, None);
+        self.history.record(
+            tr!(
+                "Hold {record} in {sheet}",
+                record = new.record,
+                sheet = sheet
+            ),
+            ops,
+            None,
+        );
         Ok(())
     }
 
@@ -182,7 +189,9 @@ impl Calc {
     ) -> Result<(), EditError> {
         let schema = self
             .schema_of(sheet)
-            .ok_or_else(|| EditError::Path(format!("{sheet} is not bound to a copybook")))?
+            .ok_or_else(|| {
+                EditError::Path(tr!("{sheet} is not bound to a copybook", sheet = sheet))
+            })?
             .to_owned();
         let spec = self.lowered_for(&schema, record.as_deref())?;
         let s = self.sheet_mut(sheet)?;
@@ -274,18 +283,17 @@ impl Calc {
         member: usize,
     ) -> Result<(), EditError> {
         let layout = self.layout(sheet)?.clone();
-        let group = layout
-            .redefines
-            .get(set)
-            .ok_or_else(|| EditError::Path(format!("{sheet} has no such group of layouts")))?;
+        let group = layout.redefines.get(set).ok_or_else(|| {
+            EditError::Path(tr!("{sheet} has no such group of layouts", sheet = sheet))
+        })?;
         let new_keys = match group.keys.get(member) {
             Some(keys) if !keys.is_empty() => keys.clone(),
             Some(_) => {
                 return Err(EditError::Path(
-                    "that layout is FILLER, which has no fields to show".into(),
+                    tr!("that layout is FILLER, which has no fields to show").into(),
                 ));
             }
-            None => return Err(EditError::Path("there is no such layout".into())),
+            None => return Err(EditError::Path(tr!("there is no such layout").into())),
         };
         let mut choices = self.sheets[sheet].redefines.clone();
         if choices.len() <= set {
@@ -300,7 +308,7 @@ impl Calc {
         // The new record, worked out before anything changes.
         let record = self.sheets[sheet].data.clone();
         let bytes = records::write_record(&record, &layout, &Path::root())
-            .map_err(|e| EditError::Path(format!("the record cannot be converted: {e}")))?;
+            .map_err(|e| EditError::Path(tr!("the record cannot be converted: {e}", e = e)))?;
         let read = records::read_record(&bytes, &layout, &choices);
         let after = if old_keys.is_empty() {
             read
@@ -345,7 +353,11 @@ impl Calc {
             after: member,
         });
         self.history.record(
-            format!("Show {} in {sheet}", group.names[member]),
+            tr!(
+                "Show {name} in {sheet}",
+                name = group.names[member],
+                sheet = sheet
+            ),
             ops,
             None,
         );

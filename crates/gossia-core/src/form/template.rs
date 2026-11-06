@@ -8,6 +8,8 @@
 //! an untrusted workbook can show the fixed text with a mark in place of each
 //! expression.
 
+use gossia_i18n::tr;
+
 /// One part of a template.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Part {
@@ -39,9 +41,10 @@ pub fn parts(template: &str) -> Result<Vec<Part>, String> {
                 i += 2;
             }
             '}' => {
-                return Err(
-                    "a } with nothing opened before it: write }} for the brace itself".to_owned(),
-                );
+                return Err(tr!(
+                    "a } with nothing opened before it: write }} for the brace itself"
+                )
+                .to_owned());
             }
             '{' => {
                 let (part, next) = expression(&chars, i + 1)?;
@@ -134,7 +137,7 @@ fn expression(chars: &[char], start: usize) -> Result<(Part, usize), String> {
 }
 
 fn unclosed() -> String {
-    "a { that is not closed: write {{ for the brace itself".to_owned()
+    tr!("a { that is not closed: write {{ for the brace itself").to_owned()
 }
 
 fn finish(
@@ -147,7 +150,7 @@ fn finish(
 ) -> Result<(Part, usize), String> {
     let text: String = chars[start..text_end].iter().collect();
     if text.trim().is_empty() {
-        return Err("an empty {} in the template: put an expression in it".to_owned());
+        return Err(tr!("an empty {} in the template: put an expression in it").to_owned());
     }
     let spec = match spec_start {
         Some(s) if s <= close => chars[s..close].iter().collect(),

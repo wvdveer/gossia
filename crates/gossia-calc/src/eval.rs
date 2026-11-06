@@ -24,6 +24,7 @@
 //! it stays out of date, and neither do the formulas and expressions that
 //! read it: they all run in a later pass, once the answer has come.
 
+use gossia_i18n::tr;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -558,7 +559,8 @@ impl Run<'_> {
         if !self.hooks.before(loc) {
             let error = ErrorValue {
                 kind: ErrorKind::Timeout,
-                message: "the recalculation ran out of time before this formula was run".to_owned(),
+                message: tr!("the recalculation ran out of time before this formula was run")
+                    .to_owned(),
                 origin: Some(loc.path.clone()),
             };
             self.record(loc, Computed::Error(error), None, Vec::new());
@@ -629,7 +631,7 @@ impl Run<'_> {
             Ok(Answer::Bytes(_)) if info.columns.iter().any(|c| c.holds(&loc.path)) => {
                 Err(Failure::new(
                     ErrorKind::Type,
-                    "a column formula cannot give bytes: give the field its own formula",
+                    tr!("a column formula cannot give bytes: give the field its own formula"),
                 ))
             }
             Ok(Answer::Bytes(bytes)) => {
@@ -761,7 +763,7 @@ impl Run<'_> {
     fn close_cycle(&mut self, members: &[Loc]) {
         let mut names: Vec<String> = members.iter().map(Loc::to_string).collect();
         names.push(names[0].clone());
-        let message = format!("circular reference: {}", names.join(" -> "));
+        let message = tr!("circular reference: {names}", names = names.join(" -> "));
         for member in members {
             // Keep what it read, so that editing anything on the cycle, or a
             // value that decides whether it is one, runs it again.
@@ -860,7 +862,7 @@ impl Context for EvalContext {
         ) else {
             return Err(ErrorValue {
                 kind: ErrorKind::Ref,
-                message: format!("there is no tab {sheet}"),
+                message: tr!("there is no tab {sheet}", sheet = sheet),
                 origin: None,
             });
         };

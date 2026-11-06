@@ -465,10 +465,10 @@ impl GossiaApp {
                     }
                 }
                 purpose::DROP if workbook => {
-                    self.notice = Some(format!(
-                        "{} is a workbook: open it from outside Gossia, as other files are \
+                    self.notice = Some(tr!(
+                        "{name} is a workbook: open it from outside Gossia, as other files are \
                          opened here.",
-                        file.name
+                        name = file.name
                     ));
                 }
                 _ => {
@@ -813,11 +813,12 @@ impl GossiaApp {
             .or(candidates.first())
             .cloned()
             .ok_or_else(|| {
-                format!(
+                tr!(
                     "{file} cannot be imported: a .blk file does not say how its record is \
                      laid out, and no copybook schema tab in the workbook has a record of its \
-                     {} bytes. Import its copybook (.cpy) first.",
-                    bytes.len()
+                     {count} bytes. Import its copybook (.cpy) first.",
+                    file = file,
+                    count = bytes.len()
                 )
             })?;
         Ok(ImportPlan {

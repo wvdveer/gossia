@@ -93,7 +93,7 @@ impl Calc {
     ) -> Result<Vec<u8>, String> {
         if format == ExportFormat::Data(DataFormat::Blk) {
             if !self.export_formats(tab).contains(&format) {
-                return Err(format!("tab {tab} does not hold COBOL records"));
+                return Err(tr!("tab {tab} does not hold COBOL records", tab = tab));
             }
             return self.records_bytes(tab);
         }
@@ -113,13 +113,14 @@ impl Calc {
         let sheet = self
             .sheets
             .get(tab)
-            .ok_or_else(|| format!("there is no tab {tab}"))?;
+            .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
         // Text says itself why a tab cannot be lines (a line break, say).
         if format != ExportFormat::Text && !self.export_formats(tab).contains(&format) {
-            return Err(format!(
-                "tab {tab} is {} data and cannot be written as {}",
-                sheet.format.label(),
-                format.label()
+            return Err(tr!(
+                "tab {tab} is {format} data and cannot be written as {format2}",
+                tab = tab,
+                format = sheet.format.label(),
+                format2 = format.label()
             ));
         }
         let mut text = match format {
@@ -138,8 +139,9 @@ impl Calc {
                 return Ok(gossia_core::copybook::to_text(&copybook));
             }
             ExportFormat::Data(DataFormat::Blk) => {
-                return Err(format!(
-                    "tab {tab} holds COBOL records, which are bytes, not text"
+                return Err(tr!(
+                    "tab {tab} holds COBOL records, which are bytes, not text",
+                    tab = tab
                 ));
             }
             ExportFormat::Data(DataFormat::Xml) => {
@@ -162,8 +164,8 @@ impl Calc {
         let sheet = self
             .sheets
             .get(tab)
-            .ok_or_else(|| format!("there is no tab {tab}"))?;
-        let not_text = || format!("tab {tab} is not an array of strings");
+            .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
+        let not_text = || tr!("tab {tab} is not an array of strings", tab = tab);
         if sheet.spec.xml().is_some() {
             return Err(not_text());
         }
@@ -173,9 +175,11 @@ impl Calc {
             match item.value() {
                 Value::Error(_) => {}
                 Value::Str(s) if s.contains(['\n', '\r']) => {
-                    return Err(format!(
+                    return Err(tr!(
                         "item {index} of tab {tab} has a line break, so the tab cannot be \
-                         written as lines of text"
+                         written as lines of text",
+                        index = index,
+                        tab = tab
                     ));
                 }
                 Value::Str(s) => lines.push(s.as_str()),

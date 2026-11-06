@@ -7,6 +7,7 @@
 //! The zip is untrusted input when it is read: entry paths are checked, and the
 //! number of entries and the sizes are limited, against zip bombs.
 
+use gossia_i18n::tr;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -58,12 +59,12 @@ pub fn write_zip(package: &Package) -> Result<Vec<u8>, String> {
 /// an error, and nothing is extracted to disk.
 pub fn read_zip(bytes: &[u8], limits: &Limits) -> Result<Package, String> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|e| format!("this is not a Gossia workbook (not a zip file: {e})"))?;
+        .map_err(|e| tr!("this is not a Gossia workbook (not a zip file: {e})", e = e))?;
     if archive.len() > limits.entries {
-        return Err(format!(
-            "the file has {} entries, more than the limit of {}",
-            archive.len(),
-            limits.entries
+        return Err(tr!(
+            "the file has {archive} entries, more than the limit of {entries}",
+            archive = archive.len(),
+            entries = limits.entries
         ));
     }
     let mut package = Package::new();
@@ -72,25 +73,32 @@ pub fn read_zip(bytes: &[u8], limits: &Limits) -> Result<Package, String> {
         let mut entry = archive
             .by_index(index)
             .map_err(|e| format!("entry {index}: {e}"))?;
-        let name = entry
-            .name()
-            .map(|n| n.into_owned())
-            .map_err(|e| format!("entry {index}: its name is not valid text ({e})"))?;
+        let name = entry.name().map(|n| n.into_owned()).map_err(|e| {
+            tr!(
+                "entry {index}: its name is not valid text ({e})",
+                index = index,
+                e = e
+            )
+        })?;
         if entry.is_dir() {
             continue;
         }
         safe_path(&name)?;
         if entry.encrypted() {
-            return Err(format!("{name}: encrypted entries are not supported"));
+            return Err(tr!(
+                "{name}: encrypted entries are not supported",
+                name = name
+            ));
         }
         if package.get(&name).is_some() {
-            return Err(format!("{name}: the archive has this entry twice"));
+            return Err(tr!("{name}: the archive has this entry twice", name = name));
         }
         if entry.size() > limits.entry {
-            return Err(format!(
-                "{name}: {} bytes uncompressed, more than the limit of {}",
-                entry.size(),
-                limits.entry
+            return Err(tr!(
+                "{name}: {size} bytes uncompressed, more than the limit of {limit}",
+                name = name,
+                size = entry.size(),
+                limit = limits.entry
             ));
         }
         // The size in the header is not to be believed: read at most one byte
@@ -103,8 +111,9 @@ pub fn read_zip(bytes: &[u8], limits: &Limits) -> Result<Package, String> {
             .read_to_end(&mut data)
             .map_err(|e| format!("{name}: {e}"))?;
         if data.len() as u64 > room {
-            return Err(format!(
-                "{name}: it is larger than the limits allow (zip bomb protection)"
+            return Err(tr!(
+                "{name}: it is larger than the limits allow (zip bomb protection)",
+                name = name
             ));
         }
         total += data.len() as u64;
