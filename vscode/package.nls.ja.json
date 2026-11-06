@@ -1,0 +1,20 @@
+{
+  "description": "シートがスキーマで定義されたツリーで、Python の数式を使えるワークブック。",
+  "customEditor.workbook": "Gossia ワークブック",
+  "command.newTab": "新しいタブ...",
+  "command.import": "インポート...",
+  "command.export": "エクスポート...",
+  "command.exportPdf": "PDF としてエクスポート...",
+  "command.exportHtml": "HTML としてエクスポート...",
+  "command.undo": "元に戻す",
+  "command.redo": "やり直し",
+  "command.recalculate": "再計算",
+  "command.codeEditor": "コードエディター",
+  "command.dataSources": "データソース...",
+  "command.disconnect": "データソースから切断...",
+  "command.options": "オプション...",
+  "command.toolbar": "ツールバーの表示/非表示",
+  "command.issues": "問題パネルの表示/非表示",
+  "command.inspector": "ノードインスペクターの表示/非表示",
+  "command.openModule": "モジュールを開く..."
+}

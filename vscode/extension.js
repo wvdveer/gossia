@@ -31,6 +31,9 @@ const PREFIX = 'gossia:';
 // The names of the secrets kept, since SecretStorage cannot list them.
 const SECRET_NAMES = 'gossia.secretNames';
 
+// Text for HTML: a translation could hold `<` or `&`.
+const escapeHtml = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
 /// One open workbook file, and its panel once it has one.
 class WorkbookDocument {
   constructor(uri, bytes) {
@@ -50,10 +53,10 @@ class WorkbookDocument {
   }
 
   dispose() {
-    for (const done of this.moduleEdits.values()) done('the Gossia panel was closed');
+    for (const done of this.moduleEdits.values()) done(vscode.l10n.t('the Gossia panel was closed'));
     this.moduleEdits.clear();
     for (const kind of Object.keys(this.waiting)) {
-      for (const w of this.waiting[kind]) w.reject(new Error('the Gossia panel was closed'));
+      for (const w of this.waiting[kind]) w.reject(new Error(vscode.l10n.t('the Gossia panel was closed')));
       this.waiting[kind] = [];
     }
   }
@@ -62,7 +65,7 @@ class WorkbookDocument {
   /// `backup` does not.
   bytesFor(kind) {
     if (!this.panel || !this.started) {
-      return Promise.reject(new Error('the Gossia panel has not started'));
+      return Promise.reject(new Error(vscode.l10n.t('the Gossia panel has not started')));
     }
     return new Promise((resolve, reject) => {
       this.waiting[kind].push({ resolve, reject });
@@ -131,7 +134,7 @@ class ModuleFileSystem {
   async writeFile(uri, content) {
     const { document, file, name } = this.place(uri);
     if (!file.endsWith('.py') || file.includes('/')) {
-      throw vscode.FileSystemError.NoPermissions('a workbook holds only modules: NAME.py');
+      throw vscode.FileSystemError.NoPermissions(vscode.l10n.t('a workbook holds only modules: NAME.py'));
     }
     const text = new TextDecoder().decode(content);
     await this.edit(document, { type: 'writeModule', name, text });
@@ -145,7 +148,8 @@ class ModuleFileSystem {
     const old = this.place(from);
     const target = this.place(to);
     if (old.document !== target.document || !target.file.endsWith('.py')) {
-      throw vscode.FileSystemError.NoPermissions('a module is renamed within its workbook, as NAME.py');
+      throw vscode.FileSystemError.NoPermissions(
+        vscode.l10n.t('a module is renamed within its workbook, as NAME.py'));
     }
     await this.edit(old.document, { type: 'renameModule', from: old.name, to: target.name });
   }
@@ -156,13 +160,13 @@ class ModuleFileSystem {
   }
 
   createDirectory() {
-    throw vscode.FileSystemError.NoPermissions('a workbook holds no folders');
+    throw vscode.FileSystemError.NoPermissions(vscode.l10n.t('a workbook holds no folders'));
   }
 
   /// Asks the panel to make a module edit, and waits for its answer.
   edit(document, message) {
     if (!document.panel || !document.started) {
-      return Promise.reject(vscode.FileSystemError.Unavailable('the Gossia panel has not started'));
+      return Promise.reject(vscode.FileSystemError.Unavailable(vscode.l10n.t('the Gossia panel has not started')));
     }
     const id = this.nextEdit++;
     return new Promise((resolve, reject) => {
@@ -251,7 +255,7 @@ class WorkbookEditorProvider {
   command(name) {
     const document = this.target();
     if (!document || !document.started) {
-      vscode.window.showInformationMessage('Open a Gossia workbook first.');
+      vscode.window.showInformationMessage(vscode.l10n.t('Open a Gossia workbook first.'));
       return;
     }
     document.panel.reveal(undefined, false);
@@ -263,16 +267,16 @@ class WorkbookEditorProvider {
   async pickModule() {
     const document = this.target();
     if (!document || !document.started) {
-      vscode.window.showInformationMessage('Open a Gossia workbook first.');
+      vscode.window.showInformationMessage(vscode.l10n.t('Open a Gossia workbook first.'));
       return;
     }
     const names = [...document.modules.keys()];
     if (!names.length) {
       vscode.window.showInformationMessage(
-        'This workbook has no modules: add one with Insert > Module in its code editor.');
+        vscode.l10n.t('This workbook has no modules: add one with Insert > Module in its code editor.'));
       return;
     }
-    const name = await vscode.window.showQuickPick(names, { placeHolder: 'The module to open' });
+    const name = await vscode.window.showQuickPick(names, { placeHolder: vscode.l10n.t('The module to open') });
     if (name) await this.openModule(document, name, 1, 1);
   }
 
@@ -325,6 +329,20 @@ class WorkbookEditorProvider {
       glueUrl: webview.asWebviewUri(vscode.Uri.joinPath(media, 'pkg', 'gossia_web.js')).toString(),
       wasmUrl: webview.asWebviewUri(vscode.Uri.joinPath(media, 'pkg', 'gossia_web_bg.wasm')).toString(),
       workerText: read('worker.js'),
+      // VS Code's display language, which the application follows unless
+      // its Options choose another.
+      language: vscode.env.language,
+      // The fonts for Japanese and Chinese, fetched only when one of them
+      // is the interface's language (cargo xtask vscode puts them there).
+      fonts: {
+        ja: webview.asWebviewUri(vscode.Uri.joinPath(media, 'fonts', 'NotoSansJP.ttf')).toString(),
+        'zh-Hans': webview.asWebviewUri(vscode.Uri.joinPath(media, 'fonts', 'NotoSansSC.ttf')).toString(),
+      },
+      texts: {
+        loading: vscode.l10n.t('Loading Gossia...'),
+        // '{0}' kept, for the panel to fill in.
+        failed: vscode.l10n.t('Gossia did not start: {0}', '{0}'),
+      },
     };
     // `<` written as an escape, so the configuration cannot end the script.
     const json = JSON.stringify(config).replace(/</g, '\\u003c');
@@ -338,7 +356,7 @@ class WorkbookEditorProvider {
       `font-src ${webview.cspSource} data:`,
     ].join('; ');
     return `<!doctype html>
-<html lang="en">
+<html lang="${vscode.env.language}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -351,7 +369,7 @@ class WorkbookEditorProvider {
 </head>
 <body>
 <canvas id="app"></canvas>
-<div id="loading">Loading Gossia...</div>
+<div id="loading">${escapeHtml(config.texts.loading)}</div>
 <script nonce="${nonce}">const GOSSIA = ${json};</script>
 <script nonce="${nonce}" type="module">${read('panel.js')}</script>
 </body>
@@ -477,7 +495,9 @@ class WorkbookEditorProvider {
     const chosen = await vscode.window.showOpenDialog({
       canSelectMany: false,
       defaultUri: this.folderOf(document),
-      filters: extensions.length ? { Files: extensions, 'All files': ['*'] } : undefined,
+      filters: extensions.length
+        ? { [vscode.l10n.t('Files')]: extensions, [vscode.l10n.t('All files')]: ['*'] }
+        : undefined,
     });
     if (!chosen || !chosen.length || !document.panel) return;
     const bytes = await vscode.workspace.fs.readFile(chosen[0]);
@@ -517,7 +537,8 @@ class WorkbookEditorProvider {
           if (size > m.maxBytes) {
             post({
               type: 'fetchFailed', id: m.id,
-              message: `the response from ${shown} is larger than the maximum response size of ${m.maxBytes} bytes`,
+              message: vscode.l10n.t('the response from {0} is larger than the maximum response size of {1} bytes',
+                shown, m.maxBytes),
             });
             return;
           }
@@ -535,7 +556,9 @@ class WorkbookEditorProvider {
       const why = (err && err.cause && err.cause.message) || (err && err.message) || String(err);
       post({
         type: 'fetchFailed', id: m.id,
-        message: timedOut ? `${shown} did not answer within ${m.timeoutMs / 1000} s` : `${shown} cannot be reached (${why})`,
+        message: timedOut
+          ? vscode.l10n.t('{0} did not answer within {1} s', shown, m.timeoutMs / 1000)
+          : vscode.l10n.t('{0} cannot be reached ({1})', shown, why),
       });
     }
   }

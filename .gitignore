@@ -42,9 +42,10 @@ packaging/linux/arch/pkg/
 packaging/linux/arch/*.pkg.tar.zst
 
 # The VS Code extension: its Node.js packages, and the wasm module copied in
-# by cargo xtask vscode.
+# by cargo xtask vscode with the fonts for Japanese and Chinese.
 /vscode/node_modules/
 /vscode/media/pkg/
+/vscode/media/fonts/
 # What cargo xtask vsix puts beside package.json: the licence and the icon.
 /vscode/LICENSE
 /vscode/media/icon.png

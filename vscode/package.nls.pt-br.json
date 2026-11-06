@@ -1,0 +1,20 @@
+{
+  "description": "Pastas de trabalho cujas planilhas são árvores definidas por um esquema, com fórmulas em Python.",
+  "customEditor.workbook": "Pasta de trabalho do Gossia",
+  "command.newTab": "Nova guia...",
+  "command.import": "Importar...",
+  "command.export": "Exportar...",
+  "command.exportPdf": "Exportar como PDF...",
+  "command.exportHtml": "Exportar como HTML...",
+  "command.undo": "Desfazer",
+  "command.redo": "Refazer",
+  "command.recalculate": "Recalcular",
+  "command.codeEditor": "Editor de código",
+  "command.dataSources": "Fontes de dados...",
+  "command.disconnect": "Desconectar das fontes de dados...",
+  "command.options": "Opções...",
+  "command.toolbar": "Mostrar ou ocultar a barra de ferramentas",
+  "command.issues": "Mostrar ou ocultar o painel de problemas",
+  "command.inspector": "Mostrar ou ocultar o inspetor de nós",
+  "command.openModule": "Abrir módulo..."
+}

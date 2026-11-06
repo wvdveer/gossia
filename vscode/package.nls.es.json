@@ -1,0 +1,20 @@
+{
+  "description": "Libros cuyas hojas son árboles definidos por un esquema, con fórmulas de Python.",
+  "customEditor.workbook": "Libro de Gossia",
+  "command.newTab": "Pestaña nueva...",
+  "command.import": "Importar...",
+  "command.export": "Exportar...",
+  "command.exportPdf": "Exportar como PDF...",
+  "command.exportHtml": "Exportar como HTML...",
+  "command.undo": "Deshacer",
+  "command.redo": "Rehacer",
+  "command.recalculate": "Recalcular",
+  "command.codeEditor": "Editor de código",
+  "command.dataSources": "Orígenes de datos...",
+  "command.disconnect": "Desconectar de los orígenes de datos...",
+  "command.options": "Opciones...",
+  "command.toolbar": "Mostrar u ocultar la barra de herramientas",
+  "command.issues": "Mostrar u ocultar el panel de problemas",
+  "command.inspector": "Mostrar u ocultar el inspector de nodos",
+  "command.openModule": "Abrir módulo..."
+}

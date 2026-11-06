@@ -1,0 +1,17 @@
+{
+  "the Gossia panel was closed": "le panneau Gossia a été fermé",
+  "the Gossia panel has not started": "le panneau Gossia n'a pas démarré",
+  "a workbook holds only modules: NAME.py": "un classeur ne contient que des modules : NOM.py",
+  "a module is renamed within its workbook, as NAME.py": "un module se renomme dans son classeur, en NOM.py",
+  "a workbook holds no folders": "un classeur ne contient pas de dossiers",
+  "Open a Gossia workbook first.": "Ouvrez d'abord un classeur Gossia.",
+  "This workbook has no modules: add one with Insert > Module in its code editor.": "Ce classeur n'a pas de modules : ajoutez-en un avec Insertion > Module dans son éditeur de code.",
+  "The module to open": "Le module à ouvrir",
+  "Files": "Fichiers",
+  "All files": "Tous les fichiers",
+  "the response from {0} is larger than the maximum response size of {1} bytes": "la réponse de {0} dépasse la taille de réponse maximale de {1} octets",
+  "{0} did not answer within {1} s": "{0} n'a pas répondu dans les {1} s",
+  "{0} cannot be reached ({1})": "{0} est injoignable ({1})",
+  "Loading Gossia...": "Chargement de Gossia...",
+  "Gossia did not start: {0}": "Gossia n'a pas démarré : {0}"
+}

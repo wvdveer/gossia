@@ -80,6 +80,21 @@ const host = {
   openModule(name, line, column) { vscode.postMessage({ type: 'openModule', name, line, column }); },
   modulesChanged(modules) { vscode.postMessage({ type: 'modulesChanged', modules }); },
   moduleAnswer(id, error) { vscode.postMessage({ type: 'moduleAnswer', id, error }); },
+  // VS Code's display language.
+  language() { return GOSSIA.language; },
+  // The font for Japanese or Chinese, from beside the wasm, when the
+  // application first needs it.
+  loadFont(tag) {
+    const url = GOSSIA.fonts[tag];
+    if (!url) throw new Error(`no font for ${tag}`);
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.arrayBuffer();
+      })
+      .then((b) => gossia.font_loaded(tag, new Uint8Array(b)))
+      .catch((err) => gossia.font_failed(tag, String(err.message || err)));
+  },
 };
 
 async function start(init) {
@@ -101,7 +116,7 @@ async function start(init) {
   } catch (err) {
     let panic = null;
     try { panic = gossia && gossia.last_panic(); } catch (_) { /* unusable */ }
-    const text = `Gossia did not start: ${err}${panic ? '\n' + panic : ''}`;
+    const text = GOSSIA.texts.failed.replace('{0}', `${err}${panic ? '\n' + panic : ''}`);
     loading.textContent = text;
     vscode.postMessage({ type: 'failed', message: text });
   }

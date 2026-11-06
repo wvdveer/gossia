@@ -331,6 +331,75 @@ fn vscode(root: &Path, test_control: bool) -> Result<(), String> {
             .map_err(|e| format!("cannot copy {name}: {e}"))?;
     }
     println!("copied the wasm version into {}", pkg.display());
+    cjk_fonts(root)
+}
+
+/// The fonts for Japanese and Chinese that the extension loads when one of
+/// them is the interface's language (DESIGN.md, the decisions for the
+/// interface's languages): Noto Sans JP and SC from the Google Fonts
+/// repository, at the commit of the bundled fonts, each with its SHA-256.
+const CJK_FONTS: &[(&str, &str, &str)] = &[
+    (
+        "NotoSansJP.ttf",
+        "ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf",
+        "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+    ),
+    (
+        "NotoSansSC.ttf",
+        "ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
+        "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+    ),
+    // One licence for both (the files are the same).
+    (
+        "OFL.txt",
+        "ofl/notosansjp/OFL.txt",
+        "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+    ),
+];
+
+/// The commit of the Google Fonts repository the fonts come from, as in
+/// `crates/gossia-layout/assets/fonts/FONTS.md`.
+const GOOGLE_FONTS_COMMIT: &str = "e7db6ca603fd4862010383ff17ffd6cc4ffac1c0";
+
+/// Puts the fonts for Japanese and Chinese in `vscode/media/fonts`,
+/// fetched with `curl` the first time and kept in `target/fonts`. A file
+/// whose SHA-256 is not the one pinned is refused.
+fn cjk_fonts(root: &Path) -> Result<(), String> {
+    use sha2::Digest;
+    let cache = root.join("target").join("fonts");
+    let dest = root.join("vscode").join("media").join("fonts");
+    for dir in [&cache, &dest] {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let digest = |bytes: &[u8]| {
+        sha2::Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    for (name, source, sha) in CJK_FONTS {
+        let cached = cache.join(name);
+        let good = |path: &Path| std::fs::read(path).is_ok_and(|b| digest(&b) == *sha);
+        if !good(&cached) {
+            let url = format!(
+                "https://raw.githubusercontent.com/google/fonts/{GOOGLE_FONTS_COMMIT}/{source}"
+            );
+            let path = cached.to_string_lossy().into_owned();
+            run_in(root, "curl", &["-sSfL", "-o", &path, &url])?;
+            if !good(&cached) {
+                let _ = std::fs::remove_file(&cached);
+                return Err(format!("{url} is not the file pinned (SHA-256 {sha})"));
+            }
+        }
+        let target = dest.join(name);
+        if !good(&target) {
+            std::fs::copy(&cached, &target).map_err(|e| format!("cannot copy {name}: {e}"))?;
+        }
+    }
+    println!(
+        "put the fonts for Japanese and Chinese in {}",
+        dest.display()
+    );
     Ok(())
 }
 

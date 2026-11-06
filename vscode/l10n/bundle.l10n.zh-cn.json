@@ -1,0 +1,17 @@
+{
+  "the Gossia panel was closed": "Gossia 面板已关闭",
+  "the Gossia panel has not started": "Gossia 面板尚未启动",
+  "a workbook holds only modules: NAME.py": "工作簿只包含模块：名称.py",
+  "a module is renamed within its workbook, as NAME.py": "模块只能在其工作簿内重命名，格式为 名称.py",
+  "a workbook holds no folders": "工作簿不包含文件夹",
+  "Open a Gossia workbook first.": "请先打开一个 Gossia 工作簿。",
+  "This workbook has no modules: add one with Insert > Module in its code editor.": "此工作簿没有模块：请在其代码编辑器中通过 插入 > 模块 添加。",
+  "The module to open": "要打开的模块",
+  "Files": "文件",
+  "All files": "所有文件",
+  "the response from {0} is larger than the maximum response size of {1} bytes": "来自 {0} 的响应超过了最大响应大小 {1} 字节",
+  "{0} did not answer within {1} s": "{0} 未在 {1} 秒内响应",
+  "{0} cannot be reached ({1})": "无法访问 {0}（{1}）",
+  "Loading Gossia...": "正在加载 Gossia...",
+  "Gossia did not start: {0}": "Gossia 未能启动：{0}"
+}

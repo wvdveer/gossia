@@ -233,6 +233,15 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                     .ok_or_else(|| format!("there is no theme {text:?}"))?;
             } else if name == gossia_calc::KEEP_REPORT_RESULTS {
                 dialog.keep_report_results = text == "true";
+            } else if name == "appearance.language" {
+                // A tag, or "system" to follow the system's (the host's).
+                dialog.language = match text.as_str() {
+                    "system" => None,
+                    tag => Some(
+                        gossia_i18n::Language::from_tag(tag)
+                            .ok_or_else(|| format!("there is no language {tag:?}"))?,
+                    ),
+                };
             } else if name == "display.row_density" {
                 dialog.density = crate::prefs::Density::from_key(&text)
                     .ok_or_else(|| format!("there is no row density {text:?}"))?;
@@ -560,6 +569,10 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                 "view": if app.in_report() { "Report" } else { app.current_view().name() },
                 "selection": app.selection.as_ref().map(ToString::to_string),
                 "code_editor": app.code.open,
+                // The interface's language, and the language whose font for
+                // Japanese or Chinese the window has (null: none).
+                "language": gossia_i18n::language().tag(),
+                "cjk_font": app.cjk_font_for.flatten().map(gossia_i18n::Language::tag),
             }))
         }
         "open_workbook" => {

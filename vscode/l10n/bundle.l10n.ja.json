@@ -1,0 +1,17 @@
+{
+  "the Gossia panel was closed": "Gossia パネルが閉じられました",
+  "the Gossia panel has not started": "Gossia パネルが起動していません",
+  "a workbook holds only modules: NAME.py": "ワークブックに入れられるのはモジュールだけです: 名前.py",
+  "a module is renamed within its workbook, as NAME.py": "モジュールの名前はそのワークブックの中で 名前.py として変更します",
+  "a workbook holds no folders": "ワークブックにフォルダーは入れられません",
+  "Open a Gossia workbook first.": "先に Gossia ワークブックを開いてください。",
+  "This workbook has no modules: add one with Insert > Module in its code editor.": "このワークブックにはモジュールがありません。コードエディターの 挿入 > モジュール で追加してください。",
+  "The module to open": "開くモジュール",
+  "Files": "ファイル",
+  "All files": "すべてのファイル",
+  "the response from {0} is larger than the maximum response size of {1} bytes": "{0} からの応答が最大応答サイズ {1} バイトを超えています",
+  "{0} did not answer within {1} s": "{0} が {1} 秒以内に応答しませんでした",
+  "{0} cannot be reached ({1})": "{0} に到達できません ({1})",
+  "Loading Gossia...": "Gossia を読み込んでいます...",
+  "Gossia did not start: {0}": "Gossia を起動できませんでした: {0}"
+}

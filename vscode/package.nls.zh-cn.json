@@ -1,0 +1,20 @@
+{
+  "description": "工作表是由架构定义的树、可使用 Python 公式的工作簿。",
+  "customEditor.workbook": "Gossia 工作簿",
+  "command.newTab": "新建标签页...",
+  "command.import": "导入...",
+  "command.export": "导出...",
+  "command.exportPdf": "导出为 PDF...",
+  "command.exportHtml": "导出为 HTML...",
+  "command.undo": "撤销",
+  "command.redo": "重做",
+  "command.recalculate": "重新计算",
+  "command.codeEditor": "代码编辑器",
+  "command.dataSources": "数据源...",
+  "command.disconnect": "断开与数据源的连接...",
+  "command.options": "选项...",
+  "command.toolbar": "显示或隐藏工具栏",
+  "command.issues": "显示或隐藏问题面板",
+  "command.inspector": "显示或隐藏节点检查器",
+  "command.openModule": "打开模块..."
+}

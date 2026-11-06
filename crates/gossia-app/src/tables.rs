@@ -592,9 +592,9 @@ impl GossiaApp {
             return;
         };
         if !self.can_reorder(array) {
-            self.notice = Some(format!(
-                "{} is computed by a formula and cannot be sorted; use SORT in a formula",
-                self.name_of(array)
+            self.notice = Some(tr!(
+                "{array} is computed by a formula and cannot be sorted; use SORT in a formula",
+                array = self.name_of(array)
             ));
             return;
         }

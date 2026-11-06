@@ -7,7 +7,9 @@
 //! with their characters, which the bundled fonts lack: on the desktop the
 //! system's own is used (owner, 2026-11-06), so the program grows by
 //! nothing; it is added behind each family's own fonts, for the window's
-//! texts and for data in those scripts alike.
+//! texts and for data in those scripts alike. A web view cannot read the
+//! system's fonts, so VS Code ships Noto Sans JP and SC beside the wasm and
+//! loads the one wanted when it is first wanted (`Host::load_font`).
 
 use gossia_i18n::tr;
 use std::path::PathBuf;
@@ -16,7 +18,8 @@ use gossia_i18n::Language;
 
 use crate::app::GossiaApp;
 
-/// A font file of the system: its bytes, and which face of a collection.
+/// A font file for Japanese or Chinese, the system's or the host's: its
+/// bytes, and which face of a collection.
 #[derive(Clone)]
 pub struct SystemFont {
     pub bytes: Vec<u8>,
@@ -55,21 +58,61 @@ impl GossiaApp {
         if self.cjk_font_for == Some(want) {
             return;
         }
+        let font = match want {
+            None => None,
+            Some(language) => match font_for(language) {
+                // Tried again next frame; the host repaints when it comes.
+                Found::Waiting => return,
+                Found::Font(font) => Some(font),
+                Found::Missing(why) => {
+                    self.notice = Some(why);
+                    None
+                }
+            },
+        };
         self.cjk_font_for = Some(want);
-        let font = want.and_then(|language| {
-            let found = system_font(language);
-            if found.is_none() {
-                self.notice = Some(
-                    tr!(
-                        "No font for Japanese or Chinese was found on this system, so their \
-                     characters show as boxes"
-                    )
-                    .to_owned(),
-                );
-            }
-            found
-        });
         crate::style::set_fonts_with(ctx, font);
+    }
+}
+
+/// Where the font for a language stands.
+enum Found {
+    Font(SystemFont),
+    /// The host is loading it.
+    Waiting,
+    /// There is none: the notice that says so.
+    Missing(String),
+}
+
+/// The font for Japanese or Chinese: in a host that ships one (VS Code,
+/// whose web view cannot read the system's fonts), the host's, loaded the
+/// first time it is wanted; otherwise the system's.
+fn font_for(language: Language) -> Found {
+    if let Some(host) = crate::host::current() {
+        match crate::host::font(&*host, language) {
+            crate::host::HostFont::None => {}
+            crate::host::HostFont::Waiting => return Found::Waiting,
+            crate::host::HostFont::Loaded(bytes) => {
+                return Found::Font(SystemFont { bytes, index: 0 });
+            }
+            crate::host::HostFont::Failed(why) => {
+                return Found::Missing(tr!(
+                    "The font for Japanese or Chinese could not be loaded ({why}), so their \
+                     characters show as boxes",
+                    why = why
+                ));
+            }
+        }
+    }
+    match system_font(language) {
+        Some(font) => Found::Font(font),
+        None => Found::Missing(
+            tr!(
+                "No font for Japanese or Chinese was found on this system, so their \
+                 characters show as boxes"
+            )
+            .to_owned(),
+        ),
     }
 }
 

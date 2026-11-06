@@ -1,0 +1,20 @@
+{
+  "description": "Des classeurs dont les feuilles sont des arbres définis par un schéma, avec des formules Python.",
+  "customEditor.workbook": "Classeur Gossia",
+  "command.newTab": "Nouvel onglet...",
+  "command.import": "Importer...",
+  "command.export": "Exporter...",
+  "command.exportPdf": "Exporter en PDF...",
+  "command.exportHtml": "Exporter en HTML...",
+  "command.undo": "Annuler",
+  "command.redo": "Rétablir",
+  "command.recalculate": "Recalculer",
+  "command.codeEditor": "Éditeur de code",
+  "command.dataSources": "Sources de données...",
+  "command.disconnect": "Se déconnecter des sources de données...",
+  "command.options": "Options...",
+  "command.toolbar": "Afficher ou masquer la barre d'outils",
+  "command.issues": "Afficher ou masquer le panneau des problèmes",
+  "command.inspector": "Afficher ou masquer l'inspecteur de nœud",
+  "command.openModule": "Ouvrir un module..."
+}

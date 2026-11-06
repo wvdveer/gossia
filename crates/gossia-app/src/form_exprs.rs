@@ -258,7 +258,7 @@ pub fn choice_list(
 
 fn list_of(trusted: bool, state: ExprState) -> ChoiceList {
     let items = if !trusted {
-        Err("Choices runs Python, so this workbook has to be trusted first.".to_owned())
+        Err(tr!("Choices runs Python, so this workbook has to be trusted first.").to_owned())
     } else {
         match state.result {
             // Not run yet: no items until it has.

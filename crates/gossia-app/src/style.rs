@@ -502,8 +502,8 @@ pub fn fonts() -> FontDefinitions {
     fonts_with(None)
 }
 
-/// The name of the system's font for Japanese or Chinese, when the
-/// interface's language needs one (see `i18n`).
+/// The name of the font for Japanese or Chinese (the system's, or the
+/// host's), when the interface's language needs one (see `i18n`).
 const CJK: &str = "CJK";
 
 /// How far the font for Japanese or Chinese is lowered, as a fraction of
@@ -530,6 +530,9 @@ pub fn fonts_with(cjk: Option<&crate::i18n::SystemFont>) -> FontDefinitions {
             // in these fonts is taller than Inter's: lowered a little, kana
             // and Han characters sit on Inter's baseline.
             y_offset_factor: CJK_Y_OFFSET,
+            // Regular: the Noto fonts VS Code ships are variable, with Thin
+            // as their default. A font without the axis ignores it.
+            coords: VariationCoords::new([(b"wght", 400.0)]),
             ..FontTweak::default()
         });
         data.index = cjk.index;

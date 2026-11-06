@@ -560,7 +560,9 @@ impl GossiaApp {
                 Some(gossia_core::Kind::Array { items, .. }) => {
                     Some(GossiaApp::default_value(spec, *items))
                 }
-                _ => return Err(format!("{} is not an array", self.name_of(array))),
+                _ => {
+                    return Err(tr!("{array} is not an array", array = self.name_of(array)));
+                }
             }
         };
         let names: Vec<String> = writes.iter().map(|(path, _)| self.name_of(path)).collect();

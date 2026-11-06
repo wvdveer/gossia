@@ -1,0 +1,20 @@
+{
+  "description": "Workbooks whose sheets are trees defined by a schema, with Python formulas.",
+  "customEditor.workbook": "Gossia workbook",
+  "command.newTab": "New Tab...",
+  "command.import": "Import...",
+  "command.export": "Export...",
+  "command.exportPdf": "Export as PDF...",
+  "command.exportHtml": "Export as HTML...",
+  "command.undo": "Undo",
+  "command.redo": "Redo",
+  "command.recalculate": "Recalculate",
+  "command.codeEditor": "Code Editor",
+  "command.dataSources": "Data Sources...",
+  "command.disconnect": "Disconnect from Data Sources...",
+  "command.options": "Options...",
+  "command.toolbar": "Show or Hide the Toolbar",
+  "command.issues": "Show or Hide the Issues Panel",
+  "command.inspector": "Show or Hide the Node Inspector",
+  "command.openModule": "Open Module..."
+}

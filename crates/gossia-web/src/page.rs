@@ -27,6 +27,14 @@
 //!
 //! Such a host also hands the page a workbook while it runs
 //! ([`open_workbook`], for Revert).
+//!
+//! These the host may leave out:
+//! - `language()`: its language as a BCP 47 tag (VS Code's display
+//!   language), the interface's language when the preferences follow the
+//!   system's.
+//! - `loadFont(tag)`: loads the font it ships for Japanese (`ja`) or
+//!   Chinese (`zh-Hans`), handing it to [`font_loaded`], or why not to
+//!   [`font_failed`].
 
 use gossia_i18n::tr;
 use std::cell::RefCell;
@@ -157,6 +165,20 @@ pub fn fetch_answered(id: f64, status: u16, reason: String, headers: Vec<String>
     repaint();
 }
 
+/// The font the host ships for a language, as `loadFont(tag)` asked.
+#[wasm_bindgen]
+pub fn font_loaded(tag: String, bytes: Vec<u8>) {
+    gossia_app::host::font_loaded(&tag, Ok(bytes));
+    repaint();
+}
+
+/// Why the font for a language could not be loaded.
+#[wasm_bindgen]
+pub fn font_failed(tag: String, message: String) {
+    gossia_app::host::font_loaded(&tag, Err(message));
+    repaint();
+}
+
 /// A request the host could not make, and why, in words for the user.
 #[wasm_bindgen]
 pub fn fetch_failed(id: f64, message: String) {
@@ -195,6 +217,11 @@ impl JsHost {
                 e = format!("{e:?}")
             )
         })
+    }
+
+    /// Whether the object has this function: for those it may leave out.
+    fn has(&self, name: &str) -> bool {
+        Reflect::get(&self.object, &JsValue::from_str(name)).is_ok_and(|f| f.is_function())
     }
 
     fn call_logged(&self, name: &str, args: &[JsValue]) -> JsValue {
@@ -263,6 +290,21 @@ impl Host for JsHost {
 
     fn dark(&self) -> Option<bool> {
         self.call_logged("dark", &[]).as_bool()
+    }
+
+    fn language(&self) -> Option<String> {
+        if !self.has("language") {
+            return None;
+        }
+        self.call_logged("language", &[]).as_string()
+    }
+
+    fn load_font(&self, tag: &str) -> bool {
+        self.has("loadFont")
+            && self
+                .call("loadFont", &[JsValue::from_str(tag)])
+                .inspect_err(|e| web_sys::console::error_1(&JsValue::from_str(e)))
+                .is_ok()
     }
 
     fn fetch(&self, request: &gossia_calc::http::FetchRequest) {
@@ -462,6 +504,8 @@ pub async fn start_app(
         GossiaApp::new(gossia_app::workbook_file::blank_workbook())
     }
     .with_user(user);
+    // As the desktop's main does: the preferences' language, or the host's.
+    gossia_i18n::set_language(app.language_for(app.user.prefs.appearance.language));
     if let (Some(name), Some(bytes)) = (name, bytes)
         && !bytes.is_empty()
         && let Err(e) = app.open_bytes(&name, &bytes)

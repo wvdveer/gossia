@@ -14,6 +14,7 @@ use gossia_calc::http::{FetchAnswer, FetchRequest};
 use gossia_calc::python::PythonSettings;
 use gossia_calc::sources::{SOURCES_FILE, SOURCES_VERSION, SourceDef, SourceStore};
 use gossia_calc::{EvalSettings, Evaluator};
+use gossia_i18n::tr;
 
 /// What the host does for the application. Calls that need an answer from
 /// the user or the network come back later through the application's
@@ -69,6 +70,14 @@ pub trait Host {
     /// the system's.
     fn language(&self) -> Option<String> {
         None
+    }
+
+    /// Starts loading the font the host ships for Japanese or Chinese (by
+    /// the language's tag), which a web view needs since it cannot read the
+    /// system's fonts. Whether the host has one: its bytes, or why they
+    /// could not be read, come later through [`font_loaded`].
+    fn load_font(&self, _tag: &str) -> bool {
+        false
     }
 
     /// Makes an HTTP request for a data source, without following a
@@ -154,6 +163,44 @@ thread_local! {
     /// The version of the data source definitions last kept in the host,
     /// and their names then.
     static SOURCES_KEPT: RefCell<(u64, Vec<String>)> = const { RefCell::new((0, Vec::new())) };
+    /// The fonts asked of the host, by tag, and what came: kept, so that
+    /// choosing the language again does not load the font again.
+    static FONTS: RefCell<HashMap<String, HostFont>> = RefCell::new(HashMap::new());
+}
+
+/// The host's font for a language, as far as it has come.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostFont {
+    /// The host ships none: the system's is looked for instead.
+    None,
+    /// Asked for, not come yet.
+    Waiting,
+    Loaded(Vec<u8>),
+    /// It could not be read: why.
+    Failed(String),
+}
+
+/// The font `host` ships for `language`, asking for it the first time.
+pub fn font(host: &dyn Host, language: gossia_i18n::Language) -> HostFont {
+    let tag = language.tag();
+    if let Some(known) = FONTS.with(|f| f.borrow().get(tag).cloned()) {
+        return known;
+    }
+    if !host.load_font(tag) {
+        return HostFont::None;
+    }
+    FONTS.with(|f| f.borrow_mut().insert(tag.to_owned(), HostFont::Waiting));
+    HostFont::Waiting
+}
+
+/// The host's answer to [`Host::load_font`]: the font's bytes, or why
+/// they could not be read.
+pub fn font_loaded(tag: &str, font: Result<Vec<u8>, String>) {
+    let font = match font {
+        Ok(bytes) => HostFont::Loaded(bytes),
+        Err(why) => HostFont::Failed(why),
+    };
+    FONTS.with(|f| f.borrow_mut().insert(tag.to_owned(), font));
 }
 
 /// The secret of a data source is kept under this name.
@@ -246,7 +293,9 @@ impl crate::GossiaApp {
                     effective.eval_settings(),
                 );
             }
-            Err(e) => self.notice = Some(format!("The data sources could not be kept: {e}")),
+            Err(e) => {
+                self.notice = Some(tr!("The data sources could not be kept: {e}", e = e));
+            }
         }
     }
 }

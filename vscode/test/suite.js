@@ -199,6 +199,21 @@ async function suite(dir) {
   }
   check(refused, 'a file whose name is no module name is refused', refused);
 
+  // The interface follows VS Code's display language; Japanese chosen in
+  // the Options loads its font from beside the wasm.
+  const lang = await send('status');
+  equal(lang.language, vscode.env.language.startsWith('en') ? 'en' : lang.language,
+    "the interface is in VS Code's display language");
+  await send('set_option', { name: 'appearance.language', value: 'ja' });
+  await waitFor(async () => (await send('status')).cjk_font === 'ja', 'the font for Japanese', 60000);
+  const japanese = await send('status');
+  // A font that failed would say so in the notice, in Japanese.
+  equal([japanese.language, (japanese.notice || '').includes('フォント')], ['ja', false],
+    'Japanese chosen: the font for it is loaded from beside the wasm');
+  await send('set_option', { name: 'appearance.language', value: 'system' });
+  await waitFor(async () => (await send('status')).cjk_font === null, 'the font to go');
+  check(true, 'back to the system language, the font goes');
+
   server.close();
 }
 

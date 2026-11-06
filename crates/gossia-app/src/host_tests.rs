@@ -21,6 +21,10 @@ struct Calls {
     opened_modules: Vec<(String, usize, usize)>,
     modules_told: Vec<Vec<(String, String)>>,
     module_answers: Vec<(u32, Option<String>)>,
+    /// Whether the host ships fonts for Japanese and Chinese, and the tags
+    /// of those asked for.
+    ships_fonts: bool,
+    fonts_asked: Vec<String>,
 }
 
 #[derive(Default)]
@@ -92,6 +96,12 @@ impl Host for FakeHost {
 
     fn modules_changed(&self, modules: &[(String, String)]) {
         self.0.borrow_mut().modules_told.push(modules.to_vec());
+    }
+
+    fn load_font(&self, tag: &str) -> bool {
+        let mut calls = self.0.borrow_mut();
+        calls.fonts_asked.push(tag.to_owned());
+        calls.ships_fonts
     }
 
     fn module_answer(&self, id: u32, error: Option<&str>) {
@@ -448,20 +458,30 @@ fn commands_run_by_name_as_their_menu_items() {
     }
 }
 
-/// The VS Code extension lists Gossia's commands, with their titles, and
-/// *Open Module...* of its own.
+/// The VS Code extension lists Gossia's commands, with their titles (in
+/// `package.nls.json`, for VS Code to translate), and *Open Module...* of
+/// its own.
 #[test]
 fn the_extension_lists_every_command() {
     let text = include_str!("../../../vscode/package.json");
     let package: serde_json::Value = serde_json::from_str(text).unwrap();
+    let english: serde_json::Value =
+        serde_json::from_str(include_str!("../../../vscode/package.nls.json")).unwrap();
     let listed: Vec<(String, String)> = package["contributes"]["commands"]
         .as_array()
         .unwrap()
         .iter()
         .map(|c| {
+            let title = c["title"].as_str().unwrap();
+            let key = title.trim_matches('%');
+            assert_eq!(
+                title,
+                format!("%{key}%"),
+                "a title is a key of package.nls.json"
+            );
             (
                 c["command"].as_str().unwrap().to_owned(),
-                c["title"].as_str().unwrap().to_owned(),
+                english[key].as_str().unwrap_or(title).to_owned(),
             )
         })
         .collect();
@@ -471,4 +491,134 @@ fn the_extension_lists_every_command() {
         .collect();
     expected.push(("gossia.openModule".to_owned(), "Open Module...".to_owned()));
     assert_eq!(listed, expected);
+}
+
+#[test]
+fn the_host_s_font_for_japanese_is_loaded_when_first_wanted() {
+    use gossia_i18n::Language;
+    let (fake, mut app) = hosted();
+    fake.0.borrow_mut().ships_fonts = true;
+    gossia_i18n::set_thread_language(Some(Language::Japanese));
+    let ctx = egui::Context::default();
+    app.apply_cjk_font(&ctx);
+    app.apply_cjk_font(&ctx);
+    assert_eq!(fake.0.borrow().fonts_asked, ["ja"], "asked once");
+    assert_eq!(app.cjk_font_for, None, "waiting for it");
+    host::font_loaded("ja", Ok(gossia_layout::fonts::INTER.to_vec()));
+    app.apply_cjk_font(&ctx);
+    assert_eq!(app.cjk_font_for, Some(Some(Language::Japanese)));
+    assert_eq!(app.notice, None);
+    // One that cannot be read says so, and the window goes on without it.
+    gossia_i18n::set_language(Language::Chinese);
+    app.apply_cjk_font(&ctx);
+    assert_eq!(fake.0.borrow().fonts_asked, ["ja", "zh-Hans"]);
+    host::font_loaded("zh-Hans", Err("404".to_owned()));
+    app.apply_cjk_font(&ctx);
+    assert_eq!(app.cjk_font_for, Some(Some(Language::Chinese)));
+    let notice = app.notice.clone().unwrap_or_default();
+    assert!(notice.contains("（404）"), "in Chinese: {notice}");
+    // Japanese again: what came is kept, not asked for again.
+    gossia_i18n::set_language(Language::Japanese);
+    app.apply_cjk_font(&ctx);
+    assert_eq!(app.cjk_font_for, Some(Some(Language::Japanese)));
+    assert_eq!(fake.0.borrow().fonts_asked.len(), 2);
+    gossia_i18n::set_thread_language(None);
+}
+
+#[test]
+fn a_host_without_fonts_leaves_the_system_s() {
+    use gossia_i18n::Language;
+    let (fake, mut app) = hosted();
+    gossia_i18n::set_thread_language(Some(Language::Japanese));
+    let ctx = egui::Context::default();
+    app.apply_cjk_font(&ctx);
+    assert_eq!(fake.0.borrow().fonts_asked, ["ja"]);
+    // Not waiting for the host: the system's font, or the notice.
+    assert_eq!(app.cjk_font_for, Some(Some(Language::Japanese)));
+    gossia_i18n::set_thread_language(None);
+}
+
+/// The `{0}` places of a VS Code text.
+fn vscode_places(text: &str) -> Vec<&str> {
+    let mut places: Vec<&str> = text
+        .match_indices('{')
+        .filter_map(|(at, _)| Some(&text[at..at + text[at..].find('}')? + 1]))
+        .collect();
+    places.sort_unstable();
+    places
+}
+
+fn json_object(text: &str) -> serde_json::Map<String, serde_json::Value> {
+    match serde_json::from_str(text).unwrap() {
+        serde_json::Value::Object(map) => map,
+        other => panic!("not an object: {other}"),
+    }
+}
+
+/// Every text of the extension is in the five other languages: the
+/// manifest's (`package.nls.<locale>.json`, with the keys package.json
+/// names) and those of `extension.js` (`l10n/bundle.l10n.<locale>.json`,
+/// with every `vscode.l10n.t('...')`), with the same places.
+#[test]
+fn the_extension_s_texts_are_in_every_language() {
+    let manifest = include_str!("../../../vscode/package.json");
+    let english = json_object(include_str!("../../../vscode/package.nls.json"));
+    let used: std::collections::BTreeSet<&str> = manifest
+        .split('"')
+        .filter(|s| s.len() > 2 && s.starts_with('%') && s.ends_with('%'))
+        .map(|s| s.trim_matches('%'))
+        .collect();
+    let keys: std::collections::BTreeSet<&str> = english.keys().map(String::as_str).collect();
+    assert_eq!(
+        used, keys,
+        "package.json names the keys of package.nls.json"
+    );
+    let script = include_str!("../../../vscode/extension.js");
+    let texts: std::collections::BTreeSet<&str> = script
+        .split("vscode.l10n.t('")
+        .skip(1)
+        .map(|rest| &rest[..rest.find('\'').unwrap()])
+        .collect();
+    assert!(texts.contains("Open a Gossia workbook first."), "{texts:?}");
+    let languages = [
+        (
+            "fr",
+            include_str!("../../../vscode/package.nls.fr.json"),
+            include_str!("../../../vscode/l10n/bundle.l10n.fr.json"),
+        ),
+        (
+            "es",
+            include_str!("../../../vscode/package.nls.es.json"),
+            include_str!("../../../vscode/l10n/bundle.l10n.es.json"),
+        ),
+        (
+            "pt-br",
+            include_str!("../../../vscode/package.nls.pt-br.json"),
+            include_str!("../../../vscode/l10n/bundle.l10n.pt-br.json"),
+        ),
+        (
+            "ja",
+            include_str!("../../../vscode/package.nls.ja.json"),
+            include_str!("../../../vscode/l10n/bundle.l10n.ja.json"),
+        ),
+        (
+            "zh-cn",
+            include_str!("../../../vscode/package.nls.zh-cn.json"),
+            include_str!("../../../vscode/l10n/bundle.l10n.zh-cn.json"),
+        ),
+    ];
+    for (locale, nls, bundle) in languages {
+        let nls = json_object(nls);
+        let nls_keys: std::collections::BTreeSet<&str> = nls.keys().map(String::as_str).collect();
+        assert_eq!(nls_keys, keys, "package.nls.{locale}.json");
+        let bundle = json_object(bundle);
+        let bundle_keys: std::collections::BTreeSet<&str> =
+            bundle.keys().map(String::as_str).collect();
+        assert_eq!(bundle_keys, texts, "bundle.l10n.{locale}.json");
+        for (key, text) in nls.iter().chain(bundle.iter()) {
+            let text = text.as_str().unwrap();
+            assert!(!text.is_empty(), "{locale}: {key}");
+            assert_eq!(vscode_places(key), vscode_places(text), "{locale}: {key}");
+        }
+    }
 }
