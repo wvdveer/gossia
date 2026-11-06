@@ -617,8 +617,10 @@ fn an_exported_json_tab_has_its_computed_values_and_no_formulas_or_errors() {
             crate::ExportFormat::Data(gossia_core::dataformat::DataFormat::Jsonc),
             crate::ExportFormat::Data(gossia_core::dataformat::DataFormat::Toml),
             crate::ExportFormat::Data(gossia_core::dataformat::DataFormat::Yaml),
+            crate::ExportFormat::Csv,
+            crate::ExportFormat::Tsv,
         ],
-        "an object is not lines of text, nor JSON Lines"
+        "an object is not lines of text, nor JSON Lines; its items are rows"
     );
     let text = calc
         .export_text("Orders", crate::ExportFormat::JSON, true)

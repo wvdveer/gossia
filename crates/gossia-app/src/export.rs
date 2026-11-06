@@ -16,6 +16,40 @@ use crate::file::save_atomic;
 use crate::view::named;
 use crate::workbook_file::{Browsing, FileDialog};
 
+/// For CSV and TSV in the export dialog: which array of objects is written,
+/// when the tab has more than one, and the fields that are left out.
+fn rows_choice(ui: &mut egui::Ui, calc: &gossia_calc::Calc, plan: &mut ExportPlan) {
+    if plan.rows.len() > 1 {
+        ui.label(tr!("Rows from"));
+        for at in plan.rows.clone() {
+            let label = if at.is_root() {
+                plan.tab.clone()
+            } else {
+                format!("{}.{at}", plan.tab)
+            };
+            if ui.radio(plan.at.as_ref() == Some(&at), label).clicked() {
+                plan.at = Some(at);
+            }
+        }
+    }
+    let left_out = plan
+        .at
+        .as_ref()
+        .and_then(|at| calc.export_row_columns(&plan.tab, at))
+        .map(|(_, left_out)| left_out)
+        .unwrap_or_default();
+    if !left_out.is_empty() {
+        ui.weak(tr!(
+            "Lists and maps have no place in a row, so these are left out: {fields}.",
+            fields = left_out.join(", ")
+        ));
+    }
+    ui.weak(tr!(
+        "Fields of records inside an item become columns such as address.city."
+    ));
+    ui.add_space(4.0);
+}
+
 /// The choices of the export dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportPlan {
@@ -28,12 +62,19 @@ pub struct ExportPlan {
     /// The schema tab that can be written beside the file, if any.
     pub schema: Option<String>,
     pub with_schema: bool,
+    /// For CSV and TSV: the arrays of objects that can be written as rows,
+    /// and the one chosen.
+    pub rows: Vec<gossia_core::Path>,
+    pub at: Option<gossia_core::Path>,
 }
 
 impl ExportPlan {
     /// Whether the schema is written too: asked for, there, and not for text.
     pub fn writes_schema(&self) -> bool {
-        self.with_schema && self.schema.is_some() && self.format != ExportFormat::Text
+        self.with_schema
+            && self.schema.is_some()
+            && self.format != ExportFormat::Text
+            && !self.format.is_rows()
     }
 }
 
@@ -53,7 +94,10 @@ impl GossiaApp {
         let format = *formats
             .first()
             .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
+        let rows = self.calc().export_row_arrays(tab);
         Ok(ExportPlan {
+            at: rows.first().cloned(),
+            rows,
             tab: tab.to_owned(),
             formats,
             format,
@@ -117,6 +161,8 @@ impl GossiaApp {
                 "xsd" => "XSD",
                 "blk" => "COBOL records",
                 "cpy" => "COBOL copybook",
+                "csv" => "CSV",
+                "tsv" => "TSV",
                 _ => tr!("Text"),
             };
             self.files.browser = crate::workbook_file::new_browser()
@@ -158,9 +204,16 @@ impl GossiaApp {
         } else {
             path.with_extension(self.export_extension(&plan))
         };
-        let bytes = self
-            .calc()
-            .export_bytes(&plan.tab, plan.format, plan.pretty)?;
+        let bytes = match (&plan.at, plan.format.is_rows()) {
+            (Some(at), true) => self
+                .calc()
+                .export_rows(&plan.tab, at, plan.format)?
+                .0
+                .into_bytes(),
+            _ => self
+                .calc()
+                .export_bytes(&plan.tab, plan.format, plan.pretty)?,
+        };
         let schema = match self.export_schema_path(&plan, &path) {
             Some(schema_path) => {
                 if schema_path == path {
@@ -227,7 +280,11 @@ impl GossiaApp {
                     }
                     ui.add_space(4.0);
                 }
-                ui.add_enabled_ui(plan.format != ExportFormat::Text, |ui| {
+                if plan.format.is_rows() {
+                    rows_choice(ui, self.calc(), &mut plan);
+                }
+                let shaped = plan.format != ExportFormat::Text && !plan.format.is_rows();
+                ui.add_enabled_ui(shaped, |ui| {
                     ui.horizontal(|ui| {
                         if ui.radio(plan.pretty, tr!("Indented")).clicked() {
                             plan.pretty = true;

@@ -47,8 +47,11 @@ fn the_dialog_starts_on_the_tabs_own_format_indented_without_the_schema() {
             ExportFormat::Data(DataFormat::Jsonc),
             ExportFormat::Data(DataFormat::Toml),
             ExportFormat::Data(DataFormat::Yaml),
+            ExportFormat::Csv,
+            ExportFormat::Tsv,
         ]
     );
+    assert_eq!(plan.rows, ["items".parse::<gossia_core::Path>().unwrap()]);
     assert!(plan.pretty);
     assert_eq!(plan.schema.as_deref(), Some("Orders_schema"));
     assert!(!plan.with_schema);
@@ -91,6 +94,58 @@ fn an_exported_tab_with_its_schema_imports_again_onto_the_same_schema() {
         plan.choice,
         SchemaChoice::Existing("Orders_schema".to_owned())
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The items of an order as CSV: a row for each, the computed totals as
+/// values, and read back by the CSV import as the same rows.
+#[test]
+fn a_list_of_records_is_exported_as_csv_and_tsv_rows() {
+    let dir = folder("export-csv");
+    let mut app = sample();
+    let path = dir.join("items.csv");
+    control::run(
+        &mut app,
+        "export",
+        &json!({"tab": "Orders", "format": "csv", "rows": "items", "path": path.display().to_string()}),
+    )
+    .unwrap();
+    let text = read(&path);
+    let header = text.split("\r\n").next().unwrap();
+    assert!(header.starts_with("sku,qty,price,total"), "{text}");
+    assert!(
+        text.contains("A-100,2,9.5,19.0"),
+        "no formulas, the values: {text}"
+    );
+    // The schema is never written beside rows.
+    assert!(!dir.join("items.schema.json").exists());
+    let plan = app.plan_import("items.csv", text.as_bytes()).unwrap();
+    app.import(&plan).unwrap();
+    let back = app.calc().data("items").unwrap();
+    let orders = app.calc().data("Orders").unwrap();
+    assert_eq!(
+        back.get(&"[0].sku".parse().unwrap()).unwrap().value(),
+        orders
+            .get(&"items[0].sku".parse().unwrap())
+            .unwrap()
+            .value()
+    );
+    // TSV: the same, with tabs.
+    let path = dir.join("items.tsv");
+    control::run(
+        &mut app,
+        "export",
+        &json!({"tab": "Orders", "format": "tsv", "path": path.display().to_string()}),
+    )
+    .unwrap();
+    assert!(read(&path).starts_with("sku\tqty\tprice\ttotal"));
+    // A path that is not a list of records is refused.
+    let refused = control::run(
+        &mut app,
+        "export",
+        &json!({"tab": "Orders", "format": "csv", "rows": "customer", "path": path.display().to_string()}),
+    );
+    assert!(refused.is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

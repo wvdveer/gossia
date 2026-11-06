@@ -3,7 +3,7 @@
 //! text. Writing it to disk is the application's job.
 
 use gossia_core::dataformat::DataFormat;
-use gossia_core::{Value, xml};
+use gossia_core::{Value, tabular, xml};
 use gossia_i18n::tr;
 
 use super::{Calc, SchemaRole};
@@ -18,6 +18,11 @@ pub enum ExportFormat {
     Text,
     /// A copybook schema tab as `.cpy` text.
     Copybook,
+    /// An array of objects as rows of comma-separated values, nested objects
+    /// as dotted columns (DESIGN.md, "Excel and ODS files, 0.4.0").
+    Csv,
+    /// The same, separated by tabs.
+    Tsv,
 }
 
 impl ExportFormat {
@@ -30,6 +35,8 @@ impl ExportFormat {
             ExportFormat::Data(format) => format.extension(),
             ExportFormat::Text => "txt",
             ExportFormat::Copybook => "cpy",
+            ExportFormat::Csv => "csv",
+            ExportFormat::Tsv => "tsv",
         }
     }
 
@@ -39,7 +46,14 @@ impl ExportFormat {
             ExportFormat::Data(format) => format.label(),
             ExportFormat::Text => tr!("Text, one line for each string"),
             ExportFormat::Copybook => tr!("COBOL copybook"),
+            ExportFormat::Csv => tr!("CSV, a row for each item"),
+            ExportFormat::Tsv => tr!("TSV, a row for each item"),
         }
+    }
+
+    /// Whether it writes rows of an array of objects.
+    pub fn is_rows(self) -> bool {
+        matches!(self, ExportFormat::Csv | ExportFormat::Tsv)
     }
 }
 
@@ -71,7 +85,56 @@ impl Calc {
         if own.json_shaped() && self.text_lines(tab).is_ok() {
             formats.push(ExportFormat::Text);
         }
+        if !self.is_schema_sheet(tab) && !self.export_row_arrays(tab).is_empty() {
+            formats.extend([ExportFormat::Csv, ExportFormat::Tsv]);
+        }
         formats
+    }
+
+    /// The arrays of objects of a data tab that can be written as rows: the
+    /// root, if it is one, and those reached through the fields of objects.
+    pub fn export_row_arrays(&self, tab: &str) -> Vec<gossia_core::Path> {
+        match self.sheets.get(tab) {
+            Some(sheet) if !self.is_schema_sheet(tab) => tabular::row_arrays(&sheet.spec),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The columns the array of objects at `at` would be written with, and
+    /// the fields left out because they are lists or maps.
+    pub fn export_row_columns(
+        &self,
+        tab: &str,
+        at: &gossia_core::Path,
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        tabular::columns_of(&self.sheets.get(tab)?.spec, at)
+    }
+
+    /// The array of objects at `at` in a tab as rows of CSV or TSV, with the
+    /// fields left out because they are lists or maps.
+    pub fn export_rows(
+        &self,
+        tab: &str,
+        at: &gossia_core::Path,
+        format: ExportFormat,
+    ) -> Result<(String, Vec<String>), String> {
+        let sheet = self
+            .sheets
+            .get(tab)
+            .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
+        let separator = match format {
+            ExportFormat::Csv => ',',
+            ExportFormat::Tsv => '\t',
+            _ => return Err(tr!("{format} does not hold rows", format = format.label())),
+        };
+        let table = tabular::table(&sheet.spec, &sheet.data, at).ok_or_else(|| {
+            tr!(
+                "{at} of tab {tab} is not a list of records, so it cannot be written as rows",
+                at = at,
+                tab = tab
+            )
+        })?;
+        Ok((tabular::to_delimited(&table, separator), table.left_out))
     }
 
     /// The schema tab whose file can be written beside the tab's: the one it
@@ -124,6 +187,14 @@ impl Calc {
             ));
         }
         let mut text = match format {
+            ExportFormat::Csv | ExportFormat::Tsv => {
+                let at = self
+                    .export_row_arrays(tab)
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| tr!("tab {tab} has no list of records", tab = tab))?;
+                return self.export_rows(tab, &at, format).map(|(text, _)| text);
+            }
             ExportFormat::Text => {
                 let lines = self.text_lines(tab)?;
                 let mut text = String::new();

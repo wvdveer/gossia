@@ -256,7 +256,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             Ok(Json::Null)
         }
         // Exports a tab (`tab`, or the current one) to `path`, with what the
-        // dialog starts with, or `format` (`json`, `xml` or `text`),
+        // dialog starts with, or `format` (`json`, `xml`, `text`, `csv` or `tsv`),
         // `compact` and `schema` (also write the schema tab beside it).
         "export" => {
             let path = std::path::PathBuf::from(text_arg(args, "path")?);
@@ -268,6 +268,8 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             if let Some(format) = args.get("format").and_then(Json::as_str) {
                 plan.format = match format {
                     "text" => gossia_calc::ExportFormat::Text,
+                    "csv" => gossia_calc::ExportFormat::Csv,
+                    "tsv" => gossia_calc::ExportFormat::Tsv,
                     code => match gossia_core::dataformat::DataFormat::from_code(code) {
                         Some(f) => gossia_calc::ExportFormat::Data(f),
                         None => return Err(format!("there is no format {code:?}")),
@@ -276,6 +278,14 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                 if !plan.formats.contains(&plan.format) {
                     return Err(format!("tab {tab} cannot be exported as {format}"));
                 }
+            }
+            // For CSV and TSV, the array written as rows (`rows`, a path).
+            if let Some(rows) = args.get("rows").and_then(Json::as_str) {
+                let at: gossia_core::Path = rows.parse().map_err(|e| format!("{rows}: {e}"))?;
+                if !plan.rows.contains(&at) {
+                    return Err(format!("{rows} of tab {tab} is not a list of records"));
+                }
+                plan.at = Some(at);
             }
             plan.pretty = !args.get("compact").and_then(Json::as_bool).unwrap_or(false);
             plan.with_schema = args.get("schema").and_then(Json::as_bool).unwrap_or(false);

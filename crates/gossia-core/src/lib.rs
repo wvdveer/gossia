@@ -25,6 +25,7 @@ pub mod report;
 #[cfg(test)]
 mod report_tests;
 pub mod spreadsheet;
+pub mod tabular;
 pub mod toml_format;
 mod typespec;
 pub mod validate;

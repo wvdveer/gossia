@@ -134,6 +134,12 @@ fn kind_of(cell: &Cell) -> Kind {
     Kind::Text
 }
 
+/// Whether a cell is read as text: what a writer must quote otherwise to
+/// have text read back as text.
+pub(crate) fn reads_as_text(cell: &Cell) -> bool {
+    kind_of(cell) == Kind::Text
+}
+
 /// The name of column `index` (from 0) when there is no header for it.
 pub fn column_name(index: usize) -> String {
     format!("column_{}", index + 1)
