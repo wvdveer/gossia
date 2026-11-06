@@ -293,6 +293,90 @@ fn a_csv_file_is_imported_as_an_array_of_rows() {
     );
 }
 
+/// A workbook of two sheets with rows and an empty one.
+fn budget_xlsx() -> Vec<u8> {
+    let mut book = rust_xlsxwriter::Workbook::new();
+    let date = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
+    let sheet = book.add_worksheet();
+    sheet.set_name("Costs").unwrap();
+    sheet.write_string(0, 0, "item").unwrap();
+    sheet.write_string(0, 1, "amount").unwrap();
+    sheet.write_string(0, 2, "due").unwrap();
+    sheet.write_string(1, 0, "rent").unwrap();
+    sheet.write_number(1, 1, 1200.0).unwrap();
+    let due = rust_xlsxwriter::ExcelDateTime::from_ymd(2026, 12, 1).unwrap();
+    sheet.write_datetime_with_format(1, 2, &due, &date).unwrap();
+    sheet.write_string(2, 0, "power").unwrap();
+    sheet.write_number(2, 1, 95.5).unwrap();
+    let sheet = book.add_worksheet();
+    sheet.set_name("Q1 2026").unwrap();
+    sheet.write_string(0, 0, "who").unwrap();
+    sheet.write_string(1, 0, "Ada").unwrap();
+    book.add_worksheet().set_name("Notes").unwrap();
+    book.save_to_buffer().unwrap()
+}
+
+/// Each sheet of a workbook is planned as a CSV file would be; the ticked
+/// ones are imported together, as one entry in the history.
+#[test]
+fn the_ticked_sheets_of_a_workbook_are_imported_in_one_entry() {
+    let mut app = sample();
+    assert_eq!(format_of("Budget.XLSX"), ImportFormat::Workbook);
+    assert_eq!(format_of("budget.ods"), ImportFormat::Workbook);
+    let mut plan = app.plan_import("Budget.xlsx", &budget_xlsx()).unwrap();
+    let sheets: Vec<(&str, bool, &str)> = plan
+        .sheets
+        .iter()
+        .map(|s| (s.title.as_str(), s.ticked, s.plan.name.as_str()))
+        .collect();
+    assert_eq!(
+        sheets,
+        [
+            ("Costs", true, "Budget_Costs"),
+            ("Q1 2026", true, "Budget_Q1_2026"),
+            ("Notes", false, "Budget_Notes"),
+        ]
+    );
+    assert_eq!(plan.sheets[0].plan.schema_name, "Budget_CostsSchema");
+    assert_eq!(plan.sheets[0].rows, 2);
+    // Nothing ticked is refused, and so are two new tabs of one name.
+    for sheet in &mut plan.sheets {
+        sheet.ticked = false;
+    }
+    assert!(app.import_problem(&plan).unwrap().contains("at least one"));
+    plan.sheets[0].ticked = true;
+    plan.sheets[1].ticked = true;
+    plan.sheets[1].plan.name = "budget_costs".to_owned();
+    assert!(
+        app.import_problem(&plan)
+            .unwrap()
+            .contains("would be called")
+    );
+    plan.sheets[1].plan.name = "Budget_Q1_2026".to_owned();
+    assert_eq!(app.import_problem(&plan), None);
+    let before = tabs(&app).len();
+    app.import(&plan).unwrap();
+    assert_eq!(tabs(&app).len(), before + 4);
+    assert_eq!(app.sheet, "Budget_Costs");
+    let data = json::to_string(app.calc().data("Budget_Costs").unwrap(), false).unwrap();
+    assert_eq!(
+        data,
+        r#"[{"item":"rent","amount":1200.0,"due":"2026-12-01"},{"item":"power","amount":95.5}]"#
+    );
+    assert!(valid(&app, "Budget_Costs"));
+    assert!(valid(&app, "Budget_Q1_2026"));
+    assert_eq!(app.calc().undo_label(), Some("Import Budget.xlsx"));
+    // One undo takes out all four tabs.
+    app.session.calc_mut().undo().unwrap();
+    assert_eq!(tabs(&app).len(), before);
+    // What is not a workbook says so.
+    let why = app.plan_import("fake.xlsx", b"not a workbook").unwrap_err();
+    assert!(
+        why.contains("cannot be read as a spreadsheet workbook"),
+        "{why}"
+    );
+}
+
 /// A paste in the Raw view is imported as a file is: a tab called Pasted. In
 /// the tab's own format it may replace the tab's data instead.
 #[test]

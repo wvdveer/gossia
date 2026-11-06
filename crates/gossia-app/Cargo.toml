@@ -122,6 +122,7 @@ assets = [
 egui_kittest = { version = "0.37.0", features = ["wgpu", "snapshot"] }
 # Reads the text of exported PDFs back.
 pdf-extract = "0.12.1"
+rust_xlsxwriter = { version = "0.102.0", default-features = false }
 
 [[test]]
 name = "e2e"

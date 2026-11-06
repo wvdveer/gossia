@@ -239,7 +239,7 @@ pub fn infer_delimited(text: &str, separator: char) -> JsonInference {
 /// Puts the fields of the items in the order of the columns. Inference takes
 /// them in the order it first meets them, which differs when a row leaves a
 /// cell empty.
-fn in_column_order(schema: &mut Node, names: &[String]) {
+pub(crate) fn in_column_order(schema: &mut Node, names: &[String]) {
     let Value::Object(top) = schema.value_mut() else {
         return;
     };

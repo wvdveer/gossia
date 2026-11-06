@@ -51,6 +51,10 @@ pub enum ImportFormat {
     /// COBOL records (`.blk`), read with a copybook schema tab already in
     /// the workbook.
     Blk,
+    /// A workbook of Excel or LibreOffice (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`,
+    /// `.ods`): each worksheet chosen is read as CSV is, into a JSON tab of
+    /// its own (DESIGN.md, "Excel and ODS files, 0.4.0").
+    Workbook,
     /// Anything else: an array of its lines.
     Text,
 }
@@ -72,6 +76,7 @@ impl ImportFormat {
             ImportFormat::Copybook => "a COBOL copybook",
             ImportFormat::Blk => "COBOL records",
             ImportFormat::Text => tr!("lines of text"),
+            ImportFormat::Workbook => tr!("a spreadsheet workbook"),
         }
     }
 
@@ -88,9 +93,11 @@ impl ImportFormat {
             ImportFormat::YamlDocuments => DataFormat::YamlDocuments,
             ImportFormat::Copybook => DataFormat::Json5,
             ImportFormat::Blk => DataFormat::Blk,
-            ImportFormat::Json | ImportFormat::Csv | ImportFormat::Tsv | ImportFormat::Text => {
-                DataFormat::Json
-            }
+            ImportFormat::Json
+            | ImportFormat::Csv
+            | ImportFormat::Tsv
+            | ImportFormat::Text
+            | ImportFormat::Workbook => DataFormat::Json,
         }
     }
 
@@ -213,6 +220,22 @@ pub struct ImportPlan {
     pub schema_problem: Option<String>,
     /// Why the last attempt was refused.
     pub error: Option<String>,
+    /// For a workbook, its worksheets, each planned as a file of its own;
+    /// the plan itself is then only their frame. Empty for any other file.
+    pub sheets: Vec<SheetPlan>,
+    /// The worksheet whose settings the dialog shows.
+    pub sheet: usize,
+}
+
+/// One worksheet of a workbook being imported.
+#[derive(Debug, Clone)]
+pub struct SheetPlan {
+    /// Its name in the workbook.
+    pub title: String,
+    /// Whether it is imported. An empty sheet is not, and cannot be.
+    pub ticked: bool,
+    pub rows: usize,
+    pub plan: ImportPlan,
 }
 
 impl ImportPlan {
@@ -274,6 +297,7 @@ pub fn format_of(file: &str) -> ImportFormat {
         Some("tsv" | "tab") => ImportFormat::Tsv,
         Some("cpy") => ImportFormat::Copybook,
         Some("blk") => ImportFormat::Blk,
+        Some("xlsx" | "xlsm" | "xlsb" | "xls" | "ods") => ImportFormat::Workbook,
         _ => ImportFormat::Text,
     }
 }
@@ -565,6 +589,8 @@ impl GossiaApp {
                 schema_file: None,
                 schema_problem: None,
                 error: None,
+                sheets: Vec::new(),
+                sheet: 0,
             },
         };
         plan.notes.insert(
@@ -609,6 +635,9 @@ impl GossiaApp {
         if format == ImportFormat::Blk {
             return self.plan_records(file, name_from, bytes);
         }
+        if format == ImportFormat::Workbook {
+            return self.plan_workbook(file, bytes);
+        }
         let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
         let text = String::from_utf8(bytes.to_vec()).map_err(|_| {
             format!(
@@ -634,7 +663,9 @@ impl GossiaApp {
                 )));
                 (None, Err(tr!("it is a copybook").to_owned()), Vec::new())
             }
-            ImportFormat::Blk => unreachable!("COBOL records are planned above"),
+            ImportFormat::Blk | ImportFormat::Workbook => {
+                unreachable!("COBOL records and workbooks are planned above")
+            }
             ImportFormat::Json5
             | ImportFormat::Jsonc
             | ImportFormat::JsonLines
@@ -763,6 +794,8 @@ impl GossiaApp {
             schema_file,
             schema_problem,
             error: None,
+            sheets: Vec::new(),
+            sheet: 0,
         })
     }
 
@@ -838,7 +871,85 @@ impl GossiaApp {
             schema_file: None,
             schema_problem: None,
             error: None,
+            sheets: Vec::new(),
+            sheet: 0,
         })
+    }
+
+    /// Reads a workbook for importing: each worksheet becomes the plan of a
+    /// tab, as a CSV file would, named `<File>_<Sheet>`, and all but the
+    /// empty ones are ticked. The names are kept apart from each other as
+    /// well as from the workbook's tabs.
+    fn plan_workbook(&self, file: &str, bytes: &[u8]) -> Result<ImportPlan, String> {
+        let read = gossia_core::spreadsheet::read(bytes).map_err(|e| {
+            tr!(
+                "{file} cannot be read as a spreadsheet workbook: {e}",
+                file = capital(file),
+                e = e
+            )
+        })?;
+        if read.is_empty() {
+            return Err(tr!("{file} has no worksheets.", file = capital(file)));
+        }
+        let calc = self.calc();
+        let stem = FsPath::new(file)
+            .file_stem()
+            .map_or_else(|| file.to_owned(), |s| s.to_string_lossy().into_owned());
+        let mut used: Vec<String> = Vec::new();
+        let mut sheets = Vec::new();
+        for sheet in read {
+            let taken = |n: &str| {
+                calc.tab_name_problem(n, None).is_some()
+                    || used.iter().any(|u| u.eq_ignore_ascii_case(n))
+            };
+            // Read as a file name: a slash would part it.
+            let title = sheet.name.replace(['/', '\\'], "_");
+            let name = name_from_file(&format!("{stem}_{title}.xlsx"), taken);
+            let schema_name = unique(&format!("{name}Schema"), |n| {
+                taken(n) || n.eq_ignore_ascii_case(&name)
+            });
+            used.push(name.clone());
+            used.push(schema_name.clone());
+            let inference = sheet.inference;
+            let data = inference.data.clone();
+            let candidates =
+                self.schema_tabs(SchemaFormat::Json, |spec| Some(validate(spec, &data).len()));
+            let choice = match candidates.iter().find(|c| c.problems == 0) {
+                Some(fits) => SchemaChoice::Existing(fits.schema.clone()),
+                None => SchemaChoice::Inferred,
+            };
+            let plan = ImportPlan {
+                file: file.to_owned(),
+                format: ImportFormat::Workbook,
+                text: String::new(),
+                bytes: Vec::new(),
+                record: None,
+                data: Some(data),
+                notes: inference.dropped.clone(),
+                inferred: Ok(Inferred::Json(inference)),
+                candidates,
+                name,
+                schema_name,
+                choice,
+                replace: None,
+                schema_file: None,
+                schema_problem: None,
+                error: None,
+                sheets: Vec::new(),
+                sheet: 0,
+            };
+            sheets.push(SheetPlan {
+                title: sheet.name,
+                ticked: sheet.rows > 0,
+                rows: sheet.rows,
+                plan,
+            });
+        }
+        let first = sheets.iter().position(|s| s.ticked).unwrap_or(0);
+        let mut frame = sheets[first].plan.clone();
+        frame.sheets = sheets;
+        frame.sheet = first;
+        Ok(frame)
     }
 
     /// The schema tabs of a format that can be used, each with what `check`
@@ -868,6 +979,9 @@ impl GossiaApp {
 
     /// Why the plan cannot be imported as it is, or None.
     pub fn import_problem(&self, plan: &ImportPlan) -> Option<String> {
+        if !plan.sheets.is_empty() {
+            return self.workbook_problem(plan);
+        }
         if let SchemaChoice::Replace(_) = plan.choice {
             return None;
         }
@@ -890,6 +1004,65 @@ impl GossiaApp {
         None
     }
 
+    /// Why the ticked worksheets cannot be imported as they are: none is
+    /// ticked, one's own settings, or two new tabs with one name.
+    fn workbook_problem(&self, plan: &ImportPlan) -> Option<String> {
+        let ticked: Vec<&SheetPlan> = plan.sheets.iter().filter(|s| s.ticked).collect();
+        if ticked.is_empty() {
+            return Some(tr!("Tick at least one sheet to import.").to_owned());
+        }
+        let mut names: Vec<String> = Vec::new();
+        for sheet in ticked {
+            if let Some(why) = self.import_problem(&sheet.plan) {
+                return Some(tr!("Sheet {sheet}: {why}", sheet = sheet.title, why = why));
+            }
+            let mut new = vec![sheet.plan.name.trim().to_owned()];
+            if sheet.plan.choice == SchemaChoice::Inferred {
+                new.push(sheet.plan.schema_name.trim().to_owned());
+            }
+            for name in new {
+                if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+                    return Some(tr!(
+                        "Two of the new tabs would be called {name}.",
+                        name = name
+                    ));
+                }
+                names.push(name);
+            }
+        }
+        None
+    }
+
+    /// Adds the tabs of the ticked worksheets of a workbook, in one entry in
+    /// the history, *Import book.xlsx*. The first becomes the current tab.
+    fn import_sheets(&mut self, plan: &ImportPlan) -> Result<(), String> {
+        let before = self.calc().history_len().0;
+        let calc = self.session.calc_mut();
+        calc.begin_entry(&tr!("Import {file}", file = plan.file));
+        let mut done = Ok(());
+        for sheet in plan.sheets.iter().filter(|s| s.ticked) {
+            done = create_tabs(calc, &sheet.plan);
+            if done.is_err() {
+                break;
+            }
+        }
+        calc.end_entry();
+        if let Err(e) = done {
+            if self.calc().history_len().0 > before {
+                let _ = self.session.calc_mut().undo();
+                let _ = self.session.calc_mut().take_removed();
+            }
+            return Err(e.to_string());
+        }
+        self.follow_tabs();
+        if let Some(first) = plan.sheets.iter().find(|s| s.ticked) {
+            self.show_tab(first.plan.name.trim());
+        }
+        self.notice = None;
+        self.session.tick();
+        Ok(())
+    }
+
     /// Adds the tabs of a plan: one entry in the history, *Import file.json*.
     /// An inferred schema has auto-update off, so that the next file of the
     /// same shape can be given it too. The data tab becomes the current tab.
@@ -902,6 +1075,9 @@ impl GossiaApp {
         }
         if let Some(why) = self.import_problem(plan) {
             return Err(why);
+        }
+        if !plan.sheets.is_empty() {
+            return self.import_sheets(plan);
         }
         if let SchemaChoice::Replace(tab) = &plan.choice {
             let tab = tab.clone();
@@ -934,76 +1110,10 @@ impl GossiaApp {
             return Ok(());
         }
         let name = plan.name.trim();
-        let schema_name = plan.schema_name.trim();
         let before = self.calc().history_len().0;
         let calc = self.session.calc_mut();
         calc.begin_entry(&tr!("Import {file}", file = plan.file));
-        let done = match (&plan.choice, &plan.inferred) {
-            (SchemaChoice::Inferred, Ok(Inferred::Json(inference))) => calc
-                .create_json_schema_tab(schema_name, inference.schema.clone())
-                .and_then(|()| {
-                    calc.create_data_tab(name, schema_name, inference.data.clone(), None)
-                }),
-            (SchemaChoice::Inferred, Ok(Inferred::Xsd(x))) => calc
-                .create_xsd_schema_tab(schema_name, x.tree.clone(), x.document.clone())
-                .and_then(|()| {
-                    calc.create_data_tab(
-                        name,
-                        schema_name,
-                        x.data.clone(),
-                        Some(x.data_document.clone()),
-                    )
-                }),
-            (SchemaChoice::Inferred, Err(why)) => Err(gossia_calc::EditError::Path(why.clone())),
-            (SchemaChoice::Replace(_) | SchemaChoice::SchemaTab, _) => {
-                unreachable!("replacing and schema tabs returned above")
-            }
-            (SchemaChoice::Existing(schema), _) if plan.format == ImportFormat::Blk => {
-                let record = plan.record.as_deref();
-                let spec = match record {
-                    Some(record) => calc.record_spec(schema, record),
-                    None => calc.schema_spec(schema),
-                };
-                spec.and_then(|spec| {
-                    let layout = spec.copybook().ok_or_else(|| {
-                        gossia_calc::EditError::Path(format!("{schema} is not a copybook"))
-                    })?;
-                    copybook::records::read(&plan.bytes, layout, &[])
-                        .map_err(|e| gossia_calc::EditError::Path(e.to_string()))
-                })
-                .and_then(|parsed| calc.create_records_tab(name, schema, record, parsed.node))
-                .and_then(|()| {
-                    // A variable-length record is written back as one.
-                    let variable = calc
-                        .spec(name)
-                        .and_then(|spec| spec.copybook())
-                        .is_some_and(|layout| copybook::records::has_rdw(&plan.bytes, layout));
-                    if variable {
-                        calc.set_variable(name, true)
-                    } else {
-                        Ok(())
-                    }
-                })
-            }
-            (SchemaChoice::Existing(schema), _) => match &plan.data {
-                Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
-                None => calc
-                    .schema_spec(schema)
-                    .and_then(|spec| {
-                        xml::parse(&plan.text, &spec)
-                            .map_err(|e| gossia_calc::EditError::Path(e.to_string()))
-                    })
-                    .and_then(|parsed| {
-                        calc.create_data_tab(name, schema, parsed.node, Some(parsed.document))
-                    }),
-            },
-        };
-        // A tab format of its own is set in the same entry.
-        let done = done.and_then(|()| match plan.format.data_format() {
-            // XML and COBOL records are the formats of their schema tabs.
-            DataFormat::Json | DataFormat::Xml | DataFormat::Blk => Ok(()),
-            format => calc.set_format(name, format),
-        });
+        let done = create_tabs(calc, plan);
         calc.end_entry();
         if let Err(e) = done {
             // A tab made before the failure is taken out again.
@@ -1037,18 +1147,30 @@ impl GossiaApp {
                 if plan.file == PASTED {
                     ui.weak(tr!("Read as {format}.", format = plan.format.label()));
                 }
-                let replacing = matches!(plan.choice, SchemaChoice::Replace(_));
+                // A workbook: its sheets, each ticked to be imported, and the
+                // settings of the one picked below.
+                if !plan.sheets.is_empty() {
+                    sheet_list(ui, &mut plan);
+                    ui.separator();
+                }
+                let shown: &mut ImportPlan = if plan.sheets.is_empty() {
+                    &mut plan
+                } else {
+                    let at = plan.sheet;
+                    &mut plan.sheets[at].plan
+                };
+                let replacing = matches!(shown.choice, SchemaChoice::Replace(_));
                 ui.horizontal(|ui| {
                     ui.label(tr!("Tab name"));
                     let response =
-                        ui.add_enabled(!replacing, egui::TextEdit::singleline(&mut plan.name));
+                        ui.add_enabled(!replacing, egui::TextEdit::singleline(&mut shown.name));
                     named(&response, tr!("Import tab name"));
                 });
                 ui.add_space(4.0);
                 // A copybook is a schema and nothing else.
-                if matches!(plan.schema_file, Some(SchemaFile::Copybook(_))) {
-                    if plan.replace.is_some() {
-                        let chosen = plan.choice == SchemaChoice::SchemaTab;
+                if matches!(shown.schema_file, Some(SchemaFile::Copybook(_))) {
+                    if shown.replace.is_some() {
+                        let chosen = shown.choice == SchemaChoice::SchemaTab;
                         if ui
                             .radio(
                                 chosen,
@@ -1056,16 +1178,16 @@ impl GossiaApp {
                             )
                             .clicked()
                         {
-                            plan.choice = SchemaChoice::SchemaTab;
+                            shown.choice = SchemaChoice::SchemaTab;
                         }
                     } else {
                         ui.label(tr!(
                             "The file is a COBOL copybook: it is imported as a schema tab."
                         ));
                     }
-                } else if plan.schema_file.is_some() {
-                    let chosen = plan.choice == SchemaChoice::SchemaTab;
-                    let what = match plan.schema_file {
+                } else if shown.schema_file.is_some() {
+                    let chosen = shown.choice == SchemaChoice::SchemaTab;
+                    let what = match shown.schema_file {
                         Some(SchemaFile::Xsd { .. }) => "an XSD",
                         _ => "a JSON Schema",
                     };
@@ -1076,13 +1198,13 @@ impl GossiaApp {
                         )
                         .clicked()
                     {
-                        plan.choice = SchemaChoice::SchemaTab;
+                        shown.choice = SchemaChoice::SchemaTab;
                     }
                     ui.label(tr!("Or as data, with the schema"));
                 } else {
                     ui.label(tr!("Schema"));
                 }
-                for candidate in &plan.candidates {
+                for candidate in &shown.candidates {
                     let schema = match &candidate.record {
                         Some(record) => format!("{} ({record})", candidate.schema),
                         None => candidate.schema.clone(),
@@ -1092,28 +1214,28 @@ impl GossiaApp {
                         1 => tr!("{schema}: 1 value would not fit", schema = schema),
                         n => tr!("{schema}: {n} values would not fit", schema = schema, n = n),
                     };
-                    let chosen = plan.choice == SchemaChoice::Existing(candidate.schema.clone())
-                        && plan.record == candidate.record;
+                    let chosen = shown.choice == SchemaChoice::Existing(candidate.schema.clone())
+                        && shown.record == candidate.record;
                     if ui.radio(chosen, text).clicked() {
-                        plan.choice = SchemaChoice::Existing(candidate.schema.clone());
-                        plan.record = candidate.record.clone();
+                        shown.choice = SchemaChoice::Existing(candidate.schema.clone());
+                        shown.record = candidate.record.clone();
                     }
                 }
-                let copybook = matches!(plan.schema_file, Some(SchemaFile::Copybook(_)));
-                match &plan.inferred {
+                let copybook = matches!(shown.schema_file, Some(SchemaFile::Copybook(_)));
+                match &shown.inferred {
                     _ if copybook => {}
                     Ok(_) => {
                         ui.horizontal(|ui| {
-                            let chosen = plan.choice == SchemaChoice::Inferred;
+                            let chosen = shown.choice == SchemaChoice::Inferred;
                             if ui
                                 .radio(chosen, tr!("A new schema, inferred from the data, called"))
                                 .clicked()
                             {
-                                plan.choice = SchemaChoice::Inferred;
+                                shown.choice = SchemaChoice::Inferred;
                             }
                             let response = ui.add_enabled(
                                 chosen,
-                                egui::TextEdit::singleline(&mut plan.schema_name)
+                                egui::TextEdit::singleline(&mut shown.schema_name)
                                     .desired_width(160.0),
                             );
                             named(&response, tr!("Schema tab name"));
@@ -1129,8 +1251,8 @@ impl GossiaApp {
                         );
                     }
                 }
-                if let Some(tab) = plan.replace.clone() {
-                    let chosen = plan.choice == SchemaChoice::Replace(tab.clone());
+                if let Some(tab) = shown.replace.clone() {
+                    let chosen = shown.choice == SchemaChoice::Replace(tab.clone());
                     if ui
                         .radio(
                             chosen,
@@ -1138,10 +1260,10 @@ impl GossiaApp {
                         )
                         .clicked()
                     {
-                        plan.choice = SchemaChoice::Replace(tab);
+                        shown.choice = SchemaChoice::Replace(tab);
                     }
                 }
-                if let (SchemaChoice::Inferred, Ok(inferred)) = (&plan.choice, &plan.inferred) {
+                if let (SchemaChoice::Inferred, Ok(inferred)) = (&shown.choice, &shown.inferred) {
                     egui::CollapsingHeader::new(tr!("The inferred schema"))
                         .id_salt("inferred_schema")
                         .show(ui, |ui| {
@@ -1159,7 +1281,7 @@ impl GossiaApp {
                                 });
                         });
                 }
-                let report = plan.report();
+                let report = shown.report();
                 if !report.is_empty() {
                     ui.add_space(4.0);
                     ui.label(tr!("The import report"));
@@ -1241,6 +1363,116 @@ impl GossiaApp {
             palette.text,
         );
     }
+}
+
+/// The worksheets of a workbook in the import dialog: a tick for each that
+/// has rows, and a click on its name shows its settings.
+fn sheet_list(ui: &mut egui::Ui, plan: &mut ImportPlan) {
+    ui.label(tr!("Sheets to import"));
+    egui::ScrollArea::vertical()
+        .id_salt("import_sheets")
+        .max_height(140.0)
+        .show(ui, |ui| {
+            for (index, sheet) in plan.sheets.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    let tick = ui.add_enabled(
+                        sheet.rows > 0,
+                        egui::Checkbox::without_text(&mut sheet.ticked),
+                    );
+                    let title = sheet.title.clone();
+                    tick.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::Role::CheckBox,
+                            sheet.rows > 0,
+                            sheet.ticked,
+                            tr!("Import sheet {sheet}", sheet = title),
+                        )
+                    });
+                    let text = match sheet.rows {
+                        0 => tr!("{sheet}: empty", sheet = sheet.title),
+                        1 => tr!("{sheet}: 1 row", sheet = sheet.title),
+                        n => tr!("{sheet}: {n} rows", sheet = sheet.title, n = n),
+                    };
+                    if ui.selectable_label(plan.sheet == index, text).clicked() {
+                        plan.sheet = index;
+                    }
+                });
+            }
+        });
+}
+
+/// Makes the tabs of one plan: the schema tab, if a new one, and the data
+/// tab, with its format. The caller holds the entry in the history.
+fn create_tabs(
+    calc: &mut gossia_calc::Calc,
+    plan: &ImportPlan,
+) -> Result<(), gossia_calc::EditError> {
+    let name = plan.name.trim();
+    let schema_name = plan.schema_name.trim();
+    let done = match (&plan.choice, &plan.inferred) {
+        (SchemaChoice::Inferred, Ok(Inferred::Json(inference))) => calc
+            .create_json_schema_tab(schema_name, inference.schema.clone())
+            .and_then(|()| calc.create_data_tab(name, schema_name, inference.data.clone(), None)),
+        (SchemaChoice::Inferred, Ok(Inferred::Xsd(x))) => calc
+            .create_xsd_schema_tab(schema_name, x.tree.clone(), x.document.clone())
+            .and_then(|()| {
+                calc.create_data_tab(
+                    name,
+                    schema_name,
+                    x.data.clone(),
+                    Some(x.data_document.clone()),
+                )
+            }),
+        (SchemaChoice::Inferred, Err(why)) => Err(gossia_calc::EditError::Path(why.clone())),
+        (SchemaChoice::Replace(_) | SchemaChoice::SchemaTab, _) => {
+            unreachable!("replacing and schema tabs returned above")
+        }
+        (SchemaChoice::Existing(schema), _) if plan.format == ImportFormat::Blk => {
+            let record = plan.record.as_deref();
+            let spec = match record {
+                Some(record) => calc.record_spec(schema, record),
+                None => calc.schema_spec(schema),
+            };
+            spec.and_then(|spec| {
+                let layout = spec.copybook().ok_or_else(|| {
+                    gossia_calc::EditError::Path(format!("{schema} is not a copybook"))
+                })?;
+                copybook::records::read(&plan.bytes, layout, &[])
+                    .map_err(|e| gossia_calc::EditError::Path(e.to_string()))
+            })
+            .and_then(|parsed| calc.create_records_tab(name, schema, record, parsed.node))
+            .and_then(|()| {
+                // A variable-length record is written back as one.
+                let variable = calc
+                    .spec(name)
+                    .and_then(|spec| spec.copybook())
+                    .is_some_and(|layout| copybook::records::has_rdw(&plan.bytes, layout));
+                if variable {
+                    calc.set_variable(name, true)
+                } else {
+                    Ok(())
+                }
+            })
+        }
+        (SchemaChoice::Existing(schema), _) => match &plan.data {
+            Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
+            None => calc
+                .schema_spec(schema)
+                .and_then(|spec| {
+                    xml::parse(&plan.text, &spec)
+                        .map_err(|e| gossia_calc::EditError::Path(e.to_string()))
+                })
+                .and_then(|parsed| {
+                    calc.create_data_tab(name, schema, parsed.node, Some(parsed.document))
+                }),
+        },
+    };
+    // A tab format of its own is set in the same entry.
+    done.and_then(|()| match plan.format.data_format() {
+        // XML and COBOL records are the formats of their schema tabs.
+        DataFormat::Json | DataFormat::Xml | DataFormat::Blk => Ok(()),
+        format => calc.set_format(name, format),
+    })
 }
 
 /// How many error values a tree holds: the bytes of COBOL records that do

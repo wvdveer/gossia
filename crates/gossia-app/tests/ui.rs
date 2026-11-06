@@ -1625,3 +1625,52 @@ fn force_object_definition_on_the_root_from_a_right_click_on_its_type() {
         .fields;
     assert_eq!(fields, ["sku", "qty"]);
 }
+
+#[test]
+fn the_import_dialog_of_a_workbook_lists_its_sheets_to_tick() {
+    let mut book = rust_xlsxwriter::Workbook::new();
+    for (name, rows) in [("Costs", 2), ("Staff", 1), ("Notes", 0)] {
+        let sheet = book.add_worksheet();
+        sheet.set_name(name).unwrap();
+        if rows > 0 {
+            sheet.write_string(0, 0, "what").unwrap();
+        }
+        for r in 0..rows {
+            sheet.write_string(1 + r, 0, format!("row {r}")).unwrap();
+        }
+    }
+    let bytes = book.save_to_buffer().unwrap();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .begin_import_bytes("Budget.xlsx", &bytes)
+        .unwrap();
+    harness.run();
+    harness.get_by_label("Costs: 2 rows");
+    harness.get_by_label("Staff: 1 row");
+    harness.get_by_label("Notes: empty");
+    // The settings shown are those of the sheet clicked.
+    harness.get_by_label("Staff: 1 row").click();
+    harness.run();
+    assert_eq!(harness.state().imports[0].sheet, 1);
+    harness.get_by_label("Import sheet Staff").click();
+    harness.run();
+    click(&mut harness, "Import");
+    settle(&mut harness);
+    let tabs: Vec<String> = harness
+        .state()
+        .calc()
+        .sheet_names()
+        .map(str::to_owned)
+        .collect();
+    assert!(tabs.iter().any(|t| t == "Budget_Costs"), "{tabs:?}");
+    assert!(
+        !tabs.iter().any(|t| t.starts_with("Budget_Staff")),
+        "{tabs:?}"
+    );
+    assert!(
+        !tabs.iter().any(|t| t.starts_with("Budget_Notes")),
+        "{tabs:?}"
+    );
+    assert_eq!(harness.state().sheet, "Budget_Costs");
+}
