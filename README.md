@@ -1,8 +1,8 @@
 # Gossia
 
-An Excel-like application which handles JSON Schema and XML Schema documents. Each sheet is a tree defined by a schema instead of a 2D grid, and cells can hold Python formulas whose results must match the schema.
+A spreadsheet like application which handles JSON Schema and XML Schema documents. Each sheet is a tree defined by a schema instead of a 2D grid, and cells can hold Python formulas whose results must match the schema.
 
-**The name.** Gossia uses Python, and its sheets are trees. The Python Tree is *Gossia bidwillii*, an Australian rainforest tree named for its smooth, mottled, python-like bark. 
+**The name:** Gossia uses Python, and its sheets are trees. The Python Tree is *Gossia bidwillii*, an Australian rainforest tree named for its smooth, mottled, python-like bark. 
 
 The full design is in [DESIGN.md](DESIGN.md).
 
