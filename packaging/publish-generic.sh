@@ -1,15 +1,17 @@
 #!/bin/bash
-# Puts one file in the generic package registry of the Gitea instance on acer
-# (package gossia, owner ward), under the workspace version, replacing a file
-# of the same name and version (the registry does not overwrite):
+# Puts one file in the generic package registry of the Gitea mirror (package
+# gossia, owner ward), under the workspace version, replacing a file of the
+# same name and version (the registry does not overwrite):
 #
 #   publish-generic.sh FILE
 #
-# Used for the .vsix (packaging/vscode/publish-vsix.sh) and the MSI
-# (packaging/windows/publish-msi.sh); the MSIX does the same from
-# build-msix.ps1.
+# Used for the .vsix (packaging/vscode/publish-vsix.sh), the MSI
+# (packaging/windows/publish-msi.sh) and the files CI keeps of a failed run
+# (packaging/keep-ci-files.sh); the MSIX does the same from build-msix.ps1.
+# PACKAGE_NAME and PACKAGE_VERSION put it under another package or version.
 #
-# GITEA_URL names the server (http://acer.patersonst:3000 when not set).
+# GITEA_URL names the server; when it is not set, the server of the Git
+# remote named gitea is used.
 # PACKAGE_REGISTRY_TOKEN is a Gitea access token of ward with the package
 # write permission; when it is not set, the login Git's credential helper
 # holds for that server and user ward is used, so it can be run by hand (Git
@@ -18,8 +20,19 @@ set -euo pipefail
 
 file=${1:?usage: publish-generic.sh FILE}
 root=$(cd "$(dirname "$0")/.." && pwd)
-server=${GITEA_URL:-http://acer.patersonst:3000}
+server=${GITEA_URL:-}
+if [ -z "$server" ]; then
+    remote=$(git -C "$root" remote get-url gitea 2>/dev/null || true)
+    # http://user@host:port/owner/repo.git -> http://host:port
+    server=$(printf '%s' "$remote" | sed -E 's#^(https?://)([^@/]*@)?([^/]+).*#\1\3#')
+fi
+case $server in
+    http://*|https://*) ;;
+    *) echo "set GITEA_URL, or add the Gitea mirror as the Git remote gitea" >&2; exit 1 ;;
+esac
+server=${server%/}
 owner=ward
+package=${PACKAGE_NAME:-gossia}
 
 token=${PACKAGE_REGISTRY_TOKEN:-}
 if [ -z "$token" ] && [ -z "${CI:-}" ]; then
@@ -34,10 +47,10 @@ if [ -z "$token" ]; then
 fi
 
 [ -f "$file" ] || { echo "no such file: $file" >&2; exit 1; }
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)
+version=${PACKAGE_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)}
 [ -n "$version" ] || { echo "no version in Cargo.toml" >&2; exit 1; }
 name=$(basename "$file")
-url=$server/api/packages/$owner/generic/gossia/$version/$name
+url=$server/api/packages/$owner/generic/$package/$version/$name
 echo "Publishing $file"
 
 auth="$owner:$token"

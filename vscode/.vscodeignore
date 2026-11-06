@@ -1,6 +1,4 @@
-# What the .vsix leaves out (cargo xtask vsix): the tools to test and pack the
-# extension, which it does not need at run time.
-node_modules/**
+# What the .vsix leaves out (cargo xtask vsix): the extension's tests and
+# what running them leaves behind, which it does not need at run time.
 test/**
-package-lock.json
 .vscode-test/**

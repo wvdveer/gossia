@@ -39,15 +39,12 @@ cargo xtask clean            # remove the build output AND vendor/
 - **A plain `cargo build` cannot do that.** Cargo needs every path dependency to exist before it runs any build script, so on a fresh clone, once the workspace depends on `vendor/`, run `cargo xtask vendor fetch` first (once). Cargo's error in that case is `no matching package named ... found`, with the path under `vendor/`.
 - Set `GOSSIA_VENDOR_DIR` to use a copy of the folder prepared elsewhere (for example when offline).
 
-## CI runner
+## CI
 
-CI (`.github/workflows/ci.yml`) runs on a self-hosted GitHub Actions runner, not on GitHub's hosted runners. Every job uses `runs-on: [self-hosted, gossia]`.
+- **On GitHub** (`.github/workflows/ci.yml`): lint and the tests, on GitHub's own Ubuntu runners, for pushes and pull requests.
+- **On the owner's Gitea mirror** (`.gitea/workflows/`): everything else, for pushes to main only: the end-to-end and snapshot tests, the web and VS Code tests, the live database tests, and the packages. No self-hosted runner is registered with GitHub, so pull requests never run on the project's machines.
 
-To register a runner (once, as an unprivileged user):
-
-1. On GitHub: repository **Settings, Actions, Runners, New self-hosted runner**, choose Linux, and follow the download and `./config.sh --url ... --token ...` commands. Give it the label `gossia` (`--labels gossia`).
-2. Start it with `./run.sh` (for example `nohup ./run.sh > runner.log 2> runner.err &`), or install it as a service with `sudo ./svc.sh install && sudo ./svc.sh start`.
-3. The machine needs `git`, `curl`, a C compiler and linker (`build-essential` or equivalent), and `rustup`. The workflow installs the toolchain pinned in `rust-toolchain.toml` through `rustup`, so nothing else has to be provisioned.
+None of it needs Node.js: the VS Code extension's tests are started by `vscode/test/run.py` and the `.vsix` is packed by `packaging/vscode/pack-vsix.py`.
 
 ## Support
 

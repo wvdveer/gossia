@@ -20,10 +20,11 @@
   Remove it again with: Get-AppxPackage WardvanderVeer.Gossia | Remove-AppxPackage
 
 .PARAMETER Publish
-  Upload the .msix to the generic package registry of the Gitea instance
-  (http://acer.patersonst:3000, package gossia, owner ward), replacing a file
-  of the same version. The login is the one Git Credential Manager holds for
-  that host and user ward; the token needs the package write permission.
+  Upload the .msix to the generic package registry of the Gitea mirror (the
+  server of the Git remote named gitea, or of GITEA_URL; package gossia,
+  owner ward), replacing a file of the same version. The login is the one Git
+  Credential Manager holds for that host and user ward; the token needs the
+  package write permission.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File packaging\windows\build-msix.ps1 -Register
@@ -102,17 +103,25 @@ if ($Register) {
 }
 
 if ($Publish) {
-    $server = 'http://acer.patersonst:3000'
+    $server = $env:GITEA_URL
+    if (-not $server) {
+        $remote = git -C $root remote get-url gitea
+        if ($remote -match '^(https?)://(?:[^@/]*@)?([^/]+)') { $server = "$($Matches[1])://$($Matches[2])" }
+    }
+    if ($server -notmatch '^(https?)://([^/]+)') { throw 'Set GITEA_URL, or add the Gitea mirror as the Git remote gitea' }
+    $protocol = $Matches[1]
+    $hostPort = $Matches[2]
+    $server = $server.TrimEnd('/')
     # Give git the query as a file: piped from Windows PowerShell (or a .NET
     # Process) git reports "credential missing protocol field", while a file
     # redirect through cmd works. The file holds no secret.
     $env:GCM_INTERACTIVE = 'never'
     $queryFile = Join-Path $env:TEMP 'gossia-credential-query.txt'
-    [IO.File]::WriteAllBytes($queryFile, [Text.Encoding]::ASCII.GetBytes("protocol=http`nhost=acer.patersonst:3000`nusername=ward`n`n"))
+    [IO.File]::WriteAllBytes($queryFile, [Text.Encoding]::ASCII.GetBytes("protocol=$protocol`nhost=$hostPort`nusername=ward`n`n"))
     try { $answer = cmd /c "git credential fill < `"$queryFile`"" }
     finally { Remove-Item $queryFile -ErrorAction SilentlyContinue }
     $password = ($answer | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
-    if (-not $password) { throw 'Git Credential Manager has no login for ward at acer.patersonst:3000' }
+    if (-not $password) { throw "Git Credential Manager has no login for ward at $hostPort" }
     $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("ward:$password"))
     $headers = @{ Authorization = "Basic $basic" }
     $url = "$server/api/packages/ward/generic/gossia/$version/$(Split-Path $msix -Leaf)"

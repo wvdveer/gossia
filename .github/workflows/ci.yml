@@ -1,9 +1,18 @@
 name: CI
 
+# Lint and the tests on GitHub's own Ubuntu runners, for pushes to main and
+# for pull requests, so that a contributor sees the checks. Nothing here runs
+# on a machine of the project's: the jobs that need a display, a graphics
+# adapter, test databases or the package registry run only on the Gitea
+# mirror (.gitea/workflows), which only the owner pushes to.
+
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -12,184 +21,25 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # The build is larger than the free space on the runner's system disk; the
+  # second disk at /mnt has room for it.
+  CARGO_TARGET_DIR: /mnt/target
 
-# Jobs run on a self-hosted GitHub Actions runner, registered
-# for this repository with the label `gossia` (see README, "CI runner").
-# There is no rust-cache or vendor cache: the workspace persists between runs, and
-# rust-cache's cleanup would delete rustup from ~/.cargo/bin on a shared machine.
 jobs:
   lint:
     name: Lint
-    runs-on: [self-hosted, gossia]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The runner is persistent: keep target/ and vendor/ between runs.
-          clean: false
-      # rustup reads rust-toolchain.toml and installs the pinned toolchain.
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+      - name: Prepare
+        run: bash .github/prepare-runner.sh
       - run: cargo xtask lint
 
   test:
     name: Test
-    runs-on: [self-hosted, gossia]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The runner is persistent: keep target/ and vendor/ between runs.
-          clean: false
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+      - name: Prepare
+        run: bash .github/prepare-runner.sh
       - run: cargo xtask test
-        env:
-          # The live PostgreSQL and MariaDB tests (see database_tests.rs), against
-          # test servers the runner reaches; skipped while a secret is not set.
-          GOSSIA_TEST_POSTGRES: ${{ secrets.CLIOTREE_TEST_POSTGRES }}
-          GOSSIA_TEST_MARIADB: ${{ secrets.CLIOTREE_TEST_MARIADB }}
-
-  # Exercises the fetch script itself on Linux: every pinned item is fetched and
-  # checked against vendor.lock, whether or not the workspace uses it yet.
-  vendor:
-    name: Vendor
-    runs-on: [self-hosted, gossia]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # The runner is persistent: keep target/ and vendor/ between runs.
-          clean: false
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - run: cargo xtask vendor fetch
-      - run: cargo xtask vendor verify
-
-  # The real application, driven through its test control channel under a
-  # virtual display. Advisory until the runner is known to provide xvfb-run and
-  # an OpenGL driver (Mesa); then it becomes a required check.
-  e2e:
-    name: E2E
-    runs-on: [self-hosted, gossia]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - run: cargo xtask e2e
-
-  # Screenshots of key screens against stored images. Advisory (DESIGN.md,
-  # "Testing and CI"): the images for Linux are made by this job, from the
-  # artifact it uploads when they differ or are missing.
-  snapshots:
-    name: Snapshots
-    runs-on: [self-hosted, gossia]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - run: cargo xtask snapshots
-      - name: Keep the images that differ
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snapshot-differences
-          path: crates/gossia-app/tests/snapshots/linux/
-          retention-days: 7
-
-
-  # The wasm version in headless Chromium: the test build driven by the harness
-  # page (DESIGN.md, Web port, 0.3.0, Testing). Playwright for Python and its
-  # Chromium live in a virtual environment under ~/.cache, so nothing is
-  # installed system-wide. Advisory until the runner is known to have the
-  # libraries Chromium needs.
-  web:
-    name: Web
-    runs-on: [self-hosted, gossia]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - name: Playwright for Python
-        run: |
-          venv="$HOME/.cache/gossia-playwright"
-          [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
-          "$venv/bin/python" -m pip install --quiet --upgrade playwright
-          "$venv/bin/python" -m playwright install chromium
-      - run: GOSSIA_PYTHON="$HOME/.cache/gossia-playwright/bin/python" cargo xtask web-test
-      - name: Keep the screenshots of a failed run
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-screenshots
-          path: target/web-test/screenshots/
-          retention-days: 7
-
-  # The VS Code extension (DESIGN.md, Web port, 0.3.0, In VS Code): its tests
-  # in a downloaded VS Code under a virtual display, then, for pushes to main,
-  # the .vsix packed with the release build and put in the Gitea package
-  # registry. Node.js comes from actions/setup-node, into the runner's tool
-  # cache. Advisory until the runner is known to have the libraries VS Code
-  # needs (as Chromium's for the web job) and xvfb-run.
-  vscode:
-    name: VS Code
-    runs-on: [self-hosted, gossia]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      # Stable VS Code, which the downloader keeps in target/vscode-test; no
-      # other VS Code runs on the runner.
-      - run: GOSSIA_VSCODE_VERSION=stable xvfb-run -a cargo xtask vscode-test
-      - name: Pack the .vsix
-        if: github.event_name == 'push'
-        run: cargo xtask vsix
-      # Without the secrets the .vsix is packed but not published; the runner
-      # must reach the Gitea server.
-      - name: Publish the .vsix
-        if: github.event_name == 'push'
-        env:
-          GITEA_URL: ${{ secrets.GITEA_URL }}
-          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-        run: bash packaging/vscode/publish-vsix.sh
-
-  # The Windows installer is built on the Gitea mirror's runner on acer
-  # (.gitea/workflows/packages.yml) and kept in the Gitea package registry,
-  # not here: GitHub's Actions storage is small. Build outputs go to Gitea;
-  # only the failure-only artifacts above stay, for a week.
-
-  # target/ is kept between runs, and every push leaves new test programs of
-  # about 1 GB each behind; on 2026-10-30 it had reached 171 GB in a week.
-  # After the other jobs, whatever they did: delete build files not read for
-  # 3 days (access time, so artifacts still being reused stay), and everything
-  # if target/ is still over 60 GB. Cargo rebuilds what is missing.
-  sweep:
-    name: Sweep target
-    runs-on: [self-hosted, gossia]
-    needs: [lint, test, vendor, e2e, snapshots, web, vscode]
-    if: always()
-    steps:
-      - name: Delete stale build files
-        run: |
-          if [ -d target ]; then
-            find target -type f -atime +3 -delete
-            find target -mindepth 1 -type d -empty -delete
-            size=$(du -s --block-size=1G target | cut -f1)
-            echo "target/ is now ${size} GB"
-            if [ "$size" -gt 60 ]; then
-              echo "Over 60 GB: removing target/ entirely"
-              rm -rf target
-            fi
-          fi

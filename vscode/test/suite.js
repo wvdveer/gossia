@@ -1,4 +1,4 @@
-// The extension's tests, run inside VS Code by test/run.js. They open a
+// The extension's tests, run inside VS Code by test/run.py. They open a
 // workbook in the custom editor and drive the application in its panel with
 // the commands of the test control protocol (the test build's), through the
 // extension's test commands; and they use VS Code's own commands for what VS

@@ -185,12 +185,5 @@
         }
       ]
     }
-  },
-  "scripts": {
-    "test": "node test/run.js"
-  },
-  "devDependencies": {
-    "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.9.2"
   }
 }

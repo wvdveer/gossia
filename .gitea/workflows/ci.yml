@@ -1,0 +1,168 @@
+name: CI
+
+# The full checks (DESIGN.md, Testing and CI), on the Gitea mirror's own
+# runner, for pushes to main: only the owner pushes there, so no one else's
+# code runs on it. GitHub runs lint and the tests on its own runners
+# (.github/workflows/ci.yml); everything that needs a display, a graphics
+# adapter, the test databases or the package registry runs here.
+#
+# The runner has no Node.js, so there is no actions/checkout or
+# upload-artifact: the checkout is shell, as in packages.yml, kept in
+# ~/ci/gossia between runs with its target/ and vendor/, and the files of a
+# failed step go to the package registry (packaging/keep-ci-files.sh). The
+# runner takes one job at a time, so the jobs here and in packages.yml share
+# that folder one after another.
+#
+# Secrets of the repository: GOSSIA_TEST_POSTGRES and GOSSIA_TEST_MARIADB for
+# the live database tests (skipped without them), PACKAGE_REGISTRY_TOKEN to
+# publish the .vsix and keep failure files (nothing is published without it).
+#
+# Each check is a step that runs whatever the steps before it did; the
+# advisory ones (continue-on-error) do not fail the job.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  check:
+    name: Lint, test, E2E, snapshots
+    runs-on: selfhosted
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          set -e
+          dir="$HOME/ci/gossia"
+          mkdir -p "$dir"
+          cd "$dir"
+          [ -d .git ] || git init -q .
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          export GIT_TERMINAL_PROMPT=0
+          timeout 300 git -c http.extraHeader="Authorization: Basic $auth" \
+            fetch -q --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git checkout -q -f FETCH_HEAD
+          git clean -ffdxq -e target -e vendor
+          git log --oneline -1
+      # rustup reads rust-toolchain.toml and installs the pinned toolchain.
+      - name: Toolchain
+        run: cd "$HOME/ci/gossia" && (rustup show active-toolchain || rustup toolchain install)
+      - name: Lint
+        run: cd "$HOME/ci/gossia" && cargo xtask lint
+      - name: Test
+        if: ${{ !cancelled() }}
+        env:
+          # The live PostgreSQL and MariaDB tests (database_tests.rs).
+          GOSSIA_TEST_POSTGRES: ${{ secrets.GOSSIA_TEST_POSTGRES }}
+          GOSSIA_TEST_MARIADB: ${{ secrets.GOSSIA_TEST_MARIADB }}
+        run: cd "$HOME/ci/gossia" && cargo xtask test
+      # Every pinned vendor item fetched and checked against vendor.lock.
+      - name: Vendor
+        if: ${{ !cancelled() }}
+        run: cd "$HOME/ci/gossia" && cargo xtask vendor fetch && cargo xtask vendor verify
+      # The real application through its test control channel, under xvfb-run.
+      - name: E2E
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: cd "$HOME/ci/gossia" && cargo xtask e2e
+      # Screenshots against the stored images, rendered with Mesa's software
+      # Vulkan driver. The Linux images are made from the files kept when they
+      # differ or are missing.
+      - name: Snapshots
+        id: snapshots
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: cd "$HOME/ci/gossia" && cargo xtask snapshots
+      - name: Keep the images that differ
+        if: ${{ !cancelled() && steps.snapshots.outcome == 'failure' }}
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: |
+          cd "$HOME/ci/gossia"
+          bash packaging/keep-ci-files.sh snapshot-differences crates/gossia-app/tests/snapshots/linux
+
+  web:
+    name: Web, VS Code
+    needs: check
+    if: ${{ !cancelled() }}
+    runs-on: selfhosted
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          set -e
+          dir="$HOME/ci/gossia"
+          mkdir -p "$dir"
+          cd "$dir"
+          [ -d .git ] || git init -q .
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          export GIT_TERMINAL_PROMPT=0
+          timeout 300 git -c http.extraHeader="Authorization: Basic $auth" \
+            fetch -q --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git checkout -q -f FETCH_HEAD
+          git clean -ffdxq -e target -e vendor
+          git log --oneline -1
+      - name: Toolchain
+        run: cd "$HOME/ci/gossia" && (rustup show active-toolchain || rustup toolchain install)
+      # The wasm version in headless Chromium, driven by the harness page.
+      # Playwright for Python and its Chromium live in a virtual environment
+      # under ~/.cache, so nothing is installed system-wide.
+      - name: Web
+        id: web
+        continue-on-error: true
+        run: |
+          venv="$HOME/.cache/gossia-playwright"
+          [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install --quiet --upgrade playwright
+          "$venv/bin/python" -m playwright install chromium
+          cd "$HOME/ci/gossia"
+          GOSSIA_PYTHON="$venv/bin/python" cargo xtask web-test
+      - name: Keep the screenshots of a failed run
+        if: ${{ !cancelled() && steps.web.outcome == 'failure' }}
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: cd "$HOME/ci/gossia" && bash packaging/keep-ci-files.sh web-screenshots target/web-test/screenshots
+      # The extension's tests in a stable VS Code that vscode/test/run.py
+      # downloads into target/vscode-test, then the .vsix packed with the
+      # release build (packaging/vscode/pack-vsix.py) and published. Python
+      # only: VS Code runs the suite in its own extension host.
+      - name: VS Code
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: cd "$HOME/ci/gossia" && GOSSIA_VSCODE_VERSION=stable xvfb-run -a cargo xtask vscode-test
+      - name: Pack and publish the .vsix
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: cd "$HOME/ci/gossia" && cargo xtask vsix && bash packaging/vscode/publish-vsix.sh
+      # target/ is kept between runs and every push leaves new test programs
+      # of about 1 GB each behind. Whatever the steps did: delete build files
+      # not read for 3 days (access time, so what is still reused stays), and
+      # everything if target/ is still over 60 GB. Cargo rebuilds what is
+      # missing.
+      - name: Sweep target
+        if: always()
+        run: |
+          cd "$HOME/ci/gossia"
+          if [ -d target ]; then
+            find target -type f -atime +3 -delete
+            find target -mindepth 1 -type d -empty -delete
+            size=$(du -s --block-size=1G target | cut -f1)
+            echo "target/ is now ${size} GB"
+            if [ "$size" -gt 60 ]; then
+              echo "Over 60 GB: removing target/ entirely"
+              rm -rf target
+            fi
+          fi

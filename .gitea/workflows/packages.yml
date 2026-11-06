@@ -1,18 +1,18 @@
 name: Packages
 
 # The packages of Gossia (DESIGN.md, Testing and CI), on the Gitea
-# mirror's runners on acer, one for each family of distributions, so that each
+# mirror's runners, one for each family of distributions, so that each
 # package links against its family's libraries:
-#   selfhosted  Debian (the gitslave host, no root)   .deb
-#   fedora      the fedora-runner container           .rpm
-#   arch        the arch-runner container             .pkg.tar.zst
+#   selfhosted  Debian, no root   .deb
+#   fedora      Fedora            .rpm
+#   arch        Arch              .pkg.tar.zst
 # and the Windows MSI, cross-built on selfhosted after them.
 # Each is then published to the Gitea package registry of ward
 # (packaging/linux/publish-package.sh), once the repository has the Actions
 # secret PACKAGE_REGISTRY_TOKEN (an access token of ward with the package write
 # permission); without it the packages are built but not published.
 #
-# Like nspawnmgr's workflow: these runners have no Node, so there is no
+# These runners have no Node, so there is no
 # actions/checkout or upload-artifact, only shell. The checkout is kept in
 # ~/ci/gossia between runs with its target/ and vendor/, so that a run does
 # not rebuild everything (not ~/code: on the fedora and arch runners that
@@ -148,8 +148,7 @@ jobs:
   # The Windows installer, cross-built on the Debian runner
   # (packaging/windows/build-msi.sh: cargo-xwin and wixl, no root) and put in
   # the generic package registry beside the MSIX and the .vsix
-  # (packaging/windows/publish-msi.sh). Moved here from GitHub CI on
-  # 2026-11-06, whose artifacts filled the account's Actions storage.
+  # (packaging/windows/publish-msi.sh).
   msi:
     name: Windows installer
     needs: arch
