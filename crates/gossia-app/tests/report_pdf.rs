@@ -289,3 +289,40 @@ fn export_as_html_writes_the_report_as_one_page_with_its_text() {
     .unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), html);
 }
+
+#[test]
+fn print_opens_the_report_as_a_pdf_in_the_pdf_program() {
+    use gossia_app::report_print::Outside;
+    let mut harness = window();
+    report(&mut harness, &[("Total", "Orders.total")], Vec::new());
+    harness.state_mut().outside = Outside::Record(Vec::new());
+    harness.state_mut().begin_print("Summary");
+    harness.run();
+    assert!(has(&harness, "Print Summary"));
+    assert!(has(&harness, "where you print it and choose the printer"));
+    harness.get_by_label("Print report").click();
+    settle(&mut harness);
+    assert!(harness.state().pdf_export.is_none(), "the dialog closes");
+    let Outside::Record(opened) = harness.state().outside.clone() else {
+        panic!("the file is noted, not opened");
+    };
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].file_name().unwrap(), "Summary.pdf");
+    assert_eq!(pdf_words(&opened[0]), [vec!["Total", "62.92"]]);
+    // On the control channel, with `open: false` nothing is opened, and the
+    // file is answered.
+    let answer = control::run(
+        harness.state_mut(),
+        "print",
+        &json!({"report": "Summary", "open": false}),
+    )
+    .unwrap();
+    let file = PathBuf::from(answer["file"].as_str().unwrap());
+    assert_ne!(file, opened[0]);
+    assert_eq!(pdf_words(&file), [vec!["Total", "62.92"]]);
+    assert_eq!(
+        harness.state().outside,
+        Outside::Record(opened),
+        "the control command puts the opener back"
+    );
+}

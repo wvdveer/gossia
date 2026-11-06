@@ -142,6 +142,11 @@ pub struct GossiaApp {
     pub export: Option<crate::export::ExportPlan>,
     /// The PDF export of a report, while its dialog is open.
     pub pdf_export: Option<crate::report_pdf::PdfExport>,
+    /// How a file is opened in the system's program for it: really, or
+    /// (in tests) only noted.
+    pub outside: crate::report_print::Outside,
+    /// The PDF *Print...* last opened.
+    pub last_printed: Option<std::path::PathBuf>,
     /// The height the formula bar was dragged or expanded to, in points;
     /// None for one line, growing while a formula is typed.
     pub formula_bar_height: Option<f32>,
@@ -241,6 +246,8 @@ impl GossiaApp {
             imports: crate::import::Imports::new(),
             export: None,
             pdf_export: None,
+            outside: crate::report_print::Outside::System,
+            last_printed: None,
             formula_bar_height: None,
             options: None,
             options_page: crate::options::Page::General,

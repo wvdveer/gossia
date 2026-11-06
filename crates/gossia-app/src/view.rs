@@ -467,6 +467,21 @@ impl GossiaApp {
                     self.begin_export_html(&tab);
                     ui.close();
                 }
+                // A host has no printing: its PDF or HTML is saved, and
+                // printed from the program that opens it.
+                if crate::host::current().is_none()
+                    && ui
+                        .add_enabled(
+                            self.editing.is_none() && self.in_report(),
+                            egui::Button::new("Print..."),
+                        )
+                        .on_disabled_hover_text("Show a report to print it")
+                        .clicked()
+                {
+                    let tab = self.sheet.clone();
+                    self.begin_print(&tab);
+                    ui.close();
+                }
                 ui.separator();
                 if ui
                     .add_enabled(self.editing.is_none(), egui::Button::new("Save"))

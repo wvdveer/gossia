@@ -43,6 +43,7 @@ pub mod replace_inside;
 pub mod report_design;
 pub mod report_params;
 pub mod report_pdf;
+pub mod report_print;
 pub mod report_props;
 pub mod report_tab;
 #[cfg(test)]

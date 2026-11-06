@@ -124,6 +124,10 @@ impl GossiaApp {
                 self.begin_export_html(tab);
                 ui.close();
             }
+            if crate::host::current().is_none() && ui.button("Print...").clicked() {
+                self.begin_print(tab);
+                ui.close();
+            }
             let saved = self.doc.path.is_some();
             let copy = ui
                 .add_enabled(saved, egui::Button::new("Copy batch command"))

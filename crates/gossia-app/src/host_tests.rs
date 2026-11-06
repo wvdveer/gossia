@@ -155,6 +155,20 @@ fn export_gives_the_host_the_tab_and_its_schema_as_files() {
     assert!(data.contains("EUR"), "{data}");
 }
 
+/// A host has no printing: *Print...* says to export and print from the
+/// program that opens the file.
+#[test]
+fn print_is_refused_in_a_host() {
+    let (_fake, mut app) = hosted();
+    app.begin_print("Prices");
+    assert!(app.pdf_export.is_none());
+    let notice = app.notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("Printing is not available here"),
+        "{notice}"
+    );
+}
+
 #[test]
 fn modules_go_out_and_come_in_through_the_host() {
     let (fake, mut app) = hosted();

@@ -54,6 +54,9 @@ impl ReportFormat {
 pub struct PdfExport {
     pub tab: String,
     pub format: ReportFormat,
+    /// *Print...*: the PDF goes to a temporary file, opened in the system's
+    /// PDF program to be printed from there (see `report_print`).
+    pub print: bool,
     /// The file chosen, while the report is still being calculated: it is
     /// written when the report is done.
     pub waiting: Option<PathBuf>,
@@ -65,15 +68,15 @@ impl GossiaApp {
     /// *Export as PDF...*: shows the report, so that it is calculated, and
     /// opens the dialog.
     pub fn begin_export_pdf(&mut self, tab: &str) {
-        self.begin_report_export(tab, ReportFormat::Pdf);
+        self.begin_report_export(tab, ReportFormat::Pdf, false);
     }
 
     /// *Export as HTML...*: as *Export as PDF...*, for an HTML page.
     pub fn begin_export_html(&mut self, tab: &str) {
-        self.begin_report_export(tab, ReportFormat::Html);
+        self.begin_report_export(tab, ReportFormat::Html, false);
     }
 
-    fn begin_report_export(&mut self, tab: &str, format: ReportFormat) {
+    pub(crate) fn begin_report_export(&mut self, tab: &str, format: ReportFormat, print: bool) {
         if self.calc().report(tab).is_none() {
             self.notice = Some(format!("there is no report {tab}"));
             return;
@@ -84,16 +87,28 @@ impl GossiaApp {
         self.pdf_export = Some(PdfExport {
             tab: tab.to_owned(),
             format,
+            print,
             waiting: None,
             error: None,
         });
     }
 
-    /// *Export...* in the dialog: asks for the file.
+    /// *Export...* in the dialog: asks for the file. *Print...* needs none:
+    /// its PDF goes to a temporary file.
     pub fn choose_pdf_file(&mut self) {
         let Some(export) = &self.pdf_export else {
             return;
         };
+        if export.print {
+            let done = crate::report_print::print_path(&export.tab)
+                .and_then(|path| self.export_report_to(&path));
+            if let Err(e) = done
+                && let Some(export) = &mut self.pdf_export
+            {
+                export.error = Some(e);
+            }
+            return;
+        }
         let format = export.format;
         let name = format!("{}.{}", export.tab, format.extension());
         // In a host the file is asked for once the file is made.
@@ -177,7 +192,14 @@ impl GossiaApp {
                 }
                 None => save_atomic(&path, &bytes).map_err(|e| format!("{e}")),
             })
-            .map_err(|e| format!("{}: {e}", path.display()));
+            .map_err(|e| format!("{}: {e}", path.display()))
+            .and_then(|()| {
+                if export.print {
+                    self.open_outside(&path)
+                } else {
+                    Ok(())
+                }
+            });
         match written {
             Ok(()) => self.pdf_export = None,
             Err(e) => {
@@ -231,13 +253,25 @@ impl GossiaApp {
         });
         let kind = export.format.name();
         let html = export.format == ReportFormat::Html;
+        let print = export.print;
         let (mut choose, mut cancel, mut open) = (false, false, true);
-        egui::Window::new(format!("Export {} as {kind}", export.tab))
+        let title = if print {
+            format!("Print {}", export.tab)
+        } else {
+            format!("Export {} as {kind}", export.tab)
+        };
+        egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .min_width(380.0)
             .show(ctx, |ui| {
+                if print {
+                    ui.label(
+                        "Opens the report as a PDF in your PDF program, where you print it \
+                         and choose the printer.",
+                    );
+                }
                 ui.label(match (multipage, html) {
                     (true, false) => {
                         "Each page on the paper of the page setup, as the page view shows it."
@@ -296,8 +330,16 @@ impl GossiaApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let ready = missing.is_empty() && export.waiting.is_none();
-                    let response = ui.add_enabled(ready, egui::Button::new("Export..."));
-                    named(&response, if html { "Export HTML" } else { "Export PDF" });
+                    let button = if print { "Print..." } else { "Export..." };
+                    let response = ui.add_enabled(ready, egui::Button::new(button));
+                    named(
+                        &response,
+                        match (print, html) {
+                            (true, _) => "Print report",
+                            (false, true) => "Export HTML",
+                            (false, false) => "Export PDF",
+                        },
+                    );
                     choose = response.clicked();
                     cancel = ui.button("Cancel").clicked();
                 });

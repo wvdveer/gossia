@@ -312,6 +312,51 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                 None => Ok(Json::Null),
             }
         }
+        // Prints a report, as *Print...* does: `report` (the tab shown if
+        // left out) is shown and calculated, its PDF written to a temporary
+        // file and opened in the system's PDF program (unless `open` is
+        // false). Answers with the file.
+        "print" => {
+            let report = match args.get("report").and_then(Json::as_str) {
+                Some(report) => report.to_owned(),
+                None => app.sheet.clone(),
+            };
+            if app.calc().report(&report).is_none() {
+                return Err(format!("there is no report called {report}"));
+            }
+            let open = args.get("open").and_then(Json::as_bool).unwrap_or(true);
+            let outside = std::mem::replace(
+                &mut app.outside,
+                if open {
+                    crate::report_print::Outside::System
+                } else {
+                    crate::report_print::Outside::Record(Vec::new())
+                },
+            );
+            app.begin_print(&report);
+            app.session.calc_mut().show_report(Some(&report));
+            let done = if app.session.wait_idle(std::time::Duration::from_secs(60)) {
+                app.choose_pdf_file();
+                match app.pdf_export.take() {
+                    Some(export) => Err(export
+                        .error
+                        .unwrap_or_else(|| format!("{report} was not printed"))),
+                    None => Ok(()),
+                }
+            } else {
+                app.pdf_export = None;
+                Err(format!(
+                    "{report} was still being calculated after a minute"
+                ))
+            };
+            let opened = std::mem::replace(&mut app.outside, outside);
+            done?;
+            let file = match opened {
+                crate::report_print::Outside::Record(files) => files.last().cloned(),
+                crate::report_print::Outside::System => app.last_printed.clone(),
+            };
+            Ok(json!({ "file": file.map(|f| f.display().to_string()) }))
+        }
         "select" => {
             let path = path_arg(args, "path")?;
             if app
