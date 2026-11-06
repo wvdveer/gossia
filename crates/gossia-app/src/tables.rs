@@ -2,6 +2,7 @@
 //! state of each, and the commands on rows and columns. None of it draws, so
 //! it is tested without a window (DESIGN.md, "Tabular view of arrays").
 
+use gossia_i18n::tr;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use gossia_core::{Node, NodeId, Path, Segment};
@@ -67,16 +68,16 @@ impl Choice {
 
     pub fn label(self) -> &'static str {
         match self {
-            Choice::Nothing => "no condition",
+            Choice::Nothing => tr!("no condition"),
             Choice::Equals => "equals",
-            Choice::NotEquals => "does not equal",
-            Choice::Greater => "is greater than",
-            Choice::Less => "is less than",
-            Choice::Between => "is between",
-            Choice::BeginsWith => "begins with",
-            Choice::EndsWith => "ends with",
+            Choice::NotEquals => tr!("does not equal"),
+            Choice::Greater => tr!("is greater than"),
+            Choice::Less => tr!("is less than"),
+            Choice::Between => tr!("is between"),
+            Choice::BeginsWith => tr!("begins with"),
+            Choice::EndsWith => tr!("ends with"),
             Choice::Contains => "contains",
-            Choice::IsBlank => "is blank",
+            Choice::IsBlank => tr!("is blank"),
         }
     }
 
@@ -537,7 +538,7 @@ impl GossiaApp {
     pub fn reverse_rows(&mut self, array: &Path) {
         let length = self.items_of(array).map_or(0, <[Node]>::len);
         let order: Vec<usize> = (0..length).rev().collect();
-        self.reorder(array, &order, "Reverse");
+        self.reorder(array, &order, tr!("Reverse"));
     }
 
     /// Swaps the item with the next one that is shown. Items hidden in between
@@ -562,7 +563,11 @@ impl GossiaApp {
         let length = self.items_of(array).map_or(0, <[Node]>::len);
         let mut order: Vec<usize> = (0..length).collect();
         order.swap(index, other);
-        self.reorder(array, &order, if up { "Move up" } else { "Move down" });
+        self.reorder(
+            array,
+            &order,
+            if up { tr!("Move up") } else { tr!("Move down") },
+        );
     }
 
     pub(crate) fn reorder(&mut self, array: &Path, order: &[usize], what: &str) {
@@ -604,7 +609,7 @@ impl GossiaApp {
         match sort_order(items, &column, descending) {
             Ok(order) => {
                 self.tables.refused = None;
-                self.reorder(array, &order, "Sort");
+                self.reorder(array, &order, tr!("Sort"));
                 self.tables.last_sort = Some((key.0, key.1, key.2, descending));
             }
             Err(refused) => {

@@ -12,6 +12,7 @@ mod lower;
 pub mod records;
 mod tables;
 
+use gossia_i18n::tr;
 use std::fmt;
 
 use indexmap::IndexMap;
@@ -61,7 +62,7 @@ impl FloatFormat {
 
     pub fn label(self) -> &'static str {
         match self {
-            FloatFormat::Hex => "IBM hexadecimal",
+            FloatFormat::Hex => tr!("IBM hexadecimal"),
             FloatFormat::Ieee => "IEEE 754",
         }
     }

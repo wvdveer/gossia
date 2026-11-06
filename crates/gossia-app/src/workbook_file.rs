@@ -6,6 +6,7 @@
 //! and the disk are in [`crate::file`]. This is the part that joins them to the
 //! window, and decides whether a file that was opened is trusted.
 
+use gossia_i18n::tr;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,26 +28,26 @@ pub(crate) fn new_browser() -> Browser {
     use crate::icons as i;
     let with = |icon: &str, text: &str| format!("{icon}  {text}");
     let labels = FileDialogLabels {
-        title_select_directory: with(i::FOLDER, "Select Folder"),
-        title_select_file: with(i::FOLDER_OPEN, "Open File"),
-        title_select_multiple: with(i::FILE_TEXT, "Select Multiple"),
-        title_save_file: with(i::FLOPPY, "Save File"),
-        reload: with(i::RELOAD, "Reload"),
-        working_directory: with(i::ARROW_UP_RIGHT, "Go to working directory"),
-        select_all: with(i::CHECK_SQUARE, "Select all"),
-        home_dir: with(i::HOUSE, "Home"),
-        desktop_dir: with(i::DESKTOP, "Desktop"),
-        documents_dir: with(i::FILE_TEXT, "Documents"),
-        downloads_dir: with(i::DOWNLOAD, "Downloads"),
-        audio_dir: with(i::MUSIC, "Audio"),
-        pictures_dir: with(i::IMAGE, "Pictures"),
-        videos_dir: with(i::FILM, "Videos"),
-        pin_folder: with(i::PIN, "Pin"),
-        unpin_folder: with(i::X, "Unpin"),
-        rename_pinned_folder: with(i::PENCIL, "Rename"),
-        open_button: with(i::FOLDER_OPEN, "Open"),
-        save_button: with(i::FLOPPY, "Save"),
-        cancel_button: with(i::PROHIBIT, "Cancel"),
+        title_select_directory: with(i::FOLDER, tr!("Select Folder")),
+        title_select_file: with(i::FOLDER_OPEN, tr!("Open File")),
+        title_select_multiple: with(i::FILE_TEXT, tr!("Select Multiple")),
+        title_save_file: with(i::FLOPPY, tr!("Save File")),
+        reload: with(i::RELOAD, tr!("Reload")),
+        working_directory: with(i::ARROW_UP_RIGHT, tr!("Go to working directory")),
+        select_all: with(i::CHECK_SQUARE, tr!("Select all")),
+        home_dir: with(i::HOUSE, tr!("Home")),
+        desktop_dir: with(i::DESKTOP, tr!("Desktop")),
+        documents_dir: with(i::FILE_TEXT, tr!("Documents")),
+        downloads_dir: with(i::DOWNLOAD, tr!("Downloads")),
+        audio_dir: with(i::MUSIC, tr!("Audio")),
+        pictures_dir: with(i::IMAGE, tr!("Pictures")),
+        videos_dir: with(i::FILM, tr!("Videos")),
+        pin_folder: with(i::PIN, tr!("Pin")),
+        unpin_folder: with(i::X, tr!("Unpin")),
+        rename_pinned_folder: with(i::PENCIL, tr!("Rename")),
+        open_button: with(i::FOLDER_OPEN, tr!("Open")),
+        save_button: with(i::FLOPPY, tr!("Save")),
+        cancel_button: with(i::PROHIBIT, tr!("Cancel")),
         ..FileDialogLabels::default()
     };
     Browser::new()
@@ -191,7 +192,7 @@ impl GossiaApp {
             .as_ref()
             .and_then(|p| p.file_name())
             .map_or_else(
-                || "Untitled".to_owned(),
+                || tr!("Untitled").to_owned(),
                 |name| name.to_string_lossy().into_owned(),
             )
     }
@@ -295,9 +296,11 @@ impl GossiaApp {
         // The workbook's limits, held down by the user's ceilings.
         let mut warnings = warnings;
         for (setting, asked, ceiling) in calc.settings().held_down(&prefs.ceilings) {
-            warnings.push(format!(
-                "The workbook asks for a {} of {asked}; your ceiling of {ceiling} is used.",
-                setting.label().to_lowercase()
+            warnings.push(tr!(
+                "The workbook asks for a {setting} of {asked}; your ceiling of {ceiling} is used.",
+                setting = setting.label().to_lowercase(),
+                asked = asked,
+                ceiling = ceiling
             ));
         }
         let effective = calc.settings().effective(&prefs.ceilings);
@@ -342,7 +345,7 @@ impl GossiaApp {
     pub fn save(&mut self) -> Result<(), String> {
         match self.doc.path.clone() {
             Some(path) => self.write_to(&path),
-            None => Err("the workbook has no file yet: use Save As".to_owned()),
+            None => Err(tr!("the workbook has no file yet: use Save As").to_owned()),
         }
     }
 
@@ -407,7 +410,7 @@ impl GossiaApp {
         self.commit_code();
         // Saving waits for what is still being calculated.
         if !self.session.wait_idle(Duration::from_secs(60)) {
-            return Err("the workbook is still calculating; try again in a moment".to_owned());
+            return Err(tr!("the workbook is still calculating; try again in a moment").to_owned());
         }
         let meta = Meta {
             workbook_id: self.doc.workbook_id.clone(),
@@ -448,15 +451,16 @@ impl GossiaApp {
         let path = self.doc.path.clone();
         let seen = path.as_deref().map(|p| (id.as_str(), p));
         if let Err(e) = self.user.change_trust_seen(change, seen) {
-            self.notice = Some(format!(
-                "The trust decision holds until Gossia ends, but it could not be kept: {e}"
+            self.notice = Some(tr!(
+                "The trust decision holds until Gossia ends, but it could not be kept: {e}",
+                e = e
             ));
         }
     }
 
     pub(crate) fn change_prefs(&mut self, change: impl FnOnce(&mut crate::prefs::Preferences)) {
         if let Err(e) = self.user.change_prefs(change) {
-            self.notice = Some(format!("The preferences could not be saved: {e}"));
+            self.notice = Some(tr!("The preferences could not be saved: {e}", e = e));
         }
     }
 
@@ -512,10 +516,10 @@ impl GossiaApp {
     fn show_open_dialog(&mut self) {
         if self.files.browse {
             self.files.browser = new_browser()
-                .title("Open a workbook")
+                .title(tr!("Open a workbook"))
                 .initial_directory(self.start_folder())
-                .add_file_filter_extensions("Gossia workbooks", vec![EXTENSION])
-                .default_file_filter("Gossia workbooks");
+                .add_file_filter_extensions(tr!("Gossia workbooks"), vec![EXTENSION])
+                .default_file_filter(tr!("Gossia workbooks"));
             self.files.browser.pick_file();
             self.files.browsing = Some(Browsing::Open);
             return;
@@ -537,7 +541,7 @@ impl GossiaApp {
         }
         if self.files.browse {
             self.files.browser = new_browser()
-                .title("Import a file")
+                .title(tr!("Import a file"))
                 .initial_directory(self.start_folder())
                 .add_file_filter_extensions(
                     "JSON, XML, CSV and TSV",
@@ -583,11 +587,11 @@ impl GossiaApp {
                 format!("Untitled.{EXTENSION}")
             };
             self.files.browser = new_browser()
-                .title("Save the workbook as")
+                .title(tr!("Save the workbook as"))
                 .initial_directory(self.start_folder())
                 .default_file_name(&name)
-                .add_save_extension("Gossia workbook", EXTENSION)
-                .default_save_extension("Gossia workbook");
+                .add_save_extension(tr!("Gossia workbook"), EXTENSION)
+                .default_save_extension(tr!("Gossia workbook"));
             self.files.browser.save_file();
             self.files.browsing = Some(Browsing::SaveAs);
             return;
@@ -624,7 +628,7 @@ impl GossiaApp {
         };
         let path = PathBuf::from(dialog.text.trim());
         if dialog.text.trim().is_empty() {
-            dialog.error = Some("Give the name of a file.".to_owned());
+            dialog.error = Some(tr!("Give the name of a file.").to_owned());
             self.files.dialog = Some(dialog);
             return;
         }
@@ -678,21 +682,21 @@ impl GossiaApp {
             let (mut apply, mut cancel) = (false, false);
             let mut open = true;
             egui::Window::new(match dialog.purpose {
-                Browsing::SaveAs => "Save As",
-                Browsing::Open => "Open a workbook",
-                Browsing::Import => "Import a file",
-                Browsing::Export => "Export",
-                Browsing::ExportPdf => "Export as PDF",
-                Browsing::ExportHtml => "Export as HTML",
+                Browsing::SaveAs => tr!("Save As"),
+                Browsing::Open => tr!("Open a workbook"),
+                Browsing::Import => tr!("Import a file"),
+                Browsing::Export => tr!("Export"),
+                Browsing::ExportPdf => tr!("Export as PDF"),
+                Browsing::ExportHtml => tr!("Export as HTML"),
             })
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label("The file, with its folder:");
+                ui.label(tr!("The file, with its folder:"));
                 let response =
                     ui.add(egui::TextEdit::singleline(&mut dialog.text).desired_width(420.0));
-                named(&response, "File name");
+                named(&response, tr!("File name"));
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     apply = true;
                 }
@@ -702,15 +706,15 @@ impl GossiaApp {
                 ui.horizontal(|ui| {
                     apply |= ui
                         .button(match dialog.purpose {
-                            Browsing::SaveAs => "Save",
-                            Browsing::Open => "Open",
-                            Browsing::Import => "Import",
+                            Browsing::SaveAs => tr!("Save"),
+                            Browsing::Open => tr!("Open"),
+                            Browsing::Import => tr!("Import"),
                             Browsing::Export | Browsing::ExportPdf | Browsing::ExportHtml => {
-                                "Export"
+                                tr!("Export")
                             }
                         })
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
             });
             if cancel || !open {
@@ -730,24 +734,29 @@ impl GossiaApp {
             }
             let (mut save, mut discard, mut cancel) = (false, false, false);
             let mut open = true;
-            egui::Window::new("Unsaved changes")
+            egui::Window::new(tr!("Unsaved changes"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(format!(
-                        "Save the changes to {} before {}?",
-                        self.file_name(),
-                        match pending {
-                            Pending::Quit => "quitting",
-                            Pending::Open | Pending::OpenRecent(_) => "opening another workbook",
-                            Pending::New => "starting a new workbook",
+                    let file = self.file_name();
+                    ui.label(match pending {
+                        Pending::Quit => {
+                            tr!("Save the changes to {file} before quitting?", file = file)
                         }
-                    ));
+                        Pending::Open | Pending::OpenRecent(_) => tr!(
+                            "Save the changes to {file} before opening another workbook?",
+                            file = file
+                        ),
+                        Pending::New => tr!(
+                            "Save the changes to {file} before starting a new workbook?",
+                            file = file
+                        ),
+                    });
                     ui.horizontal(|ui| {
-                        save = ui.button("Save").clicked();
-                        discard = ui.button("Don't save").clicked();
-                        cancel = ui.button("Cancel").clicked();
+                        save = ui.button(tr!("Save")).clicked();
+                        discard = ui.button(tr!("Don't save")).clicked();
+                        cancel = ui.button(tr!("Cancel")).clicked();
                     });
                 });
             if save {

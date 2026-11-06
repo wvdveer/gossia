@@ -12,6 +12,7 @@
 use gossia_calc::ExprKind;
 use gossia_core::form::{CONTROL_HEIGHTS, Control};
 use gossia_core::report::{self, BandKind, Orientation, Paper, ReportDesign, SectionOptions};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::form_layout::{draft_id, expr_text, expression_box, is_name, option_text};
@@ -49,10 +50,10 @@ impl GossiaApp {
         let Some(design) = self.shown_report_design() else {
             return;
         };
-        ui.strong("Report");
+        ui.strong(tr!("Report"));
         let mut edited = design.clone();
         ui.horizontal(|ui| {
-            ui.label("Paper");
+            ui.label(tr!("Paper"));
             egui::ComboBox::from_id_salt("report_paper")
                 .selected_text(edited.page.paper.label())
                 .show_ui(ui, |ui| {
@@ -61,29 +62,31 @@ impl GossiaApp {
                     }
                 })
                 .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Paper"));
+                .widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Paper"))
+                });
         });
         ui.horizontal(|ui| {
-            ui.label("Orientation");
+            ui.label(tr!("Orientation"));
             ui.radio_value(
                 &mut edited.page.orientation,
                 Orientation::Portrait,
-                "Portrait",
+                tr!("Portrait"),
             );
             ui.radio_value(
                 &mut edited.page.orientation,
                 Orientation::Landscape,
-                "Landscape",
+                tr!("Landscape"),
             );
         });
-        ui.label("Margins, in points");
+        ui.label(tr!("Margins, in points"));
         egui::Grid::new("report_margins")
             .num_columns(4)
             .show(ui, |ui| {
                 let m = &mut edited.page.margins;
                 let rows = [
-                    [("Top", &mut m.top), ("Right", &mut m.right)],
-                    [("Bottom", &mut m.bottom), ("Left", &mut m.left)],
+                    [(tr!("Top"), &mut m.top), (tr!("Right"), &mut m.right)],
+                    [(tr!("Bottom"), &mut m.bottom), (tr!("Left"), &mut m.left)],
                 ];
                 for pair in rows {
                     for (label, value) in pair {
@@ -99,10 +102,10 @@ impl GossiaApp {
             });
         ui.weak(match design.kind {
             report::ReportKind::SinglePage => {
-                "The canvas is as wide as the paper less its margins; the PDF is one page that wide."
+                tr!("The canvas is as wide as the paper less its margins; the PDF is one page that wide.")
             }
             report::ReportKind::Multipage => {
-                "Each page is the paper; the bands are as wide as it less its margins."
+                tr!("Each page is the paper; the bands are as wide as it less its margins.")
             }
         });
         if edited != design {
@@ -113,20 +116,20 @@ impl GossiaApp {
         if let Some(n) = design.bands() {
             ui.separator();
             ui.label(match n {
-                0 => "No sections: the detail band repeats for each of its items.".to_owned(),
-                1 => "One section around the detail band.".to_owned(),
+                0 => tr!("No sections: the detail band repeats for each of its items.").to_owned(),
+                1 => tr!("One section around the detail band.").to_owned(),
                 n => format!("{n} sections, one inside the other, around the detail band."),
             });
-            if ui.button("Add section").clicked() {
+            if ui.button(tr!("Add section")).clicked() {
                 self.add_report_section();
             }
-            ui.weak(
+            ui.weak(tr!(
                 "A new section goes inside the others, around the detail band. Its items are on \
-                 its header band.",
-            );
+                 its header band."
+            ));
         }
         ui.separator();
-        ui.weak("Select a control or a band to change it.");
+        ui.weak(tr!("Select a control or a band to change it."));
     }
 
     /// The property page of a band of a multipage report.
@@ -145,8 +148,8 @@ impl GossiaApp {
         let key = |property: &str| format!("band {band}:{property}");
         ui.strong(design.band_name(band));
         ui.weak(match kind {
-            BandKind::ReportHeader => "Drawn once, at the start of the report.",
-            BandKind::ReportFooter => "Drawn once, at the end of the report.",
+            BandKind::ReportHeader => tr!("Drawn once, at the start of the report."),
+            BandKind::ReportFooter => tr!("Drawn once, at the end of the report."),
             BandKind::PageHeader => {
                 "Drawn at the top of every page. Its expressions can use page.number and \
                  page.count."
@@ -156,34 +159,34 @@ impl GossiaApp {
                  page.count."
             }
             BandKind::SectionHeader(_) => {
-                "Drawn before each item of the section. The section's items are set here."
+                tr!("Drawn before each item of the section. The section's items are set here.")
             }
             BandKind::SectionFooter(_) => {
-                "Drawn after each item of the section. Its items are set on its header band."
+                tr!("Drawn after each item of the section. Its items are set on its header band.")
             }
-            BandKind::Detail => "Drawn once for each of its items.",
+            BandKind::Detail => tr!("Drawn once for each of its items."),
         });
 
         // The height, and hiding the band.
         let mut height = edited.height.unwrap_or(0);
         ui.horizontal(|ui| {
-            ui.label("Height");
+            ui.label(tr!("Height"));
             let response = ui.add(
                 egui::DragValue::new(&mut height)
                     .range(0..=*CONTROL_HEIGHTS.end())
                     .suffix(" pt"),
             );
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Height of the band")
+                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Height of the band"))
             });
             let (label, to) = if height == 0 {
-                ("Show band", SHOWN_BAND)
+                (tr!("Show band"), SHOWN_BAND)
             } else {
-                ("Hide band", 0)
+                (tr!("Hide band"), 0)
             };
             if ui
                 .button(label)
-                .on_hover_text("A hidden band, of height 0, is not drawn.")
+                .on_hover_text(tr!("A hidden band, of height 0, is not drawn."))
                 .clicked()
             {
                 height = to;
@@ -199,7 +202,7 @@ impl GossiaApp {
             let expr = ExprKind::Items;
             if expr_text(
                 ui,
-                "Items",
+                tr!("Items"),
                 &mut edited.items,
                 "a list, as Orders.items",
                 draft_id(&at, None, expr),
@@ -207,10 +210,10 @@ impl GossiaApp {
                 merge = Some(key("items"));
             }
             self.expression_error(ui, &at, None, expr);
-            if option_text(ui, "Item name", &mut edited.item_name, "item", false) {
+            if option_text(ui, tr!("Item name"), &mut edited.item_name, "item", false) {
                 merge = Some(key("item_name"));
             }
-            if option_text(ui, "List name", &mut edited.list_name, "", false) {
+            if option_text(ui, tr!("List name"), &mut edited.list_name, "", false) {
                 merge = Some(key("list_name"));
             }
             for name in [&edited.item_name, &edited.list_name].into_iter().flatten() {
@@ -225,10 +228,10 @@ impl GossiaApp {
                     );
                 }
             }
-            ui.weak(
+            ui.weak(tr!(
                 "The bands inside see each item by the item name, and the whole list by the list \
-                 name, which the header and footer around can total.",
-            );
+                 name, which the header and footer around can total."
+            ));
         }
 
         // Where a band is not visible it takes no room.
@@ -249,26 +252,26 @@ impl GossiaApp {
             ui.separator();
             let before = design.section_options(k);
             let mut options = before;
-            ui.checkbox(&mut options.new_page, "Start each on a new page");
+            ui.checkbox(&mut options.new_page, tr!("Start each on a new page"));
             ui.checkbox(
                 &mut options.keep_with_first,
-                "Keep the header with the first band",
+                tr!("Keep the header with the first band"),
             );
             ui.checkbox(
                 &mut options.repeat_header,
-                "Repeat the header on the pages it goes on to",
+                tr!("Repeat the header on the pages it goes on to"),
             );
             if options != before {
                 self.set_section_options(k, options);
             }
-            if ui.button("Remove section").clicked() {
+            if ui.button(tr!("Remove section")).clicked() {
                 self.remove_report_section(k);
                 return;
             }
         }
         if kind == BandKind::Detail {
             ui.separator();
-            if ui.button("Add section").clicked() {
+            if ui.button(tr!("Add section")).clicked() {
                 self.add_report_section();
                 return;
             }

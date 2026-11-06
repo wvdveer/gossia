@@ -7,6 +7,7 @@
 
 use gossia_calc::FieldKind;
 use gossia_core::{Kind, Path, Segment};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::table::item_type;
@@ -96,9 +97,9 @@ impl GossiaApp {
         if let Some(editing) = &self.editing
             && editing.sheet == places.schema_sheet
         {
-            return Err(format!(
-                "finish or cancel the edit in progress on {} first",
-                places.schema_sheet
+            return Err(tr!(
+                "finish or cancel the edit in progress on {schema_sheet} first",
+                schema_sheet = places.schema_sheet
             ));
         }
         Ok(())

@@ -4,6 +4,7 @@
 //! when that command is.
 
 use gossia_core::{Path, Segment};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::icons;
@@ -50,38 +51,42 @@ impl GossiaApp {
             let idle = self.editing.is_none();
             // In a host the host opens and makes files.
             let hosted = crate::host::current().is_some();
-            if !hosted && icons::button(ui, true, icons::FILE_PLUS, "N", "New workbook").clicked() {
+            if !hosted
+                && icons::button(ui, true, icons::FILE_PLUS, "N", tr!("New workbook")).clicked()
+            {
                 self.begin_new();
             }
             if !hosted
-                && icons::button(ui, true, icons::FOLDER_OPEN, "O", "Open workbook").clicked()
+                && icons::button(ui, true, icons::FOLDER_OPEN, "O", tr!("Open workbook")).clicked()
             {
                 self.begin_open();
             }
-            if icons::button(ui, idle, icons::FLOPPY, "S", "Save workbook").clicked() {
+            if icons::button(ui, idle, icons::FLOPPY, "S", tr!("Save workbook")).clicked() {
                 self.begin_save();
             }
             ui.separator();
             let can_change = idle && self.session.running_procedure().is_none();
             let undo = self.calc().undo_label().map(str::to_owned);
             let redo = self.calc().redo_label().map(str::to_owned);
-            let tip = |what: &str, label: &Option<String>| match label {
-                Some(label) => format!("{what} {label}"),
-                None => format!("Nothing to {}", what.to_lowercase()),
+            let tip = |undo: bool, label: &Option<String>| match (undo, label) {
+                (true, Some(label)) => tr!("Undo {label}", label = label),
+                (false, Some(label)) => tr!("Redo {label}", label = label),
+                (true, None) => tr!("Nothing to undo").to_owned(),
+                (false, None) => tr!("Nothing to redo").to_owned(),
             };
-            let response = icons::button(ui, undo.is_some() && can_change, UNDO, "<", "Undo")
-                .on_hover_text(tip("Undo", &undo));
+            let response = icons::button(ui, undo.is_some() && can_change, UNDO, "<", tr!("Undo"))
+                .on_hover_text(tip(true, &undo));
             if response.clicked() {
                 self.undo();
             }
-            let response = icons::button(ui, redo.is_some() && can_change, REDO, ">", "Redo")
-                .on_hover_text(tip("Redo", &redo));
+            let response = icons::button(ui, redo.is_some() && can_change, REDO, ">", tr!("Redo"))
+                .on_hover_text(tip(false, &redo));
             if response.clicked() {
                 self.redo();
             }
             ui.separator();
             let target = self.add_item_target();
-            if icons::button(ui, target.is_some(), icons::PLUS, "+", "Add an item").clicked()
+            if icons::button(ui, target.is_some(), icons::PLUS, "+", tr!("Add an item")).clicked()
                 && let Some((array, at)) = target
             {
                 self.insert_item(&array, at);
@@ -89,9 +94,13 @@ impl GossiaApp {
             let fx = crate::style::medium("fx").italics();
             let response = ui
                 .add_enabled(self.in_tree(), egui::Button::new(fx).small())
-                .on_hover_text("Insert a function");
+                .on_hover_text(tr!("Insert a function"));
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, self.in_tree(), "Insert a function")
+                egui::WidgetInfo::labeled(
+                    egui::Role::Button,
+                    self.in_tree(),
+                    tr!("Insert a function"),
+                )
             });
             if response.clicked() {
                 self.open_insert_function();
@@ -100,7 +109,7 @@ impl GossiaApp {
             self.refresh_summary();
             let problems = self.summary.errors + self.summary.invalid;
             let (icon, tip) = if problems == 0 {
-                (CHECK_CIRCLE, "No errors, no invalid data".to_owned())
+                (CHECK_CIRCLE, tr!("No errors, no invalid data").to_owned())
             } else {
                 (
                     icons::WARNING,
@@ -111,7 +120,7 @@ impl GossiaApp {
                 )
             };
             let response =
-                toggle(ui, self.show_issues, icon, "I", "Show issues").on_hover_text(tip);
+                toggle(ui, self.show_issues, icon, "I", tr!("Show issues")).on_hover_text(tip);
             if response.clicked() {
                 self.show_issues = !self.show_issues;
             }
@@ -120,7 +129,7 @@ impl GossiaApp {
                 self.show_inspector,
                 SIDE_PANEL,
                 "i",
-                "Show node inspector",
+                tr!("Show node inspector"),
             );
             if response.clicked() {
                 self.show_inspector = !self.show_inspector;
@@ -129,8 +138,8 @@ impl GossiaApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let theme = self.user.prefs.appearance.theme;
                 for (choice, icon, letter, name) in [
-                    (ThemeChoice::Dark, MOON, "D", "Dark theme"),
-                    (ThemeChoice::Light, SUN, "L", "Light theme"),
+                    (ThemeChoice::Dark, MOON, "D", tr!("Dark theme")),
+                    (ThemeChoice::Light, SUN, "L", tr!("Light theme")),
                 ] {
                     let on = theme == choice;
                     let tip = if on {

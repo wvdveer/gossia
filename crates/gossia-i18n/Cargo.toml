@@ -1,0 +1,20 @@
+[package]
+name = "gossia-i18n"
+description = "The interface's texts in six languages: the language chosen and the translations. No egui."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The translations are TOML files, one per language, read once.
+toml = "1.1.8"
+
+# The system's language, on the desktop. A web view says its own through the
+# host.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+sys-locale = "0.3.2"

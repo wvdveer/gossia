@@ -27,6 +27,7 @@
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{Key, KeyboardShortcut, Modifiers, ViewportBuilder, ViewportClass, ViewportId};
+use gossia_i18n::tr;
 
 use crate::GossiaApp;
 use crate::code_text::{self, Edited};
@@ -37,7 +38,9 @@ use gossia_core::form::FormDesign;
 use gossia_core::report::ReportDesign;
 
 /// The title of the code editor's window.
-pub const TITLE: &str = "Code editor - Gossia";
+pub fn title() -> &'static str {
+    tr!("Code editor - Gossia")
+}
 
 /// How long typing pauses before the text is put in the workbook, in seconds.
 pub const PAUSE: f64 = 1.0;
@@ -66,7 +69,9 @@ pub enum CodeItem {
 }
 
 /// The name of the module of the built-in chart types in the explorer.
-pub const BUILT_IN_CHARTS: &str = "charts (built in)";
+pub fn built_in_charts() -> &'static str {
+    tr!("charts (built in)")
+}
 
 impl CodeItem {
     /// The name on the tab.
@@ -75,7 +80,7 @@ impl CodeItem {
             CodeItem::Module(name) => name.clone(),
             CodeItem::Form { sheet, form } => format!("{sheet}: {form}"),
             CodeItem::Report(name) => name.clone(),
-            CodeItem::BuiltInCharts => BUILT_IN_CHARTS.to_owned(),
+            CodeItem::BuiltInCharts => built_in_charts().to_owned(),
         }
     }
 
@@ -392,7 +397,7 @@ impl GossiaApp {
             return Err(format!("{}: {why}", control_place(&at)));
         }
         match self.calc().report(name) {
-            None => return Err(format!("the report {name} is gone")),
+            None => return Err(tr!("the report {name} is gone", name = name)),
             Some(own) if *own == design => return Ok(()),
             Some(_) => {}
         }
@@ -410,7 +415,11 @@ impl GossiaApp {
             return Ok(());
         }
         if self.calc().forms().get(sheet, form).is_none() {
-            return Err(format!("the form {form} of {sheet} is gone"));
+            return Err(tr!(
+                "the form {form} of {sheet} is gone",
+                form = form,
+                sheet = sheet
+            ));
         }
         self.session.calc_mut().forms_mut().set(sheet, form, design);
         Ok(())
@@ -514,7 +523,7 @@ impl GossiaApp {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(self.code.pause));
         }
         let builder = ViewportBuilder::default()
-            .with_title(TITLE)
+            .with_title(title())
             .with_inner_size(SIZE)
             .with_min_inner_size([480.0, 360.0]);
         ctx.clone()
@@ -625,15 +634,17 @@ impl GossiaApp {
 
     fn code_menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Import module...").clicked() {
+            ui.menu_button(tr!("File"), |ui| {
+                if ui.button(tr!("Import module...")).clicked() {
                     self.begin_import_module();
                     ui.close();
                 }
                 let module = self.code.current_module().map(str::to_owned);
                 let export = module
                     .as_ref()
-                    .map_or("Export module...".to_owned(), |m| format!("Export {m}..."));
+                    .map_or(tr!("Export module...").to_owned(), |m| {
+                        tr!("Export {module}...", module = m)
+                    });
                 if ui
                     .add_enabled(module.is_some(), egui::Button::new(export))
                     .clicked()
@@ -644,18 +655,18 @@ impl GossiaApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Save workbook").clicked() {
+                if ui.button(tr!("Save workbook")).clicked() {
                     self.begin_save();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Close and return to Gossia").clicked() {
+                if ui.button(tr!("Close and return to Gossia")).clicked() {
                     self.commit_code();
                     self.code.open = false;
                     ui.close();
                 }
             });
-            ui.menu_button("Edit", |ui| {
+            ui.menu_button(tr!("Edit"), |ui| {
                 // What is typed counts as the next entry, so Undo names it.
                 let typing = self.code.has_typing();
                 let undo_label = if typing {
@@ -672,7 +683,7 @@ impl GossiaApp {
                     self.editing.is_none() && self.session.running_procedure().is_none();
                 let undo_text = undo_label
                     .as_ref()
-                    .map_or("Undo".to_owned(), |l| format!("Undo {l}"));
+                    .map_or(tr!("Undo").to_owned(), |l| tr!("Undo {label}", label = l));
                 if ui
                     .add_enabled(
                         undo_label.is_some() && can_change,
@@ -685,7 +696,7 @@ impl GossiaApp {
                 }
                 let redo_text = redo_label
                     .as_ref()
-                    .map_or("Redo".to_owned(), |l| format!("Redo {l}"));
+                    .map_or(tr!("Redo").to_owned(), |l| tr!("Redo {label}", label = l));
                 if ui
                     .add_enabled(
                         redo_label.is_some() && can_change,
@@ -697,11 +708,12 @@ impl GossiaApp {
                     ui.close();
                 }
             });
-            ui.menu_button("View", |ui| {
+            ui.menu_button(tr!("View"), |ui| {
                 let shown = self.code.immediate.open;
                 if ui
                     .add(
-                        egui::Button::selectable(shown, "Immediate window").shortcut_text("Ctrl+G"),
+                        egui::Button::selectable(shown, tr!("Immediate window"))
+                            .shortcut_text("Ctrl+G"),
                     )
                     .clicked()
                 {
@@ -713,20 +725,20 @@ impl GossiaApp {
                     ui.close();
                 }
             });
-            ui.menu_button("Insert", |ui| {
-                if ui.button("Module").clicked() {
+            ui.menu_button(tr!("Insert"), |ui| {
+                if ui.button(tr!("Module")).clicked() {
                     self.insert_module();
                     ui.close();
                 }
             });
-            ui.menu_button("Debug", |ui| {
+            ui.menu_button(tr!("Debug"), |ui| {
                 let module = self.code.current_module().map(str::to_owned);
-                let label = module
-                    .as_ref()
-                    .map_or("Compile".to_owned(), |m| format!("Compile {m}"));
+                let label = module.as_ref().map_or(tr!("Compile").to_owned(), |m| {
+                    tr!("Compile {module}", module = m)
+                });
                 if ui
                     .add_enabled(module.is_some(), egui::Button::new(label))
-                    .on_disabled_hover_text("Open a module to compile it.")
+                    .on_disabled_hover_text(tr!("Open a module to compile it."))
                     .clicked()
                 {
                     if let Some(module) = module {
@@ -742,7 +754,7 @@ impl GossiaApp {
     /// the customised forms of each tab.
     fn explorer(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
-        ui.strong("Project");
+        ui.strong(tr!("Project"));
         ui.separator();
         let names: Vec<String> = self.calc().module_names().map(str::to_owned).collect();
         let shown = self.code.current_tab().map(|t| t.item.clone());
@@ -750,11 +762,11 @@ impl GossiaApp {
             .id_salt("code_explorer_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let header = egui::CollapsingHeader::new("Modules")
+                let header = egui::CollapsingHeader::new(tr!("Modules"))
                     .default_open(true)
                     .show(ui, |ui| {
                         if names.is_empty() {
-                            ui.weak("No modules yet");
+                            ui.weak(tr!("No modules yet"));
                         }
                         for name in &names {
                             let status = self.calc().module_status(name).cloned();
@@ -766,7 +778,7 @@ impl GossiaApp {
                             let response = ui.selectable_label(selected, text);
                             let response = match &status {
                                 Some(ModuleStatus::Failed(why)) => {
-                                    response.on_hover_text(format!("Failed to load: {why}"))
+                                    response.on_hover_text(tr!("Failed to load: {why}", why = why))
                                 }
                                 _ => response,
                             };
@@ -777,26 +789,26 @@ impl GossiaApp {
                         }
                     });
                 header.header_response.context_menu(|ui| {
-                    if ui.button("Insert module").clicked() {
+                    if ui.button(tr!("Insert module")).clicked() {
                         self.insert_module();
                         ui.close();
                     }
-                    if ui.button("Import module...").clicked() {
+                    if ui.button(tr!("Import module...")).clicked() {
                         self.begin_import_module();
                         ui.close();
                     }
                 });
                 self.forms_branch(ui, shown.as_ref());
                 self.reports_branch(ui, shown.as_ref());
-                egui::CollapsingHeader::new("Built in")
+                egui::CollapsingHeader::new(tr!("Built in"))
                     .default_open(true)
                     .show(ui, |ui| {
                         let item = CodeItem::BuiltInCharts;
                         let response = ui
-                            .selectable_label(shown == Some(item), BUILT_IN_CHARTS)
+                            .selectable_label(shown == Some(item), built_in_charts())
                             .on_hover_text(
-                                "The built-in chart types, Bar, Line, Pie, Scatter and Sankey: read-only, \
-                                 to read and copy as the start of a chart type of your own.",
+                                tr!("The built-in chart types, Bar, Line, Pie, Scatter and Sankey: read-only, \
+                                 to read and copy as the start of a chart type of your own."),
                             );
                         if response.clicked() || response.double_clicked() {
                             self.open_built_in_charts();
@@ -808,11 +820,11 @@ impl GossiaApp {
     /// The *Reports* branch: the design of each report tab.
     fn reports_branch(&mut self, ui: &mut egui::Ui, shown: Option<&CodeItem>) {
         let names = self.calc().report_names();
-        egui::CollapsingHeader::new("Reports")
+        egui::CollapsingHeader::new(tr!("Reports"))
             .default_open(true)
             .show(ui, |ui| {
                 if names.is_empty() {
-                    ui.weak("No reports");
+                    ui.weak(tr!("No reports"));
                 }
                 for name in &names {
                     let item = CodeItem::Report(name.clone());
@@ -842,11 +854,11 @@ impl GossiaApp {
             })
             .filter(|(_, names)| !names.is_empty())
             .collect();
-        egui::CollapsingHeader::new("Forms")
+        egui::CollapsingHeader::new(tr!("Forms"))
             .default_open(true)
             .show(ui, |ui| {
                 if forms.is_empty() {
-                    ui.weak("No customised forms");
+                    ui.weak(tr!("No customised forms"));
                 }
                 for (sheet, names) in &forms {
                     egui::CollapsingHeader::new(sheet.as_str())
@@ -871,11 +883,11 @@ impl GossiaApp {
 
     /// The context menu of a module in the explorer.
     fn module_menu(&mut self, ui: &mut egui::Ui, name: &str) {
-        if ui.button("Open").clicked() {
+        if ui.button(tr!("Open")).clicked() {
             self.open_module(name);
             ui.close();
         }
-        if ui.button("Rename...").clicked() {
+        if ui.button(tr!("Rename...")).clicked() {
             self.code.rename = Some(RenameModule {
                 from: name.to_owned(),
                 name: name.to_owned(),
@@ -884,22 +896,22 @@ impl GossiaApp {
             });
             ui.close();
         }
-        if ui.button("Remove...").clicked() {
+        if ui.button(tr!("Remove...")).clicked() {
             self.code.remove = Some(name.to_owned());
             ui.close();
         }
         ui.separator();
-        if ui.button("Export...").clicked() {
+        if ui.button(tr!("Export...")).clicked() {
             self.begin_export_module(name);
             ui.close();
         }
-        if ui.button("Compile").clicked() {
+        if ui.button(tr!("Compile")).clicked() {
             self.open_module(name);
             self.compile_module(name);
             ui.close();
         }
         ui.separator();
-        if ui.button("Insert module").clicked() {
+        if ui.button(tr!("Insert module")).clicked() {
             self.insert_module();
             ui.close();
         }
@@ -909,7 +921,7 @@ impl GossiaApp {
     fn code_pane(&mut self, ui: &mut egui::Ui) {
         if self.code.tabs.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.weak("No module is open. Insert > Module makes one.");
+                ui.weak(tr!("No module is open. Insert > Module makes one."));
             });
             return;
         }
@@ -923,7 +935,7 @@ impl GossiaApp {
                 {
                     self.code.current = i;
                 }
-                let label = format!("Close {title}");
+                let label = tr!("Close {title}", title = title);
                 if crate::icons::button(ui, true, crate::icons::X, "x", &label).clicked() {
                     close = Some(i);
                 }
@@ -960,13 +972,13 @@ impl GossiaApp {
             .map_or("(General)", |(name, _)| name.as_str());
         let mut jump = None;
         ui.horizontal(|ui| {
-            ui.label("Procedure");
+            ui.label(tr!("Procedure"));
             let response = egui::ComboBox::from_id_salt("procedure_box")
                 .selected_text(here)
                 .width(220.0)
                 .show_ui(ui, |ui| {
                     if functions.is_empty() {
-                        ui.weak("No functions");
+                        ui.weak(tr!("No functions"));
                     }
                     for (name, line) in &functions {
                         if ui.selectable_label(name == here, name).clicked() {
@@ -977,7 +989,7 @@ impl GossiaApp {
                 .response;
             response.widget_info(|| {
                 let mut info =
-                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Procedure box");
+                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Procedure box"));
                 info.current_text_value = Some(here.to_owned());
                 info
             });
@@ -1115,7 +1127,7 @@ impl GossiaApp {
                         .desired_rows(30)
                         .layouter(&mut layouter)
                         .show(ui);
-                    named(&output.response, "Code");
+                    named(&output.response, tr!("Code"));
                     if output.response.changed() {
                         if read_only {
                             tab.text = gossia_calc::python::CHARTS.to_owned();
@@ -1170,16 +1182,18 @@ impl GossiaApp {
             let module = match &tab.item {
                 CodeItem::Module(module) => module,
                 CodeItem::BuiltInCharts => {
-                    ui.label(
+                    ui.label(tr!(
                         "The built-in chart types: read-only. Copy a function into a module \
-                         of your own, with a new name in @chart, to start a chart type.",
-                    );
+                         of your own, with a new name in @chart, to start a chart type."
+                    ));
                     return;
                 }
                 CodeItem::Form { .. } | CodeItem::Report(_) => {
                     let title = match &tab.item {
-                        CodeItem::Form { sheet, form } => format!("Form {form} of {sheet}"),
-                        item => format!("Report {}", item.title()),
+                        CodeItem::Form { sheet, form } => {
+                            tr!("Form {form} of {sheet}", form = form, sheet = sheet)
+                        }
+                        item => tr!("Report {title}", title = item.title()),
                     };
                     if tab.typed_at.is_some() {
                         ui.label(format!("{title}: waiting for typing to pause..."));
@@ -1232,14 +1246,14 @@ impl GossiaApp {
         };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
-        egui::Window::new(format!("Rename module {}", dialog.from))
+        egui::Window::new(tr!("Rename module {from}", from = dialog.from))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label("New name");
+                ui.label(tr!("New name"));
                 let response = ui.text_edit_singleline(&mut dialog.name);
-                named(&response, "Module name");
+                named(&response, tr!("Module name"));
                 if !dialog.focused {
                     response.request_focus();
                     select_all(ui, &response, &dialog.name);
@@ -1254,15 +1268,15 @@ impl GossiaApp {
                 if let Some(why) = problem.as_ref().or(dialog.error.as_ref()) {
                     ui.colored_label(error_color(ui), why);
                 }
-                ui.label(
+                ui.label(tr!(
                     "Formulas that use the old name will show #NAME! until they are \
-                     changed; names in formulas are not rewritten.",
-                );
+                     changed; names in formulas are not rewritten."
+                ));
                 ui.horizontal(|ui| {
                     apply |= ui
-                        .add_enabled(problem.is_none(), egui::Button::new("Rename"))
+                        .add_enabled(problem.is_none(), egui::Button::new(tr!("Rename")))
                         .clicked();
-                    cancel |= ui.button("Cancel").clicked();
+                    cancel |= ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply && problem.is_none() {
@@ -1282,21 +1296,22 @@ impl GossiaApp {
         };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
-        egui::Window::new(format!("Remove module {name}"))
+        egui::Window::new(tr!("Remove module {name}", name = name))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!(
+                ui.label(tr!(
                     "Formulas that use {name} or its functions will show #NAME! until it is \
-                     back. Edit > Undo puts it back."
+                     back. Edit > Undo puts it back.",
+                    name = name
                 ));
                 if ui.input(|i| i.key_pressed(Key::Escape)) {
                     cancel = true;
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Remove").clicked();
-                    cancel |= ui.button("Cancel").clicked();
+                    apply = ui.button(tr!("Remove")).clicked();
+                    cancel |= ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply {

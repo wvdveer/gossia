@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use gossia_calc::{Ceilings, Setting, Unit, WorkbookSettings};
 
+use gossia_i18n::tr;
+
 use crate::app::GossiaApp;
 use crate::prefs::{
     Appearance, CODE_FONT_RANGE, COLUMN_WIDTH_RANGE, COMMENT_DELAY_RANGE, COMMENT_HEIGHT_RANGE,
@@ -55,16 +57,16 @@ impl Page {
 
     pub fn label(self) -> &'static str {
         match self {
-            Page::General => "General",
-            Page::Display => "Display",
-            Page::Editing => "Editing",
-            Page::CodeEditor => "Code editor",
-            Page::Evaluation => "Evaluation",
-            Page::DataSources => "Data sources",
-            Page::Reports => "Reports",
-            Page::Trust => "Trust and security",
-            Page::Files => "Files and import",
-            Page::About => "About",
+            Page::General => tr!("General"),
+            Page::Display => tr!("Display"),
+            Page::Editing => tr!("Editing"),
+            Page::CodeEditor => tr!("Code editor"),
+            Page::Evaluation => tr!("Evaluation"),
+            Page::DataSources => tr!("Data sources"),
+            Page::Reports => tr!("Reports"),
+            Page::Trust => tr!("Trust and security"),
+            Page::Files => tr!("Files and import"),
+            Page::About => tr!("About"),
         }
     }
 
@@ -162,12 +164,12 @@ impl Shown {
     pub fn parse(self, text: &str) -> Result<u64, String> {
         let text = text.trim().replace('_', "");
         if text.is_empty() {
-            return Err("Give a number.".to_owned());
+            return Err(tr!("Give a number.").to_owned());
         }
         if let Ok(n) = text.parse::<u64>() {
             return n
                 .checked_mul(self.scale())
-                .ok_or_else(|| "The number is too large.".to_owned());
+                .ok_or_else(|| tr!("The number is too large.").to_owned());
         }
         if self.scale() > 1
             && let Ok(x) = text.parse::<f64>()
@@ -178,12 +180,12 @@ impl Shown {
             if value < u64::MAX as f64 {
                 return Ok(value as u64);
             }
-            return Err("The number is too large.".to_owned());
+            return Err(tr!("The number is too large.").to_owned());
         }
         Err(if self.scale() > 1 {
-            "Give a number, such as 2 or 0.5.".to_owned()
+            tr!("Give a number, such as 2 or 0.5.").to_owned()
         } else {
-            "Give a whole number.".to_owned()
+            tr!("Give a whole number.").to_owned()
         })
     }
 }
@@ -250,23 +252,23 @@ impl Field {
     pub fn label(self) -> &'static str {
         match self {
             Field::Workbook(s) | Field::Ceiling(s) => s.label(),
-            Field::Scale => "Interface scale",
-            Field::TreeIndent => "Indentation per level",
-            Field::ColumnWidth => "Default column width",
-            Field::CommentDelay => "Hover delay",
-            Field::CommentWidth => "Largest popup width",
-            Field::CommentHeight => "Largest popup height",
-            Field::FormulaBarLines => "Most lines before it scrolls",
-            Field::UndoEntries => "Most entries kept",
-            Field::UndoWeight => "Memory budget (rough units)",
-            Field::CodeFontSize => "Font size",
-            Field::IndentWidth => "Indent width (spaces)",
-            Field::ImmediateEntries => "History entries kept",
-            Field::ImmediateOutput => "Largest result shown",
-            Field::ZipEntries => "Most entries in a workbook",
-            Field::TotalBytes => "Largest workbook, uncompressed",
-            Field::EntryBytes => "Largest entry, uncompressed",
-            Field::ImportBytes => "Largest file imported",
+            Field::Scale => tr!("Interface scale"),
+            Field::TreeIndent => tr!("Indentation per level"),
+            Field::ColumnWidth => tr!("Default column width"),
+            Field::CommentDelay => tr!("Hover delay"),
+            Field::CommentWidth => tr!("Largest popup width"),
+            Field::CommentHeight => tr!("Largest popup height"),
+            Field::FormulaBarLines => tr!("Most lines before it scrolls"),
+            Field::UndoEntries => tr!("Most entries kept"),
+            Field::UndoWeight => tr!("Memory budget (rough units)"),
+            Field::CodeFontSize => tr!("Font size"),
+            Field::IndentWidth => tr!("Indent width (spaces)"),
+            Field::ImmediateEntries => tr!("History entries kept"),
+            Field::ImmediateOutput => tr!("Largest result shown"),
+            Field::ZipEntries => tr!("Most entries in a workbook"),
+            Field::TotalBytes => tr!("Largest workbook, uncompressed"),
+            Field::EntryBytes => tr!("Largest entry, uncompressed"),
+            Field::ImportBytes => tr!("Largest file imported"),
         }
     }
 
@@ -382,6 +384,8 @@ pub struct OptionsDialog {
     /// whose text was not changed keeps its exact value.
     start: BTreeMap<Field, u64>,
     pub theme: ThemeChoice,
+    /// The language chosen; none follows the system's.
+    pub language: Option<gossia_i18n::Language>,
     /// The trusted workbooks to forget on OK.
     pub revoke: BTreeSet<String>,
     /// The Display page's choices.
@@ -415,6 +419,7 @@ impl OptionsDialog {
             texts,
             start,
             theme: prefs.appearance.theme,
+            language: prefs.appearance.language,
             revoke: BTreeSet::new(),
             density: prefs.display.density,
             type_column: prefs.display.type_column,
@@ -438,10 +443,16 @@ impl OptionsDialog {
         let value = field.shown().parse(text)?;
         let (low, high) = field.range();
         if value < low {
-            return Err(format!("The smallest allowed is {}.", field.with_unit(low)));
+            return Err(tr!(
+                "The smallest allowed is {value}.",
+                value = field.with_unit(low)
+            ));
         }
         if value > high {
-            return Err(format!("The largest allowed is {}.", field.with_unit(high)));
+            return Err(tr!(
+                "The largest allowed is {value}.",
+                value = field.with_unit(high)
+            ));
         }
         Ok(value)
     }
@@ -473,6 +484,7 @@ impl OptionsDialog {
             scale_percent: self
                 .value(Field::Scale)
                 .unwrap_or(self.start[&Field::Scale]),
+            language: self.language,
         }
     }
 
@@ -568,7 +580,7 @@ impl GossiaApp {
             self.user.keep_immediate()
         };
         if let Err(e) = kept {
-            self.notice = Some(format!("The Immediate window's history: {e}"));
+            self.notice = Some(tr!("The Immediate window's history: {error}", error = e));
         }
         if !dialog.revoke.is_empty() {
             let revoke = dialog.revoke.clone();
@@ -636,17 +648,21 @@ impl GossiaApp {
         if want.scale_percent != before.scale_percent {
             ctx.set_zoom_factor(want.scale_percent as f32 / 100.0);
         }
+        // The language at the start is set before the window opens (from
+        // the preferences, or the host's); here it follows a change.
+        if want.language != before.language {
+            gossia_i18n::set_language(self.language_for(want.language));
+        }
+        self.apply_cjk_font(ctx);
         self.appearance_applied = Some(want);
     }
 
     /// *Save and restart*: saves the workbook and gives the file to open in
     /// the new process. A workbook without a file is not saved.
     pub fn save_for_restart(&mut self) -> Result<PathBuf, String> {
-        let path = self
-            .doc
-            .path
-            .clone()
-            .ok_or("the workbook has no file yet: save it with Save As first")?;
+        let path = self.doc.path.clone().ok_or(tr!(
+            "the workbook has no file yet: save it with Save As first"
+        ))?;
         self.save()?;
         Ok(path)
     }
@@ -657,7 +673,7 @@ impl GossiaApp {
             std::process::Command::new(exe)
                 .arg(path)
                 .spawn()
-                .map_err(|e| format!("Gossia could not be started again: {e}"))
+                .map_err(|e| tr!("Gossia could not be started again: {error}", error = e))
         });
         match started {
             Ok(_) => {
@@ -676,7 +692,7 @@ impl GossiaApp {
         };
         let (mut ok, mut cancel, mut restart, mut open) = (false, false, false, true);
         let problems = dialog.problems();
-        egui::Window::new("Gossia Options")
+        egui::Window::new(tr!("Gossia Options"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -709,9 +725,9 @@ impl GossiaApp {
                         if dialog.page != Page::About {
                             ui.heading(dialog.page.label());
                             ui.weak(if dialog.page.is_workbook() {
-                                "Applies to this workbook, and is stored in it."
+                                tr!("Applies to this workbook, and is stored in it.")
                             } else {
-                                "Applies to all workbooks, and is stored for you."
+                                tr!("Applies to all workbooks, and is stored for you.")
                             });
                             ui.add_space(6.0);
                         }
@@ -735,9 +751,9 @@ impl GossiaApp {
                 ui.colored_label(error_color(ui), why);
                 ui.horizontal(|ui| {
                     ok = ui
-                        .add_enabled(problems.is_empty(), egui::Button::new("OK"))
+                        .add_enabled(problems.is_empty(), egui::Button::new(tr!("OK")))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 let (enter, escape) = ui.input(|i| {
                     (
@@ -770,8 +786,8 @@ impl GossiaApp {
         let mut restart = false;
         match dialog.page {
             Page::General => {
-                section(ui, "Appearance", |ui| {
-                    ui.label("Theme");
+                section(ui, tr!("Appearance"), |ui| {
+                    ui.label(tr!("Theme"));
                     ui.horizontal(|ui| {
                         for theme in ThemeChoice::ALL {
                             if ui.radio(dialog.theme == theme, theme.label()).clicked() {
@@ -781,16 +797,39 @@ impl GossiaApp {
                     });
                     ui.end_row();
                     number(ui, dialog, Field::Scale, None);
+                    ui.label(tr!("Language"));
+                    let system = self.language_for(None);
+                    let follow = tr!(
+                        "Follow system ({language})",
+                        language = system.native_name()
+                    );
+                    let shown = dialog
+                        .language
+                        .map_or(follow.clone(), |l| l.native_name().to_owned());
+                    let combo = egui::ComboBox::from_id_salt("options_language")
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut dialog.language, None, follow);
+                            for language in gossia_i18n::Language::ALL {
+                                ui.selectable_value(
+                                    &mut dialog.language,
+                                    Some(language),
+                                    language.native_name(),
+                                );
+                            }
+                        });
+                    crate::view::named(&combo.response, tr!("Language"));
+                    ui.end_row();
                 });
                 note(
                     ui,
-                    "The font of the data views belongs to each workbook: View > Font.",
+                    tr!("The font of the data views belongs to each workbook: View > Font."),
                 );
             }
             Page::Display => {
-                section(ui, "Tree grid", |ui| {
+                section(ui, tr!("Tree grid"), |ui| {
                     number(ui, dialog, Field::TreeIndent, None);
-                    ui.label("Row density");
+                    ui.label(tr!("Row density"));
                     ui.horizontal(|ui| {
                         for density in Density::ALL {
                             if ui
@@ -803,67 +842,72 @@ impl GossiaApp {
                     });
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut dialog.type_column, "Show the Type column");
+                    ui.checkbox(&mut dialog.type_column, tr!("Show the Type column"));
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut dialog.formula_column, "Show the Formula column");
+                    ui.checkbox(&mut dialog.formula_column, tr!("Show the Formula column"));
                     ui.end_row();
                 });
-                section(ui, "Tabular view", |ui| {
+                section(ui, tr!("Tabular view"), |ui| {
                     number(ui, dialog, Field::ColumnWidth, None);
                 });
-                section(ui, "Comments", |ui| {
+                section(ui, tr!("Comments"), |ui| {
                     number(ui, dialog, Field::CommentDelay, None);
                     number(ui, dialog, Field::CommentWidth, None);
                     number(ui, dialog, Field::CommentHeight, None);
                 });
                 note(
                     ui,
-                    "The row density applies to the tabular view too. A column keeps the width \
-                     it was dragged to.",
+                    tr!(
+                        "The row density applies to the tabular view too. A column keeps the width \
+                     it was dragged to."
+                    ),
                 );
             }
             Page::Editing => {
-                section(ui, "Undo history", |ui| {
+                section(ui, tr!("Undo history"), |ui| {
                     number(ui, dialog, Field::UndoEntries, None);
                     number(ui, dialog, Field::UndoWeight, None);
                 });
-                section(ui, "Formula bar", |ui| {
+                section(ui, tr!("Formula bar"), |ui| {
                     number(ui, dialog, Field::FormulaBarLines, None);
                 });
             }
             Page::CodeEditor => {
-                section(ui, "Editor", |ui| {
-                    ui.label("Font");
+                section(ui, tr!("Editor"), |ui| {
+                    ui.label(tr!("Font"));
                     ui.label("Geist Mono");
                     ui.end_row();
                     number(ui, dialog, Field::CodeFontSize, None);
                     number(ui, dialog, Field::IndentWidth, None);
                     ui.label("");
-                    ui.checkbox(&mut dialog.line_numbers, "Show line numbers");
+                    ui.checkbox(&mut dialog.line_numbers, tr!("Show line numbers"));
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut dialog.highlighting, "Syntax highlighting");
+                    ui.checkbox(&mut dialog.highlighting, tr!("Syntax highlighting"));
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut dialog.wrap, "Wrap long lines");
+                    ui.checkbox(&mut dialog.wrap, tr!("Wrap long lines"));
                     ui.end_row();
                 });
-                section(ui, "Immediate window", |ui| {
+                section(ui, tr!("Immediate window"), |ui| {
                     number(ui, dialog, Field::ImmediateEntries, None);
                     number(ui, dialog, Field::ImmediateOutput, None);
-                    ui.label("History");
+                    ui.label(tr!("History"));
                     ui.horizontal(|ui| {
                         let kept = self.user.immediate.len();
                         if dialog.clear_history {
                             ui.label(format!("{kept} entries, cleared on OK"));
-                            if ui.small_button("Keep history").clicked() {
+                            if ui.small_button(tr!("Keep history")).clicked() {
                                 dialog.clear_history = false;
                             }
                         } else {
                             ui.label(format!("{kept} entries"));
                             if ui
-                                .add_enabled(kept > 0, egui::Button::new("Clear history").small())
+                                .add_enabled(
+                                    kept > 0,
+                                    egui::Button::new(tr!("Clear history")).small(),
+                                )
                                 .clicked()
                             {
                                 dialog.clear_history = true;
@@ -874,13 +918,15 @@ impl GossiaApp {
                 });
                 note(
                     ui,
-                    "The history is kept for you, not in the workbook, in immediate-history.json \
-                     beside the preferences.",
+                    tr!(
+                        "The history is kept for you, not in the workbook, in immediate-history.json \
+                     beside the preferences."
+                    ),
                 );
             }
             Page::Evaluation => {
                 let ceilings = dialog.ceilings();
-                section(ui, "Time limits", |ui| {
+                section(ui, tr!("Time limits"), |ui| {
                     for s in [
                         Setting::FormulaTimeLimit,
                         Setting::ProcedureTimeLimit,
@@ -889,7 +935,7 @@ impl GossiaApp {
                         number(ui, dialog, Field::Workbook(s), Some(ceilings.get(s)));
                     }
                 });
-                section(ui, "Cancellation", |ui| {
+                section(ui, tr!("Cancellation"), |ui| {
                     number(
                         ui,
                         dialog,
@@ -908,24 +954,24 @@ impl GossiaApp {
                         Some(ceilings.get(Setting::MaxAbandoned)),
                     );
                     let abandoned = self.session.status().abandoned;
-                    ui.label("Abandoned now");
+                    ui.label(tr!("Abandoned now"));
                     ui.horizontal(|ui| {
                         ui.label(abandoned.to_string());
                         let can = self.doc.path.is_some();
                         restart = ui
-                            .add_enabled(can, egui::Button::new("Save and restart"))
-                            .on_hover_text(
+                            .add_enabled(can, egui::Button::new(tr!("Save and restart")))
+                            .on_hover_text(tr!(
                                 "Saves the workbook and starts Gossia again, which ends the \
-                                 abandoned threads.",
-                            )
-                            .on_disabled_hover_text(
-                                "The workbook has no file yet: save it with Save As first.",
-                            )
+                                 abandoned threads."
+                            ))
+                            .on_disabled_hover_text(tr!(
+                                "The workbook has no file yet: save it with Save As first."
+                            ))
                             .clicked();
                     });
                     ui.end_row();
                 });
-                section(ui, "Guards", |ui| {
+                section(ui, tr!("Guards"), |ui| {
                     number(
                         ui,
                         dialog,
@@ -936,67 +982,73 @@ impl GossiaApp {
             }
             Page::DataSources => {
                 let ceilings = dialog.ceilings();
-                section(ui, "Limits", |ui| {
+                section(ui, tr!("Limits"), |ui| {
                     for s in [Setting::SourceTimeout, Setting::MaxResponse] {
                         number(ui, dialog, Field::Workbook(s), Some(ceilings.get(s)));
                     }
                 });
                 note(
                     ui,
-                    "Data sources are not part of this version yet; these limits are kept for \
-                     them.",
+                    tr!(
+                        "Data sources are not part of this version yet; these limits are kept for \
+                     them."
+                    ),
                 );
             }
             Page::Reports => {
                 let ceilings = dialog.ceilings();
-                section(ui, "Limits", |ui| {
+                section(ui, tr!("Limits"), |ui| {
                     for s in [Setting::MaxDetailRows, Setting::MaxChartSvg] {
                         number(ui, dialog, Field::Workbook(s), Some(ceilings.get(s)));
                     }
                 });
-                group(ui, "Storage", |ui| {
+                group(ui, tr!("Storage"), |ui| {
                     ui.checkbox(
                         &mut dialog.keep_report_results,
-                        "Keep report results in the file",
+                        tr!("Keep report results in the file"),
                     )
-                    .on_hover_text(
+                    .on_hover_text(tr!(
                         "Each report keeps the values of its last run in the workbook, so it \
                              is drawn at once when the workbook is opened, and from them when it \
-                             is not trusted.",
-                    );
+                             is not trusted."
+                    ));
                 });
                 note(
                     ui,
-                    "Off, a report keeps only its parameters: the file stays small and holds no \
-                     copies of report data, and the report is calculated again when it is shown.",
+                    tr!(
+                        "Off, a report keeps only its parameters: the file stays small and holds no \
+                     copies of report data, and the report is calculated again when it is shown."
+                    ),
                 );
             }
             Page::Trust => {
-                group(ui, "Trusted workbooks", |ui| {
+                group(ui, tr!("Trusted workbooks"), |ui| {
                     self.trusted_list(ui, dialog);
                 });
-                section(ui, "Ceilings", |ui| {
+                section(ui, tr!("Ceilings"), |ui| {
                     for s in Setting::ALL {
                         number(ui, dialog, Field::Ceiling(s), None);
                     }
                 });
                 note(
                     ui,
-                    "A workbook's setting is used only up to its ceiling, whatever the workbook \
-                     asks for.",
+                    tr!(
+                        "A workbook's setting is used only up to its ceiling, whatever the workbook \
+                     asks for."
+                    ),
                 );
             }
             Page::Files => {
-                section(ui, "Reading files", |ui| {
+                section(ui, tr!("Reading files"), |ui| {
                     number(ui, dialog, Field::ZipEntries, None);
                     number(ui, dialog, Field::TotalBytes, None);
                     number(ui, dialog, Field::EntryBytes, None);
                 });
-                section(ui, "Import", |ui| {
+                section(ui, tr!("Import"), |ui| {
                     number(ui, dialog, Field::ImportBytes, None);
                 });
-                section(ui, "COBOL records", |ui| {
-                    ui.label("Copy as");
+                section(ui, tr!("COBOL records"), |ui| {
+                    ui.label(tr!("Copy as"));
                     ui.vertical(|ui| {
                         for kind in gossia_core::binary::BinaryText::ALL {
                             if ui.radio(dialog.binary_copy == kind, kind.label()).clicked() {
@@ -1023,22 +1075,22 @@ impl GossiaApp {
     fn trusted_list(&self, ui: &mut egui::Ui, dialog: &mut OptionsDialog) {
         let ids: Vec<String> = self.user.trust.ids().map(str::to_owned).collect();
         if ids.is_empty() {
-            ui.weak("No workbooks are trusted.");
+            ui.weak(tr!("No workbooks are trusted."));
             return;
         }
         for id in ids {
             let name = match self.user.trust_files.get(&id) {
                 Some(path) => path.display().to_string(),
-                None => format!("A workbook with no file (id {id})"),
+                None => tr!("A workbook with no file (id {id})", id = id),
             };
             let this = id == self.doc.workbook_id;
             ui.horizontal(|ui| {
                 let revoked = dialog.revoke.contains(&id);
                 if revoked {
-                    if ui.small_button("Keep").clicked() {
+                    if ui.small_button(tr!("Keep")).clicked() {
                         dialog.revoke.remove(&id);
                     }
-                } else if ui.small_button("Revoke").clicked() {
+                } else if ui.small_button(tr!("Revoke")).clicked() {
                     dialog.revoke.insert(id.clone());
                 }
                 // A long path is cut to the width of the page; all of it on hover.
@@ -1050,7 +1102,10 @@ impl GossiaApp {
                     .on_hover_text(&name);
             });
             if this {
-                note(ui, "Open now: a revoke applies when it is next opened.");
+                note(
+                    ui,
+                    tr!("Open now: a revoke applies when it is next opened."),
+                );
             }
         }
     }
@@ -1060,29 +1115,29 @@ impl GossiaApp {
 /// third-party libraries with their versions and licences.
 fn about_page(ui: &mut egui::Ui) {
     ui.label(egui::RichText::new("Gossia").size(26.0).strong());
-    ui.label(format!("Version {}", gossia_calc::VERSION));
+    ui.label(tr!("Version {version}", version = gossia_calc::VERSION));
     ui.add_space(6.0);
     ui.add(
-        egui::Label::new(
+        egui::Label::new(tr!(
             "Workbooks of JSON and XML: each tab is a tree defined by a JSON Schema or an \
              XML Schema instead of a grid, and cells can hold Python formulas whose results \
-             must match the schema.",
-        )
+             must match the schema."
+        ))
         .wrap(),
     );
     ui.add_space(6.0);
-    ui.label("Licensed under the Apache License, Version 2.0.");
+    ui.label(tr!("Licensed under the Apache License, Version 2.0."));
     ui.hyperlink(env!("CARGO_PKG_REPOSITORY"));
     ui.add_space(8.0);
-    group(ui, "Third-party libraries", |ui| {
+    group(ui, tr!("Third-party libraries"), |ui| {
         egui::Grid::new("about_libraries")
             .num_columns(3)
             .striped(true)
             .spacing([16.0, 4.0])
             .show(ui, |ui| {
-                ui.strong("Library");
-                ui.strong("Version");
-                ui.strong("Licence");
+                ui.strong(tr!("Library"));
+                ui.strong(tr!("Version"));
+                ui.strong(tr!("Licence"));
                 ui.end_row();
                 for (name, version, licence) in LIBRARIES {
                     ui.label(*name);
@@ -1093,7 +1148,7 @@ fn about_page(ui: &mut egui::Ui) {
                             "{version} ({})",
                             revision.get(..12).unwrap_or(revision)
                         ))
-                        .on_hover_text(format!("Revision {revision}"));
+                        .on_hover_text(tr!("Revision {revision}", revision = revision));
                     } else {
                         ui.label(*version);
                     }
@@ -1104,8 +1159,10 @@ fn about_page(ui: &mut egui::Ui) {
     });
     note(
         ui,
-        "Fonts: Inter, Geist Mono, Source Serif 4, Oswald, Dancing Script and Caveat, under \
-         the SIL Open Font License; the Phosphor icons, under the MIT License.",
+        tr!(
+            "Fonts: Inter, Geist Mono, Source Serif 4, Oswald, Dancing Script and Caveat, under \
+         the SIL Open Font License; the Phosphor icons, under the MIT License."
+        ),
     );
 }
 
@@ -1160,8 +1217,8 @@ fn number(ui: &mut egui::Ui, dialog: &mut OptionsDialog, field: Field, ceiling: 
         ui.weak(format!("default {}", field.with_unit(default)));
         let at_default = dialog.value(field) == Ok(default);
         if ui
-            .add_enabled(!at_default, egui::Button::new("Reset").small())
-            .on_hover_text("Reset to default")
+            .add_enabled(!at_default, egui::Button::new(tr!("Reset")).small())
+            .on_hover_text(tr!("Reset to default"))
             .clicked()
         {
             dialog.reset(field);

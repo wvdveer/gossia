@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+gossia-i18n.workspace = true
 gossia-core.workspace = true
 gossia-std.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }

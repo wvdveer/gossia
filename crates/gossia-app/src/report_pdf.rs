@@ -9,6 +9,7 @@
 //! results cache has, which the dialog says. The file is written
 //! atomically, by `gossia-report`, from the same layout the tab draws.
 
+use gossia_i18n::tr;
 use std::path::{Path, PathBuf};
 
 use crate::app::GossiaApp;
@@ -78,7 +79,7 @@ impl GossiaApp {
 
     pub(crate) fn begin_report_export(&mut self, tab: &str, format: ReportFormat, print: bool) {
         if self.calc().report(tab).is_none() {
-            self.notice = Some(format!("there is no report {tab}"));
+            self.notice = Some(tr!("there is no report {tab}", tab = tab));
             return;
         }
         if self.sheet != tab {
@@ -122,7 +123,11 @@ impl GossiaApp {
         }
         if self.files.browse {
             self.files.browser = crate::workbook_file::new_browser()
-                .title(&format!("Export {} as {}", export.tab, format.name()))
+                .title(&tr!(
+                    "Export {tab} as {kind}",
+                    tab = export.tab,
+                    kind = format.name()
+                ))
                 .initial_directory(self.start_folder())
                 .default_file_name(&name)
                 .add_save_extension(format.name(), format.extension())
@@ -144,7 +149,7 @@ impl GossiaApp {
         let export = self
             .pdf_export
             .as_mut()
-            .ok_or("there is nothing to export")?;
+            .ok_or(tr!("there is nothing to export"))?;
         let path = if path.extension().is_some() {
             path.to_path_buf()
         } else {
@@ -152,9 +157,9 @@ impl GossiaApp {
         };
         let missing = self.session.calc().missing_params(&export.tab);
         if !missing.is_empty() {
-            return Err(format!(
-                "Fill in {} to export the report.",
-                crate::report_params::and_list(&missing)
+            return Err(tr!(
+                "Fill in {params} to export the report.",
+                params = gossia_i18n::and_list(&missing)
             ));
         }
         export.error = None;
@@ -256,9 +261,9 @@ impl GossiaApp {
         let print = export.print;
         let (mut choose, mut cancel, mut open) = (false, false, true);
         let title = if print {
-            format!("Print {}", export.tab)
+            tr!("Print {tab}", tab = export.tab)
         } else {
-            format!("Export {} as {kind}", export.tab)
+            tr!("Export {tab} as {kind}", tab = export.tab, kind = kind)
         };
         egui::Window::new(title)
             .open(&mut open)
@@ -267,14 +272,14 @@ impl GossiaApp {
             .min_width(380.0)
             .show(ctx, |ui| {
                 if print {
-                    ui.label(
+                    ui.label(tr!(
                         "Opens the report as a PDF in your PDF program, where you print it \
-                         and choose the printer.",
-                    );
+                         and choose the printer."
+                    ));
                 }
                 ui.label(match (multipage, html) {
                     (true, false) => {
-                        "Each page on the paper of the page setup, as the page view shows it."
+                        tr!("Each page on the paper of the page setup, as the page view shows it.")
                     }
                     (true, true) => {
                         "Each page as the page view shows it, in one file with no scripts; \
@@ -290,19 +295,22 @@ impl GossiaApp {
                     }
                 });
                 if has_params {
-                    ui.weak("With the parameter values in the parameter bar.");
+                    ui.weak(tr!("With the parameter values in the parameter bar."));
                 }
                 match &untrusted {
                     Some(Some(time)) => {
-                        ui.weak(format!(
+                        ui.weak(tr!(
                             "This workbook is not trusted, so nothing runs: the {kind} has the \
-                             results calculated on {time}."
+                             results calculated on {time}.",
+                            kind = kind,
+                            time = time
                         ));
                     }
                     Some(None) => {
-                        ui.weak(format!(
+                        ui.weak(tr!(
                             "This workbook is not trusted, so nothing runs, and no results of \
-                             the report were kept: the {kind} shows #UNTRUSTED! in their place."
+                             the report were kept: the {kind} shows #UNTRUSTED! in their place.",
+                            kind = kind
                         ));
                     }
                     None => {}
@@ -310,17 +318,18 @@ impl GossiaApp {
                 if !missing.is_empty() {
                     ui.colored_label(
                         crate::view::error_color(ui),
-                        format!(
-                            "Fill in {} to export the report.",
-                            crate::report_params::and_list(&missing)
+                        tr!(
+                            "Fill in {params} to export the report.",
+                            params = gossia_i18n::and_list(&missing)
                         ),
                     );
                 }
                 if export.waiting.is_some() {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!(
-                            "Calculating the report: the {kind} is written when it is done."
+                        ui.label(tr!(
+                            "Calculating the report: the {kind} is written when it is done.",
+                            kind = kind
                         ));
                     });
                 }
@@ -330,18 +339,22 @@ impl GossiaApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let ready = missing.is_empty() && export.waiting.is_none();
-                    let button = if print { "Print..." } else { "Export..." };
+                    let button = if print {
+                        tr!("Print...")
+                    } else {
+                        tr!("Export...")
+                    };
                     let response = ui.add_enabled(ready, egui::Button::new(button));
                     named(
                         &response,
                         match (print, html) {
-                            (true, _) => "Print report",
-                            (false, true) => "Export HTML",
-                            (false, false) => "Export PDF",
+                            (true, _) => tr!("Print report"),
+                            (false, true) => tr!("Export HTML"),
+                            (false, false) => tr!("Export PDF"),
                         },
                     );
                     choose = response.clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;

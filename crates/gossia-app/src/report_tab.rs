@@ -7,6 +7,7 @@
 
 use gossia_core::Path;
 use gossia_core::report::{self, ReportDesign, ReportKind};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 
@@ -60,7 +61,7 @@ impl GossiaApp {
                 let spec = self
                     .calc()
                     .spec(tab)
-                    .ok_or_else(|| format!("there is no tab {tab}"))?;
+                    .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
                 report::starting_design(spec, tab, path)
                     .ok_or_else(|| format!("{tab} has no array at {path}"))?
             }
@@ -97,60 +98,60 @@ impl GossiaApp {
     pub(crate) fn report_menu_items(&mut self, ui: &mut egui::Ui, tab: &str) {
         let can_change = self.editing.is_none() && self.session.running_procedure().is_none();
         ui.add_enabled_ui(can_change, |ui| {
-            if ui.button("New tab...").clicked() {
+            if ui.button(tr!("New tab...")).clicked() {
                 self.begin_new_tab();
                 ui.close();
             }
-            if ui.button("New report...").clicked() {
+            if ui.button(tr!("New report...")).clicked() {
                 self.begin_new_report();
                 ui.close();
             }
-            if ui.button("Import...").clicked() {
+            if ui.button(tr!("Import...")).clicked() {
                 self.begin_import();
                 ui.close();
             }
             ui.separator();
             let mut on = tab == self.sheet && self.layout_active();
-            if ui.checkbox(&mut on, "Edit report").clicked() {
+            if ui.checkbox(&mut on, tr!("Edit report")).clicked() {
                 self.switch_to(tab);
                 self.set_layout(on);
                 ui.close();
             }
-            if ui.button("Export as PDF...").clicked() {
+            if ui.button(tr!("Export as PDF...")).clicked() {
                 self.begin_export_pdf(tab);
                 ui.close();
             }
-            if ui.button("Export as HTML...").clicked() {
+            if ui.button(tr!("Export as HTML...")).clicked() {
                 self.begin_export_html(tab);
                 ui.close();
             }
-            if crate::host::current().is_none() && ui.button("Print...").clicked() {
+            if crate::host::current().is_none() && ui.button(tr!("Print...")).clicked() {
                 self.begin_print(tab);
                 ui.close();
             }
             let saved = self.doc.path.is_some();
             let copy = ui
-                .add_enabled(saved, egui::Button::new("Copy batch command"))
+                .add_enabled(saved, egui::Button::new(tr!("Copy batch command")))
                 .on_hover_text(
-                    "Copies a command line that writes this report as a PDF with bidwillii,                      with the parameter values chosen and the workbook's trust digest",
+                    tr!("Copies a command line that writes this report as a PDF with bidwillii, with the parameter values chosen and the workbook's trust digest"),
                 )
-                .on_disabled_hover_text("Save the workbook first: the command runs its file");
+                .on_disabled_hover_text(tr!("Save the workbook first: the command runs its file"));
             if copy.clicked() {
                 self.copy_batch_command(tab);
                 ui.close();
             }
             ui.separator();
-            if ui.button("Rename tab...").clicked() {
+            if ui.button(tr!("Rename tab...")).clicked() {
                 self.begin_rename_tab(tab);
                 ui.close();
             }
-            if ui.button("Duplicate").clicked() {
+            if ui.button(tr!("Duplicate")).clicked() {
                 if let Err(why) = self.duplicate_report_tab(tab) {
                     self.notice = Some(why);
                 }
                 ui.close();
             }
-            if ui.button("Delete tab...").clicked() {
+            if ui.button(tr!("Delete tab...")).clicked() {
                 self.begin_delete_tab(tab);
                 ui.close();
             }
@@ -164,7 +165,8 @@ impl GossiaApp {
             Ok((command, note)) => {
                 self.tables.to_clipboard = Some(command);
                 self.notice = Some(format!(
-                    "Copied the command that writes {tab} as a PDF.{}",
+                    "{}{}",
+                    tr!("Copied the command that writes {tab} as a PDF.", tab = tab),
                     note.map(|n| format!(" {n}")).unwrap_or_default()
                 ));
             }
@@ -182,12 +184,12 @@ impl GossiaApp {
         let calc = self.calc();
         let design = calc
             .report(tab)
-            .ok_or_else(|| format!("there is no report {tab}"))?;
+            .ok_or_else(|| tr!("there is no report {tab}", tab = tab))?;
         let file = self
             .doc
             .path
             .clone()
-            .ok_or("Save the workbook first: the command runs its file.")?;
+            .ok_or(tr!("Save the workbook first: the command runs its file."))?;
         let file = std::path::absolute(&file).unwrap_or(file);
         let saved = crate::file::saved_digest(&file, &self.user.prefs.limits)?;
         let program = std::env::current_exe()
@@ -226,7 +228,7 @@ impl GossiaApp {
         words.push("--trust-digest".to_owned());
         words.push(saved.clone());
         let note = (saved != calc.fingerprint().hash).then(|| {
-            "The workbook has unsaved changes to its formulas, modules or reports; the              command runs the file as it was saved."
+            tr!("The workbook has unsaved changes to its formulas, modules or reports; the command runs the file as it was saved.")
                 .to_owned()
         });
         let command = words.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");

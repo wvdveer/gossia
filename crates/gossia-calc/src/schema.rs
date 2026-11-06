@@ -10,6 +10,7 @@
 
 use gossia_core::xml::XmlDocument;
 use gossia_core::{Kind, TypeId, jsonschema, metaschema, xsd};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use super::xsd_fields::XsdChange;
@@ -63,14 +64,14 @@ impl FieldKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            FieldKind::Text => "text",
-            FieldKind::Integer => "whole number",
-            FieldKind::Number => "number",
-            FieldKind::Boolean => "yes or no",
-            FieldKind::Date => "date",
-            FieldKind::DateTime => "date and time",
-            FieldKind::Object => "object",
-            FieldKind::Array => "array",
+            FieldKind::Text => tr!("text"),
+            FieldKind::Integer => tr!("whole number"),
+            FieldKind::Number => tr!("number"),
+            FieldKind::Boolean => tr!("yes or no"),
+            FieldKind::Date => tr!("date"),
+            FieldKind::DateTime => tr!("date and time"),
+            FieldKind::Object => tr!("object"),
+            FieldKind::Array => tr!("array"),
         }
     }
 

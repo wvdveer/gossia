@@ -11,6 +11,7 @@
 //! longer than the preferences allow is cut off with a notice.
 
 use egui::{Key, Modifiers};
+use gossia_i18n::tr;
 
 use crate::GossiaApp;
 use crate::view::{error_color, named};
@@ -133,7 +134,7 @@ impl GossiaApp {
         ui.lines.drain(..extra);
         ui.recall = None;
         if let Err(e) = self.user.add_immediate(&text) {
-            self.code.notice = Some(format!("The Immediate window's history: {e}"));
+            self.code.notice = Some(tr!("The Immediate window's history: {e}", e = e));
         }
     }
 
@@ -205,15 +206,17 @@ impl GossiaApp {
             format!("{sheet}.{path}")
         };
         ui.horizontal(|ui| {
-            ui.strong("Immediate");
-            ui.weak(format!("this is {here}"));
+            ui.strong(tr!("Immediate"));
+            ui.weak(tr!("this is {here}", here = here));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add_enabled(
                         !self.code.immediate.lines.is_empty(),
-                        egui::Button::new("Clear").small(),
+                        egui::Button::new(tr!("Clear")).small(),
                     )
-                    .on_hover_text("Clears what is shown; the history of what was typed stays.")
+                    .on_hover_text(tr!(
+                        "Clears what is shown; the history of what was typed stays."
+                    ))
                     .clicked()
                 {
                     self.code.immediate.lines.clear();
@@ -238,7 +241,7 @@ impl GossiaApp {
                         )
                         .selectable(true),
                     )
-                    .on_hover_text(format!("Run with this as {}", line.place));
+                    .on_hover_text(tr!("Run with this as {place}", place = line.place));
                     let (text, color) = match (&line.waiting, &line.output) {
                         (Some(_), _) => ("running...".to_owned(), ui.visuals().weak_text_color()),
                         (None, Ok(text)) => (text.clone(), ui.visuals().text_color()),
@@ -252,7 +255,9 @@ impl GossiaApp {
                 }
             });
         if !trusted {
-            ui.weak("The Immediate window runs Python, so it works once the workbook is trusted.");
+            ui.weak(tr!(
+                "The Immediate window runs Python, so it works once the workbook is trusted."
+            ));
             return;
         }
         let response = ui.add_enabled(
@@ -260,10 +265,10 @@ impl GossiaApp {
             egui::TextEdit::singleline(&mut self.code.immediate.input)
                 .id(input_id())
                 .font(font)
-                .hint_text("A Python expression, then Enter")
+                .hint_text(tr!("A Python expression, then Enter"))
                 .desired_width(f32::INFINITY),
         );
-        named(&response, "Immediate expression");
+        named(&response, tr!("Immediate expression"));
         if std::mem::take(&mut self.code.immediate.focus) {
             response.request_focus();
         }

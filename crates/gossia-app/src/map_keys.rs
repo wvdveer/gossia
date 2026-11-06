@@ -3,6 +3,7 @@
 //! row, each asking for the key in a small dialog.
 
 use gossia_core::{Kind, Node, Path, Segment, Value};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::tab_rename::select_all;
@@ -74,7 +75,7 @@ impl GossiaApp {
     /// Why `key` cannot be the key of a new or renamed entry, or None.
     pub fn key_problem(&self, map: &Path, from: Option<&str>, key: &str) -> Option<String> {
         if key.is_empty() {
-            return Some("Type the key.".to_owned());
+            return Some(tr!("Type the key.").to_owned());
         }
         if Some(key) == from {
             return None;
@@ -156,8 +157,8 @@ impl GossiaApp {
         let key = dialog.key.trim().to_owned();
         let problem = self.key_problem(&dialog.map, dialog.from.as_deref(), &key);
         let title = match &dialog.from {
-            Some(from) => format!("Rename key {from}"),
-            None => format!("Add entry to {}", self.name_of(&dialog.map)),
+            Some(from) => tr!("Rename key {from}", from = from),
+            None => tr!("Add entry to {map}", map = self.name_of(&dialog.map)),
         };
         let (mut apply, mut cancel, mut open) = (false, false, true);
         egui::Window::new(title)
@@ -166,12 +167,12 @@ impl GossiaApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.label(if dialog.from.is_some() {
-                    "New key"
+                    tr!("New key")
                 } else {
-                    "Key"
+                    tr!("Key")
                 });
                 let response = ui.text_edit_singleline(&mut dialog.key);
-                named(&response, "Map key");
+                named(&response, tr!("Map key"));
                 if !dialog.focused {
                     response.request_focus();
                     select_all(ui, &response, &dialog.key);
@@ -188,14 +189,14 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     let label = if dialog.from.is_some() {
-                        "Rename"
+                        tr!("Rename")
                     } else {
-                        "Add"
+                        tr!("Add")
                     };
                     apply |= ui
                         .add_enabled(problem.is_none(), egui::Button::new(label))
                         .clicked();
-                    cancel |= ui.button("Cancel").clicked();
+                    cancel |= ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply && problem.is_none() {

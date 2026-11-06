@@ -20,6 +20,7 @@ gossia-std = { path = "crates/gossia-std" }
 gossia-layout = { path = "crates/gossia-layout" }
 gossia-report = { path = "crates/gossia-report" }
 gossia-user = { path = "crates/gossia-user" }
+gossia-i18n = { path = "crates/gossia-i18n" }
 
 [workspace.metadata.gossia]
 # Vendor items (see vendor.lock) that the workspace needs. `cargo xtask` fetches

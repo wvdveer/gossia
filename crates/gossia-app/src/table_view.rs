@@ -5,6 +5,7 @@
 use egui::{RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
 use gossia_core::{Kind, Node, Path, TypeSpec};
+use gossia_i18n::tr;
 
 use crate::app::{Editing, GossiaApp};
 use crate::rows::{Row, RowKind};
@@ -55,7 +56,7 @@ impl GossiaApp {
             ui.label(counts);
             ui.separator();
             if ui
-                .add_enabled(self.can_edit(array), egui::Button::new("Add row"))
+                .add_enabled(self.can_edit(array), egui::Button::new(tr!("Add row")))
                 .clicked()
             {
                 actions.push(Action::AddRow(array.clone(), None));
@@ -63,47 +64,53 @@ impl GossiaApp {
             if ui
                 .add_enabled(
                     self.can_reorder(array),
-                    egui::Button::new("Reverse row order"),
+                    egui::Button::new(tr!("Reverse row order")),
                 )
                 .clicked()
             {
                 actions.push(Action::Reverse(array.clone()));
             }
             if ui
-                .add_enabled(filtered, egui::Button::new("Clear all filters"))
+                .add_enabled(filtered, egui::Button::new(tr!("Clear all filters")))
                 .clicked()
             {
                 actions.push(Action::ClearAllFilters(array.clone()));
             }
             if ui
-                .add_enabled(filtered, egui::Button::new("Reapply filter"))
+                .add_enabled(filtered, egui::Button::new(tr!("Reapply filter")))
                 .clicked()
             {
                 actions.push(Action::ReapplyFilters(array.clone()));
             }
             let hidden = hidden_columns.len() + hidden_rows.len();
             if hidden > 0 {
-                ui.menu_button(format!("Hidden ({hidden})"), |ui| {
+                ui.menu_button(tr!("Hidden ({hidden})", hidden = hidden), |ui| {
                     for column in &hidden_columns {
-                        if ui.button(format!("Show column {column}")).clicked() {
+                        if ui
+                            .button(tr!("Show column {column}", column = column))
+                            .clicked()
+                        {
                             actions.push(Action::ShowColumn(array.clone(), column.clone()));
                             ui.close();
                         }
                     }
                     for (index, id) in &hidden_rows {
-                        if ui.button(format!("Show row [{index}]")).clicked() {
+                        if ui
+                            .button(tr!("Show row [{index}]", index = index))
+                            .clicked()
+                        {
                             actions.push(Action::ShowRow(array.clone(), *id));
                             ui.close();
                         }
                     }
                     ui.separator();
-                    if ui.button("Show all").clicked() {
+                    if ui.button(tr!("Show all")).clicked() {
                         actions.push(Action::ShowAllHidden(array.clone()));
                         ui.close();
                     }
                 });
             }
-            if ui.button("Close table").clicked() {
+            if ui.button(tr!("Close table")).clicked() {
                 actions.push(Action::ToggleTabular(array.clone(), false));
             }
         });
@@ -116,21 +123,26 @@ impl GossiaApp {
                     .map(|i| format!("[{i}]"))
                     .collect();
                 let more = refused.rows.len().saturating_sub(8);
-                let mut text = format!(
-                    "Not sorted by {}: {} (rows {}",
-                    refused.column,
-                    refused.message,
+                let rows = if more > 0 {
+                    tr!(
+                        "{rows} and {more} more",
+                        rows = rows.join(", "),
+                        more = more
+                    )
+                } else {
                     rows.join(", ")
+                };
+                let text = tr!(
+                    "Not sorted by {column}: {message} (rows {rows})",
+                    column = refused.column,
+                    message = refused.message,
+                    rows = rows
                 );
-                if more > 0 {
-                    text += &format!(" and {more} more");
-                }
-                text.push(')');
                 ui.colored_label(error_color(ui), text);
-                if ui.button("Show these rows").clicked() {
+                if ui.button(tr!("Show these rows")).clicked() {
                     actions.push(Action::ShowRefusedRows);
                 }
-                if ui.button("Dismiss").clicked() {
+                if ui.button(tr!("Dismiss")).clicked() {
                     actions.push(Action::DismissRefusal);
                 }
             });
@@ -152,7 +164,7 @@ impl GossiaApp {
                 .and_then(|d| d.get(array))
                 .and_then(|n| n.value().as_array()),
         ) else {
-            ui.label("The array is not there.");
+            ui.label(tr!("The array is not there."));
             return;
         };
         let shown: Vec<&Column> = layout.shown.iter().map(|&i| &layout.columns[i]).collect();
@@ -350,12 +362,13 @@ impl GossiaApp {
                     .unwrap_or_default(),
                 _ => String::new(),
             };
-            let response = response.on_hover_text(format!(
-                "Click to select the column. Right-click for more, such as sorting.{drag_note}"
+            let response = response.on_hover_text(tr!(
+                "Click to select the column. Right-click for more, such as sorting.{drag_note}",
+                drag_note = drag_note
             ));
             response.context_menu(|ui| {
                 if ui
-                    .add_enabled(sortable, egui::Button::new("Sort ascending"))
+                    .add_enabled(sortable, egui::Button::new(tr!("Sort ascending")))
                     .clicked()
                 {
                     actions.push(Action::SortBy(
@@ -366,7 +379,7 @@ impl GossiaApp {
                     ui.close();
                 }
                 if ui
-                    .add_enabled(sortable, egui::Button::new("Sort descending"))
+                    .add_enabled(sortable, egui::Button::new(tr!("Sort descending")))
                     .clicked()
                 {
                     actions.push(Action::SortBy(
@@ -378,21 +391,21 @@ impl GossiaApp {
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(!column.summary, egui::Button::new("Filter..."))
+                    .add_enabled(!column.summary, egui::Button::new(tr!("Filter...")))
                     .clicked()
                 {
                     actions.push(Action::FilterDialog(array.clone(), column.name.clone()));
                     ui.close();
                 }
                 if ui
-                    .add_enabled(filtered, egui::Button::new("Clear filter"))
+                    .add_enabled(filtered, egui::Button::new(tr!("Clear filter")))
                     .clicked()
                 {
                     actions.push(Action::ClearFilter(array.clone(), column.name.clone()));
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Hide column").clicked() {
+                if ui.button(tr!("Hide column")).clicked() {
                     actions.push(Action::HideColumn(array.clone(), column.name.clone()));
                     ui.close();
                 }
@@ -416,18 +429,18 @@ impl GossiaApp {
         };
         let mut open = true;
         let (mut apply, mut cancel, mut clear) = (false, false, false);
-        egui::Window::new(format!("Filter {}", dialog.column))
+        egui::Window::new(tr!("Filter {column}", column = dialog.column))
             .open(&mut open)
             .default_size([360.0, 420.0])
             .show(ctx, |ui| {
-                ui.label("Show these values");
+                ui.label(tr!("Show these values"));
                 ui.horizontal(|ui| {
                     let response = ui.text_edit_singleline(&mut dialog.search);
-                    named(&response, "Search values");
-                    if ui.button("Select all").clicked() {
+                    named(&response, tr!("Search values"));
+                    if ui.button(tr!("Select all")).clicked() {
                         dialog.checked = dialog.distinct.iter().cloned().collect();
                     }
-                    if ui.button("Select none").clicked() {
+                    if ui.button(tr!("Select none")).clicked() {
                         dialog.checked.clear();
                     }
                 });
@@ -455,7 +468,7 @@ impl GossiaApp {
                         }
                     });
                 ui.separator();
-                egui::ComboBox::from_label("Condition")
+                egui::ComboBox::from_label(tr!("Condition"))
                     .selected_text(dialog.choice.label())
                     .show_ui(ui, |ui| {
                         for choice in Choice::ALL {
@@ -464,20 +477,20 @@ impl GossiaApp {
                     });
                 if dialog.choice.operands() >= 1 {
                     let response = ui.text_edit_singleline(&mut dialog.first);
-                    named(&response, "Filter value");
+                    named(&response, tr!("Filter value"));
                 }
                 if dialog.choice.operands() == 2 {
                     let response = ui.text_edit_singleline(&mut dialog.second);
-                    named(&response, "Filter upper value");
+                    named(&response, tr!("Filter upper value"));
                 }
-                ui.checkbox(&mut dialog.ignore_case, "Ignore case");
+                ui.checkbox(&mut dialog.ignore_case, tr!("Ignore case"));
                 if let Some(error) = &dialog.error {
                     ui.colored_label(error_color(ui), error);
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Apply").clicked();
-                    cancel = ui.button("Cancel").clicked();
-                    clear = ui.button("Clear filter").clicked();
+                    apply = ui.button(tr!("Apply")).clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
+                    clear = ui.button(tr!("Clear filter")).clicked();
                 });
             });
         if apply {
@@ -505,8 +518,8 @@ pub(crate) fn filter_mark(ui: &mut egui::Ui) {
         ui.visuals().strong_text_color(),
         Stroke::NONE,
     ));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, "Filtered"));
-    response.on_hover_text("Filtered");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, tr!("Filtered")));
+    response.on_hover_text(tr!("Filtered"));
 }
 
 /// The context menu of a row header.
@@ -527,36 +540,41 @@ fn row_menu(
     item(
         ui,
         editable,
-        "Insert row above",
+        tr!("Insert row above"),
         Action::AddRow(array.clone(), Some(index)),
     );
     item(
         ui,
         editable,
-        "Insert row below",
+        tr!("Insert row below"),
         Action::AddRow(array.clone(), Some(index + 1)),
     );
     item(
         ui,
         editable,
-        "Delete row",
+        tr!("Delete row"),
         Action::DeleteRow(array.clone(), index),
     );
     ui.separator();
     item(
         ui,
         reorderable && has_previous,
-        "Move row up",
+        tr!("Move row up"),
         Action::MoveRow(array.clone(), index, true),
     );
     item(
         ui,
         reorderable && has_next,
-        "Move row down",
+        tr!("Move row down"),
         Action::MoveRow(array.clone(), index, false),
     );
     ui.separator();
-    item(ui, true, "Hide row", Action::HideRow(array.clone(), index));
+    item(
+        ui,
+        true,
+        tr!("Hide row"),
+        Action::HideRow(array.clone(), index),
+    );
 }
 
 /// A cell of the table as a row of the tree grid, so that it is drawn and

@@ -4,6 +4,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use gossia_i18n::tr;
 
 use crate::copybook::CodePage;
 
@@ -38,8 +39,8 @@ impl BinaryText {
 
     pub fn label(self) -> &'static str {
         match self {
-            BinaryText::Dump => "Hex dump, as the Raw view shows it",
-            BinaryText::Hex => "Hex digits",
+            BinaryText::Dump => tr!("Hex dump, as the Raw view shows it"),
+            BinaryText::Hex => tr!("Hex digits"),
             BinaryText::Base64 => "Base64",
         }
     }

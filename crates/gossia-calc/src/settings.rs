@@ -6,6 +6,7 @@
 //! A workbook cannot raise its own limits past the user's [`Ceilings`]: the
 //! value used is the smaller of the two ([`WorkbookSettings::effective`]).
 
+use gossia_i18n::tr;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -73,16 +74,16 @@ impl Setting {
 
     pub fn label(self) -> &'static str {
         match self {
-            Setting::FormulaTimeLimit => "Formula time limit",
-            Setting::ProcedureTimeLimit => "Button procedure time limit",
-            Setting::RecalcTimeLimit => "Recalculation time limit",
-            Setting::CancelGrace => "Cancel grace period",
-            Setting::MaxAbandoned => "Maximum abandoned threads",
-            Setting::MaxRange => "Maximum range length",
-            Setting::SourceTimeout => "Data source call timeout",
-            Setting::MaxResponse => "Maximum response size",
-            Setting::MaxDetailRows => "Maximum detail rows",
-            Setting::MaxChartSvg => "Maximum chart SVG size",
+            Setting::FormulaTimeLimit => tr!("Formula time limit"),
+            Setting::ProcedureTimeLimit => tr!("Button procedure time limit"),
+            Setting::RecalcTimeLimit => tr!("Recalculation time limit"),
+            Setting::CancelGrace => tr!("Cancel grace period"),
+            Setting::MaxAbandoned => tr!("Maximum abandoned threads"),
+            Setting::MaxRange => tr!("Maximum range length"),
+            Setting::SourceTimeout => tr!("Data source call timeout"),
+            Setting::MaxResponse => tr!("Maximum response size"),
+            Setting::MaxDetailRows => tr!("Maximum detail rows"),
+            Setting::MaxChartSvg => tr!("Maximum chart SVG size"),
         }
     }
 

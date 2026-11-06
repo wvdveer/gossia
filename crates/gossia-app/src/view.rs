@@ -1,6 +1,7 @@
 //! Drawing the window: the menu, the formula bar, the grid, the tabs, the
 //! status bar, and the Insert Function dialog.
 
+use gossia_i18n::tr;
 use std::time::Duration;
 
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Stroke, StrokeKind};
@@ -410,14 +411,14 @@ impl GossiaApp {
 
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
+            ui.menu_button(tr!("File"), |ui| {
                 // In a host the host opens, saves and closes the file.
                 let hosted = crate::host::current().is_some();
-                if !hosted && ui.button("New").clicked() {
+                if !hosted && ui.button(tr!("New")).clicked() {
                     self.begin_new();
                     ui.close();
                 }
-                if !hosted && ui.button("Open...").clicked() {
+                if !hosted && ui.button(tr!("Open...")).clicked() {
                     self.begin_open();
                     ui.close();
                 }
@@ -425,7 +426,7 @@ impl GossiaApp {
                     self.recent_menu(ui);
                 }
                 if ui
-                    .add_enabled(self.editing.is_none(), egui::Button::new("Import..."))
+                    .add_enabled(self.editing.is_none(), egui::Button::new(tr!("Import...")))
                     .clicked()
                 {
                     self.begin_import();
@@ -435,7 +436,7 @@ impl GossiaApp {
                 if ui
                     .add_enabled(
                         self.editing.is_none() && !self.in_report(),
-                        egui::Button::new("Export..."),
+                        egui::Button::new(tr!("Export...")),
                     )
                     .clicked()
                 {
@@ -446,9 +447,9 @@ impl GossiaApp {
                 if ui
                     .add_enabled(
                         self.editing.is_none() && self.in_report(),
-                        egui::Button::new("Export as PDF..."),
+                        egui::Button::new(tr!("Export as PDF...")),
                     )
-                    .on_disabled_hover_text("Show a report to export it as PDF")
+                    .on_disabled_hover_text(tr!("Show a report to export it as PDF"))
                     .clicked()
                 {
                     let tab = self.sheet.clone();
@@ -458,9 +459,9 @@ impl GossiaApp {
                 if ui
                     .add_enabled(
                         self.editing.is_none() && self.in_report(),
-                        egui::Button::new("Export as HTML..."),
+                        egui::Button::new(tr!("Export as HTML...")),
                     )
-                    .on_disabled_hover_text("Show a report to export it as HTML")
+                    .on_disabled_hover_text(tr!("Show a report to export it as HTML"))
                     .clicked()
                 {
                     let tab = self.sheet.clone();
@@ -473,9 +474,9 @@ impl GossiaApp {
                     && ui
                         .add_enabled(
                             self.editing.is_none() && self.in_report(),
-                            egui::Button::new("Print..."),
+                            egui::Button::new(tr!("Print...")),
                         )
-                        .on_disabled_hover_text("Show a report to print it")
+                        .on_disabled_hover_text(tr!("Show a report to print it"))
                         .clicked()
                 {
                     let tab = self.sheet.clone();
@@ -484,34 +485,34 @@ impl GossiaApp {
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(self.editing.is_none(), egui::Button::new("Save"))
+                    .add_enabled(self.editing.is_none(), egui::Button::new(tr!("Save")))
                     .clicked()
                 {
                     self.begin_save();
                     ui.close();
                 }
-                if !hosted && ui.button("Save As...").clicked() {
+                if !hosted && ui.button(tr!("Save As...")).clicked() {
                     self.begin_save_as();
                     ui.close();
                 }
                 if !hosted {
                     ui.separator();
-                    if ui.button("Quit").clicked() {
+                    if ui.button(tr!("Quit")).clicked() {
                         let ctx = ui.ctx().clone();
                         self.request_quit(&ctx);
                         ui.close();
                     }
                 }
             });
-            ui.menu_button("Edit", |ui| {
+            ui.menu_button(tr!("Edit"), |ui| {
                 let undo_label = self.calc().undo_label().map(str::to_owned);
                 let redo_label = self.calc().redo_label().map(str::to_owned);
                 // Undo and redo wait while a button procedure runs.
                 let can_change =
                     self.editing.is_none() && self.session.running_procedure().is_none();
                 let undo_text = match &undo_label {
-                    Some(label) => format!("Undo {label}"),
-                    None => "Undo".to_owned(),
+                    Some(label) => tr!("Undo {label}", label = label),
+                    None => tr!("Undo").to_owned(),
                 };
                 if ui
                     .add_enabled(
@@ -524,8 +525,8 @@ impl GossiaApp {
                     ui.close();
                 }
                 let redo_text = match &redo_label {
-                    Some(label) => format!("Redo {label}"),
-                    None => "Redo".to_owned(),
+                    Some(label) => tr!("Redo {label}", label = label),
+                    None => tr!("Redo").to_owned(),
                 };
                 if ui
                     .add_enabled(
@@ -541,11 +542,11 @@ impl GossiaApp {
                 let sheet = self.sheet.clone();
                 self.tab_menu_items(ui, &sheet);
             });
-            ui.menu_button("View", |ui| {
+            ui.menu_button(tr!("View"), |ui| {
                 // How the current tab is shown. A report has one view.
                 let report = self.in_report();
                 ui.add_enabled_ui(!report, |ui| {
-                    ui.menu_button("Show as", |ui| {
+                    ui.menu_button(tr!("Show as"), |ui| {
                         // The views every tab has, a line, then its forms.
                         let mut forms_begun = false;
                         for view in self.view_names() {
@@ -562,22 +563,28 @@ impl GossiaApp {
                     });
                     self.forms_menu(ui);
                 });
-                ui.menu_button("Font", |ui| self.font_menu(ui));
+                ui.menu_button(tr!("Font"), |ui| self.font_menu(ui));
                 ui.separator();
-                if ui.checkbox(&mut self.show_toolbar, "Toolbar").clicked() {
-                    ui.close();
-                }
-                if ui.checkbox(&mut self.show_issues, "Issues panel").clicked() {
-                    ui.close();
-                }
                 if ui
-                    .checkbox(&mut self.show_inspector, "Node inspector")
+                    .checkbox(&mut self.show_toolbar, tr!("Toolbar"))
                     .clicked()
                 {
                     ui.close();
                 }
                 if ui
-                    .add_enabled(!report, egui::Button::new("Collapse all"))
+                    .checkbox(&mut self.show_issues, tr!("Issues panel"))
+                    .clicked()
+                {
+                    ui.close();
+                }
+                if ui
+                    .checkbox(&mut self.show_inspector, tr!("Node inspector"))
+                    .clicked()
+                {
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!report, egui::Button::new(tr!("Collapse all")))
                     .clicked()
                 {
                     let root = Path::root();
@@ -589,10 +596,12 @@ impl GossiaApp {
                     ui.close();
                 }
             });
-            ui.menu_button("Tools", |ui| {
+            ui.menu_button(tr!("Tools"), |ui| {
                 if ui
-                    .add(egui::Button::new("Recalculate").shortcut_text("F9"))
-                    .on_hover_text("Run every formula again, reading the data sources afresh")
+                    .add(egui::Button::new(tr!("Recalculate")).shortcut_text("F9"))
+                    .on_hover_text(tr!(
+                        "Run every formula again, reading the data sources afresh"
+                    ))
                     .clicked()
                 {
                     self.recalculate();
@@ -600,29 +609,29 @@ impl GossiaApp {
                 }
                 ui.separator();
                 if ui
-                    .add(egui::Button::new("Code editor").shortcut_text("Alt+F11"))
+                    .add(egui::Button::new(tr!("Code editor")).shortcut_text("Alt+F11"))
                     .clicked()
                 {
                     self.open_code_editor();
                     ui.close();
                 }
-                if ui.button("Data sources...").clicked() {
+                if ui.button(tr!("Data sources...")).clicked() {
                     self.open_sources();
                     ui.close();
                 }
                 if ui
-                    .button("Disconnect from Data Sources...")
-                    .on_hover_text(
+                    .button(tr!("Disconnect from Data Sources..."))
+                    .on_hover_text(tr!(
                         "Replace every read of a data source in the formulas and forms by what \
-                         it gives now, so the workbook can go to someone without the sources",
-                    )
+                         it gives now, so the workbook can go to someone without the sources"
+                    ))
                     .clicked()
                 {
                     ui.close();
                     self.begin_disconnect();
                 }
                 ui.separator();
-                if ui.button("Options...").clicked() {
+                if ui.button(tr!("Options...")).clicked() {
                     self.begin_options(None);
                     ui.close();
                 }
@@ -634,7 +643,7 @@ impl GossiaApp {
     fn recent_menu(&mut self, ui: &mut egui::Ui) {
         let recent = self.user.prefs.recent.clone();
         ui.add_enabled_ui(!recent.is_empty(), |ui| {
-            ui.menu_button("Open Recent", |ui| {
+            ui.menu_button(tr!("Open Recent"), |ui| {
                 for path in &recent {
                     let name = path.file_name().map_or_else(
                         || path.display().to_string(),
@@ -650,7 +659,7 @@ impl GossiaApp {
                     }
                 }
                 ui.separator();
-                if ui.button("Clear the list").clicked() {
+                if ui.button(tr!("Clear the list")).clicked() {
                     self.change_prefs(|p| p.recent.clear());
                     ui.close();
                 }
@@ -661,7 +670,7 @@ impl GossiaApp {
     /// View > Font: the typeface and size of the Data tree and Raw views of
     /// every tab. A form's text has the font of its controls instead.
     fn font_menu(&mut self, ui: &mut egui::Ui) {
-        ui.weak("Data tree and Raw views, every tab");
+        ui.weak(tr!("Data tree and Raw views, every tab"));
         let current = self.data_font;
         let mut chosen = current;
         for typeface in crate::style::Typeface::ALL {
@@ -674,7 +683,7 @@ impl GossiaApp {
         ui.separator();
         for size in crate::style::DATA_FONT_SIZES {
             if ui
-                .radio(current.size == size, format!("{size} pt"))
+                .radio(current.size == size, tr!("{size} pt", size = size))
                 .clicked()
             {
                 chosen.size = size;
@@ -683,7 +692,7 @@ impl GossiaApp {
         ui.separator();
         let default = crate::style::DataFont::default();
         if ui
-            .add_enabled(current != default, egui::Button::new("Default font"))
+            .add_enabled(current != default, egui::Button::new(tr!("Default font")))
             .clicked()
         {
             chosen = default;
@@ -719,7 +728,11 @@ impl GossiaApp {
                     ui.add(egui::Label::new(RichText::new(name).monospace()).truncate());
                 });
             let fx = crate::style::medium("fx").italics();
-            if ui.button(fx).on_hover_text("Insert Function").clicked() {
+            if ui
+                .button(fx)
+                .on_hover_text(tr!("Insert Function"))
+                .clicked()
+            {
                 self.open_insert_function();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -730,7 +743,7 @@ impl GossiaApp {
         });
         self.formula_bar_handle(ui);
         if self.picking() {
-            ui.label(RichText::new(crate::pick::PICK_HINT).italics());
+            ui.label(RichText::new(crate::pick::pick_hint()).italics());
         } else if let Some(notice) = &self.notice {
             let color = error_color(ui);
             ui.colored_label(color, notice);
@@ -809,9 +822,9 @@ impl GossiaApp {
             RichText::new(if expanded { "^" } else { "v" })
         };
         let name = if expanded {
-            "Collapse formula bar"
+            tr!("Collapse formula bar")
         } else {
-            "Expand formula bar"
+            tr!("Expand formula bar")
         };
         let response = ui.button(text).on_hover_text(name);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
@@ -828,9 +841,9 @@ impl GossiaApp {
             ui.allocate_exact_size(egui::vec2(width, 5.0), egui::Sense::click_and_drag());
         let response = response
             .on_hover_cursor(egui::CursorIcon::ResizeVertical)
-            .on_hover_text("Drag to make the formula bar taller or shorter");
+            .on_hover_text(tr!("Drag to make the formula bar taller or shorter"));
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Splitter, true, "Formula bar height")
+            egui::WidgetInfo::labeled(egui::Role::Splitter, true, tr!("Formula bar height"))
         });
         if response.hovered() || response.dragged() {
             let palette = Palette::of_ui(ui);
@@ -866,13 +879,13 @@ impl GossiaApp {
         } else {
             RichText::new("@")
         };
-        let name = "Pick a place";
+        let name = tr!("Pick a place");
         let response = ui
             .add_enabled(enabled, egui::Button::new(text).selected(picking))
-            .on_hover_text(
+            .on_hover_text(tr!(
                 "Pick a place: click a node, on this tab or another, to put its address \
-                 into the formula where the cursor is",
-            );
+                 into the formula where the cursor is"
+            ));
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
         if response.clicked() {
             if picking {
@@ -899,7 +912,7 @@ impl GossiaApp {
                         .interactive(false),
                 )
             });
-            named(&response, "Formula bar");
+            named(&response, tr!("Formula bar"));
             return;
         }
         let column = self.column_selected().cloned();
@@ -913,7 +926,7 @@ impl GossiaApp {
                 false,
                 egui::TextEdit::singleline(&mut empty).desired_width(f32::INFINITY),
             );
-            named(&response, "Formula bar");
+            named(&response, tr!("Formula bar"));
             return;
         };
         let editing_here = self.editing.as_ref().is_some_and(|e| {
@@ -934,7 +947,7 @@ impl GossiaApp {
                         .interactive(interactive),
                 )
             });
-            named(&response, "Formula bar");
+            named(&response, tr!("Formula bar"));
             if response.gained_focus() || response.clicked() {
                 if column.is_some() {
                     self.begin_editing_column();
@@ -978,7 +991,7 @@ impl GossiaApp {
                     .inner
             }
         };
-        named(&output.response, "Formula bar");
+        named(&output.response, tr!("Formula bar"));
         self.finish_text_widget(ui, id, &mut editing, &output);
         let rect = output.response.rect;
         self.editing = Some(editing);
@@ -1088,7 +1101,7 @@ impl GossiaApp {
         {
             let display = self.user.prefs.display;
             let row_height = crate::style::grid_row_height(ui, display.density);
-            let mut titles = vec!["Name"];
+            let mut titles = vec![tr!("Name")];
             let mut table = TableBuilder::new(ui)
                 // The widths are kept for each set of columns, so that hiding
                 // one does not give its width to another.
@@ -1101,17 +1114,17 @@ impl GossiaApp {
                 .max_scroll_height(f32::INFINITY)
                 .column(Column::initial(300.0).at_least(120.0).clip(true));
             if display.type_column {
-                titles.push("Type");
+                titles.push(tr!("Type"));
                 table = table.column(Column::initial(130.0).at_least(60.0).clip(true));
             }
-            titles.push("Value");
+            titles.push(tr!("Value"));
             table = table.column(if display.formula_column {
                 Column::initial(260.0).at_least(80.0).clip(true)
             } else {
                 Column::remainder().at_least(80.0).clip(true)
             });
             if display.formula_column {
-                titles.push("Formula");
+                titles.push(tr!("Formula"));
                 table = table.column(Column::remainder().at_least(80.0).clip(true));
             }
             if let Some(index) = scroll_to {
@@ -1337,7 +1350,7 @@ impl GossiaApp {
                     menu_on.push(response);
                 } else if let Some(by) = &computed_by {
                     ui.label(
-                        RichText::new(format!("computed by {}", self.name_of(by)))
+                        RichText::new(tr!("computed by {name}", name = self.name_of(by)))
                             .weak()
                             .italics(),
                     );
@@ -1500,7 +1513,7 @@ impl GossiaApp {
             untrusted_mark(ui, stale);
         }
         if pending {
-            crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
+            crate::style::pending_marker(ui).on_hover_text(tr!("Waiting to be calculated"));
         }
     }
 
@@ -1640,7 +1653,7 @@ impl GossiaApp {
             .align(align)
             .desired_width(f32::INFINITY)
             .show(ui);
-        named(&output.response, "Cell editor");
+        named(&output.response, tr!("Cell editor"));
         if e.focus == Focus::Cell {
             output.response.request_focus();
             e.focus = Focus::None;
@@ -1664,8 +1677,8 @@ impl GossiaApp {
         for child in &children {
             ui.horizontal(|ui| {
                 ui.label(&child.name);
-                let label = format!("Show {}", child.name);
-                let show = ui.small_button("Show");
+                let label = tr!("Show {name}", name = child.name);
+                let show = ui.small_button(tr!("Show"));
                 show.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
                 if show.clicked() {
                     actions.push(Action::ShowNode(child.path.clone()));
@@ -1673,7 +1686,7 @@ impl GossiaApp {
                 }
             });
         }
-        if !children.is_empty() && ui.button("Show all").clicked() {
+        if !children.is_empty() && ui.button(tr!("Show all")).clicked() {
             actions.push(Action::ShowAllNodes(parent.clone()));
             ui.close();
         }
@@ -1715,42 +1728,46 @@ impl GossiaApp {
     fn row_menu(&self, ui: &mut egui::Ui, row: &Row, actions: &mut Vec<Action>) {
         let path = &row.path;
         if row.expandable() {
-            let label = if row.expanded { "Collapse" } else { "Expand" };
+            let label = if row.expanded {
+                tr!("Collapse")
+            } else {
+                tr!("Expand")
+            };
             if ui.button(label).clicked() {
                 actions.push(Action::Toggle(path.clone()));
                 ui.close();
             }
         }
-        if !path.is_empty() && ui.button("Hide").clicked() {
+        if !path.is_empty() && ui.button(tr!("Hide")).clicked() {
             actions.push(Action::HideNode(path.clone()));
             ui.close();
         }
         if row.hidden > 0 {
-            ui.menu_button(format!("Hidden ({})", row.hidden), |ui| {
+            ui.menu_button(tr!("Hidden ({hidden})", hidden = row.hidden), |ui| {
                 self.hidden_list(ui, path, actions);
             });
         }
-        if row.kind == RowKind::Array && ui.button("Add item").clicked() {
+        if row.kind == RowKind::Array && ui.button(tr!("Add item")).clicked() {
             actions.push(Action::AddItem(path.clone()));
             ui.close();
         }
-        if row.kind == RowKind::Map && ui.button("Add entry...").clicked() {
+        if row.kind == RowKind::Map && ui.button(tr!("Add entry...")).clicked() {
             actions.push(Action::AddEntry(path.clone()));
             ui.close();
         }
         let map_entry = row.node.is_some()
             && matches!(path.segments().last(), Some(Segment::Key(_)))
             && path.parent().is_some_and(|map| self.is_map(&map));
-        if map_entry && ui.button("Rename key...").clicked() {
+        if map_entry && ui.button(tr!("Rename key...")).clicked() {
             actions.push(Action::RenameKey(path.clone()));
             ui.close();
         }
         if row.kind == RowKind::Array {
             if self.can_tabulate(path) {
                 let label = if row.tabular {
-                    "Tabular view (on)"
+                    tr!("Tabular view (on)")
                 } else {
-                    "Tabular view"
+                    tr!("Tabular view")
                 };
                 if ui.button(label).clicked() {
                     actions.push(Action::ToggleTabular(path.clone(), !row.tabular));
@@ -1758,7 +1775,7 @@ impl GossiaApp {
                 }
             }
             let reorderable = self.can_reorder(path);
-            let reverse = ui.add_enabled(reorderable, egui::Button::new("Reverse row order"));
+            let reverse = ui.add_enabled(reorderable, egui::Button::new(tr!("Reverse row order")));
             if reverse.clicked() {
                 actions.push(Action::Reverse(path.clone()));
                 ui.close();
@@ -1766,20 +1783,20 @@ impl GossiaApp {
         }
         match path.segments().last() {
             Some(Segment::Index(_)) => {
-                if ui.button("Insert item above").clicked() {
+                if ui.button(tr!("Insert item above")).clicked() {
                     actions.push(Action::InsertAbove(path.clone()));
                     ui.close();
                 }
-                if ui.button("Delete item").clicked() {
+                if ui.button(tr!("Delete item")).clicked() {
                     actions.push(Action::Delete(path.clone()));
                     ui.close();
                 }
             }
             Some(Segment::Key(_)) if row.node.is_some() && (!row.required || row.unrecognised) => {
                 let label = if row.unrecognised {
-                    "Delete"
+                    tr!("Delete")
                 } else {
-                    "Delete (leave absent)"
+                    tr!("Delete (leave absent)")
                 };
                 if ui.button(label).clicked() {
                     actions.push(Action::Delete(path.clone()));
@@ -1858,8 +1875,8 @@ impl GossiaApp {
             }
             let add = ui
                 .add(egui::Button::new(crate::icons::PLUS).frame(false))
-                .on_hover_text("New tab");
-            named(&add, "New tab");
+                .on_hover_text(tr!("New tab"));
+            named(&add, tr!("New tab"));
             if add.clicked() {
                 self.begin_new_tab();
             }
@@ -1873,7 +1890,7 @@ impl GossiaApp {
                 // The Evaluation page has the limit and *Save and restart*.
                 if ui
                     .link(evaluation_text(&status))
-                    .on_hover_text("Options: Evaluation")
+                    .on_hover_text(tr!("Options: Evaluation"))
                     .clicked()
                 {
                     self.begin_options(Some(crate::options::Page::Evaluation));
@@ -1887,9 +1904,9 @@ impl GossiaApp {
                 ui.separator();
                 let stale = self.calc().stale();
                 let text = if stale == 0 {
-                    "Not trusted".to_owned()
+                    tr!("Not trusted").to_owned()
                 } else {
-                    format!("Not trusted, {stale} stale")
+                    tr!("Not trusted, {stale} stale", stale = stale)
                 };
                 ui.colored_label(error_color(ui), text);
             }
@@ -1905,22 +1922,25 @@ impl GossiaApp {
             }
             if self.calc().is_modified() {
                 ui.separator();
-                ui.label("Modified");
+                ui.label(tr!("Modified"));
             }
         });
     }
 
     fn issues_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Issues");
+        ui.heading(tr!("Issues"));
         let issues = self.issue_list();
         let modules = self.calc().module_issues();
         if issues.is_empty() && modules.is_empty() {
-            ui.label("No errors, no invalid data.");
+            ui.label(tr!("No errors, no invalid data."));
             return;
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (module, why) in modules {
-                ui.colored_label(error_color(ui), format!("Module {module}: {why}"));
+                ui.colored_label(
+                    error_color(ui),
+                    tr!("Module {module}: {why}", module = module, why = why),
+                );
             }
             for (path, text) in issues {
                 if ui
@@ -1939,14 +1959,14 @@ impl GossiaApp {
         };
         let mut open = true;
         let mut insert: Option<&'static str> = None;
-        egui::Window::new("Insert Function")
+        egui::Window::new(tr!("Insert Function"))
             .open(&mut open)
             .default_size([520.0, 380.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Search");
+                    ui.label(tr!("Search"));
                     let response = ui.text_edit_singleline(&mut dialog.search);
-                    named(&response, "Search functions");
+                    named(&response, tr!("Search functions"));
                 });
                 ui.separator();
                 let found = GossiaApp::functions_matching(&dialog.search);
@@ -1978,12 +1998,12 @@ impl GossiaApp {
                         Some(f) => {
                             ui.label(RichText::new(f.signature).monospace().strong());
                             ui.label(f.description);
-                            if ui.button("Insert").clicked() {
+                            if ui.button(tr!("Insert")).clicked() {
                                 insert = Some(f.insert);
                             }
                         }
                         None => {
-                            ui.label("Choose a function to see what it does.");
+                            ui.label(tr!("Choose a function to see what it does."));
                         }
                     }
                 });
@@ -2131,17 +2151,17 @@ impl GossiaApp {
                     ui.close();
                 }
             };
-            item(ui, "Copy", "Ctrl+C", Action::Copy(CopyMode::Cells));
+            item(ui, tr!("Copy"), "Ctrl+C", Action::Copy(CopyMode::Cells));
             item(
                 ui,
-                "Copy formulas",
+                tr!("Copy formulas"),
                 "Ctrl+Shift+C",
                 Action::Copy(CopyMode::Formulas),
             );
-            item(ui, "Paste", "Ctrl+V", Action::Paste(PasteMode::Cells));
+            item(ui, tr!("Paste"), "Ctrl+V", Action::Paste(PasteMode::Cells));
             item(
                 ui,
-                "Paste values",
+                tr!("Paste values"),
                 "Ctrl+Shift+V",
                 Action::Paste(PasteMode::Values),
             );

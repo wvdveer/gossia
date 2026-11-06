@@ -1,6 +1,7 @@
 //! Editing: what the window does when the user changes something. None of it
 //! draws anything, so it is tested without a window.
 
+use gossia_i18n::tr;
 use std::collections::BTreeSet;
 
 use gossia_calc::entry;
@@ -456,7 +457,7 @@ impl GossiaApp {
     pub fn insert_function_text(&mut self, insert: &str) {
         if self.editing.is_none() {
             let Some(path) = self.selection.clone() else {
-                self.notice = Some("select a cell first".to_owned());
+                self.notice = Some(tr!("select a cell first").to_owned());
                 return;
             };
             if !self.begin_editing(&path, false, Some("=".to_owned())) {

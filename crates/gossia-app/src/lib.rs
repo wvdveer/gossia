@@ -31,6 +31,7 @@ mod form_layout_tests;
 pub mod form_nav;
 pub mod host;
 pub mod host_code;
+pub mod i18n;
 pub mod icons;
 pub mod immediate;
 pub mod import;

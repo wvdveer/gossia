@@ -11,6 +11,7 @@
 //! a schema inferred from the data. The dialog starts on the first schema tab
 //! the data fits completely, and on the inferred schema when none does.
 
+use gossia_i18n::tr;
 use std::collections::VecDeque;
 use std::path::Path as FsPath;
 
@@ -66,11 +67,11 @@ impl ImportFormat {
             ImportFormat::Toml => "TOML",
             ImportFormat::Yaml => "YAML",
             ImportFormat::YamlDocuments => "YAML documents",
-            ImportFormat::Csv => "comma-separated values",
-            ImportFormat::Tsv => "tab-separated values",
+            ImportFormat::Csv => tr!("comma-separated values"),
+            ImportFormat::Tsv => tr!("tab-separated values"),
             ImportFormat::Copybook => "a COBOL copybook",
             ImportFormat::Blk => "COBOL records",
-            ImportFormat::Text => "lines of text",
+            ImportFormat::Text => tr!("lines of text"),
         }
     }
 
@@ -231,32 +232,28 @@ impl ImportPlan {
                     .find(|c| &c.schema == schema && c.record == self.record)
                     && c.problems > 0
                 {
-                    lines.push(format!(
-                        "{} in the data {} not fit {schema}; {} kept and flagged.",
-                        plural(c.problems, "value", "values"),
-                        if c.problems == 1 { "does" } else { "do" },
-                        if c.problems == 1 { "it is" } else { "they are" },
-                    ));
+                    lines.push(if c.problems == 1 {
+                        tr!(
+                            "1 value in the data does not fit {schema}; it is kept and flagged.",
+                            schema = schema
+                        )
+                    } else {
+                        tr!(
+                            "{n} values in the data do not fit {schema}; they are kept and flagged.",
+                            n = c.problems,
+                            schema = schema
+                        )
+                    });
                 }
             }
             SchemaChoice::Replace(_) => {}
             SchemaChoice::SchemaTab => {
                 if let Some(why) = &self.schema_problem {
-                    lines.push(format!(
-                        "It cannot be used as a schema as it is: {why}. It can be corrected on its tab."
-                    ));
+                    lines.push(tr!("It cannot be used as a schema as it is: {why}. It can be corrected on its tab.", why = why));
                 }
             }
         }
         lines
-    }
-}
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
     }
 }
 
@@ -557,7 +554,9 @@ impl GossiaApp {
                 record: None,
                 data: None,
                 notes: Vec::new(),
-                inferred: Err("a .blk file does not say how its records are laid out".to_owned()),
+                inferred: Err(
+                    tr!("a .blk file does not say how its records are laid out").to_owned()
+                ),
                 candidates: Vec::new(),
                 name: name_from_file("Pasted", |n| calc.tab_name_problem(n, None).is_some()),
                 schema_name: String::new(),
@@ -570,10 +569,11 @@ impl GossiaApp {
         };
         plan.notes.insert(
             0,
-            format!(
-                "Read as {} bytes of {}.",
-                bytes.len(),
-                kind.label()
+            tr!(
+                "Read as {count} bytes of {kind}.",
+                count = bytes.len(),
+                kind = kind
+                    .label()
                     .split(',')
                     .next()
                     .unwrap_or_default()
@@ -632,7 +632,7 @@ impl GossiaApp {
                     &book,
                     CodePage::default(),
                 )));
-                (None, Err("it is a copybook".to_owned()), Vec::new())
+                (None, Err(tr!("it is a copybook").to_owned()), Vec::new())
             }
             ImportFormat::Blk => unreachable!("COBOL records are planned above"),
             ImportFormat::Json5
@@ -828,7 +828,7 @@ impl GossiaApp {
             record: chosen.record.clone(),
             data: None,
             notes: Vec::new(),
-            inferred: Err("a .blk file does not say how its records are laid out".to_owned()),
+            inferred: Err(tr!("a .blk file does not say how its records are laid out").to_owned()),
             candidates,
             name,
             schema_name,
@@ -872,18 +872,18 @@ impl GossiaApp {
         }
         let name = plan.name.trim();
         if let Some(why) = self.calc().tab_name_problem(name, None) {
-            return Some(format!("The tab name: {why}."));
+            return Some(tr!("The tab name: {why}.", why = why));
         }
         if plan.choice == SchemaChoice::Inferred {
             if let Err(why) = &plan.inferred {
-                return Some(format!("No schema can be inferred: {why}."));
+                return Some(tr!("No schema can be inferred: {why}.", why = why));
             }
             let schema = plan.schema_name.trim();
             if let Some(why) = self.calc().tab_name_problem(schema, None) {
-                return Some(format!("The schema tab's name: {why}."));
+                return Some(tr!("The schema tab's name: {why}.", why = why));
             }
             if schema.eq_ignore_ascii_case(name) {
-                return Some("The two tabs need different names.".to_owned());
+                return Some(tr!("The two tabs need different names.").to_owned());
             }
         }
         None
@@ -894,7 +894,7 @@ impl GossiaApp {
     /// same shape can be given it too. The data tab becomes the current tab.
     pub fn import(&mut self, plan: &ImportPlan) -> Result<(), String> {
         if self.session.running_procedure().is_some() {
-            return Err("a button procedure is running; wait for it to finish".to_owned());
+            return Err(tr!("a button procedure is running; wait for it to finish").to_owned());
         }
         if !self.commit_editing() {
             return Err(self.notice.clone().unwrap_or_default());
@@ -923,7 +923,7 @@ impl GossiaApp {
                 Some(SchemaFile::Copybook(tree)) => {
                     calc.create_copybook_schema_tab(name, tree.clone())
                 }
-                None => return Err("the file is not a schema".to_owned()),
+                None => return Err(tr!("the file is not a schema").to_owned()),
             };
             done.map_err(|e| e.to_string())?;
             self.follow_tabs();
@@ -936,7 +936,7 @@ impl GossiaApp {
         let schema_name = plan.schema_name.trim();
         let before = self.calc().history_len().0;
         let calc = self.session.calc_mut();
-        calc.begin_entry(&format!("Import {}", plan.file));
+        calc.begin_entry(&tr!("Import {file}", file = plan.file));
         let done = match (&plan.choice, &plan.inferred) {
             (SchemaChoice::Inferred, Ok(Inferred::Json(inference))) => calc
                 .create_json_schema_tab(schema_name, inference.schema.clone())
@@ -1026,7 +1026,7 @@ impl GossiaApp {
         };
         let problem = self.import_problem(&plan);
         let (mut apply, mut cancel, mut open) = (false, false, true);
-        egui::Window::new(format!("Import {}", plan.file))
+        egui::Window::new(tr!("Import {file}", file = plan.file))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1034,14 +1034,14 @@ impl GossiaApp {
             .max_width(560.0)
             .show(ctx, |ui| {
                 if plan.file == PASTED {
-                    ui.weak(format!("Read as {}.", plan.format.label()));
+                    ui.weak(tr!("Read as {format}.", format = plan.format.label()));
                 }
                 let replacing = matches!(plan.choice, SchemaChoice::Replace(_));
                 ui.horizontal(|ui| {
-                    ui.label("Tab name");
+                    ui.label(tr!("Tab name"));
                     let response =
                         ui.add_enabled(!replacing, egui::TextEdit::singleline(&mut plan.name));
-                    named(&response, "Import tab name");
+                    named(&response, tr!("Import tab name"));
                 });
                 ui.add_space(4.0);
                 // A copybook is a schema and nothing else.
@@ -1049,13 +1049,18 @@ impl GossiaApp {
                     if plan.replace.is_some() {
                         let chosen = plan.choice == SchemaChoice::SchemaTab;
                         if ui
-                            .radio(chosen, "It is a COBOL copybook: import it as a schema tab")
+                            .radio(
+                                chosen,
+                                tr!("It is a COBOL copybook: import it as a schema tab"),
+                            )
                             .clicked()
                         {
                             plan.choice = SchemaChoice::SchemaTab;
                         }
                     } else {
-                        ui.label("The file is a COBOL copybook: it is imported as a schema tab.");
+                        ui.label(tr!(
+                            "The file is a COBOL copybook: it is imported as a schema tab."
+                        ));
                     }
                 } else if plan.schema_file.is_some() {
                     let chosen = plan.choice == SchemaChoice::SchemaTab;
@@ -1066,28 +1071,25 @@ impl GossiaApp {
                     if ui
                         .radio(
                             chosen,
-                            format!("The file is {what}: import it as a schema tab"),
+                            tr!("The file is {what}: import it as a schema tab", what = what),
                         )
                         .clicked()
                     {
                         plan.choice = SchemaChoice::SchemaTab;
                     }
-                    ui.label("Or as data, with the schema");
+                    ui.label(tr!("Or as data, with the schema"));
                 } else {
-                    ui.label("Schema");
+                    ui.label(tr!("Schema"));
                 }
                 for candidate in &plan.candidates {
                     let schema = match &candidate.record {
                         Some(record) => format!("{} ({record})", candidate.schema),
                         None => candidate.schema.clone(),
                     };
-                    let text = if candidate.problems == 0 {
-                        format!("{schema}: the data fits it")
-                    } else {
-                        format!(
-                            "{schema}: {} would not fit",
-                            plural(candidate.problems, "value", "values")
-                        )
+                    let text = match candidate.problems {
+                        0 => tr!("{schema}: the data fits it", schema = schema),
+                        1 => tr!("{schema}: 1 value would not fit", schema = schema),
+                        n => tr!("{schema}: {n} values would not fit", schema = schema, n = n),
                     };
                     let chosen = plan.choice == SchemaChoice::Existing(candidate.schema.clone())
                         && plan.record == candidate.record;
@@ -1103,7 +1105,7 @@ impl GossiaApp {
                         ui.horizontal(|ui| {
                             let chosen = plan.choice == SchemaChoice::Inferred;
                             if ui
-                                .radio(chosen, "A new schema, inferred from the data, called")
+                                .radio(chosen, tr!("A new schema, inferred from the data, called"))
                                 .clicked()
                             {
                                 plan.choice = SchemaChoice::Inferred;
@@ -1113,7 +1115,7 @@ impl GossiaApp {
                                 egui::TextEdit::singleline(&mut plan.schema_name)
                                     .desired_width(160.0),
                             );
-                            named(&response, "Schema tab name");
+                            named(&response, tr!("Schema tab name"));
                         });
                     }
                     Err(why) => {
@@ -1121,7 +1123,7 @@ impl GossiaApp {
                             false,
                             egui::RadioButton::new(
                                 false,
-                                format!("No schema can be inferred: {why}"),
+                                tr!("No schema can be inferred: {why}", why = why),
                             ),
                         );
                     }
@@ -1131,7 +1133,7 @@ impl GossiaApp {
                     if ui
                         .radio(
                             chosen,
-                            format!("No new tab: replace the data of {tab} with it"),
+                            tr!("No new tab: replace the data of {tab} with it", tab = tab),
                         )
                         .clicked()
                     {
@@ -1139,7 +1141,7 @@ impl GossiaApp {
                     }
                 }
                 if let (SchemaChoice::Inferred, Ok(inferred)) = (&plan.choice, &plan.inferred) {
-                    egui::CollapsingHeader::new("The inferred schema")
+                    egui::CollapsingHeader::new(tr!("The inferred schema"))
                         .id_salt("inferred_schema")
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
@@ -1159,7 +1161,7 @@ impl GossiaApp {
                 let report = plan.report();
                 if !report.is_empty() {
                     ui.add_space(4.0);
-                    ui.label("The import report");
+                    ui.label(tr!("The import report"));
                     egui::ScrollArea::vertical()
                         .id_salt("import_report")
                         .max_height(120.0)
@@ -1175,9 +1177,9 @@ impl GossiaApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     apply = ui
-                        .add_enabled(problem.is_none(), egui::Button::new("Import"))
+                        .add_enabled(problem.is_none(), egui::Button::new(tr!("Import")))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;
@@ -1233,7 +1235,7 @@ impl GossiaApp {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Drop to import as a new tab (a .gossia file opens)",
+            tr!("Drop to import as a new tab (a .gossia file opens)"),
             egui::FontId::proportional(18.0),
             palette.text,
         );
@@ -1275,7 +1277,7 @@ fn is_json_schema(file: &str, node: &Node) -> bool {
 /// A file name as it starts a sentence: as it is, but "The pasted text".
 fn capital(file: &str) -> String {
     if file == PASTED {
-        "The pasted text".to_owned()
+        tr!("The pasted text").to_owned()
     } else {
         file.to_owned()
     }

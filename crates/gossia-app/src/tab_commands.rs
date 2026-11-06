@@ -9,6 +9,7 @@ use gossia_core::report::ReportKind;
 use gossia_core::validate::validate;
 use gossia_core::xml::XmlDocument;
 use gossia_core::{Node, Path, json, metaschema, xml, xsd};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::import::unique;
@@ -229,7 +230,7 @@ impl GossiaApp {
     pub fn new_tab_problem(&self, dialog: &NewTab) -> Option<String> {
         let name = dialog.name.trim();
         if let Some(why) = self.calc().tab_name_problem(name, None) {
-            return Some(format!("The tab name: {why}."));
+            return Some(tr!("The tab name: {why}.", why = why));
         }
         if dialog.kind == NewKind::Report {
             return None;
@@ -238,10 +239,10 @@ impl GossiaApp {
             NewSchema::Own(_) => {
                 let schema = dialog.schema_name.trim();
                 if let Some(why) = self.calc().tab_name_problem(schema, None) {
-                    return Some(format!("The schema tab's name: {why}."));
+                    return Some(tr!("The schema tab's name: {why}.", why = why));
                 }
                 if schema.eq_ignore_ascii_case(name) {
-                    return Some("The two tabs need different names.".to_owned());
+                    return Some(tr!("The two tabs need different names.").to_owned());
                 }
             }
             NewSchema::Existing(schema) => {
@@ -294,7 +295,7 @@ impl GossiaApp {
         };
         let before = self.calc().history_len().0;
         let calc = self.session.calc_mut();
-        calc.begin_entry(&format!("New tab {name}"));
+        calc.begin_entry(&tr!("New tab {name}", name = name));
         let done = match &dialog.schema {
             NewSchema::Own(format) => {
                 let schema_name = dialog.schema_name.trim();
@@ -392,14 +393,17 @@ impl GossiaApp {
         };
         let (data_name, report_name) = (self.data_name(), self.report_name());
         let (mut apply, mut cancel, mut open) = (false, false, true);
-        egui::Window::new("New tab")
+        egui::Window::new(tr!("New tab"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Make a");
-                    for (kind, text) in [(NewKind::Data, "Data tab"), (NewKind::Report, "Report")] {
+                    ui.label(tr!("Make a"));
+                    for (kind, text) in [
+                        (NewKind::Data, tr!("Data tab")),
+                        (NewKind::Report, tr!("Report")),
+                    ] {
                         if ui.radio(dialog.kind == kind, text).clicked() && dialog.kind != kind {
                             dialog.kind = kind;
                             // The name offered for the other kind, unless one
@@ -416,9 +420,9 @@ impl GossiaApp {
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label("Tab name");
+                    ui.label(tr!("Tab name"));
                     let response = ui.text_edit_singleline(&mut dialog.name);
-                    named(&response, "New tab name");
+                    named(&response, tr!("New tab name"));
                     if !dialog.focused {
                         response.request_focus();
                         crate::tab_rename::select_all(ui, &response, &dialog.name);
@@ -434,7 +438,7 @@ impl GossiaApp {
                 } else {
                     ui.horizontal(|ui| {
                         let own = matches!(dialog.schema, NewSchema::Own(_));
-                        if ui.radio(own, "Its own schema, called").clicked() && !own {
+                        if ui.radio(own, tr!("Its own schema, called")).clicked() && !own {
                             dialog.schema = NewSchema::Own(SchemaFormat::Json);
                         }
                         let response = ui.add_enabled(
@@ -442,7 +446,7 @@ impl GossiaApp {
                             egui::TextEdit::singleline(&mut dialog.schema_name)
                                 .desired_width(160.0),
                         );
-                        named(&response, "New schema tab name");
+                        named(&response, tr!("New schema tab name"));
                     });
                     // The language of its own schema: an XSD makes an XML tab.
                     ui.horizontal(|ui| {
@@ -453,9 +457,9 @@ impl GossiaApp {
                         ui.add_space(24.0);
                         ui.add_enabled_ui(own.is_some(), |ui| {
                             for (format, text) in [
-                                (SchemaFormat::Json, "JSON Schema (JSON data)"),
-                                (SchemaFormat::Xsd, "XSD (XML data)"),
-                                (SchemaFormat::Copybook, "COBOL copybook (records)"),
+                                (SchemaFormat::Json, tr!("JSON Schema (JSON data)")),
+                                (SchemaFormat::Xsd, tr!("XSD (XML data)")),
+                                (SchemaFormat::Copybook, tr!("COBOL copybook (records)")),
                             ] {
                                 if ui.radio(own == Some(format), text).clicked() {
                                     dialog.schema = NewSchema::Own(format);
@@ -466,7 +470,7 @@ impl GossiaApp {
                     ui.add_enabled_ui(!schemas.is_empty(), |ui| {
                         ui.horizontal(|ui| {
                             let existing = matches!(dialog.schema, NewSchema::Existing(_));
-                            if ui.radio(existing, "The schema of").clicked()
+                            if ui.radio(existing, tr!("The schema of")).clicked()
                                 && let Some(first) = schemas.first()
                             {
                                 dialog.schema = NewSchema::Existing(first.clone());
@@ -490,7 +494,7 @@ impl GossiaApp {
                                     egui::WidgetInfo::labeled(
                                         egui::Role::ComboBox,
                                         true,
-                                        "Schema of the new tab",
+                                        tr!("Schema of the new tab"),
                                     )
                                 });
                         });
@@ -505,11 +509,11 @@ impl GossiaApp {
                     };
                     ui.add_enabled_ui(json_data, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label("Data format");
+                            ui.label(tr!("Data format"));
                             let shown = if json_data {
                                 dialog.format.label()
                             } else {
-                                "set by the schema"
+                                tr!("set by the schema")
                             };
                             egui::ComboBox::from_id_salt("new_tab_format")
                                 .selected_text(shown)
@@ -531,7 +535,7 @@ impl GossiaApp {
                                     egui::WidgetInfo::labeled(
                                         egui::Role::ComboBox,
                                         true,
-                                        "Data format of the new tab",
+                                        tr!("Data format of the new tab"),
                                     )
                                 });
                         });
@@ -542,9 +546,9 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     apply |= ui
-                        .add_enabled(problem.is_none(), egui::Button::new("Create"))
+                        .add_enabled(problem.is_none(), egui::Button::new(tr!("Create")))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;
@@ -617,25 +621,28 @@ impl GossiaApp {
         let report = self.calc().is_report(&dialog.name);
         let mentions = self.calc().mentions(&dialog.name);
         let (mut apply, mut cancel, mut open) = (false, false, true);
-        egui::Window::new(format!("Delete tab {}", dialog.name))
+        egui::Window::new(tr!("Delete tab {name}", name = dialog.name))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 match &problem {
                     Some(why) => {
-                        ui.colored_label(error_color(ui), format!("It cannot be deleted: {why}."));
+                        ui.colored_label(
+                            error_color(ui),
+                            tr!("It cannot be deleted: {why}.", why = why),
+                        );
                     }
                     None if report => {
-                        ui.label(format!(
-                            "Delete the report {} with its design? Undo puts it back.",
-                            dialog.name
+                        ui.label(tr!(
+                            "Delete the report {name} with its design? Undo puts it back.",
+                            name = dialog.name
                         ));
                     }
                     None => {
-                        ui.label(format!(
-                            "Delete {} with its data, formulas and forms? Undo puts it back.",
-                            dialog.name
+                        ui.label(tr!(
+                            "Delete {name} with its data, formulas and forms? Undo puts it back.",
+                            name = dialog.name
                         ));
                         if let Some(warning) = delete_mentions_text(&dialog.name, mentions) {
                             ui.label(warning);
@@ -647,9 +654,9 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     apply = ui
-                        .add_enabled(problem.is_none(), egui::Button::new("Delete"))
+                        .add_enabled(problem.is_none(), egui::Button::new(tr!("Delete")))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;
@@ -727,13 +734,13 @@ impl GossiaApp {
             dialog.problems = Some((dialog.schema.clone(), validate(&spec, data).len()));
         }
         let (mut apply, mut cancel, mut open) = (false, false, true);
-        egui::Window::new(format!("Schema of {}", dialog.sheet))
+        egui::Window::new(tr!("Schema of {sheet}", sheet = dialog.sheet))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Schema tab");
+                    ui.label(tr!("Schema tab"));
                     egui::ComboBox::from_id_salt("bind_tab_schema")
                         .selected_text(dialog.schema.clone())
                         .show_ui(ui, |ui| {
@@ -754,7 +761,7 @@ impl GossiaApp {
                         })
                         .response
                         .widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Schema tab")
+                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Schema tab"))
                         });
                 });
                 match (&problem, &dialog.problems) {
@@ -762,7 +769,7 @@ impl GossiaApp {
                         ui.colored_label(error_color(ui), why);
                     }
                     (None, Some((_, 0))) => {
-                        ui.label("The data fits it.");
+                        ui.label(tr!("The data fits it."));
                     }
                     (None, Some((_, n))) => {
                         ui.label(format!(
@@ -777,9 +784,9 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     apply = ui
-                        .add_enabled(problem.is_none(), egui::Button::new("Apply"))
+                        .add_enabled(problem.is_none(), egui::Button::new(tr!("Apply")))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;
@@ -830,10 +837,10 @@ impl GossiaApp {
             return;
         };
         let (mut yes, mut no, mut open) = (false, false, true);
-        egui::Window::new(format!(
-            "Write {} as {}",
-            change.sheet,
-            change.format.label()
+        egui::Window::new(tr!(
+            "Write {tab} as {format}",
+            tab = change.sheet,
+            format = change.format.label()
         ))
         .open(&mut open)
         .collapsible(false)
@@ -850,8 +857,8 @@ impl GossiaApp {
                 change.sheet
             ));
             ui.horizontal(|ui| {
-                yes = ui.button("Yes").clicked();
-                no = ui.button("No").clicked();
+                yes = ui.button(tr!("Yes")).clicked();
+                no = ui.button(tr!("No")).clicked();
             });
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 no = true;
@@ -882,7 +889,7 @@ impl GossiaApp {
                 .redefine_groups(sheet)
                 .into_iter()
                 .nth(set)
-                .ok_or("there is no such group of layouts")?;
+                .ok_or(tr!("there is no such group of layouts"))?;
             let name = |i: usize| group.names.get(i).cloned().unwrap_or_default();
             self.tab_dialogs.redefine = Some(RedefineChange {
                 sheet: sheet.to_owned(),
@@ -921,31 +928,35 @@ impl GossiaApp {
             return;
         };
         let (mut yes, mut no, mut open) = (false, false, true);
-        egui::Window::new(format!("Show {} in {}", change.to, change.sheet))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "{} has {} on its fields, which showing {} deletes. Delete {}? Undo puts {} back.",
-                    change.from,
-                    if change.formulas == 1 {
-                        "a formula".to_owned()
-                    } else {
-                        format!("{} formulas", change.formulas)
-                    },
-                    change.to,
-                    if change.formulas == 1 { "it" } else { "them" },
-                    if change.formulas == 1 { "it" } else { "them" },
-                ));
-                ui.horizontal(|ui| {
-                    yes = ui.button("Yes").clicked();
-                    no = ui.button("No").clicked();
-                });
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    no = true;
-                }
+        egui::Window::new(tr!(
+            "Show {to} in {sheet}",
+            to = change.to,
+            sheet = change.sheet
+        ))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "{} has {} on its fields, which showing {} deletes. Delete {}? Undo puts {} back.",
+                change.from,
+                if change.formulas == 1 {
+                    "a formula".to_owned()
+                } else {
+                    format!("{} formulas", change.formulas)
+                },
+                change.to,
+                if change.formulas == 1 { "it" } else { "them" },
+                if change.formulas == 1 { "it" } else { "them" },
+            ));
+            ui.horizontal(|ui| {
+                yes = ui.button(tr!("Yes")).clicked();
+                no = ui.button(tr!("No")).clicked();
             });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                no = true;
+            }
+        });
         if yes {
             if let Err(why) = self.set_redefine(&change.sheet, change.set, change.member) {
                 self.notice = Some(why);
@@ -1016,7 +1027,7 @@ impl GossiaApp {
         };
         let (mut yes, mut no, mut open) = (false, false, true);
         let one = change.formulas == 1;
-        egui::Window::new(format!("Hold {} in {}", change.record, change.sheet))
+        egui::Window::new(tr!("Hold {record} in {sheet}", record = change.record, sheet = change.sheet))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1034,8 +1045,8 @@ impl GossiaApp {
                     if one { "it" } else { "them" },
                 ));
                 ui.horizontal(|ui| {
-                    yes = ui.button("Yes").clicked();
-                    no = ui.button("No").clicked();
+                    yes = ui.button(tr!("Yes")).clicked();
+                    no = ui.button(tr!("No")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     no = true;
@@ -1134,34 +1145,34 @@ impl GossiaApp {
         }
         let can_change = self.editing.is_none() && self.session.running_procedure().is_none();
         ui.add_enabled_ui(can_change, |ui| {
-            if ui.button("New tab...").clicked() {
+            if ui.button(tr!("New tab...")).clicked() {
                 self.begin_new_tab();
                 ui.close();
             }
-            if ui.button("New report...").clicked() {
+            if ui.button(tr!("New report...")).clicked() {
                 self.begin_new_report();
                 ui.close();
             }
-            if ui.button("Import...").clicked() {
+            if ui.button(tr!("Import...")).clicked() {
                 self.begin_import();
                 ui.close();
             }
-            if ui.button("Export...").clicked() {
+            if ui.button(tr!("Export...")).clicked() {
                 self.begin_export(tab);
                 ui.close();
             }
             ui.separator();
-            if ui.button("Rename tab...").clicked() {
+            if ui.button(tr!("Rename tab...")).clicked() {
                 self.begin_rename_tab(tab);
                 ui.close();
             }
-            if ui.button("Delete tab...").clicked() {
+            if ui.button(tr!("Delete tab...")).clicked() {
                 self.begin_delete_tab(tab);
                 ui.close();
             }
             let data_tab = !self.calc().is_schema_sheet(tab);
             if ui
-                .add_enabled(data_tab, egui::Button::new("Change schema..."))
+                .add_enabled(data_tab, egui::Button::new(tr!("Change schema...")))
                 .clicked()
             {
                 self.begin_bind_tab(tab);
@@ -1171,7 +1182,7 @@ impl GossiaApp {
             let formats = self.calc().formats_for(tab);
             let own = self.calc().format(tab);
             ui.add_enabled_ui(formats.len() > 1, |ui| {
-                ui.menu_button("Format", |ui| {
+                ui.menu_button(tr!("Format"), |ui| {
                     for format in formats {
                         if ui.radio(own == Some(format), format.label()).clicked() {
                             if own != Some(format)
@@ -1187,7 +1198,7 @@ impl GossiaApp {
             // A copybook schema tab: the code page of its records' text.
             if self.calc().schema_format(tab) == Some(SchemaFormat::Copybook) {
                 let own = self.code_page_of(tab);
-                ui.menu_button("Code page", |ui| {
+                ui.menu_button(tr!("Code page"), |ui| {
                     for page in CodePage::ALL {
                         if ui.radio(own == Some(page), page.label()).clicked() {
                             if own != Some(page)
@@ -1200,7 +1211,7 @@ impl GossiaApp {
                     }
                 });
                 let own = self.float_format_of(tab);
-                ui.menu_button("Floating point", |ui| {
+                ui.menu_button(tr!("Floating point"), |ui| {
                     for format in FloatFormat::ALL {
                         if ui.radio(own == format, format.label()).clicked() {
                             if own != format
@@ -1221,7 +1232,7 @@ impl GossiaApp {
             ) {
                 let records = self.calc().copybook_records(&schema);
                 let variable = self.calc().is_variable(tab);
-                ui.menu_button("Record", |ui| {
+                ui.menu_button(tr!("Record"), |ui| {
                     for record in &records {
                         let problem = self.calc().record_problem(tab, record);
                         let mine = record.eq_ignore_ascii_case(&own);
@@ -1245,7 +1256,7 @@ impl GossiaApp {
                     if ui
                         .checkbox(
                             &mut on,
-                            "Variable length (VB, with a record descriptor word)",
+                            tr!("Variable length (VB, with a record descriptor word)"),
                         )
                         .clicked()
                     {
@@ -1260,7 +1271,7 @@ impl GossiaApp {
             // REDEFINES it shows. FILLER has no fields to show.
             let groups = self.calc().redefine_groups(tab);
             if !groups.is_empty() {
-                ui.menu_button("Layouts", |ui| {
+                ui.menu_button(tr!("Layouts"), |ui| {
                     for (set, group) in groups.iter().enumerate() {
                         ui.menu_button(group.names.join(" / "), |ui| {
                             for (member, name) in group.names.iter().enumerate() {
@@ -1320,7 +1331,7 @@ fn blank_copybook(tab: &str) -> String {
 /// from, if any.
 fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Path, String)]) {
     ui.horizontal(|ui| {
-        ui.label("Kind");
+        ui.label(tr!("Kind"));
         for kind in ReportKind::ALL {
             // Starting from an array makes a multipage report.
             let allowed = dialog.start.is_none() || kind == ReportKind::Multipage;
@@ -1329,17 +1340,17 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                     allowed,
                     egui::RadioButton::new(dialog.report_kind == kind, kind.label()),
                 )
-                .on_disabled_hover_text(
+                .on_disabled_hover_text(tr!(
                     "A report that starts from an array is multipage: its detail band repeats \
-                     for each item.",
-                );
+                     for each item."
+                ));
             if response.clicked() {
                 dialog.report_kind = kind;
             }
         }
     });
     ui.horizontal(|ui| {
-        ui.label("Start from");
+        ui.label(tr!("Start from"));
         let shown = dialog
             .start
             .as_ref()
@@ -1349,12 +1360,12 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                     .find(|(t, p, _)| t == tab && p == path)
                     .map(|(.., shown)| shown.clone())
             })
-            .unwrap_or_else(|| "nothing (an empty report)".to_owned());
+            .unwrap_or_else(|| tr!("nothing (an empty report)").to_owned());
         egui::ComboBox::from_id_salt("new_report_start")
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 if ui
-                    .selectable_label(dialog.start.is_none(), "nothing (an empty report)")
+                    .selectable_label(dialog.start.is_none(), tr!("nothing (an empty report)"))
                     .clicked()
                 {
                     dialog.start = None;
@@ -1375,12 +1386,12 @@ fn report_choices(ui: &mut egui::Ui, dialog: &mut NewTab, starts: &[(String, Pat
                 egui::WidgetInfo::labeled(
                     egui::Role::ComboBox,
                     true,
-                    "Array the report starts from",
+                    tr!("Array the report starts from"),
                 )
             });
     });
-    ui.weak(
+    ui.weak(tr!(
         "Empty, a report's controls are added in Edit report. From an array, it is a multipage \
-         report whose detail band shows each item's fields.",
-    );
+         report whose detail band shows each item's fields."
+    ));
 }

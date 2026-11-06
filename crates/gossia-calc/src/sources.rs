@@ -8,6 +8,7 @@
 //! change the file, so every read goes to the file and every change reads it
 //! again first. What a newer version wrote and this one does not know is kept.
 
+use gossia_i18n::tr;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -67,7 +68,7 @@ impl SourceKind {
             SourceKind::Postgres => "PostgreSQL",
             SourceKind::Mariadb => "MariaDB",
             SourceKind::Odbc => "ODBC",
-            SourceKind::Beancount => "Beancount journal",
+            SourceKind::Beancount => tr!("Beancount journal"),
         }
     }
 
@@ -140,11 +141,11 @@ impl HttpAuth {
 
     pub fn label(self) -> &'static str {
         match self {
-            HttpAuth::None => "None",
-            HttpAuth::Basic => "User name and password",
-            HttpAuth::Bearer => "Bearer token",
-            HttpAuth::KeyHeader => "API key in a header",
-            HttpAuth::KeyQuery => "API key in the query",
+            HttpAuth::None => tr!("None"),
+            HttpAuth::Basic => tr!("User name and password"),
+            HttpAuth::Bearer => tr!("Bearer token"),
+            HttpAuth::KeyHeader => tr!("API key in a header"),
+            HttpAuth::KeyQuery => tr!("API key in the query"),
         }
     }
 
@@ -197,10 +198,10 @@ impl TlsMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            TlsMode::Prefer => "Prefer: encrypted when the server offers it",
-            TlsMode::Require => "Require: encrypted or not at all",
-            TlsMode::Unchecked => "Unchecked: encrypted, certificate not checked",
-            TlsMode::Off => "Off: never encrypted",
+            TlsMode::Prefer => tr!("Prefer: encrypted when the server offers it"),
+            TlsMode::Require => tr!("Require: encrypted or not at all"),
+            TlsMode::Unchecked => tr!("Unchecked: encrypted, certificate not checked"),
+            TlsMode::Off => tr!("Off: never encrypted"),
         }
     }
 

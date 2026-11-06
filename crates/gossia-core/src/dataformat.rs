@@ -9,6 +9,7 @@ use crate::toml_format;
 use crate::typespec::Kind;
 use crate::value::{Node, Value};
 use crate::yaml;
+use gossia_i18n::tr;
 
 /// A tab's file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -82,12 +83,12 @@ impl DataFormat {
             DataFormat::Json => "JSON",
             DataFormat::Xml => "XML",
             DataFormat::Json5 => "JSON5",
-            DataFormat::Jsonc => "JSON with comments",
-            DataFormat::JsonLines => "JSON Lines",
+            DataFormat::Jsonc => tr!("JSON with comments"),
+            DataFormat::JsonLines => tr!("JSON Lines"),
             DataFormat::Toml => "TOML",
             DataFormat::Yaml => "YAML",
-            DataFormat::YamlDocuments => "YAML documents",
-            DataFormat::Blk => "COBOL records",
+            DataFormat::YamlDocuments => tr!("YAML documents"),
+            DataFormat::Blk => tr!("COBOL records"),
         }
     }
 

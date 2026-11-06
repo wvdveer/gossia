@@ -12,6 +12,7 @@
 //! in this window puts the formulas back. *Copy formulas* and *Paste values*
 //! choose explicitly. None of this draws, so it is tested without a window.
 
+use gossia_i18n::tr;
 use std::ops::RangeInclusive;
 
 use gossia_calc::entry;
@@ -338,7 +339,7 @@ impl GossiaApp {
                 if let Some(host) = crate::host::current()
                     && let Err(e) = host.write_storage(crate::host::CLIPBOARD, text)
                 {
-                    self.notice = Some(format!("the clipboard cannot be written: {e}"));
+                    self.notice = Some(tr!("the clipboard cannot be written: {e}", e = e));
                 }
             }
             #[cfg(not(target_family = "wasm"))]
@@ -356,11 +357,11 @@ impl GossiaApp {
         return arboard::Clipboard::new()
             .and_then(|mut clipboard| clipboard.get_text())
             .map(|text| text.replace("\r\n", "\n"))
-            .map_err(|e| format!("the clipboard cannot be read: {e}"));
+            .map_err(|e| tr!("the clipboard cannot be read: {e}", e = e));
         #[cfg(target_family = "wasm")]
         crate::host::current()
             .and_then(|host| host.read_storage(crate::host::CLIPBOARD))
-            .ok_or_else(|| "nothing has been copied".to_owned())
+            .ok_or_else(|| tr!("nothing has been copied").to_owned())
     }
 
     // ----------------------------------------------------------- paste
@@ -439,15 +440,15 @@ impl GossiaApp {
         let path = self
             .selection
             .clone()
-            .ok_or("nothing is selected to paste into")?;
-        let one = "only one cell can be pasted here; paste a range into a table";
+            .ok_or(tr!("nothing is selected to paste into"))?;
+        let one = tr!("only one cell can be pasted here; paste a range into a table");
         let [row] = cells else {
             return Err(one.to_owned());
         };
         let [cell] = row.as_slice() else {
             return Err(one.to_owned());
         };
-        self.paste_cells("Paste", &path, &[], &[(path.clone(), cell.clone())])
+        self.paste_cells(tr!("Paste"), &path, &[], &[(path.clone(), cell.clone())])
     }
 
     fn paste_in_table(
@@ -469,10 +470,11 @@ impl GossiaApp {
         };
         let (top, left) = (*range.rows.start(), *range.columns.start());
         if left + width > columns.len() {
-            return Err(format!(
-                "the clipboard is {width} columns wide and the table has {} from {}",
-                columns.len() - left,
-                columns[left].name
+            return Err(tr!(
+                "the clipboard is {width} columns wide and the table has {count} from {column}",
+                width = width,
+                count = columns.len() - left,
+                column = columns[left].name
             ));
         }
         let mut writes = Vec::new();
@@ -498,9 +500,13 @@ impl GossiaApp {
         }
         let added = (top + height).saturating_sub(length);
         let label = if height * width == 1 {
-            "Paste".to_owned()
+            tr!("Paste").to_owned()
         } else {
-            format!("Paste {height} x {width} cells")
+            tr!(
+                "Paste {height} x {width} cells",
+                height = height,
+                width = width
+            )
         };
         let added: Vec<usize> = (length..length + added).collect();
         let skipped = self.paste_cells(&label, &range.array, &added, &writes)?;
@@ -549,7 +555,7 @@ impl GossiaApp {
             None
         } else {
             let calc = self.calc();
-            let spec = calc.spec(&sheet).ok_or("the tab has no schema")?;
+            let spec = calc.spec(&sheet).ok_or(tr!("the tab has no schema"))?;
             match spec.resolve(array).map(|r| &spec.get(r.ty).kind) {
                 Some(gossia_core::Kind::Array { items, .. }) => {
                     Some(GossiaApp::default_value(spec, *items))

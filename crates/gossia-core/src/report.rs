@@ -26,6 +26,7 @@ pub use params::{
     period, period_dates,
 };
 
+use gossia_i18n::tr;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -53,8 +54,8 @@ impl ReportKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            ReportKind::SinglePage => "Single page",
-            ReportKind::Multipage => "Multipage",
+            ReportKind::SinglePage => tr!("Single page"),
+            ReportKind::Multipage => tr!("Multipage"),
         }
     }
 }
@@ -77,8 +78,8 @@ impl Paper {
         match self {
             Paper::A4 => "A4",
             Paper::A3 => "A3",
-            Paper::Letter => "Letter",
-            Paper::Legal => "Legal",
+            Paper::Letter => tr!("Letter"),
+            Paper::Legal => tr!("Legal"),
         }
     }
 
@@ -238,13 +239,13 @@ impl BandKind {
     /// Its name in the designer, without the section's item.
     pub fn label(self) -> &'static str {
         match self {
-            BandKind::ReportHeader => "Report header",
-            BandKind::PageHeader => "Page header",
-            BandKind::SectionHeader(_) => "Section header",
-            BandKind::Detail => "Detail",
-            BandKind::SectionFooter(_) => "Section footer",
-            BandKind::PageFooter => "Page footer",
-            BandKind::ReportFooter => "Report footer",
+            BandKind::ReportHeader => tr!("Report header"),
+            BandKind::PageHeader => tr!("Page header"),
+            BandKind::SectionHeader(_) => tr!("Section header"),
+            BandKind::Detail => tr!("Detail"),
+            BandKind::SectionFooter(_) => tr!("Section footer"),
+            BandKind::PageFooter => tr!("Page footer"),
+            BandKind::ReportFooter => tr!("Report footer"),
         }
     }
 

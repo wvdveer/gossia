@@ -3,6 +3,7 @@
 //! aside; the user goes to a node, on this tab or another, and clicks it, and
 //! its address goes into the text where the cursor was.
 
+use gossia_i18n::tr;
 use std::time::Duration;
 
 use web_time::Instant;
@@ -22,8 +23,11 @@ pub struct Pick {
 }
 
 /// What the formula bar says while a place is being picked.
-pub const PICK_HINT: &str =
-    "Click the place whose address goes into the formula; it can be on another tab. Esc cancels.";
+pub fn pick_hint() -> &'static str {
+    tr!(
+        "Click the place whose address goes into the formula; it can be on another tab. Esc cancels."
+    )
+}
 
 /// How long after a pick a click that would start editing is ignored: the
 /// second click of a double click on the place.
@@ -93,7 +97,10 @@ impl GossiaApp {
         let exists = self.calc().sheet_names().any(|s| s == editing.sheet);
         if !exists {
             // The tab was deleted or renamed meanwhile.
-            self.notice = Some(format!("The tab {} is no longer there", editing.sheet));
+            self.notice = Some(tr!(
+                "The tab {sheet} is no longer there",
+                sheet = editing.sheet
+            ));
             return;
         }
         if self.sheet != editing.sheet {

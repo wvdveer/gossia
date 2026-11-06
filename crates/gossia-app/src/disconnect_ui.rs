@@ -3,6 +3,7 @@
 //! formulas, the forms and the reports is replaced by what it gives now,
 //! after a dialog that says what changes and what cannot.
 
+use gossia_i18n::tr;
 use std::time::Duration;
 
 use web_time::Instant;
@@ -14,12 +15,13 @@ use crate::app::GossiaApp;
 /// How long the command waits for the sources to answer.
 const WAIT: Duration = Duration::from_secs(120);
 
-fn plural(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{count} {many}")
-    }
+/// "1 read of a data source", "3 reads of data sources".
+fn reads(count: usize) -> String {
+    counted(
+        count,
+        tr!("1 read of a data source"),
+        tr!("{n} reads of data sources"),
+    )
 }
 
 impl GossiaApp {
@@ -44,11 +46,12 @@ impl GossiaApp {
                 self.disconnect = Some(found);
             }
             Err(DisconnectError::Refused(e)) => {
-                self.notice = Some(format!("Cannot disconnect from the data sources: {e}."));
+                self.notice = Some(tr!("Cannot disconnect from the data sources: {e}.", e = e));
             }
             Err(DisconnectError::Timeout) => {
                 self.notice = Some(
-                    "The data sources did not answer in time, so nothing was changed.".to_owned(),
+                    tr!("The data sources did not answer in time, so nothing was changed.")
+                        .to_owned(),
                 );
             }
         }
@@ -66,23 +69,16 @@ impl GossiaApp {
         };
         gossia_calc::apply_and_rerun(&mut runner, &found, None);
         self.session.tick();
-        let mut notice = format!(
-            "Replaced {} by what they give now.",
-            plural(
-                found.replaced,
-                "read of a data source",
-                "reads of data sources"
-            )
+        let mut notice = tr!(
+            "Replaced {reads} by what they give now.",
+            reads = reads(found.replaced)
         );
         if !found.problems.is_empty() {
-            notice.push_str(&format!(
-                " {} still {} a data source.",
-                plural(found.problems.len(), "use", "uses"),
-                if found.problems.len() == 1 {
-                    "needs"
-                } else {
-                    "need"
-                }
+            notice.push(' ');
+            notice.push_str(&counted(
+                found.problems.len(),
+                tr!("1 use still needs a data source."),
+                tr!("{n} uses still need a data source."),
             ));
         }
         self.notice = Some(notice);
@@ -93,7 +89,7 @@ impl GossiaApp {
             return;
         };
         let (mut yes, mut no) = (false, false);
-        egui::Window::new("Disconnect from data sources")
+        egui::Window::new(tr!("Disconnect from data sources"))
             .collapsible(false)
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -103,9 +99,9 @@ impl GossiaApp {
                 if !found.problems.is_empty() {
                     ui.add_space(4.0);
                     ui.label(if found.is_empty() {
-                        "These uses of a data source cannot be replaced:"
+                        tr!("These uses of a data source cannot be replaced:")
                     } else {
-                        "These uses of a data source stay as they are:"
+                        tr!("These uses of a data source stay as they are:")
                     });
                     egui::ScrollArea::vertical()
                         .max_height(180.0)
@@ -119,10 +115,10 @@ impl GossiaApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if found.is_empty() {
-                        no = ui.button("Close").clicked();
+                        no = ui.button(tr!("Close")).clicked();
                     } else {
-                        yes = ui.button("Replace").clicked();
-                        no = ui.button("Cancel").clicked();
+                        yes = ui.button(tr!("Replace")).clicked();
+                        no = ui.button(tr!("Cancel")).clicked();
                     }
                 });
             });
@@ -138,76 +134,78 @@ impl GossiaApp {
 fn question(found: &Disconnect) -> String {
     if found.is_empty() {
         return if found.problems.is_empty() {
-            "No formula, form or report reads a data source, so there is nothing to replace."
+            tr!("No formula, form or report reads a data source, so there is nothing to replace.")
                 .to_owned()
         } else {
-            "Nothing can be replaced.".to_owned()
+            tr!("Nothing can be replaced.").to_owned()
         };
     }
     let mut changed = Vec::new();
     if found.formulas() > 0 {
-        changed.push(plural(found.formulas(), "formula", "formulas"));
+        changed.push(counted(
+            found.formulas(),
+            tr!("1 formula"),
+            tr!("{n} formulas"),
+        ));
     }
     if found.expressions() > 0 {
-        changed.push(plural(
+        changed.push(counted(
             found.expressions(),
-            "expression of a form",
-            "expressions of forms",
+            tr!("1 expression of a form"),
+            tr!("{n} expressions of forms"),
         ));
     }
     if found.report_expressions() > 0 {
-        changed.push(plural(
+        changed.push(counted(
             found.report_expressions(),
-            "expression of a report",
-            "expressions of reports",
+            tr!("1 expression of a report"),
+            tr!("{n} expressions of reports"),
         ));
     }
-    let mut text = format!(
-        "{} will be replaced by what they give now, as fixed values, so the workbook no longer \
-         needs the sources. This changes {}.",
-        plural(
-            found.replaced,
-            "read of a data source",
-            "reads of data sources"
-        ),
-        and_list(&changed)
+    let mut text = tr!(
+        "{reads} will be replaced by what they give now, as fixed values, so the workbook no longer \
+         needs the sources. This changes {changes}.",
+        reads = reads(found.replaced),
+        changes = and_list(&changed)
     );
     if !found.with_params.is_empty() {
         let reports: Vec<String> = found
             .with_params
             .iter()
-            .map(|r| format!("the report {r}"))
+            .map(|r| tr!("the report {r}", r = r))
             .collect();
-        text.push_str(&format!(
-            "\n\nReads that use the parameters of {} are replaced by what they give with the \
+        text.push_str("\n\n");
+        text.push_str(&tr!(
+            "Reads that use the parameters of {reports} are replaced by what they give with the \
              values chosen now.",
-            and_list(&reports)
+            reports = and_list(&reports)
         ));
     }
     if found.formulas() > 0 {
-        text.push_str("\n\nEdit > Undo takes back the changes to the formulas.");
+        text.push_str("\n\n");
+        text.push_str(tr!("Edit > Undo takes back the changes to the formulas."));
     }
     let forms = found.expressions() > 0;
     let reports = found.report_expressions() > 0;
     if forms || reports {
-        text.push_str(&format!(
-            "\n\nThe changes to the {} cannot be undone: save a copy of the workbook first if \
-             you may want them back.",
-            match (forms, reports) {
-                (true, true) => "forms and reports",
-                (true, false) => "forms",
-                _ => "reports",
-            }
-        ));
+        text.push_str("\n\n");
+        text.push_str(match (forms, reports) {
+            (true, true) => tr!(
+                "The changes to the forms and reports cannot be undone: save a copy of the \
+                 workbook first if you may want them back."
+            ),
+            (true, false) => tr!(
+                "The changes to the forms cannot be undone: save a copy of the workbook first if \
+                 you may want them back."
+            ),
+            _ => tr!(
+                "The changes to the reports cannot be undone: save a copy of the workbook first \
+                 if you may want them back."
+            ),
+        });
     }
     text
 }
 
 /// `a`, `a and b`, `a, b and c`.
-fn and_list(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    }
-}
+use gossia_i18n::{and_list, counted};

@@ -7,6 +7,7 @@
 use egui::Color32;
 use gossia_calc::{Calc, ExprKind, ExprState};
 use gossia_core::Value;
+use gossia_i18n::tr;
 
 /// How a control is to be drawn.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -98,22 +99,22 @@ fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> G
         };
         gate.pending |= state.pending;
         let what = match kind {
-            ExprKind::Visible => "Visible when",
-            ExprKind::Enabled => "Enabled when",
-            ExprKind::TextColour => "Text colour",
-            ExprKind::FillColour => "Fill colour",
-            ExprKind::Choices => "Choices",
-            ExprKind::Value => "Value",
-            ExprKind::Template => "Text",
-            ExprKind::Items => "Items",
-            ExprKind::Chart => "Chart",
+            ExprKind::Visible => tr!("Visible when"),
+            ExprKind::Enabled => tr!("Enabled when"),
+            ExprKind::TextColour => tr!("Text colour"),
+            ExprKind::FillColour => tr!("Fill colour"),
+            ExprKind::Choices => tr!("Choices"),
+            ExprKind::Value => tr!("Value"),
+            ExprKind::Template => tr!("Text"),
+            ExprKind::Items => tr!("Items"),
+            ExprKind::Chart => tr!("Chart"),
         };
         if !trusted {
             // Nothing runs: shown, and disabled if it has an *enabled when*.
             if kind == ExprKind::Enabled {
                 gate.disabled = true;
                 gate.why.push(
-                    "Enabled when runs Python, so this workbook has to be trusted first."
+                    tr!("Enabled when runs Python, so this workbook has to be trusted first.")
                         .to_owned(),
                 );
             }
@@ -296,8 +297,9 @@ pub fn choice_items(value: &Value) -> Result<Vec<Choice>, String> {
         .enumerate()
         .map(|(i, item)| {
             let wrong = || {
-                format!(
-                    "item {i} is not a value, a (code, text) pair or a dict with value and label"
+                tr!(
+                    "item {i} is not a value, a (code, text) pair or a dict with value and label",
+                    i = i
                 )
             };
             match item.value() {

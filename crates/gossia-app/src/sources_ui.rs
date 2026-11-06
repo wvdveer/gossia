@@ -4,6 +4,7 @@
 //! with a *Test* that runs in the background. Nothing here runs Python, so it
 //! works in an untrusted workbook too.
 
+use gossia_i18n::tr;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -90,7 +91,7 @@ impl RunningTest {
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => Some(TestOutcome {
                 ok: false,
-                message: "the test stopped without a result".to_owned(),
+                message: tr!("the test stopped without a result").to_owned(),
             }),
         }
     }
@@ -204,7 +205,7 @@ impl SourceForm {
                 text.parse::<u16>()
                     .ok()
                     .filter(|p| *p > 0)
-                    .ok_or("the port must be a whole number from 1 to 65535")?,
+                    .ok_or(tr!("the port must be a whole number from 1 to 65535"))?,
             ),
         };
         def.pool = match self.pooling && !def.kind.is_file() {
@@ -215,7 +216,7 @@ impl SourceForm {
                     .parse::<u32>()
                     .ok()
                     .filter(|n| *n >= 1)
-                    .ok_or("pooling needs a maximum of at least 1 connection")?,
+                    .ok_or(tr!("pooling needs a maximum of at least 1 connection"))?,
             ),
         };
         def.headers = Vec::new();
@@ -225,9 +226,12 @@ impl SourceForm {
             .map(str::trim)
             .filter(|l| !l.is_empty())
         {
-            let (name, value) = line
-                .split_once(':')
-                .ok_or_else(|| format!("the header line {line:?} needs a colon: Name: value"))?;
+            let (name, value) = line.split_once(':').ok_or_else(|| {
+                tr!(
+                    "the header line {line} needs a colon: Name: value",
+                    line = format!("{line:?}")
+                )
+            })?;
             def.headers
                 .push((name.trim().to_owned(), value.trim().to_owned()));
         }
@@ -332,17 +336,17 @@ fn secret_row(ui: &mut egui::Ui, label: &str, secret: &mut Secret, stored: bool)
     ui.label(label);
     ui.horizontal(|ui| match secret {
         Secret::Keep => {
-            ui.weak("Stored");
-            if ui.button("Change").clicked() {
+            ui.weak(tr!("Stored"));
+            if ui.button(tr!("Change")).clicked() {
                 *secret = Secret::Change(String::new());
             }
-            if ui.button("Clear").clicked() {
+            if ui.button(tr!("Clear")).clicked() {
                 *secret = Secret::Clear;
             }
         }
         Secret::Clear => {
-            ui.weak("None");
-            if stored && ui.button("Undo").clicked() {
+            ui.weak(tr!("None"));
+            if stored && ui.button(tr!("Undo")).clicked() {
                 *secret = Secret::Keep;
             }
         }
@@ -353,7 +357,7 @@ fn secret_row(ui: &mut egui::Ui, label: &str, secret: &mut Secret, stored: bool)
                     .desired_width(240.0),
             );
             labeled(&response, egui::Role::PasswordInput, &field_name(label));
-            if stored && ui.button("Keep stored").clicked() {
+            if stored && ui.button(tr!("Keep stored")).clicked() {
                 *secret = Secret::Keep;
             }
         }
@@ -369,16 +373,16 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Name");
+            ui.label(tr!("Name"));
             let response = ui.add(
                 egui::TextEdit::singleline(&mut form.draft.name)
                     .desired_width(340.0)
                     .hint_text("Sales"),
             );
-            labeled(&response, egui::Role::TextInput, "Name of the data source");
+            labeled(&response, egui::Role::TextInput, tr!("Name of the data source"));
             ui.end_row();
 
-            ui.label("Kind");
+            ui.label(tr!("Kind"));
             let mut kind = form.draft.kind;
             egui::ComboBox::from_id_salt("source_kind")
                 .selected_text(kind.label())
@@ -389,7 +393,7 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                 })
                 .response
                 .widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Kind of the data source")
+                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Kind of the data source"))
                 });
             form.draft.kind = kind;
             ui.end_row();
@@ -398,11 +402,11 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                 SourceKind::Http => {
                     text_row(
                         ui,
-                        "Base URL",
+                        tr!("Base URL"),
                         &mut form.draft.url,
                         "https://api.example.com/v1",
                     );
-                    ui.label("Authentication");
+                    ui.label(tr!("Authentication"));
                     let mut auth = form.draft.auth;
                     egui::ComboBox::from_id_salt("source_auth")
                         .selected_text(auth.label())
@@ -413,46 +417,46 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                         })
                         .response
                         .widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Authentication")
+                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Authentication"))
                         });
                     form.draft.auth = auth;
                     ui.end_row();
                     match auth {
                         HttpAuth::None => {}
                         HttpAuth::Basic => {
-                            text_row(ui, "User name", &mut form.draft.user, "");
-                            secret_row(ui, "Password", &mut form.password, stored_password);
+                            text_row(ui, tr!("User name"), &mut form.draft.user, "");
+                            secret_row(ui, tr!("Password"), &mut form.password, stored_password);
                         }
                         HttpAuth::Bearer => {
-                            secret_row(ui, "Token", &mut form.token, stored_token);
+                            secret_row(ui, tr!("Token"), &mut form.token, stored_token);
                         }
                         HttpAuth::KeyHeader | HttpAuth::KeyQuery => {
                             let what = match auth {
-                                HttpAuth::KeyHeader => "Header name",
-                                _ => "Parameter name",
+                                HttpAuth::KeyHeader => tr!("Header name"),
+                                _ => tr!("Parameter name"),
                             };
                             text_row(ui, what, &mut form.draft.key_name, "X-Api-Key");
                             secret_row(ui, "API key", &mut form.token, stored_token);
                         }
                     }
-                    ui.label("Default headers");
+                    ui.label(tr!("Default headers"));
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut form.headers)
                             .desired_rows(2)
                             .desired_width(340.0)
                             .hint_text("Accept: application/json"),
                     );
-                    labeled(&response, egui::Role::MultilineTextInput, "Default headers");
+                    labeled(&response, egui::Role::MultilineTextInput, tr!("Default headers"));
                     ui.end_row();
-                    text_row(ui, "Test path", &mut form.draft.test_path, "/health");
+                    text_row(ui, tr!("Test path"), &mut form.draft.test_path, "/health");
                 }
                 SourceKind::Sqlite => {
-                    text_row(ui, "File", &mut form.draft.path, "C:\\data\\sales.db");
+                    text_row(ui, tr!("File"), &mut form.draft.path, "C:\\data\\sales.db");
                 }
                 SourceKind::Beancount => {
                     text_row(
                         ui,
-                        "Journal file",
+                        tr!("Journal file"),
                         &mut form.draft.path,
                         "C:\\books\\main.beancount",
                     );
@@ -464,24 +468,24 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                         &mut form.draft.connection,
                         "Sales, or Driver={...};Server=...",
                     );
-                    text_row(ui, "User name", &mut form.draft.user, "");
-                    secret_row(ui, "Password", &mut form.password, stored_password);
+                    text_row(ui, tr!("User name"), &mut form.draft.user, "");
+                    secret_row(ui, tr!("Password"), &mut form.password, stored_password);
                 }
                 SourceKind::Postgres | SourceKind::Mariadb => {
-                    text_row(ui, "Host", &mut form.draft.host, "db.example.com");
-                    ui.label("Port");
+                    text_row(ui, tr!("Host"), &mut form.draft.host, "db.example.com");
+                    ui.label(tr!("Port"));
                     let port = kind.default_port().unwrap_or(0).to_string();
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut form.port)
                             .desired_width(80.0)
                             .hint_text(port),
                     );
-                    labeled(&response, egui::Role::TextInput, &field_name("Port"));
+                    labeled(&response, egui::Role::TextInput, &field_name(tr!("Port")));
                     ui.end_row();
-                    text_row(ui, "Database", &mut form.draft.database, "");
-                    text_row(ui, "User name", &mut form.draft.user, "");
-                    secret_row(ui, "Password", &mut form.password, stored_password);
-                    ui.label("TLS");
+                    text_row(ui, tr!("Database"), &mut form.draft.database, "");
+                    text_row(ui, tr!("User name"), &mut form.draft.user, "");
+                    secret_row(ui, tr!("Password"), &mut form.password, stored_password);
+                    ui.label(tr!("TLS"));
                     let mut tls = form.draft.tls;
                     egui::ComboBox::from_id_salt("source_tls")
                         .selected_text(tls.label())
@@ -492,14 +496,14 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                         })
                         .response
                         .on_hover_text(
-                            "When the connection is encrypted, the server's certificate is \
+                            tr!("When the connection is encrypted, the server's certificate is \
                              checked against this computer's certificate store. A self-signed \
                              certificate cannot be checked: use Unchecked for such a server, \
                              which still encrypts but would not notice a server pretending to \
-                             be this one.",
+                             be this one."),
                         )
                         .widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "TLS")
+                            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("TLS"))
                         });
                     form.draft.tls = tls;
                     ui.end_row();
@@ -507,23 +511,23 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
             }
 
             if !kind.is_file() {
-                ui.label("Pooling");
+                ui.label(tr!("Pooling"));
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut form.pooling, "Keep connections, at most");
+                    ui.checkbox(&mut form.pooling, tr!("Keep connections, at most"));
                     let response = ui.add_enabled(
                         form.pooling,
                         egui::TextEdit::singleline(&mut form.pool).desired_width(40.0),
                     );
-                    labeled(&response, egui::Role::TextInput, "Most connections kept");
+                    labeled(&response, egui::Role::TextInput, tr!("Most connections kept"));
                 });
                 ui.end_row();
             }
-            ui.label("Writes");
-            ui.checkbox(&mut form.draft.writes, "Allow writes")
+            ui.label(tr!("Writes"));
+            ui.checkbox(&mut form.draft.writes, tr!("Allow writes"))
                 .on_hover_text(
-                    "Off: SQLite is opened read-only, database sessions are read-only, \
+                    tr!("Off: SQLite is opened read-only, database sessions are read-only, \
                  HTTP may only GET, and nothing is added to a Beancount journal. ODBC asks the driver for read-only access, which \
-                 not every driver honours: use a read-only account where it matters.",
+                 not every driver honours: use a read-only account where it matters."),
                 );
             ui.end_row();
         });
@@ -628,10 +632,10 @@ impl GossiaApp {
         let (mut open, mut close) = (true, false);
         let mut action = FormAction::None;
         let title = match &panel.form {
-            None => "Data sources".to_owned(),
+            None => tr!("Data sources").to_owned(),
             Some(form) => match &form.old {
-                None => "New data source".to_owned(),
-                Some(name) => format!("Data source {name}"),
+                None => tr!("New data source").to_owned(),
+                Some(name) => tr!("Data source {name}", name = name),
             },
         };
         egui::Window::new(title)
@@ -679,11 +683,11 @@ impl GossiaApp {
         listed: &Result<Vec<SourceDef>, String>,
         timeout: Duration,
     ) -> bool {
-        ui.weak(
+        ui.weak(tr!(
             "Defined for you on this computer, passwords included. A workbook refers to a \
              data source by name, as source(\"Sales\"), so another computer needs the same \
-             names defined.",
-        );
+             names defined."
+        ));
         ui.add_space(6.0);
         let empty = Vec::new();
         let defs = match listed {
@@ -706,7 +710,7 @@ impl GossiaApp {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 if defs.is_empty() && listed.is_ok() {
-                    ui.weak("No data sources are defined on this computer.");
+                    ui.weak(tr!("No data sources are defined on this computer."));
                     return;
                 }
                 egui::Grid::new("sources_grid")
@@ -714,7 +718,7 @@ impl GossiaApp {
                     .striped(true)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        for head in ["Name", "Kind", "Where", "Writes"] {
+                        for head in [tr!("Name"), tr!("Kind"), tr!("Where"), tr!("Writes")] {
                             ui.label(RichText::new(head).strong());
                         }
                         ui.end_row();
@@ -734,7 +738,11 @@ impl GossiaApp {
                             if shown != target {
                                 label.on_hover_text(target);
                             }
-                            ui.label(if def.writes { "Allowed" } else { "Read only" });
+                            ui.label(if def.writes {
+                                tr!("Allowed")
+                            } else {
+                                tr!("Read only")
+                            });
                             ui.end_row();
                         }
                     });
@@ -748,17 +756,18 @@ impl GossiaApp {
             .cloned();
         if let Some(name) = panel.confirm_delete.clone() {
             ui.horizontal(|ui| {
-                ui.label(format!(
-                    "Delete the data source {name}? Its password is deleted with it."
+                ui.label(tr!(
+                    "Delete the data source {name}? Its password is deleted with it.",
+                    name = name
                 ));
-                if ui.button("Delete it").clicked() {
+                if ui.button(tr!("Delete it")).clicked() {
                     match self.user.sources.remove(&name) {
                         Ok(()) => panel.error = None,
                         Err(why) => panel.error = Some(why),
                     }
                     panel.confirm_delete = None;
                 }
-                if ui.button("Keep").clicked() {
+                if ui.button(tr!("Keep")).clicked() {
                     panel.confirm_delete = None;
                 }
             });
@@ -766,30 +775,36 @@ impl GossiaApp {
         let mut close = false;
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(listed.is_ok(), egui::Button::new("New..."))
+                .add_enabled(listed.is_ok(), egui::Button::new(tr!("New...")))
                 .clicked()
             {
                 panel.form = Some(SourceForm::new());
             }
             let some = selected.is_some();
-            if ui.add_enabled(some, egui::Button::new("Edit...")).clicked()
+            if ui
+                .add_enabled(some, egui::Button::new(tr!("Edit...")))
+                .clicked()
                 && let Some(def) = &selected
             {
                 panel.form = Some(SourceForm::edit(def.clone()));
             }
-            if ui.add_enabled(some, egui::Button::new("Copy...")).clicked()
+            if ui
+                .add_enabled(some, egui::Button::new(tr!("Copy...")))
+                .clicked()
                 && let Some(def) = &selected
             {
                 panel.form = Some(SourceForm::copy(def, self.copy_name(&def.name)));
             }
-            if ui.add_enabled(some, egui::Button::new("Delete")).clicked()
+            if ui
+                .add_enabled(some, egui::Button::new(tr!("Delete")))
+                .clicked()
                 && let Some(def) = &selected
             {
                 panel.confirm_delete = Some(def.name.clone());
             }
             let idle = panel.test.is_none();
             if ui
-                .add_enabled(some && idle, egui::Button::new("Test"))
+                .add_enabled(some && idle, egui::Button::new(tr!("Test")))
                 .clicked()
                 && let Some(def) = &selected
             {
@@ -797,18 +812,19 @@ impl GossiaApp {
                 panel.test = Some((def.name.clone(), RunningTest::start(def.clone(), timeout)));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                close = ui.button("Close").clicked();
+                close = ui.button(tr!("Close")).clicked();
             });
         });
         if let Some((name, running)) = &panel.test {
             let mut cancel = false;
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(format!(
-                    "Testing {name}... {} s",
-                    running.started.elapsed().as_secs()
+                ui.label(tr!(
+                    "Testing {name}... {seconds} s",
+                    name = name,
+                    seconds = running.started.elapsed().as_secs()
                 ));
-                cancel = ui.button("Cancel").clicked();
+                cancel = ui.button(tr!("Cancel")).clicked();
             });
             if cancel {
                 panel.test = None;
@@ -825,9 +841,9 @@ impl GossiaApp {
 
 fn outcome_line(ui: &mut egui::Ui, prefix: &str, outcome: &TestOutcome) {
     let (mark, color) = if outcome.ok {
-        ("Passed", crate::style::Palette::of_ui(ui).success)
+        (tr!("Passed"), crate::style::Palette::of_ui(ui).success)
     } else {
-        ("Failed", error_color(ui))
+        (tr!("Failed"), error_color(ui))
     };
     ui.colored_label(color, format!("{prefix}{mark}: {}", outcome.message));
 }
@@ -843,7 +859,7 @@ fn form_ui(ui: &mut egui::Ui, form: &mut SourceForm, timeout: Duration) -> FormA
         Err(_) => form.draft.target(),
     };
     ui.horizontal(|ui| {
-        ui.label("Where");
+        ui.label(tr!("Where"));
         ui.label(RichText::new(target).monospace());
     });
     if let Err(why) = &def {
@@ -853,17 +869,19 @@ fn form_ui(ui: &mut egui::Ui, form: &mut SourceForm, timeout: Duration) -> FormA
     ui.horizontal(|ui| match &form.test {
         Some(running) => {
             ui.spinner();
-            ui.label(format!(
-                "Testing... {} s",
-                running.started.elapsed().as_secs()
+            ui.label(tr!(
+                "Testing... {seconds} s",
+                seconds = running.started.elapsed().as_secs()
             ));
-            if ui.button("Cancel test").clicked() {
+            if ui.button(tr!("Cancel test")).clicked() {
                 form.test = None;
             }
         }
         None => {
             let can = def.is_ok();
-            if ui.add_enabled(can, egui::Button::new("Test")).clicked()
+            if ui
+                .add_enabled(can, egui::Button::new(tr!("Test")))
+                .clicked()
                 && let Ok(def) = &def
             {
                 form.result = None;
@@ -881,16 +899,18 @@ fn form_ui(ui: &mut egui::Ui, form: &mut SourceForm, timeout: Duration) -> FormA
     let mut action = FormAction::None;
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(def.is_ok(), egui::Button::new("Save"))
+            .add_enabled(def.is_ok(), egui::Button::new(tr!("Save")))
             .clicked()
         {
             action = FormAction::Save;
         }
-        if ui.button("Cancel").clicked() {
+        if ui.button(tr!("Cancel")).clicked() {
             action = FormAction::Cancel;
         }
         if form.result.as_ref().is_some_and(|r| !r.ok) {
-            ui.weak("The last test failed; the definition can still be saved.");
+            ui.weak(tr!(
+                "The last test failed; the definition can still be saved."
+            ));
         }
     });
     action

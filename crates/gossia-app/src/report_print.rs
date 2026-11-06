@@ -10,6 +10,7 @@
 //! printing: its PDF or HTML is saved through the host and printed from the
 //! program that opens it.
 
+use gossia_i18n::tr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -61,7 +62,7 @@ impl GossiaApp {
 /// system's temporary folder. Folders older than a day are deleted first.
 pub(crate) fn print_path(tab: &str) -> Result<PathBuf, String> {
     if cfg!(target_family = "wasm") {
-        return Err("printing is not available here".to_owned());
+        return Err(tr!("printing is not available here").to_owned());
     }
     let base = std::env::temp_dir().join("gossia-print");
     remove_old(&base, KEEP);
@@ -70,8 +71,13 @@ pub(crate) fn print_path(tab: &str) -> Result<PathBuf, String> {
         .map(|d| d.as_millis())
         .unwrap_or_default();
     let folder = base.join(format!("{stamp}-{}", std::process::id()));
-    std::fs::create_dir_all(&folder)
-        .map_err(|e| format!("cannot make {}: {e}", folder.display()))?;
+    std::fs::create_dir_all(&folder).map_err(|e| {
+        tr!(
+            "cannot make {folder}: {e}",
+            folder = folder.display(),
+            e = e
+        )
+    })?;
     Ok(folder.join(format!("{tab}.pdf")))
 }
 
@@ -109,7 +115,14 @@ fn open_with_system(path: &Path) -> Result<(), String> {
     let mut child = std::process::Command::new(program)
         .arg(path)
         .spawn()
-        .map_err(|e| format!("cannot open {} with {program}: {e}", path.display()))?;
+        .map_err(|e| {
+            tr!(
+                "cannot open {path} with {program}: {e}",
+                path = path.display(),
+                program = program,
+                e = e
+            )
+        })?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });

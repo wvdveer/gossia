@@ -2,6 +2,7 @@
 //! and moving what the window keeps for a tab to its new name, which an undo
 //! or a redo of a rename needs as much as the rename itself.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 use std::hash::Hash;
 
@@ -46,7 +47,7 @@ impl GossiaApp {
     /// Renames a tab, as the dialog does on *Rename*.
     pub fn rename_tab(&mut self, from: &str, to: &str) -> Result<(), String> {
         if self.session.running_procedure().is_some() {
-            return Err("a button procedure is running; wait for it to finish".to_owned());
+            return Err(tr!("a button procedure is running; wait for it to finish").to_owned());
         }
         if !self.commit_editing() {
             return Err(self.notice.clone().unwrap_or_default());
@@ -207,14 +208,14 @@ impl GossiaApp {
         };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
-        egui::Window::new(format!("Rename tab {}", dialog.from))
+        egui::Window::new(tr!("Rename tab {from}", from = dialog.from))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label("New name");
+                ui.label(tr!("New name"));
                 let response = ui.text_edit_singleline(&mut dialog.name);
-                named(&response, "Tab name");
+                named(&response, tr!("Tab name"));
                 if !dialog.focused {
                     response.request_focus();
                     select_all(ui, &response, &dialog.name);
@@ -234,9 +235,9 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     apply |= ui
-                        .add_enabled(problem.is_none(), egui::Button::new("Rename"))
+                        .add_enabled(problem.is_none(), egui::Button::new(tr!("Rename")))
                         .clicked();
-                    cancel |= ui.button("Cancel").clicked();
+                    cancel |= ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply && problem.is_none() {
@@ -253,31 +254,27 @@ impl GossiaApp {
 
 /// What the dialog says about the formulas and modules that use the old name.
 pub(crate) fn mentions_text(name: &str, mentions: gossia_calc::Mentions) -> Option<String> {
-    let count = |n: usize, one: &str, many: &str| match n {
-        0 => None,
-        1 => Some(format!("1 {one}")),
-        n => Some(format!("{n} {many}")),
+    let formulas = |n| gossia_i18n::counted(n, tr!("1 formula"), tr!("{n} formulas"));
+    let modules = |n| gossia_i18n::counted(n, tr!("1 module"), tr!("{n} modules"));
+    let things = match (mentions.formulas, mentions.modules) {
+        (0, 0) => return None,
+        (f, 0) => formulas(f),
+        (0, m) => modules(m),
+        (f, m) => gossia_i18n::and_list(&[formulas(f), modules(m)]),
     };
-    let parts: Vec<String> = [
-        count(mentions.formulas, "formula", "formulas"),
-        count(mentions.modules, "module", "modules"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let one = mentions.formulas + mentions.modules == 1;
-    let (verb, they, are) = if one {
-        ("uses", "It is", "it is")
+    Some(if mentions.formulas + mentions.modules == 1 {
+        tr!(
+            "{things} uses {name}. It is not changed, and will show #NAME! until it is edited.",
+            things = things,
+            name = name
+        )
     } else {
-        ("use", "They are", "they are")
-    };
-    Some(format!(
-        "{} {verb} {name}. {they} not changed, and will show #NAME! until {are} edited.",
-        parts.join(" and ")
-    ))
+        tr!(
+            "{things} use {name}. They are not changed, and will show #NAME! until they are edited.",
+            things = things,
+            name = name
+        )
+    })
 }
 
 /// Selects the whole text of a field, so that typing replaces the name.

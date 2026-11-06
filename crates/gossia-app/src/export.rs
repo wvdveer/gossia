@@ -6,6 +6,7 @@
 //! The schema tab of a data tab can be written beside it, as `<name>.xsd` or
 //! `<name>.schema.json` in the same folder. Both files are written atomically.
 
+use gossia_i18n::tr;
 use std::path::{Path, PathBuf};
 
 use gossia_calc::{ExportFormat, SchemaFormat};
@@ -51,7 +52,7 @@ impl GossiaApp {
         let formats = self.calc().export_formats(tab);
         let format = *formats
             .first()
-            .ok_or_else(|| format!("there is no tab {tab}"))?;
+            .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
         Ok(ExportPlan {
             tab: tab.to_owned(),
             formats,
@@ -116,10 +117,10 @@ impl GossiaApp {
                 "xsd" => "XSD",
                 "blk" => "COBOL records",
                 "cpy" => "COBOL copybook",
-                _ => "Text",
+                _ => tr!("Text"),
             };
             self.files.browser = crate::workbook_file::new_browser()
-                .title(&format!("Export {}", plan.tab))
+                .title(&tr!("Export {tab}", tab = plan.tab))
                 .initial_directory(self.start_folder())
                 .default_file_name(&name)
                 .add_save_extension(kind, extension)
@@ -148,7 +149,10 @@ impl GossiaApp {
     /// The files of the dialog's tab, and its schema if asked, to be written
     /// at `path` and beside it.
     fn export_files(&self, path: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
-        let plan = self.export.clone().ok_or("there is nothing to export")?;
+        let plan = self
+            .export
+            .clone()
+            .ok_or(tr!("there is nothing to export"))?;
         let path = if path.extension().is_some() {
             path.to_path_buf()
         } else {
@@ -160,16 +164,16 @@ impl GossiaApp {
         let schema = match self.export_schema_path(&plan, &path) {
             Some(schema_path) => {
                 if schema_path == path {
-                    return Err(format!(
-                        "the schema would be written to {} as well; give the file another name",
-                        path.display()
+                    return Err(tr!(
+                        "the schema would be written to {path} as well; give the file another name",
+                        path = path.display()
                     ));
                 }
                 let schema = plan.schema.as_deref().expect("a schema is written");
                 let format = self
                     .calc()
                     .export_format(schema)
-                    .ok_or_else(|| format!("there is no tab {schema}"))?;
+                    .ok_or_else(|| tr!("there is no tab {schema}", schema = schema))?;
                 Some((
                     schema_path,
                     self.calc().export_text(schema, format, plan.pretty)?,
@@ -208,14 +212,14 @@ impl GossiaApp {
             )
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
         let (mut choose, mut cancel, mut open) = (false, false, true);
-        egui::Window::new(format!("Export {}", plan.tab))
+        egui::Window::new(tr!("Export {tab}", tab = plan.tab))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .min_width(360.0)
             .show(ctx, |ui| {
                 if plan.formats.len() > 1 {
-                    ui.label("Format");
+                    ui.label(tr!("Format"));
                     for format in plan.formats.clone() {
                         if ui.radio(plan.format == format, format.label()).clicked() {
                             plan.format = format;
@@ -225,27 +229,25 @@ impl GossiaApp {
                 }
                 ui.add_enabled_ui(plan.format != ExportFormat::Text, |ui| {
                     ui.horizontal(|ui| {
-                        if ui.radio(plan.pretty, "Indented").clicked() {
+                        if ui.radio(plan.pretty, tr!("Indented")).clicked() {
                             plan.pretty = true;
                         }
-                        if ui.radio(!plan.pretty, "Compact").clicked() {
+                        if ui.radio(!plan.pretty, tr!("Compact")).clicked() {
                             plan.pretty = false;
                         }
                     });
                     if let (Some(schema), Some(file)) = (&plan.schema, &schema_file) {
                         let response = ui.checkbox(
                             &mut plan.with_schema,
-                            format!("Also write the schema, {schema}, beside it"),
+                            tr!("Also write the schema, {schema}, beside it", schema = schema),
                         );
-                        named(&response, "Export the schema");
+                        named(&response, tr!("Export the schema"));
                         if plan.with_schema {
-                            ui.weak(format!(
-                                "As {file} (named after the file), replacing a file of that name."
-                            ));
+                            ui.weak(tr!("As {file} (named after the file), replacing a file of that name.", file = file));
                         }
                     }
                 });
-                ui.weak("Formulas are not written: the values they computed are.");
+                ui.weak(tr!("Formulas are not written: the values they computed are."));
                 let format = match plan.format {
                     ExportFormat::Data(format) => Some(format),
                     _ => None,
@@ -263,8 +265,8 @@ impl GossiaApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    choose = ui.button("Export...").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    choose = ui.button(tr!("Export...")).clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;

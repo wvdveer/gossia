@@ -13,6 +13,7 @@
 //! by reading the file again, applying the change to what it holds, and writing
 //! it back.
 
+use gossia_i18n::tr;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -297,9 +298,9 @@ impl ThemeChoice {
 
     pub fn label(self) -> &'static str {
         match self {
-            ThemeChoice::System => "Follow system",
-            ThemeChoice::Light => "Light",
-            ThemeChoice::Dark => "Dark",
+            ThemeChoice::System => tr!("Follow system"),
+            ThemeChoice::Light => tr!("Light"),
+            ThemeChoice::Dark => tr!("Dark"),
         }
     }
 
@@ -314,6 +315,8 @@ pub struct Appearance {
     pub theme: ThemeChoice,
     /// The interface scale, in percent.
     pub scale_percent: u64,
+    /// The language of the interface; none follows the system's.
+    pub language: Option<gossia_i18n::Language>,
 }
 
 /// The range of the interface scale, in percent.
@@ -324,6 +327,7 @@ impl Default for Appearance {
         Appearance {
             theme: ThemeChoice::System,
             scale_percent: 100,
+            language: None,
         }
     }
 }
@@ -350,9 +354,9 @@ impl Density {
 
     pub fn label(self) -> &'static str {
         match self {
-            Density::Compact => "Compact",
-            Density::Normal => "Normal",
-            Density::Comfortable => "Comfortable",
+            Density::Compact => tr!("Compact"),
+            Density::Normal => tr!("Normal"),
+            Density::Comfortable => tr!("Comfortable"),
         }
     }
 
@@ -744,6 +748,20 @@ impl Preferences {
             ));
             scale_percent = 100;
         }
+        let language = match section.and_then(|o| o.get("language")) {
+            None => None,
+            Some(Json::String(tag)) if tag == "system" => None,
+            Some(value) => match value.as_str().and_then(gossia_i18n::Language::from_tag) {
+                Some(language) => Some(language),
+                None => {
+                    warnings.push(format!(
+                        "In {PREFERENCES_FILE}, appearance.language is {value}, which cannot be \
+                         used; the language follows the system."
+                    ));
+                    None
+                }
+            },
+        };
         let undo = object_at(&raw, "undo");
         let history_entries = number(
             undo,
@@ -787,6 +805,7 @@ impl Preferences {
             appearance: Appearance {
                 theme,
                 scale_percent,
+                language,
             },
             ceilings,
             limits,
@@ -819,6 +838,10 @@ impl Preferences {
             vec![
                 ("theme", json!(self.appearance.theme.key())),
                 ("scale_percent", json!(self.appearance.scale_percent)),
+                (
+                    "language",
+                    json!(self.appearance.language.map_or("system", |l| l.tag())),
+                ),
             ],
         );
         section(
@@ -1308,6 +1331,34 @@ mod tests {
         let first = prefs.recent[0].clone();
         prefs.remove_recent(&first);
         assert!(prefs.recent[0].ends_with("11.gossia"));
+    }
+
+    #[test]
+    fn the_language_is_kept_and_a_tag_not_known_follows_the_system() {
+        let folder = Folder::new("language");
+        let (mut user, _) = User::load(Config::at(&folder.0));
+        assert_eq!(
+            user.prefs.appearance.language, None,
+            "the system's at first"
+        );
+        user.change_prefs(|p| p.appearance.language = Some(gossia_i18n::Language::Japanese))
+            .unwrap();
+        let text = std::fs::read_to_string(folder.0.join(PREFERENCES_FILE)).unwrap();
+        assert!(text.contains("\"language\": \"ja\""), "{text}");
+        let (again, warnings) = User::load(Config::at(&folder.0));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            again.prefs.appearance.language,
+            Some(gossia_i18n::Language::Japanese)
+        );
+        std::fs::write(
+            folder.0.join(PREFERENCES_FILE),
+            r#"{"version": 3, "appearance": {"language": "klingon"}}"#,
+        )
+        .unwrap();
+        let (odd, warnings) = User::load(Config::at(&folder.0));
+        assert_eq!(odd.prefs.appearance.language, None);
+        assert!(warnings[0].contains("appearance.language"), "{warnings:?}");
     }
 
     #[test]

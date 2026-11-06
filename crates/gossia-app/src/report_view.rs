@@ -18,6 +18,7 @@ use gossia_calc::{Calc, REPORT_FORM};
 use gossia_core::Value;
 use gossia_core::form::{Address, FormDesign};
 use gossia_core::report::ReportDesign;
+use gossia_i18n::tr;
 use gossia_layout::report::{self, Got, Ink, Laid, Paged, Paint, Prop, Source};
 pub use gossia_report::workbook::CalcSource;
 
@@ -242,9 +243,9 @@ impl GossiaApp {
             ui.add_space(MARGIN);
             ui.horizontal(|ui| {
                 ui.add_space(MARGIN);
-                ui.label(format!(
-                    "Fill in {} to see the report.",
-                    crate::report_params::and_list(&missing)
+                ui.label(tr!(
+                    "Fill in {params} to see the report.",
+                    params = gossia_i18n::and_list(&missing)
                 ));
             });
             return;
@@ -284,9 +285,9 @@ impl GossiaApp {
             (false, None) => "This workbook is not trusted, so nothing runs, and no results \
                               of the report were kept."
                 .to_owned(),
-            (true, Some(c)) if calc.pending_expressions() > 0 => format!(
-                "Showing the results calculated on {} until the new ones are in.",
-                local_time(&c.calculated)
+            (true, Some(c)) if calc.pending_expressions() > 0 => tr!(
+                "Showing the results calculated on {time} until the new ones are in.",
+                time = local_time(&c.calculated)
             ),
             _ => return,
         };
@@ -360,13 +361,13 @@ impl GossiaApp {
     pub(crate) fn report_tools(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         let text = match self.report.zoom {
-            None => "Fit width".to_owned(),
+            None => tr!("Fit width").to_owned(),
             Some(z) => format!("{:.0}%", z * 100.0),
         };
         let response = egui::ComboBox::from_id_salt("report_zoom")
             .selected_text(text)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.report.zoom, None, "Fit width");
+                ui.selectable_value(&mut self.report.zoom, None, tr!("Fit width"));
                 for z in ZOOMS {
                     ui.selectable_value(
                         &mut self.report.zoom,
@@ -376,12 +377,12 @@ impl GossiaApp {
                 }
             })
             .response;
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Zoom"));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Zoom")));
         if self.layout_active() {
-            ui.checkbox(&mut self.report.show_expressions, "Show expressions")
-                .on_hover_text(
-                    "Each field shows its expression, as [Orders.total], in place of its value",
-                );
+            ui.checkbox(&mut self.report.show_expressions, tr!("Show expressions"))
+                .on_hover_text(tr!(
+                    "Each field shows its expression, as [Orders.total], in place of its value"
+                ));
         } else if self
             .calc()
             .report(&self.sheet)
@@ -394,18 +395,28 @@ impl GossiaApp {
                 .map_or(1, |p| p.pages.len().max(1));
             let page = self.report.page.min(count - 1);
             ui.separator();
-            if crate::icons::button(ui, page > 0, crate::icons::CARET_LEFT, "<", "Previous page")
-                .clicked()
+            if crate::icons::button(
+                ui,
+                page > 0,
+                crate::icons::CARET_LEFT,
+                "<",
+                tr!("Previous page"),
+            )
+            .clicked()
             {
                 self.report.page = page.saturating_sub(1);
             }
-            ui.label(format!("Page {} of {count}", page + 1));
+            ui.label(tr!(
+                "Page {page} of {count}",
+                page = page + 1,
+                count = count
+            ));
             if crate::icons::button(
                 ui,
                 page + 1 < count,
                 crate::icons::CARET_RIGHT,
                 ">",
-                "Next page",
+                tr!("Next page"),
             )
             .clicked()
             {
@@ -420,17 +431,17 @@ impl GossiaApp {
             let place: Vec<String> = at.iter().map(usize::to_string).collect();
             ui.colored_label(
                 crate::view::error_color(ui),
-                format!("Control {}: {why}", place.join(".")),
+                tr!("Control {place}: {why}", place = place.join("."), why = why),
             );
         }
         if self.calc().report(name).is_some_and(has_no_controls) {
-            ui.label("This report has no controls yet.");
-            ui.weak(
+            ui.label(tr!("This report has no controls yet."));
+            ui.weak(tr!(
                 "Turn on Edit report to add controls, or edit its design in the code editor, \
-                 under Reports.",
-            );
-            let open = ui.button("Open the design in the code editor");
-            named(&open, "Open report design");
+                 under Reports."
+            ));
+            let open = ui.button(tr!("Open the design in the code editor"));
+            named(&open, tr!("Open report design"));
             if open.clicked() {
                 self.open_code_editor();
                 self.open_report_design(name);

@@ -1267,7 +1267,7 @@ fn a_place_on_another_tab_is_picked_into_the_formula_where_the_cursor_was() {
     harness.run();
     click(&mut harness, "Pick a place");
     assert!(harness.state().picking());
-    harness.get_by_label(gossia_app::pick::PICK_HINT);
+    harness.get_by_label(gossia_app::pick::pick_hint());
     click(&mut harness, "Prices");
     click(&mut harness, "EUR");
     // Back on the tab of the formula, with the address put in.

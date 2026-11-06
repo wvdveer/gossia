@@ -3,6 +3,7 @@
 //! drawn, the snapping of a moved control to the grid and to the others, the
 //! cells of a Grid group, and the align tools for several selected controls.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use egui::{Pos2, Rect, Vec2};
@@ -186,16 +187,16 @@ impl Arrange {
 
     pub fn label(self) -> &'static str {
         match self {
-            Arrange::Left => "Align left",
-            Arrange::Right => "Align right",
-            Arrange::Top => "Align top",
-            Arrange::Bottom => "Align bottom",
-            Arrange::CentresAcross => "Align centres across",
-            Arrange::CentresDown => "Align centres down",
-            Arrange::SameWidth => "Same width",
-            Arrange::SameHeight => "Same height",
-            Arrange::SpreadAcross => "Distribute across",
-            Arrange::SpreadDown => "Distribute down",
+            Arrange::Left => tr!("Align left"),
+            Arrange::Right => tr!("Align right"),
+            Arrange::Top => tr!("Align top"),
+            Arrange::Bottom => tr!("Align bottom"),
+            Arrange::CentresAcross => tr!("Align centres across"),
+            Arrange::CentresDown => tr!("Align centres down"),
+            Arrange::SameWidth => tr!("Same width"),
+            Arrange::SameHeight => tr!("Same height"),
+            Arrange::SpreadAcross => tr!("Distribute across"),
+            Arrange::SpreadDown => tr!("Distribute down"),
         }
     }
 

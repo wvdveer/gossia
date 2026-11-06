@@ -7,6 +7,7 @@
 //! value that does not fit stays in the field with its error and is not
 //! written.
 
+use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
@@ -55,11 +56,21 @@ pub enum View {
 }
 
 impl View {
-    pub fn label(&self) -> &str {
+    /// Its name in English, as the control server's commands give it.
+    pub fn name(&self) -> &str {
         match self {
             View::Tree => "Data tree",
             View::Form(name) => name,
             View::Raw => "Raw",
+        }
+    }
+
+    /// Its name in the window, in the interface's language.
+    pub fn label(&self) -> &str {
+        match self {
+            View::Tree => tr!("Data tree"),
+            View::Form(name) => name,
+            View::Raw => tr!("Raw"),
         }
     }
 }
@@ -442,7 +453,9 @@ impl GossiaApp {
                         }
                         ui.add_space(4.0);
                         if design.controls.is_empty() {
-                            ui.weak("This form has no controls. Add some from the palette above.");
+                            ui.weak(tr!(
+                                "This form has no controls. Add some from the palette above."
+                            ));
                         }
                         painter.controls(ui, &design.controls, &[]);
                         if painter.layout.is_some() {
@@ -539,7 +552,11 @@ impl GossiaApp {
                 if let Some(other) = other {
                     let mut order: Vec<usize> = (0..length).collect();
                     order.swap(index, other);
-                    self.reorder(&array, &order, if up { "Move up" } else { "Move down" });
+                    self.reorder(
+                        &array,
+                        &order,
+                        if up { tr!("Move up") } else { tr!("Move down") },
+                    );
                 }
             }
             FormAction::Sort(array, column) => self.sort_table(&array, &column, None),
@@ -604,7 +621,7 @@ impl GossiaApp {
     fn add_entry(&mut self, map: &Path, key: &str) {
         let key = key.trim();
         if key.is_empty() {
-            self.notice = Some("type the key of the new entry first".to_owned());
+            self.notice = Some(tr!("type the key of the new entry first").to_owned());
             return;
         }
         if let Err(why) = self.add_map_entry(map, key) {
@@ -708,7 +725,7 @@ fn check_text(spec: &TypeSpec, path: &Path, text: &str) -> Option<String> {
     let kind = &spec.get(spec.resolve(path)?.ty).kind;
     if !is_text(kind) && text.trim_start().starts_with('=') {
         return Some(
-            "a form has no formulas; enter a literal here, or a formula in the data tree"
+            tr!("a form has no formulas; enter a literal here, or a formula in the data tree")
                 .to_owned(),
         );
     }
@@ -719,7 +736,7 @@ fn check_text(spec: &TypeSpec, path: &Path, text: &str) -> Option<String> {
 
 fn hint(kind: &Kind) -> &'static str {
     match kind {
-        Kind::Integer(_) => "whole number",
+        Kind::Integer(_) => tr!("whole number"),
         Kind::Number(_) => "number",
         Kind::Date => "yyyy-mm-dd",
         Kind::DateTime => "yyyy-mm-ddThh:mm:ss",
@@ -1229,7 +1246,7 @@ impl Painter<'_> {
                 egui::vec2(side, side),
             );
             ui.put(rect, |ui: &mut egui::Ui| crate::style::pending_marker(ui))
-                .on_hover_text("Waiting to be calculated");
+                .on_hover_text(tr!("Waiting to be calculated"));
         }
         if !gate.why.is_empty() {
             let why = gate.why.join("\n");
@@ -1698,9 +1715,9 @@ impl Painter<'_> {
         }
         let rect = rect.expand(2.0);
         let handles = [
-            (true, false, rect.right_center(), "Width handle"),
-            (false, true, rect.center_bottom(), "Height handle"),
-            (true, true, rect.right_bottom(), "Size handle"),
+            (true, false, rect.right_center(), tr!("Width handle")),
+            (false, true, rect.center_bottom(), tr!("Height handle")),
+            (true, true, rect.right_bottom(), tr!("Size handle")),
         ];
         for (sets_width, sets_height, centre, name) in handles {
             if sets_height && c.kind == ControlKind::Separator && !c.vertical {
@@ -1783,7 +1800,7 @@ impl Painter<'_> {
         );
         let id = ui.scope_id().with(("column_edge", slot.at.clone(), name));
         let handle = ui.interact(edge, id, Sense::drag());
-        let label = format!("Width of column {name}");
+        let label = tr!("Width of column {name}", name = name);
         handle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, &label));
         if handle.hovered() || handle.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
@@ -1872,9 +1889,9 @@ impl Painter<'_> {
                     ui.close();
                 }
             };
-            command(ui, "Move column left", ColumnEdit::Move(true));
-            command(ui, "Move column right", ColumnEdit::Move(false));
-            command(ui, "Hide column", ColumnEdit::Show(false));
+            command(ui, tr!("Move column left"), ColumnEdit::Move(true));
+            command(ui, tr!("Move column right"), ColumnEdit::Move(false));
+            command(ui, tr!("Hide column"), ColumnEdit::Show(false));
         });
     }
 
@@ -1919,28 +1936,28 @@ impl Painter<'_> {
         let nested = slot.at.len() > 1;
         let mut commands = vec![
             (
-                "Move up",
+                tr!("Move up"),
                 index > 0,
                 ControlAction::Shift(slot.at.clone(), true),
             ),
             (
-                "Move down",
+                tr!("Move down"),
                 index + 1 < slot.siblings,
                 ControlAction::Shift(slot.at.clone(), false),
             ),
             (
-                "Move into the group above",
+                tr!("Move into the group above"),
                 slot.above_is_group,
                 ControlAction::Nest(slot.at.clone(), true),
             ),
             (
-                "Move out of the group",
+                tr!("Move out of the group"),
                 nested,
                 ControlAction::Nest(slot.at.clone(), false),
             ),
         ];
         commands.push((
-            "Delete control",
+            tr!("Delete control"),
             true,
             ControlAction::Delete(slot.at.clone()),
         ));
@@ -1959,7 +1976,7 @@ impl Painter<'_> {
             .chain(self.also.iter().cloned())
             .collect();
         if selection.len() > 1 && selection.contains(&slot.at) {
-            ui.menu_button("Align", |ui| {
+            ui.menu_button(tr!("Align"), |ui| {
                 for how in crate::form_free::Arrange::ALL {
                     let placements = crate::form_free::arranged(how, &selection, &self.last);
                     if ui
@@ -2030,7 +2047,7 @@ impl Painter<'_> {
                     width,
                 );
                 let can = self.app.can_edit(path);
-                if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
+                if ui.add_enabled(can, egui::Button::new(tr!("Add"))).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
                 }
             });
@@ -2235,20 +2252,21 @@ impl Painter<'_> {
             },
             // Charts are drawn in reports only, for now.
             ControlKind::Chart => {
-                ui.weak("A chart is drawn in reports only");
+                ui.weak(tr!("A chart is drawn in reports only"));
             }
             ControlKind::Button => {
-                let label = c.label.clone().unwrap_or_else(|| "Button".to_owned());
+                let label = c.label.clone().unwrap_or_else(|| tr!("Button").to_owned());
                 let running = self
                     .app
                     .session
                     .running_procedure()
                     .map(|c| c.button.clone());
                 let (can, hint) = match &c.procedure {
-                    None => (false, "No procedure has been chosen.".to_owned()),
+                    None => (false, tr!("No procedure has been chosen.").to_owned()),
                     Some(_) if !self.app.calc().is_trusted() => (
                         false,
-                        "Buttons run Python, so this workbook has to be trusted first.".to_owned(),
+                        tr!("Buttons run Python, so this workbook has to be trusted first.")
+                            .to_owned(),
                     ),
                     Some(_) if running.is_some() => (
                         false,
@@ -2257,7 +2275,7 @@ impl Painter<'_> {
                             running.unwrap_or_default()
                         ),
                     ),
-                    Some(p) => (true, format!("Runs {p}")),
+                    Some(p) => (true, tr!("Runs {p}", p = p)),
                 };
                 let width = if self.sized {
                     ui.available_width()
@@ -2404,7 +2422,7 @@ impl Painter<'_> {
                 let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
                 label_cell(ui, self.text(label), required, self.help(path, ty), width);
                 let can = self.app.can_edit(path);
-                if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
+                if ui.add_enabled(can, egui::Button::new(tr!("Add"))).clicked() {
                     self.actions.push(FormAction::Create(path.clone()));
                 }
             });
@@ -2823,7 +2841,7 @@ impl Painter<'_> {
             }
             if not_listed {
                 r.clone()
-                    .on_hover_text("This value is not in the list of choices.");
+                    .on_hover_text(tr!("This value is not in the list of choices."));
             }
             // The node's comments, as on its cell: the triangle and the
             // popup, and outside layout mode the comment commands in the
@@ -2844,20 +2862,25 @@ impl Painter<'_> {
             }
         }
         if not_listed && !compact {
-            ui.label(RichText::new("not in the list").small().weak().italics());
+            ui.label(
+                RichText::new(tr!("not in the list"))
+                    .small()
+                    .weak()
+                    .italics(),
+            );
         }
         if let Some(text) = formula {
             ui.label(RichText::new("fx").italics().weak())
                 .on_hover_text(format!("={text}"));
         } else if let Some(by) = &computed_by {
             ui.label(RichText::new("fx").italics().weak())
-                .on_hover_text(format!("computed by {}", app.name_of(by)));
+                .on_hover_text(tr!("computed by {name}", name = app.name_of(by)));
         }
         if untrusted && formula.is_some() {
             crate::view::untrusted_mark(ui, stale);
         }
         if pending {
-            crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
+            crate::style::pending_marker(ui).on_hover_text(tr!("Waiting to be calculated"));
         }
         problem
     }
@@ -2887,9 +2910,9 @@ impl Painter<'_> {
                 .calendar_week(false)
                 .highlight_weekends(false),
         );
-        let label = format!("Pick a date for {name}");
+        let label = tr!("Pick a date for {name}", name = name);
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
-        let r = r.on_hover_text("Pick a date");
+        let r = r.on_hover_text(tr!("Pick a date"));
         if day != before || (shown.is_none() && r.changed()) {
             let date = day.strftime("%Y-%m-%d").to_string();
             let entered = if with_time {
@@ -2958,8 +2981,8 @@ impl Painter<'_> {
                         }
                         if f.allow_other
                             && ui
-                                .selectable_label(!listed, "Other...")
-                                .on_hover_text("Type a code that is not in the list")
+                                .selectable_label(!listed, tr!("Other..."))
+                                .on_hover_text(tr!("Type a code that is not in the list"))
                                 .clicked()
                         {
                             other = true;
@@ -2992,7 +3015,7 @@ impl Painter<'_> {
             egui::TextEdit::singleline(&mut text)
                 .id(text_id)
                 .desired_width(f.width.unwrap_or(f32::INFINITY))
-                .hint_text("type a code"),
+                .hint_text(tr!("type a code")),
         );
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, f.name));
         if started.is_none() {
@@ -3034,7 +3057,7 @@ impl Painter<'_> {
             egui::TextEdit::singleline(&mut text)
                 .id(id)
                 .desired_width(f.width.unwrap_or(f32::INFINITY))
-                .hint_text("type to search")
+                .hint_text(tr!("type to search"))
                 .interactive(!f.read_only),
         );
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, f.name));
@@ -3177,7 +3200,10 @@ impl Painter<'_> {
                 let response = in_font(ui, title_font, |ui| ui.strong(label));
                 self.arrive(path, &response);
                 ui.label(RichText::new(count_text(items.len())).weak());
-                if ui.add_enabled(can_add, egui::Button::new("New")).clicked() {
+                if ui
+                    .add_enabled(can_add, egui::Button::new(tr!("New")))
+                    .clicked()
+                {
                     self.actions.push(FormAction::Add(path.clone()));
                 }
                 if let Some(shown) = &shown {
@@ -3341,10 +3367,10 @@ impl Painter<'_> {
                                 }
                                 let mut hover: Vec<String> = design.help.iter().cloned().collect();
                                 if sorts {
-                                    hover.push("Click to sort by this column".to_owned());
+                                    hover.push(tr!("Click to sort by this column").to_owned());
                                 }
                                 if menu {
-                                    hover.push("Right-click to filter or hide it".to_owned());
+                                    hover.push(tr!("Right-click to filter or hide it").to_owned());
                                 }
                                 if !hover.is_empty() {
                                     response = response.on_hover_text(hover.join("\n"));
@@ -3499,7 +3525,7 @@ impl Painter<'_> {
         editable: bool,
     ) {
         if ui
-            .add_enabled(editable && index > 0, egui::Button::new("Move up"))
+            .add_enabled(editable && index > 0, egui::Button::new(tr!("Move up")))
             .clicked()
         {
             self.actions
@@ -3507,7 +3533,10 @@ impl Painter<'_> {
             ui.close();
         }
         if ui
-            .add_enabled(editable && index + 1 < len, egui::Button::new("Move down"))
+            .add_enabled(
+                editable && index + 1 < len,
+                egui::Button::new(tr!("Move down")),
+            )
             .clicked()
         {
             self.actions
@@ -3515,7 +3544,7 @@ impl Painter<'_> {
             ui.close();
         }
         if ui
-            .add_enabled(editable, egui::Button::new("Delete row"))
+            .add_enabled(editable, egui::Button::new(tr!("Delete row")))
             .clicked()
         {
             self.actions.push(FormAction::Delete(array.clone(), index));
@@ -3523,7 +3552,7 @@ impl Painter<'_> {
         }
         if self.layout.is_none() {
             ui.separator();
-            if ui.button("Hide row").clicked() {
+            if ui.button(tr!("Hide row")).clicked() {
                 self.actions
                     .push(FormAction::Table(crate::view::Action::HideRow(
                         array.clone(),
@@ -3578,12 +3607,14 @@ impl Painter<'_> {
         }
         let mut command = None;
         if shown.filtered {
-            if ui.button("Clear all filters").clicked() {
+            if ui.button(tr!("Clear all filters")).clicked() {
                 command = Some(Action::ClearAllFilters(array.clone()));
             }
             if ui
-                .button("Reapply filter")
-                .on_hover_text("Hide the rows edited since that no longer pass the filters")
+                .button(tr!("Reapply filter"))
+                .on_hover_text(tr!(
+                    "Hide the rows edited since that no longer pass the filters"
+                ))
                 .clicked()
             {
                 command = Some(Action::ReapplyFilters(array.clone()));
@@ -3591,21 +3622,27 @@ impl Painter<'_> {
         }
         let hidden = shown.hidden_columns.len() + shown.hidden_rows.len();
         if hidden > 0 {
-            ui.menu_button(format!("Hidden ({hidden})"), |ui| {
+            ui.menu_button(tr!("Hidden ({hidden})", hidden = hidden), |ui| {
                 for column in &shown.hidden_columns {
-                    if ui.button(format!("Show column {column}")).clicked() {
+                    if ui
+                        .button(tr!("Show column {column}", column = column))
+                        .clicked()
+                    {
                         command = Some(Action::ShowColumn(array.clone(), column.clone()));
                         ui.close();
                     }
                 }
                 for (index, id) in &shown.hidden_rows {
-                    if ui.button(format!("Show row [{index}]")).clicked() {
+                    if ui
+                        .button(tr!("Show row [{index}]", index = index))
+                        .clicked()
+                    {
                         command = Some(Action::ShowRow(array.clone(), *id));
                         ui.close();
                     }
                 }
                 ui.separator();
-                if ui.button("Show all").clicked() {
+                if ui.button(tr!("Show all")).clicked() {
                     command = Some(Action::ShowAllHidden(array.clone()));
                     ui.close();
                 }
@@ -3644,15 +3681,16 @@ impl Painter<'_> {
             self.actions.push(FormAction::Step(array.clone(), i));
         }
         ui.horizontal(|ui| {
-            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", "Previous item").clicked() {
+            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", tr!("Previous item")).clicked() {
                 self.actions.push(FormAction::Step(array.clone(), at - 1));
             }
             ui.label(format!("{} of {len}", at + 1));
-            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", "Next item").clicked() {
+            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", tr!("Next item")).clicked()
+            {
                 self.actions.push(FormAction::Step(array.clone(), at + 1));
             }
             if ui
-                .add_enabled(editable, egui::Button::new("Delete"))
+                .add_enabled(editable, egui::Button::new(tr!("Delete")))
                 .clicked()
             {
                 self.actions.push(FormAction::Delete(array.clone(), at));
@@ -3669,7 +3707,7 @@ impl Painter<'_> {
                 self.item = outer;
                 self.at = address;
             }
-            None => self.node(ui, &item, item_ty, &format!("Item {}", at + 1), true),
+            None => self.node(ui, &item, item_ty, &tr!("Item {n}", n = at + 1), true),
         }
     }
 
@@ -3697,14 +3735,14 @@ impl Painter<'_> {
         ) {
             Shown::Untrusted => {
                 ui.label(self.text(gossia_core::form::template::with_marks(&text, UNTRUSTED)))
-                    .on_hover_text(
-                        "The text runs Python, so this workbook has to be trusted first.",
-                    );
+                    .on_hover_text(tr!(
+                        "The text runs Python, so this workbook has to be trusted first."
+                    ));
             }
             Shown::Value(value, pending) => {
                 let r = ui.label(self.text(value_text(&value)));
                 if pending {
-                    r.on_hover_text("Waiting to run again.");
+                    r.on_hover_text(tr!("Waiting to run again."));
                 }
             }
             Shown::Waiting => {
@@ -3712,7 +3750,7 @@ impl Painter<'_> {
             }
             Shown::Error(error) => {
                 ui.label(RichText::new("#ERROR!").color(error_color(ui)).strong())
-                    .on_hover_text(format!("Text: {error}"));
+                    .on_hover_text(tr!("Text: {error}", error = error));
             }
         }
     }
@@ -3793,18 +3831,21 @@ impl Painter<'_> {
             Shown::Untrusted => (
                 UNTRUSTED.to_owned(),
                 Some(error_color(ui)),
-                Some("The value runs Python, so this workbook has to be trusted first.".to_owned()),
+                Some(
+                    tr!("The value runs Python, so this workbook has to be trusted first.")
+                        .to_owned(),
+                ),
             ),
             Shown::Value(value, pending) => (
                 b.format.apply(value).unwrap_or_else(|| value_text(value)),
                 None,
-                pending.then(|| "Waiting to run again.".to_owned()),
+                pending.then(|| tr!("Waiting to run again.").to_owned()),
             ),
             Shown::Waiting => (String::new(), None, None),
             Shown::Error(error) => (
                 "#ERROR!".to_owned(),
                 Some(error_color(ui)),
-                Some(format!("Value: {error}")),
+                Some(tr!("Value: {error}", error = error)),
             ),
         };
         if writer.is_some()
@@ -3818,8 +3859,10 @@ impl Painter<'_> {
                 if trusted {
                     "A procedure is running; wait for it to finish.".to_owned()
                 } else {
-                    "Its write procedure runs Python, so this workbook has to be trusted first."
-                        .to_owned()
+                    tr!(
+                        "Its write procedure runs Python, so this workbook has to be trusted first."
+                    )
+                    .to_owned()
                 }
             });
         }
@@ -3892,7 +3935,9 @@ impl Painter<'_> {
         let (items, problem): (Vec<Value>, Option<String>) = match shown {
             Shown::Untrusted => (
                 Vec::new(),
-                Some("Items runs Python, so this workbook has to be trusted first.".to_owned()),
+                Some(
+                    tr!("Items runs Python, so this workbook has to be trusted first.").to_owned(),
+                ),
             ),
             Shown::Value(Value::Array(items), _) => {
                 (items.iter().map(|n| n.value().clone()).collect(), None)
@@ -3900,9 +3945,12 @@ impl Painter<'_> {
             Shown::Value(Value::Null, _) | Shown::Waiting => (Vec::new(), None),
             Shown::Value(other, _) => (
                 Vec::new(),
-                Some(format!("Items gave {}, not a list.", display(&other))),
+                Some(tr!(
+                    "Items gave {value}, not a list.",
+                    value = display(&other)
+                )),
             ),
-            Shown::Error(error) => (Vec::new(), Some(format!("Items: {error}"))),
+            Shown::Error(error) => (Vec::new(), Some(tr!("Items: {error}", error = error))),
         };
         ui.group(|ui| {
             ui.set_width(ui.available_width());
@@ -3938,11 +3986,12 @@ impl Painter<'_> {
             .min(len - 1);
         ui.horizontal(|ui| {
             let mut step = at;
-            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", "Previous item").clicked() {
+            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", tr!("Previous item")).clicked() {
                 step = at - 1;
             }
             ui.label(format!("{} of {len}", at + 1));
-            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", "Next item").clicked() {
+            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", tr!("Next item")).clicked()
+            {
                 step = at + 1;
             }
             if step != at {
@@ -4272,7 +4321,7 @@ impl Painter<'_> {
                         },
                     );
                     self.editor(ui, &path.key(key.as_str()), value_ty, true, false);
-                    if icons::button(ui, editable, icons::X, "x", "Delete entry").clicked() {
+                    if icons::button(ui, editable, icons::X, "x", tr!("Delete entry")).clicked() {
                         self.actions
                             .push(FormAction::DeleteEntry(path.clone(), key.clone()));
                     }
@@ -4283,14 +4332,14 @@ impl Painter<'_> {
             ui.horizontal(|ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut new_key)
-                        .hint_text("new key")
+                        .hint_text(tr!("new key"))
                         .desired_width(LABEL_WIDTH),
                 );
-                let name = format!("New key of {}", self.app.name_of(path));
+                let name = tr!("New key of {map}", map = self.app.name_of(path));
                 r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, &name));
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                 let add = ui
-                    .add_enabled(editable, egui::Button::new("Add entry"))
+                    .add_enabled(editable, egui::Button::new(tr!("Add entry")))
                     .clicked();
                 if add || enter {
                     self.actions
@@ -4568,30 +4617,35 @@ fn column_menu(
     item(
         ui,
         sorts,
-        "Sort ascending",
+        tr!("Sort ascending"),
         Action::SortBy(array.clone(), name.clone(), Some(false)),
     );
     item(
         ui,
         sorts,
-        "Sort descending",
+        tr!("Sort descending"),
         Action::SortBy(array.clone(), name.clone(), Some(true)),
     );
     ui.separator();
     item(
         ui,
         can_filter,
-        "Filter...",
+        tr!("Filter..."),
         Action::FilterDialog(array.clone(), name.clone()),
     );
     item(
         ui,
         filtered,
-        "Clear filter",
+        tr!("Clear filter"),
         Action::ClearFilter(array.clone(), name.clone()),
     );
     ui.separator();
-    item(ui, true, "Hide column", Action::HideColumn(array, name));
+    item(
+        ui,
+        true,
+        tr!("Hide column"),
+        Action::HideColumn(array, name),
+    );
     chosen
 }
 
@@ -4660,7 +4714,11 @@ fn arranged(
 
 /// What a column is called to a screen reader and a test.
 pub(crate) fn column_label(name: &str, control: &Control) -> String {
-    format!("Column {name} of {}", control_name(control))
+    tr!(
+        "Column {name} of {control}",
+        name = name,
+        control = control_name(control)
+    )
 }
 
 /// The name of the last step of a path, which labels a control by default.

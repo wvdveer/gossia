@@ -22,6 +22,7 @@ gossia-std.workspace = true
 gossia-layout.workspace = true
 gossia-report.workspace = true
 gossia-user.workspace = true
+gossia-i18n.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 egui = "0.37.0"
 eframe = "0.37.0"

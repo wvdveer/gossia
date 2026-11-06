@@ -64,6 +64,13 @@ pub trait Host {
     /// Whether the host's theme is dark, if it says.
     fn dark(&self) -> Option<bool>;
 
+    /// The host's language, as a BCP 47 tag (VS Code's display language),
+    /// if it says: the interface's language when the preferences follow
+    /// the system's.
+    fn language(&self) -> Option<String> {
+        None
+    }
+
     /// Makes an HTTP request for a data source, without following a
     /// redirect and within its timeout and size. The answer is handed to
     /// [`fetched`] with the request's id, later.

@@ -147,6 +147,9 @@ pub struct GossiaApp {
     pub outside: crate::report_print::Outside,
     /// The PDF *Print...* last opened.
     pub last_printed: Option<std::path::PathBuf>,
+    /// The language whose font for Japanese or Chinese the window has (none
+    /// inside: no such font), once it has been given one or none.
+    pub cjk_font_for: Option<Option<gossia_i18n::Language>>,
     /// The height the formula bar was dragged or expanded to, in points;
     /// None for one line, growing while a formula is typed.
     pub formula_bar_height: Option<f32>,
@@ -248,6 +251,7 @@ impl GossiaApp {
             pdf_export: None,
             outside: crate::report_print::Outside::System,
             last_printed: None,
+            cjk_font_for: None,
             formula_bar_height: None,
             options: None,
             options_page: crate::options::Page::General,

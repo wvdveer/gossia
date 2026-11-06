@@ -9,6 +9,7 @@
 use egui::RichText;
 use gossia_core::validate::validate_at;
 use gossia_core::{Kind, Path, Range, Segment, StringConstraints, StringFormat, TypeSpec, Value};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::style::Palette;
@@ -44,9 +45,9 @@ fn fact(label: &'static str, text: impl Into<String>, tone: Tone) -> Fact {
 /// The bounds of a number, in words.
 fn range_text(range: &Range) -> Option<String> {
     match (range.min, range.max) {
-        (Some(min), Some(max)) => Some(format!("from {min} to {max}")),
-        (Some(min), None) => Some(format!("at least {min}")),
-        (None, Some(max)) => Some(format!("at most {max}")),
+        (Some(min), Some(max)) => Some(tr!("from {min} to {max}", min = min, max = max)),
+        (Some(min), None) => Some(tr!("at least {min}", min = min)),
+        (None, Some(max)) => Some(tr!("at most {max}", max = max)),
         (None, None) => None,
     }
 }
@@ -54,10 +55,10 @@ fn range_text(range: &Range) -> Option<String> {
 /// How many of something, in words: `1 to 20 characters`.
 fn count_text(min: Option<usize>, max: Option<usize>, what: &str) -> Option<String> {
     match (min, max) {
-        (Some(a), Some(b)) if a == b => Some(format!("exactly {a} {what}")),
+        (Some(a), Some(b)) if a == b => Some(tr!("exactly {a} {what}", a = a, what = what)),
         (Some(a), Some(b)) => Some(format!("{a} to {b} {what}")),
-        (Some(a), None) => Some(format!("at least {a} {what}")),
-        (None, Some(b)) => Some(format!("at most {b} {what}")),
+        (Some(a), None) => Some(tr!("at least {a} {what}", a = a, what = what)),
+        (None, Some(b)) => Some(tr!("at most {b} {what}", b = b, what = what)),
         (None, None) => None,
     }
 }
@@ -74,7 +75,7 @@ fn string_rules(strings: &StringConstraints, out: &mut Vec<String>) {
     match strings.format {
         Some(StringFormat::Date) => out.push("a date (2026-10-30)".to_owned()),
         Some(StringFormat::DateTime) => {
-            out.push("a date and time (2026-10-30T14:30:00Z)".to_owned());
+            out.push(tr!("a date and time (2026-10-30T14:30:00Z)").to_owned());
         }
         None => {}
     }
@@ -88,7 +89,7 @@ pub fn allowed(spec: &TypeSpec, kind: &Kind) -> Option<String> {
         Kind::Integer(range) | Kind::Number(range) => rules.extend(range_text(range)),
         Kind::String(strings) => string_rules(strings, &mut rules),
         Kind::Enum { values, strings } => {
-            rules.push(format!("one of {}", values.join(", ")));
+            rules.push(tr!("one of {values}", values = values.join(", ")));
             string_rules(strings, &mut rules);
         }
         Kind::Array {
@@ -98,7 +99,7 @@ pub fn allowed(spec: &TypeSpec, kind: &Kind) -> Option<String> {
         } => {
             rules.extend(count_text(*min_items, *max_items, "items"));
             if let Some(more) = allowed(spec, &spec.get(*items).kind) {
-                rules.push(format!("each {more}"));
+                rules.push(tr!("each {more}", more = more));
             }
         }
         _ => {}
@@ -126,7 +127,7 @@ impl GossiaApp {
     pub fn inspect(&self, path: &Path) -> Vec<Fact> {
         let calc = self.calc();
         let sheet = &self.sheet;
-        let mut out = vec![fact("Path", self.name_of(path), Tone::Code)];
+        let mut out = vec![fact(tr!("Path"), self.name_of(path), Tone::Code)];
         let Some(spec) = calc.spec(sheet) else {
             return out;
         };
@@ -138,12 +139,12 @@ impl GossiaApp {
         match resolved {
             Some(here) => {
                 let def = spec.get(here.ty);
-                out.push(fact("Type", spec.describe(here.ty), Tone::Plain));
+                out.push(fact(tr!("Type"), spec.describe(here.ty), Tone::Plain));
                 if let Some(title) = &def.title {
-                    out.push(fact("Title", title.clone(), Tone::Plain));
+                    out.push(fact(tr!("Title"), title.clone(), Tone::Plain));
                 }
                 if let Some(description) = &def.description {
-                    out.push(fact("Description", description.clone(), Tone::Plain));
+                    out.push(fact(tr!("Description"), description.clone(), Tone::Plain));
                 }
                 if matches!(path.segments().last(), Some(Segment::Key(_)))
                     && let Some(parent) = path.parent()
@@ -151,14 +152,14 @@ impl GossiaApp {
                         .resolve(&parent)
                         .is_some_and(|p| matches!(spec.get(p.ty).kind, Kind::Object { .. }))
                 {
-                    let required = if here.required { "Yes" } else { "No" };
-                    out.push(fact("Required", required, Tone::Plain));
+                    let required = if here.required { tr!("Yes") } else { tr!("No") };
+                    out.push(fact(tr!("Required"), required, Tone::Plain));
                 }
                 if let Some(rules) = allowed(spec, &def.kind) {
-                    out.push(fact("Allowed", rules, Tone::Plain));
+                    out.push(fact(tr!("Allowed"), rules, Tone::Plain));
                 }
             }
-            None => out.push(fact("Type", "not in the schema", Tone::Note)),
+            None => out.push(fact(tr!("Type"), tr!("not in the schema"), Tone::Note)),
         }
 
         // Where the value comes from.
@@ -172,21 +173,21 @@ impl GossiaApp {
             _ => None,
         };
         let (source, shown) = if let Some(text) = column {
-            ("Column formula".to_owned(), Some(text))
+            (tr!("Column formula").to_owned(), Some(text))
         } else if let Some(text) = formula {
-            ("Formula".to_owned(), Some(text))
+            (tr!("Formula").to_owned(), Some(text))
         } else if let Some(by) = &computed_by {
-            (format!("Computed by {}", self.name_of(by)), None)
+            (tr!("Computed by {name}", name = self.name_of(by)), None)
         } else if resolved.is_none() {
-            ("Data the schema does not define".to_owned(), None)
+            (tr!("Data the schema does not define").to_owned(), None)
         } else if node.is_none() {
-            ("Absent".to_owned(), None)
+            (tr!("Absent").to_owned(), None)
         } else {
-            ("Value".to_owned(), None)
+            (tr!("Value").to_owned(), None)
         };
-        out.push(fact("Source", source, Tone::Plain));
+        out.push(fact(tr!("Source"), source, Tone::Plain));
         if let Some(text) = shown {
-            out.push(fact("Formula", format!("={text}"), Tone::Code));
+            out.push(fact(tr!("Formula"), format!("={text}"), Tone::Code));
         }
 
         // The value.
@@ -196,30 +197,34 @@ impl GossiaApp {
                     m if m.is_empty() => error.kind.code().to_owned(),
                     m => format!("{} {m}", error.kind.code()),
                 };
-                out.push(fact("Error", text, Tone::Error));
+                out.push(fact(tr!("Error"), text, Tone::Error));
             }
-            Some(value) => out.push(fact("Value", summary(value), Tone::Plain)),
+            Some(value) => out.push(fact(tr!("Value"), summary(value), Tone::Plain)),
             None => {}
         }
         if let Some(traceback) = cell.as_ref().and_then(|c| c.traceback) {
-            out.push(fact("Traceback", traceback, Tone::Code));
+            out.push(fact(tr!("Traceback"), traceback, Tone::Code));
         }
 
         // Its state.
         if let Some(c) = &cell {
             if c.pending {
-                out.push(fact("State", "Waiting to be calculated", Tone::Note));
+                out.push(fact(
+                    tr!("State"),
+                    tr!("Waiting to be calculated"),
+                    Tone::Note,
+                ));
             }
             if c.stale {
                 out.push(fact(
-                    "State",
-                    "Out of date: the workbook is not trusted",
+                    tr!("State"),
+                    tr!("Out of date: the workbook is not trusted"),
                     Tone::Note,
                 ));
             } else if c.untrusted {
                 out.push(fact(
-                    "State",
-                    "Not run: the workbook is not trusted, so this is the stored value",
+                    tr!("State"),
+                    tr!("Not run: the workbook is not trusted, so this is the stored value"),
                     Tone::Note,
                 ));
             }
@@ -235,22 +240,26 @@ impl GossiaApp {
                 );
                 let issues = validate_at(spec, here.ty, node, path);
                 for issue in issues.iter().filter(|i| scalar || &i.path == path) {
-                    out.push(fact("Problem", issue.message.clone(), Tone::Error));
+                    out.push(fact(tr!("Problem"), issue.message.clone(), Tone::Error));
                 }
             }
             (None, Some(here)) if here.required => {
-                out.push(fact("Problem", "Required, but absent", Tone::Error));
+                out.push(fact(
+                    tr!("Problem"),
+                    tr!("Required, but absent"),
+                    Tone::Error,
+                ));
             }
             _ => {}
         }
 
         if let Some(comment) = calc.comment(sheet, path) {
-            out.push(fact("Comment", comment, Tone::Plain));
+            out.push(fact(tr!("Comment"), comment, Tone::Plain));
         }
         let hidden = self.hidden_children(path).len();
         if hidden > 0 {
             out.push(fact(
-                "Hidden",
+                tr!("Hidden"),
                 format!("{hidden} hidden inside"),
                 Tone::Note,
             ));
@@ -260,9 +269,9 @@ impl GossiaApp {
 
     /// The inspector's panel.
     pub(crate) fn inspector_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Inspector");
+        ui.heading(tr!("Inspector"));
         let Some(path) = self.selection.clone() else {
-            ui.weak("Select a node to see what it is.");
+            ui.weak(tr!("Select a node to see what it is."));
             return;
         };
         let facts = self.inspect(&path);
@@ -285,13 +294,13 @@ impl GossiaApp {
                             };
                             ui.horizontal_wrapped(|ui| {
                                 ui.add(egui::Label::new(text).wrap());
-                                if f.label == "Path"
+                                if f.label == tr!("Path")
                                     && crate::icons::button(
                                         ui,
                                         true,
                                         crate::toolbar::COPY,
                                         "c",
-                                        "Copy path",
+                                        tr!("Copy path"),
                                     )
                                     .clicked()
                                 {

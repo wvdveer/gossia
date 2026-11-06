@@ -499,11 +499,42 @@ fn checksum(body: &[u8]) -> u32 {
 /// egui's own fonts, with the bundled ones in front of them. What a font lacks
 /// is looked for in the fonts after it: egui's emoji fonts, then the icons.
 pub fn fonts() -> FontDefinitions {
+    fonts_with(None)
+}
+
+/// The name of the system's font for Japanese or Chinese, when the
+/// interface's language needs one (see `i18n`).
+const CJK: &str = "CJK";
+
+/// How far the font for Japanese or Chinese is lowered, as a fraction of
+/// the size: checked by eye against Inter with Yu Gothic and Microsoft YaHei.
+const CJK_Y_OFFSET: f32 = 0.15;
+
+/// Gives the window its fonts, with the system's font for Japanese or
+/// Chinese behind each family's own when there is one.
+pub fn set_fonts_with(ctx: &egui::Context, cjk: Option<crate::i18n::SystemFont>) {
+    ctx.set_fonts(fonts_with(cjk.as_ref()));
+}
+
+/// [`fonts`], with a font for Japanese or Chinese after Inter and Ubuntu in
+/// every family, so that Latin text keeps the bundled fonts.
+pub fn fonts_with(cjk: Option<&crate::i18n::SystemFont>) -> FontDefinitions {
     use gossia_layout::fonts::{CAVEAT, DANCING_SCRIPT, GEIST_MONO, INTER, OSWALD, SOURCE_SERIF};
     let mut fonts = FontDefinitions::default();
     let mut add = |name: &str, data: FontData| {
         fonts.font_data.insert(name.to_owned(), data.into());
     };
+    if let Some(cjk) = cjk {
+        let mut data = FontData::from_owned(cjk.bytes.clone()).tweak(FontTweak {
+            // egui places a fallback font's glyphs by its own ascent, which
+            // in these fonts is taller than Inter's: lowered a little, kana
+            // and Han characters sit on Inter's baseline.
+            y_offset_factor: CJK_Y_OFFSET,
+            ..FontTweak::default()
+        });
+        data.index = cjk.index;
+        add(CJK, data);
+    }
     add("Inter", weighted(INTER, 400.0));
     add("Inter Medium", weighted(INTER, MEDIUM_WEIGHT));
     add("Geist Mono", weighted(GEIST_MONO, 400.0));
@@ -534,6 +565,7 @@ pub fn fonts() -> FontDefinitions {
             .map(|name| (*name).to_owned())
             // Ubuntu has symbols (√ and others) that some of the fonts lack.
             .chain(["Inter".to_owned(), "Ubuntu-Light".to_owned()])
+            .chain(cjk.map(|_| CJK.to_owned()))
             .chain(fallbacks.iter().cloned())
             .fold(Vec::new(), |mut list, name| {
                 if !list.contains(&name) {

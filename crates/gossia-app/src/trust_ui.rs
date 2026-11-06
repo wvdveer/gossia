@@ -7,6 +7,7 @@
 
 use egui::{Color32, RichText};
 use gossia_calc::{Change, ChangeKind};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 
@@ -31,8 +32,12 @@ pub fn change_text(change: &Change) -> String {
 }
 
 /// The sentence that says what trusting allows.
-pub const WARNING: &str = "This workbook has not been trusted, so its formulas and modules are \
-     not run. Trusting it allows it to run code.";
+pub fn warning() -> &'static str {
+    tr!(
+        "This workbook has not been trusted, so its formulas and modules are \
+         not run. Trusting it allows it to run code."
+    )
+}
 
 impl GossiaApp {
     /// Trusts the workbook as it is now, and records it, so that it opens
@@ -75,7 +80,8 @@ impl GossiaApp {
         }
         self.trust.dismissed = false;
         self.notice = Some(
-            "The formula is stored but not calculated: this workbook is not trusted.".to_owned(),
+            tr!("The formula is stored but not calculated: this workbook is not trusted.")
+                .to_owned(),
         );
     }
 
@@ -87,12 +93,12 @@ impl GossiaApp {
         let text = |words: &str| RichText::new(words).color(palette.banner_text);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(crate::icons::WARNING).color(palette.warning));
-            ui.label(crate::style::medium(WARNING).color(palette.banner_text));
+            ui.label(crate::style::medium(warning()).color(palette.banner_text));
         });
         if !self.trust.changes.is_empty() {
-            ui.label(text(
-                "It was trusted before, but the file has changed since:",
-            ));
+            ui.label(text(tr!(
+                "It was trusted before, but the file has changed since:"
+            )));
             egui::ScrollArea::vertical()
                 .max_height(90.0)
                 .id_salt("trust_changes")
@@ -103,11 +109,12 @@ impl GossiaApp {
                 });
         }
         ui.horizontal(|ui| {
-            let primary =
-                egui::Button::new(crate::style::medium("Trust this version").color(Color32::WHITE))
-                    .fill(palette.primary);
+            let primary = egui::Button::new(
+                crate::style::medium(tr!("Trust this version")).color(Color32::WHITE),
+            )
+            .fill(palette.primary);
             trust = ui.add(primary).clicked();
-            dismiss = ui.button("Continue read-only").clicked();
+            dismiss = ui.button(tr!("Continue read-only")).clicked();
         });
         if trust {
             self.trust_workbook();

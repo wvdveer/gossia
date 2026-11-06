@@ -18,6 +18,9 @@ use gossia_app::prefs::{Config, User};
 fn start() -> GossiaApp {
     let (user, mut warnings) = User::load(Config::standard());
     let mut app = GossiaApp::new(gossia_app::workbook_file::blank_workbook()).with_user(user);
+    // The interface's language (DESIGN.md, step 13f), before anything is
+    // shown: the one chosen in Options, or the system's.
+    gossia_i18n::set_language(app.language_for(app.user.prefs.appearance.language));
     if let Some(path) = std::env::args_os().nth(1)
         && let Err(e) = app.open_path(std::path::Path::new(&path))
     {

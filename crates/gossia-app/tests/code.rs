@@ -8,7 +8,7 @@ use egui::{Key, Modifiers};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{Queryable, by};
 use gossia_app::GossiaApp;
-use gossia_app::code::{CodeItem, PAUSE, TITLE};
+use gossia_app::code::{CodeItem, PAUSE, title};
 use gossia_calc::ModuleStatus;
 
 const TAX: &str = "def vat(x):\n    return x * 0.21\n\n\ndef half(x):\n    return x / 2\n";
@@ -55,7 +55,7 @@ fn menu(harness: &mut Harness<'_, GossiaApp>, label: &str) {
 fn open_editor(harness: &mut Harness<'_, GossiaApp>) {
     harness.key_combination_modifiers(Modifiers::ALT, &[Key::F11]);
     harness.run();
-    harness.get_by_label(TITLE);
+    harness.get_by_label(title());
 }
 
 fn code(harness: &Harness<'_, GossiaApp>) -> String {
@@ -107,7 +107,7 @@ fn alt_f11_opens_the_editor_and_insert_module_makes_module1() {
     // Close and return: Alt+F11 shows it again with the module still open.
     menu(&mut harness, "File");
     click(&mut harness, "Close and return to Gossia");
-    assert!(harness.query_by_label(TITLE).is_none());
+    assert!(harness.query_by_label(title()).is_none());
     open_editor(&mut harness);
     assert_eq!(code(&harness), "");
 }

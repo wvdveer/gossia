@@ -5,6 +5,7 @@
 //! node read from a file can also have comments inside its element, at its
 //! start and its end; they are shown and edited with the one before it.
 
+use gossia_i18n::tr;
 use std::time::Duration;
 
 use egui::{Key, Modifiers, Pos2, Rect, RichText, Shape, Stroke, Vec2};
@@ -40,11 +41,11 @@ const MARK: f32 = 7.0;
 /// an element on an XML tab, inside an object or array otherwise.
 fn place_label(place: CommentPlace, xml: bool) -> &'static str {
     match (place, xml) {
-        (CommentPlace::Before, _) => "Comment",
-        (CommentPlace::Start, true) => "Comment at the start of the element",
-        (CommentPlace::End, true) => "Comment at the end of the element",
-        (CommentPlace::Start, false) => "Comment at the start, inside the brackets",
-        (CommentPlace::End, false) => "Comment at the end, inside the brackets",
+        (CommentPlace::Before, _) => tr!("Comment"),
+        (CommentPlace::Start, true) => tr!("Comment at the start of the element"),
+        (CommentPlace::End, true) => tr!("Comment at the end of the element"),
+        (CommentPlace::Start, false) => tr!("Comment at the start, inside the brackets"),
+        (CommentPlace::End, false) => tr!("Comment at the end, inside the brackets"),
     }
 }
 
@@ -141,20 +142,20 @@ impl GossiaApp {
             ui.separator();
         }
         if let Some(why) = calc.comment_refusal(&self.sheet, path) {
-            ui.add_enabled(false, egui::Button::new("Insert Comment"))
+            ui.add_enabled(false, egui::Button::new(tr!("Insert Comment")))
                 .on_disabled_hover_text(why);
             return;
         }
         if calc.has_comments(&self.sheet, path) {
-            if ui.button("Edit Comment").clicked() {
+            if ui.button(tr!("Edit Comment")).clicked() {
                 actions.push(Action::EditComment(path.clone(), at));
                 ui.close();
             }
-            if ui.button("Delete Comment").clicked() {
+            if ui.button(tr!("Delete Comment")).clicked() {
                 actions.push(Action::DeleteComment(path.clone()));
                 ui.close();
             }
-        } else if ui.button("Insert Comment").clicked() {
+        } else if ui.button(tr!("Insert Comment")).clicked() {
             actions.push(Action::EditComment(path.clone(), at));
             ui.close();
         }
@@ -269,7 +270,11 @@ impl GossiaApp {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(300.0);
                     ui.label(
-                        RichText::new(format!("Comment on {}", place.trim_end_matches('.'))).weak(),
+                        RichText::new(tr!(
+                            "Comment on {place}",
+                            place = place.trim_end_matches('.')
+                        ))
+                        .weak(),
                     );
                     // A box for each place, named when there are several.
                     let several = edit.texts.len() > 1;
@@ -290,14 +295,14 @@ impl GossiaApp {
                         }
                     }
                     if several {
-                        ui.weak("An empty box takes that comment away.");
+                        ui.weak(tr!("An empty box takes that comment away."));
                     }
                     if let Some(error) = &edit.error {
                         ui.add(
                             egui::Label::new(RichText::new(error).color(error_color(ui))).wrap(),
                         );
                     }
-                    ui.weak("Ctrl+Enter or a click outside to save, Esc to cancel");
+                    ui.weak(tr!("Ctrl+Enter or a click outside to save, Esc to cancel"));
                 });
             });
         edit.rect = Some(shown.response.rect);

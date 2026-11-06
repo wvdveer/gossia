@@ -5,6 +5,7 @@
 
 use gossia_calc::{Detail, Loc, entry, entry::Entered};
 use gossia_core::Path;
+use gossia_i18n::{and_list, counted, tr};
 
 use crate::app::GossiaApp;
 
@@ -32,14 +33,6 @@ pub enum Target {
     Column(Path, String),
 }
 
-fn plural(count: usize, one: &str) -> String {
-    if count == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{count} {one}s")
-    }
-}
-
 impl ReplaceInside {
     /// The node the formula goes on, as the tab names it.
     pub fn place(&self) -> String {
@@ -56,7 +49,11 @@ impl ReplaceInside {
         let place = self.place();
         let mut parts = Vec::new();
         if self.inside.values > 0 {
-            parts.push(plural(self.inside.values, "value"));
+            parts.push(counted(
+                self.inside.values,
+                tr!("1 value"),
+                tr!("{n} values"),
+            ));
         }
         let formulas = &self.inside.formulas;
         if !formulas.is_empty() {
@@ -66,24 +63,34 @@ impl ReplaceInside {
                 .map(|p| Loc::new(self.sheet.clone(), p.clone()).to_string())
                 .collect();
             if formulas.len() > NAMED {
-                names.push(format!("{} more", formulas.len() - NAMED));
+                names.push(tr!("{n} more", n = formulas.len() - NAMED));
             }
             parts.push(format!(
                 "{} ({})",
-                plural(formulas.len(), "formula"),
+                counted(formulas.len(), tr!("1 formula"), tr!("{n} formulas")),
                 names.join(", ")
             ));
         }
-        let what = parts.join(" and ");
-        let column = matches!(self.target, Target::Column(..));
-        let holds = if column { "The items hold" } else { "It holds" };
-        format!(
-            "A formula on {place} computes everything {}, so what is there now would be \
-             erased. {holds} {what}.\n\n\
-             Yes enters the formula and erases them. \
-             No keeps them and drops the formula.",
-            if column { "in it" } else { "inside it" }
-        )
+        let what = and_list(&parts);
+        if matches!(self.target, Target::Column(..)) {
+            tr!(
+                "A formula on {place} computes everything in it, so what is there now would be \
+                 erased. The items hold {what}.\n\n\
+                 Yes enters the formula and erases them. \
+                 No keeps them and drops the formula.",
+                place = place,
+                what = what
+            )
+        } else {
+            tr!(
+                "A formula on {place} computes everything inside it, so what is there now would \
+                 be erased. It holds {what}.\n\n\
+                 Yes enters the formula and erases them. \
+                 No keeps them and drops the formula.",
+                place = place,
+                what = what
+            )
+        }
     }
 }
 
@@ -178,18 +185,18 @@ impl GossiaApp {
             return;
         };
         let (mut yes, mut no) = (false, false);
-        egui::Window::new("Erase what is inside?")
+        egui::Window::new(tr!("Erase what is inside?"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .default_width(420.0)
             .show(ctx, |ui| {
                 ui.label(ask.question());
-                ui.label("Edit > Undo takes back a Yes.");
+                ui.label(tr!("Edit > Undo takes back a Yes."));
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    yes = ui.button("Yes").clicked();
-                    no = ui.button("No").clicked();
+                    yes = ui.button(tr!("Yes")).clicked();
+                    no = ui.button(tr!("No")).clicked();
                 });
             });
         if yes {

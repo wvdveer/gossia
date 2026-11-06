@@ -12,6 +12,7 @@ use gossia_core::report::{
     ParamKind, PeriodPreset, ReportDesign, ReportParam, period, period_dates,
 };
 use gossia_core::{Node, Value};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::form_layout::{draft_id, expr_text, option_text};
@@ -81,14 +82,15 @@ impl GossiaApp {
                         chosen.push((p.name.clone(), value));
                     }
                     if state.pending {
-                        crate::style::pending_marker(ui).on_hover_text("Waiting to be calculated");
+                        crate::style::pending_marker(ui)
+                            .on_hover_text(tr!("Waiting to be calculated"));
                     }
                     ui.add_space(12.0);
                 }
                 if states.iter().any(|s| s.chosen)
                     && ui
-                        .button("Defaults")
-                        .on_hover_text("Every parameter back to its default")
+                        .button(tr!("Defaults"))
+                        .on_hover_text(tr!("Every parameter back to its default"))
                         .clicked()
                 {
                     for p in &design.params {
@@ -97,9 +99,9 @@ impl GossiaApp {
                 }
             })
             .response
-            .on_disabled_hover_text(
-                "This workbook is not trusted, so its parameters cannot be changed.",
-            );
+            .on_disabled_hover_text(tr!(
+                "This workbook is not trusted, so its parameters cannot be changed."
+            ));
         });
         for (p, state) in design.params.iter().zip(&states) {
             let mut notes = Vec::new();
@@ -288,7 +290,7 @@ impl GossiaApp {
                 .calendar_week(false)
                 .highlight_weekends(false),
         );
-        let label = format!("Pick a date for {name}");
+        let label = tr!("Pick a date for {name}", name = name);
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
         if picked != before || (day.is_none() && r.changed()) {
             self.report.param_drafts.remove(&draft_key(param, part));
@@ -314,7 +316,7 @@ impl GossiaApp {
         let mut out = None;
         let name = p.shown_name().to_owned();
         let text = match (preset, dates) {
-            _ if custom => "Dates".to_owned(),
+            _ if custom => tr!("Dates").to_owned(),
             (Some(p), _) => p.label().to_owned(),
             _ => "(none)".to_owned(),
         };
@@ -331,7 +333,7 @@ impl GossiaApp {
                         custom = false;
                     }
                 }
-                if ui.selectable_label(custom, "Dates").clicked() {
+                if ui.selectable_label(custom, tr!("Dates")).clicked() {
                     custom = true;
                 }
                 if !p.required
@@ -388,7 +390,7 @@ impl GossiaApp {
         };
         let text = match picked.len() {
             0 => "(none)".to_owned(),
-            n if n == list.len() && n > 1 => "All".to_owned(),
+            n if n == list.len() && n > 1 => tr!("All").to_owned(),
             n if n <= 2 => picked
                 .iter()
                 .map(|v| shown(v, label_of(state, v)))
@@ -401,10 +403,10 @@ impl GossiaApp {
         let name = p.shown_name().to_owned();
         let r = ui.menu_button(text, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Select all").clicked() {
+                if ui.button(tr!("Select all")).clicked() {
                     out = Some(list.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>());
                 }
-                if ui.button("Clear").clicked() {
+                if ui.button(tr!("Clear")).clicked() {
                     out = Some(Vec::new());
                 }
             });
@@ -415,8 +417,10 @@ impl GossiaApp {
                 .cloned()
                 .unwrap_or_default();
             if list.len() > SEARCH_FROM {
-                let r = ui.add(egui::TextEdit::singleline(&mut search).hint_text("Search"));
-                r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Search"));
+                let r = ui.add(egui::TextEdit::singleline(&mut search).hint_text(tr!("Search")));
+                r.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::TextInput, true, tr!("Search"))
+                });
                 self.report
                     .param_drafts
                     .insert(search_key.clone(), search.clone());
@@ -464,9 +468,9 @@ impl GossiaApp {
         let mut edited = design.clone();
         let states = self.calc().report_params(&report);
         let problems = design.problems();
-        ui.strong("Parameters");
+        ui.strong(tr!("Parameters"));
         if design.params.is_empty() {
-            ui.weak("None: the report shows the same for everyone.");
+            ui.weak(tr!("None: the report shows the same for everyone."));
         }
         let mut remove = None;
         let mut swap = None;
@@ -477,17 +481,24 @@ impl GossiaApp {
                 .id_salt(id)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Name");
+                        ui.label(tr!("Name"));
                         let r =
                             ui.add(egui::TextEdit::singleline(&mut p.name).desired_width(140.0));
                         r.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Parameter name")
+                            egui::WidgetInfo::labeled(
+                                egui::Role::TextInput,
+                                true,
+                                tr!("Parameter name"),
+                            )
                         });
                     });
-                    ui.weak(format!("Expressions use it as params.{}", p.name.trim()));
-                    option_text(ui, "Label", &mut p.label, p.name.trim(), false);
+                    ui.weak(tr!(
+                        "Expressions use it as params.{name}",
+                        name = p.name.trim()
+                    ));
+                    option_text(ui, tr!("Label"), &mut p.label, p.name.trim(), false);
                     ui.horizontal(|ui| {
-                        ui.label("Kind");
+                        ui.label(tr!("Kind"));
                         egui::ComboBox::from_id_salt(("param_kind", i))
                             .selected_text(p.kind.label())
                             .show_ui(ui, |ui| {
@@ -500,13 +511,13 @@ impl GossiaApp {
                                 egui::WidgetInfo::labeled(
                                     egui::Role::ComboBox,
                                     true,
-                                    "Parameter kind",
+                                    tr!("Parameter kind"),
                                 )
                             });
                     });
                     if p.kind == ParamKind::Period {
                         ui.horizontal(|ui| {
-                            ui.label("Default");
+                            ui.label(tr!("Default"));
                             egui::ComboBox::from_id_salt(("param_preset", i))
                                 .selected_text(p.preset.map_or("(none)", PeriodPreset::label))
                                 .show_ui(ui, |ui| {
@@ -524,7 +535,7 @@ impl GossiaApp {
                                     egui::WidgetInfo::labeled(
                                         egui::Role::ComboBox,
                                         true,
-                                        "Default period",
+                                        tr!("Default period"),
                                     )
                                 });
                         });
@@ -537,7 +548,7 @@ impl GossiaApp {
                         };
                         expr_text(
                             ui,
-                            "Default",
+                            tr!("Default"),
                             &mut p.default,
                             hint,
                             draft_id(&[], Some(&format!("param {i}")), ExprKind::Value),
@@ -546,25 +557,25 @@ impl GossiaApp {
                     if p.kind.has_choices() {
                         expr_text(
                             ui,
-                            "Choices",
+                            tr!("Choices"),
                             &mut p.choices,
-                            "a list, as [u.name for u in OrgUnits.items]",
+                            tr!("a list, as [u.name for u in OrgUnits.items]"),
                             draft_id(&[], Some(&format!("param {i}")), ExprKind::Choices),
                         );
-                        ui.weak(
+                        ui.weak(tr!(
                             "Each item is a value, or a (value, label) pair to show something \
-                             else.",
-                        );
+                             else."
+                        ));
                     }
-                    ui.checkbox(&mut p.required, "Required")
-                        .on_hover_text("While it is empty the report is not drawn");
+                    ui.checkbox(&mut p.required, tr!("Required"))
+                        .on_hover_text(tr!("While it is empty the report is not drawn"));
                     let state = states.iter().find(|s| s.name == p.name);
                     let mut errors: Vec<String> = Vec::new();
                     if let Some(e) = state.and_then(|s| s.default_error.as_ref()) {
-                        errors.push(format!("Default: {e}"));
+                        errors.push(tr!("Default: {e}", e = e));
                     }
                     if let Some(Some(Err(e))) = state.map(|s| &s.choices) {
-                        errors.push(format!("Choices: {e}"));
+                        errors.push(tr!("Choices: {e}", e = e));
                     }
                     for (_, why) in &problems {
                         if why.contains(&format!(" {} ", p.name.trim()))
@@ -578,18 +589,18 @@ impl GossiaApp {
                     }
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(i > 0, egui::Button::new("Move up"))
+                            .add_enabled(i > 0, egui::Button::new(tr!("Move up")))
                             .clicked()
                         {
                             swap = Some((i - 1, i));
                         }
                         if ui
-                            .add_enabled(i + 1 < count, egui::Button::new("Move down"))
+                            .add_enabled(i + 1 < count, egui::Button::new(tr!("Move down")))
                             .clicked()
                         {
                             swap = Some((i, i + 1));
                         }
-                        if ui.button("Remove parameter").clicked() {
+                        if ui.button(tr!("Remove parameter")).clicked() {
                             remove = Some(i);
                         }
                     });
@@ -601,25 +612,16 @@ impl GossiaApp {
         if let Some(i) = remove {
             edited.params.remove(i);
         }
-        if ui.button("Add parameter").clicked() {
+        if ui.button(tr!("Add parameter")).clicked() {
             let name = (1..)
                 .map(|n| format!("param{n}"))
                 .find(|n| !edited.params.iter().any(|p| &p.name == n))
                 .expect("some number is free");
             edited.params.push(ReportParam::new(&name, ParamKind::Date));
         }
-        ui.weak("Expressions see the values as params.<name>. They are chosen in the bar above the report.");
+        ui.weak(tr!("Expressions see the values as params.<name>. They are chosen in the bar above the report."));
         if edited != *design {
             let _ = self.session.calc_mut().set_report(&report, edited);
         }
-    }
-}
-
-/// Names joined as a sentence has them: "A", "A and B", "A, B and C".
-pub(crate) fn and_list(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }

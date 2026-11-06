@@ -16,6 +16,7 @@ use gossia_core::copybook;
 use gossia_core::dataformat::DataFormat;
 use gossia_core::validate::validate;
 use gossia_core::{Path, xml};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::view::error_color;
@@ -96,7 +97,8 @@ impl GossiaApp {
                 },
                 _ => Ok(String::new()),
             };
-            self.raw.text = text.unwrap_or_else(|e| format!("The document cannot be written: {e}"));
+            self.raw.text =
+                text.unwrap_or_else(|e| tr!("The document cannot be written: {e}", e = e));
             self.raw.key = Some(key);
         }
         &self.raw.text
@@ -121,11 +123,11 @@ impl GossiaApp {
         let parsed = self
             .calc()
             .read_records(sheet, bytes)
-            .map_err(|e| format!("Not pasted: {e}"))?;
+            .map_err(|e| tr!("Not pasted: {e}", e = e))?;
         self.session
             .calc_mut()
             .set_value(sheet, &Path::root(), parsed.node.value().clone())
-            .map_err(|e| format!("Not pasted: {e}"))?;
+            .map_err(|e| tr!("Not pasted: {e}", e = e))?;
         self.raw.error = None;
         self.notice = None;
         self.session.tick();
@@ -148,26 +150,37 @@ impl GossiaApp {
         }
         let (node, document) = {
             let Some(spec) = self.calc().spec(&sheet) else {
-                return Err("there is no such tab".to_owned());
+                return Err(tr!("there is no such tab").to_owned());
             };
             let (node, document) = if spec.xml().is_some() {
                 let parsed = xml::parse(text, spec)
-                    .map_err(|e| format!("Not pasted: it is not XML of this schema: {e}"))?;
+                    .map_err(|e| tr!("Not pasted: it is not XML of this schema: {e}", e = e))?;
                 (parsed.node, Some(parsed.document))
             } else {
                 let format = self.raw_format();
-                let parsed = format
-                    .read(text)
-                    .map_err(|e| format!("Not pasted: it is not valid {}: {e}", format.label()))?;
+                let parsed = format.read(text).map_err(|e| {
+                    tr!(
+                        "Not pasted: it is not valid {format}: {e}",
+                        format = format.label(),
+                        e = e
+                    )
+                })?;
                 (parsed.node, None)
             };
             let issues = validate(spec, &node);
             if !issues.is_empty() {
-                let mut message = format!(
-                    "Not pasted: the document does not conform to the schema of {sheet} ({} problem{}):",
-                    issues.len(),
-                    if issues.len() == 1 { "" } else { "s" }
-                );
+                let mut message = if issues.len() == 1 {
+                    tr!(
+                        "Not pasted: the document does not conform to the schema of {sheet} (1 problem):",
+                        sheet = sheet
+                    )
+                } else {
+                    tr!(
+                        "Not pasted: the document does not conform to the schema of {sheet} ({n} problems):",
+                        sheet = sheet,
+                        n = issues.len()
+                    )
+                };
                 for issue in issues.iter().take(LISTED) {
                     let at = if issue.path.is_root() {
                         sheet.clone()
@@ -186,7 +199,7 @@ impl GossiaApp {
         self.session
             .calc_mut()
             .set_value(&sheet, &Path::root(), node.value().clone())
-            .map_err(|e| format!("Not pasted: {e}"))?;
+            .map_err(|e| tr!("Not pasted: {e}", e = e))?;
         if let Some(document) = document {
             let _ = self.session.calc_mut().set_xml_document(&sheet, document);
         }
@@ -198,8 +211,8 @@ impl GossiaApp {
     /// Puts copybook text in place of a copybook schema tab's, keeping its
     /// code page and floating point format, which the text does not say.
     fn paste_copybook(&mut self, sheet: &str, text: &str) -> Result<(), String> {
-        let mut book =
-            copybook::parse(text).map_err(|e| format!("Not pasted: it is not a copybook: {e}"))?;
+        let mut book = copybook::parse(text)
+            .map_err(|e| tr!("Not pasted: it is not a copybook: {e}", e = e))?;
         let (old, code_page) = self
             .calc()
             .data(sheet)
@@ -210,7 +223,7 @@ impl GossiaApp {
         self.session
             .calc_mut()
             .set_value(sheet, &Path::root(), tree.value().clone())
-            .map_err(|e| format!("Not pasted: {e}"))?;
+            .map_err(|e| tr!("Not pasted: {e}", e = e))?;
         self.notice = None;
         self.session.tick();
         Ok(())
@@ -251,13 +264,13 @@ impl GossiaApp {
         ui.horizontal(|ui| {
             ui.strong(format);
             let hover = match &records {
-                Some(_) => format!(
-                    "Copy the records as {} (Options, Files and import)",
-                    self.user.prefs.binary_copy.label().to_lowercase()
+                Some(_) => tr!(
+                    "Copy the records as {kind} (Options, Files and import)",
+                    kind = self.user.prefs.binary_copy.label().to_lowercase()
                 ),
-                None => "Copy the whole document".to_owned(),
+                None => tr!("Copy the whole document").to_owned(),
             };
-            if ui.button("Copy").on_hover_text(hover).clicked() {
+            if ui.button(tr!("Copy")).on_hover_text(hover).clicked() {
                 match records {
                     Some(Ok(records)) => ui.ctx().copy_text(records),
                     Some(Err(why)) => self.raw.error = Some(why),
@@ -265,7 +278,7 @@ impl GossiaApp {
                 }
             }
             ui.weak(
-                "Press Ctrl+V to import the clipboard: JSON, XML, YAML, TOML, CSV, TSV or a COBOL copybook.",
+                tr!("Press Ctrl+V to import the clipboard: JSON, XML, YAML, TOML, CSV, TSV or a COBOL copybook."),
             );
         });
         if let Some(error) = &self.raw.error {
@@ -284,7 +297,7 @@ impl GossiaApp {
                         .code_editor()
                         .desired_width(f32::INFINITY),
                 );
-                let name = "Raw document";
+                let name = tr!("Raw document");
                 response
                     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, name));
             });

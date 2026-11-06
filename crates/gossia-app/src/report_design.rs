@@ -16,6 +16,7 @@ use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use gossia_calc::REPORT_FORM;
 use gossia_core::form::{Address, CONTROL_HEIGHTS, Control, ControlKind};
 use gossia_core::report::{BandKind, ReportDesign};
+use gossia_i18n::tr;
 use gossia_layout::report::{self, BAND_GAP, Laid};
 
 use crate::app::GossiaApp;
@@ -154,7 +155,7 @@ pub(crate) fn sized_control(kind: ControlKind) -> Control {
         ControlKind::Chart => gossia_core::form::CHART_SIZE,
     };
     if kind == ControlKind::Field {
-        c.label = Some("Field".to_owned());
+        c.label = Some(tr!("Field").to_owned());
     }
     c.width = Some(w);
     c.height = Some(h);

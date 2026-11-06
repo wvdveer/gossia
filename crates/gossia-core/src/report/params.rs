@@ -7,6 +7,7 @@
 //! instead, worked out here from today's date.
 
 use chrono::{Datelike, Months, NaiveDate};
+use gossia_i18n::tr;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -111,13 +112,13 @@ impl ParamKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            ParamKind::Date => "Date",
-            ParamKind::Period => "Period",
-            ParamKind::Choice => "Choice",
-            ParamKind::Choices => "Choices",
-            ParamKind::Number => "Number",
-            ParamKind::Text => "Text",
-            ParamKind::YesNo => "Yes/no",
+            ParamKind::Date => tr!("Date"),
+            ParamKind::Period => tr!("Period"),
+            ParamKind::Choice => tr!("Choice"),
+            ParamKind::Choices => tr!("Choices"),
+            ParamKind::Number => tr!("Number"),
+            ParamKind::Text => tr!("Text"),
+            ParamKind::YesNo => tr!("Yes/no"),
         }
     }
 
@@ -209,19 +210,28 @@ impl PeriodPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            PeriodPreset::ThisMonth => "This month",
-            PeriodPreset::LastMonth => "Last month",
-            PeriodPreset::ThisQuarter => "This quarter",
-            PeriodPreset::LastQuarter => "Last quarter",
-            PeriodPreset::ThisYear => "This year",
-            PeriodPreset::LastYear => "Last year",
-            PeriodPreset::YearToDate => "Year to date",
+            PeriodPreset::ThisMonth => tr!("This month"),
+            PeriodPreset::LastMonth => tr!("Last month"),
+            PeriodPreset::ThisQuarter => tr!("This quarter"),
+            PeriodPreset::LastQuarter => tr!("Last quarter"),
+            PeriodPreset::ThisYear => tr!("This year"),
+            PeriodPreset::LastYear => tr!("Last year"),
+            PeriodPreset::YearToDate => tr!("Year to date"),
         }
     }
 
     /// Its name on the command line: `last-month`.
     pub fn key(self) -> String {
-        self.label().to_lowercase().replace(' ', "-")
+        match self {
+            PeriodPreset::ThisMonth => "this-month",
+            PeriodPreset::LastMonth => "last-month",
+            PeriodPreset::ThisQuarter => "this-quarter",
+            PeriodPreset::LastQuarter => "last-quarter",
+            PeriodPreset::ThisYear => "this-year",
+            PeriodPreset::LastYear => "last-year",
+            PeriodPreset::YearToDate => "year-to-date",
+        }
+        .to_owned()
     }
 
     /// The first and last day of the period, on `today`.

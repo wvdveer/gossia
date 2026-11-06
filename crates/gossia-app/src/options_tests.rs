@@ -206,7 +206,7 @@ fn the_preferences_are_written_and_read_by_the_next_session() {
     let file: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
         file["appearance"],
-        json!({ "theme": "dark", "scale_percent": 150 })
+        json!({ "theme": "dark", "scale_percent": 150, "language": "system" })
     );
     assert_eq!(file["files"]["max_import_bytes"], 2 << 20);
     assert_eq!(file["files"]["copy_records_as"], "base64");

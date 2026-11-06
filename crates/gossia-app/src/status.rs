@@ -2,43 +2,39 @@
 //! "Status bar").
 
 use gossia_calc::Status;
+use gossia_i18n::{counted, tr};
 
 /// `Ready`, or `Calculating... N pending`, or `Running <button>...` while a
 /// button procedure waits or runs, or that evaluation is suspended.
 pub fn evaluation_text(status: &Status) -> String {
     if status.suspended {
-        return format!(
-            "Evaluation suspended: {} abandoned threads still running",
-            status.abandoned
+        return tr!(
+            "Evaluation suspended: {abandoned} abandoned threads still running",
+            abandoned = status.abandoned
         );
     }
     let mut text = if let Some(button) = &status.procedure {
-        format!("Running {button}...")
+        tr!("Running {button}...", button = button)
     } else if status.running || status.pending > 0 {
-        format!("Calculating... {} pending", status.pending)
+        tr!("Calculating... {pending} pending", pending = status.pending)
     } else {
-        "Ready".to_owned()
+        tr!("Ready").to_owned()
     };
     if status.abandoned > 0 {
-        text.push_str(&format!("   {} abandoned", status.abandoned));
+        text.push_str("   ");
+        text.push_str(&tr!("{n} abandoned", n = status.abandoned));
     }
     text
 }
 
 /// `2 errors, 1 invalid`, or that there are none.
 pub fn problems_text(errors: usize, invalid: usize) -> String {
-    let plural = |n: usize, one: &str, many: &str| {
-        if n == 1 {
-            format!("1 {one}")
-        } else {
-            format!("{n} {many}")
-        }
-    };
+    let errors_text = |e: usize| counted(e, tr!("1 error"), tr!("{n} errors"));
     match (errors, invalid) {
-        (0, 0) => "No errors".to_owned(),
-        (e, 0) => plural(e, "error", "errors"),
-        (0, i) => format!("{} invalid", i),
-        (e, i) => format!("{}, {} invalid", plural(e, "error", "errors"), i),
+        (0, 0) => tr!("No errors").to_owned(),
+        (e, 0) => errors_text(e),
+        (0, i) => tr!("{n} invalid", n = i),
+        (e, i) => tr!("{errors}, {n} invalid", errors = errors_text(e), n = i),
     }
 }
 

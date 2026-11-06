@@ -4,6 +4,7 @@
 
 use gossia_calc::FieldKind;
 use gossia_core::Path;
+use gossia_i18n::{counted, tr};
 
 use crate::app::GossiaApp;
 use crate::schema::SchemaCommand;
@@ -32,12 +33,12 @@ impl GossiaApp {
         ui.horizontal(|ui| {
             let checkbox = ui.add_enabled(
                 blocker.is_none(),
-                egui::Checkbox::new(&mut on, "Auto-update"),
+                egui::Checkbox::new(&mut on, tr!("Auto-update")),
             );
             let checkbox = match &blocker {
-                Some(why) => checkbox.on_disabled_hover_text(format!("Cannot be switched on: {why}")),
+                Some(why) => checkbox.on_disabled_hover_text(tr!("Cannot be switched on: {why}", why = why)),
                 None => checkbox.on_hover_text(
-                    "Lets the one tab that uses this schema add, rename, delete and reorder                      its fields from its own grid",
+                    tr!("Lets the one tab that uses this schema add, rename, delete and reorder its fields from its own grid"),
                 ),
             };
             if checkbox.changed() {
@@ -45,13 +46,13 @@ impl GossiaApp {
             }
             ui.separator();
             if users.is_empty() {
-                ui.label("Used by: no tab");
+                ui.label(tr!("Used by: no tab"));
             } else {
-                ui.label(format!("Used by: {}", users.join(", ")));
+                ui.label(tr!("Used by: {tabs}", tabs = users.join(", ")));
             }
             if let Some(error) = self.calc().schema_error(&sheet) {
                 ui.separator();
-                ui.colored_label(error_color(ui), format!("Schema error: {error}"));
+                ui.colored_label(error_color(ui), tr!("Schema error: {error}", error = error));
             }
         });
     }
@@ -88,17 +89,17 @@ impl GossiaApp {
             }
         };
         if let Some(object) = add_to {
-            item(ui, "Add field...", Action::AddField(object.clone()));
+            item(ui, tr!("Add field..."), Action::AddField(object.clone()));
         }
         if let Some((object, name)) = field {
             item(
                 ui,
-                "Rename field...",
+                tr!("Rename field..."),
                 Action::RenameField(object.clone(), name.clone()),
             );
             item(
                 ui,
-                "Delete field...",
+                tr!("Delete field..."),
                 Action::DeleteField(object.clone(), name.clone()),
             );
         }
@@ -124,21 +125,22 @@ impl GossiaApp {
                 .ok()
                 .filter(|p| p.xsd)
                 .map(|p| {
-                    format!(
-                        "the type of an XML element is defined on its XSD tab, {}",
-                        p.schema_sheet
+                    tr!(
+                        "the type of an XML element is defined on its XSD tab, {schema_sheet}",
+                        schema_sheet = p.schema_sheet
                     )
                 })
         });
         ui.separator();
         let response = ui.add_enabled(
             reason.is_none(),
-            egui::Button::new("Force object definition"),
+            egui::Button::new(tr!("Force object definition")),
         );
         let response = match &reason {
             Some(why) => response.on_disabled_hover_text(why),
-            None => response
-                .on_hover_text("Defines the fields of this node from what its formula returned"),
+            None => response.on_hover_text(tr!(
+                "Defines the fields of this node from what its formula returned"
+            )),
         };
         if response.clicked() {
             actions.push(Action::ForceType(path.clone()));
@@ -158,7 +160,7 @@ impl GossiaApp {
         {
             return;
         }
-        if ui.button("Go to schema definition").clicked() {
+        if ui.button(tr!("Go to schema definition")).clicked() {
             actions.push(Action::GoToDefinition(path.clone()));
             ui.close();
         }
@@ -192,10 +194,10 @@ impl GossiaApp {
             return;
         };
         let title = match &dialog.command {
-            SchemaCommand::Add { .. } => "Add field".to_owned(),
-            SchemaCommand::Rename { from, .. } => format!("Rename field {from}"),
-            SchemaCommand::Delete { name } => format!("Delete field {name}"),
-            SchemaCommand::Reorder { .. } => "Reorder fields".to_owned(),
+            SchemaCommand::Add { .. } => tr!("Add field").to_owned(),
+            SchemaCommand::Rename { from, .. } => tr!("Rename field {from}", from = from),
+            SchemaCommand::Delete { name } => tr!("Delete field {name}", name = name),
+            SchemaCommand::Reorder { .. } => tr!("Reorder fields").to_owned(),
         };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
@@ -218,18 +220,18 @@ impl GossiaApp {
                     } => {
                         if dialog.xml {
                             ui.horizontal(|ui| {
-                                ui.radio_value(attribute, false, "Element");
-                                ui.radio_value(attribute, true, "Attribute");
+                                ui.radio_value(attribute, false, tr!("Element"));
+                                ui.radio_value(attribute, true, tr!("Attribute"));
                             });
                         }
-                        ui.label("Name");
+                        ui.label(tr!("Name"));
                         let response = ui.text_edit_singleline(name);
-                        named(&response, "Field name");
+                        named(&response, tr!("Field name"));
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             apply = true;
                         }
                         ui.horizontal(|ui| {
-                            let label = ui.label("Type");
+                            let label = ui.label(tr!("Type"));
                             egui::ComboBox::from_id_salt("field type")
                                 .selected_text(kind.label())
                                 // Every type in sight, without scrolling.
@@ -245,56 +247,63 @@ impl GossiaApp {
                         if let Some(hint) = kind.hint() {
                             ui.weak(hint);
                         }
-                        ui.checkbox(required, "Required");
+                        ui.checkbox(required, tr!("Required"));
                     }
                     SchemaCommand::Rename { from, to } => {
-                        ui.label(format!("New name for {from}"));
+                        ui.label(tr!("New name for {from}", from = from));
                         let response = ui.text_edit_singleline(to);
-                        named(&response, "New field name");
+                        named(&response, tr!("New field name"));
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             apply = true;
                         }
                         ui.label(
-                            "Formulas that read the field by its old name are not rewritten \
-                             and will show #REF!.",
+                            tr!("Formulas that read the field by its old name are not rewritten \
+                             and will show #REF!."),
                         );
                     }
                     SchemaCommand::Delete { name } => {
-                        ui.label(format!(
-                            "Delete {name}? {} will be removed from the data{}.",
-                            plural(dialog.values, "value"),
-                            if dialog.formulas > 0 {
-                                format!(", with {}", plural(dialog.formulas, "formula"))
-                            } else {
-                                String::new()
-                            }
-                        ));
-                        ui.label("Formulas that read it will show #REF!.");
+                        let values = counted(dialog.values, tr!("1 value"), tr!("{n} values"));
+                        ui.label(if dialog.formulas > 0 {
+                            tr!(
+                                "Delete {name}? {values} will be removed from the data, with {formulas}.",
+                                name = name,
+                                values = values,
+                                formulas =
+                                    counted(dialog.formulas, tr!("1 formula"), tr!("{n} formulas"))
+                            )
+                        } else {
+                            tr!(
+                                "Delete {name}? {values} will be removed from the data.",
+                                name = name,
+                                values = values
+                            )
+                        });
+                        ui.label(tr!("Formulas that read it will show #REF!."));
                     }
                     SchemaCommand::Reorder { order } => {
-                        ui.label(format!("New order: {}", order.join(", ")));
+                        ui.label(tr!("New order: {order}", order = order.join(", ")));
                     }
                 }
                 if !dialog.also_used_at.is_empty() {
                     ui.separator();
-                    ui.label(format!(
-                        "This type is also used at {}. The change applies there too.",
-                        dialog.also_used_at.join(", ")
+                    ui.label(tr!(
+                        "This type is also used at {places}. The change applies there too.",
+                        places = dialog.also_used_at.join(", ")
                     ));
                 }
-                ui.label(format!("This changes the schema in {schema}."));
+                ui.label(tr!("This changes the schema in {schema}.", schema = schema));
                 if let Some(error) = &dialog.error {
                     ui.colored_label(error_color(ui), error);
                 }
                 ui.horizontal(|ui| {
                     let label = match &dialog.command {
-                        SchemaCommand::Add { .. } => "Add",
-                        SchemaCommand::Rename { .. } => "Rename",
-                        SchemaCommand::Delete { .. } => "Delete",
-                        SchemaCommand::Reorder { .. } => "Reorder",
+                        SchemaCommand::Add { .. } => tr!("Add"),
+                        SchemaCommand::Rename { .. } => tr!("Rename"),
+                        SchemaCommand::Delete { .. } => tr!("Delete"),
+                        SchemaCommand::Reorder { .. } => tr!("Reorder"),
                     };
                     apply |= ui.button(label).clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply {
@@ -333,13 +342,5 @@ impl GossiaApp {
             }
             _ => {}
         }
-    }
-}
-
-fn plural(n: usize, noun: &str) -> String {
-    if n == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{n} {noun}s")
     }
 }

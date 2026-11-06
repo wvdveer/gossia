@@ -383,7 +383,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             let view = app
                 .view_names()
                 .into_iter()
-                .find(|v| v.label().eq_ignore_ascii_case(name))
+                .find(|v| v.name().eq_ignore_ascii_case(name))
                 .ok_or_else(|| format!("there is no view called {name}"))?;
             if app.set_view(view) {
                 app.refresh_rows();
@@ -396,7 +396,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
         // of the tree or a table (`values` for *Paste values*).
         "paste" => {
             let text = text_arg(args, "text")?;
-            if app.current_view().label() == "Raw" {
+            if *app.current_view() == crate::form::View::Raw {
                 return app.paste_document(text).map(|()| Json::Null);
             }
             if !app.in_tree() {
@@ -557,7 +557,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>(),
-                "view": if app.in_report() { "Report" } else { app.current_view().label() },
+                "view": if app.in_report() { "Report" } else { app.current_view().name() },
                 "selection": app.selection.as_ref().map(ToString::to_string),
                 "code_editor": app.code.open,
             }))

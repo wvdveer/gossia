@@ -16,6 +16,7 @@ use gossia_core::form::{
     TRACK_POINTS, TRACK_SHARES, TrackSize, flow_rows, free_place, grid_cells, rebase_free,
 };
 use gossia_core::{Kind, Path, Value};
+use gossia_i18n::tr;
 
 use crate::app::GossiaApp;
 use crate::form::{DEFAULT_FORM, View, control_name, last_name};
@@ -123,8 +124,8 @@ pub(crate) enum DragItem {
 pub(crate) fn new_control(kind: ControlKind) -> Control {
     let mut c = Control::new(kind);
     match kind {
-        ControlKind::Label => c.text = Some("Label".to_owned()),
-        ControlKind::Button => c.label = Some("Button".to_owned()),
+        ControlKind::Label => c.text = Some(tr!("Label").to_owned()),
+        ControlKind::Button => c.label = Some(tr!("Button").to_owned()),
         _ => {}
     }
     c
@@ -805,7 +806,7 @@ impl GossiaApp {
 
     fn check_form_name(&self, name: &str, renaming: Option<&str>) -> Result<(), String> {
         if name.eq_ignore_ascii_case("Raw") {
-            return Err("Raw is the name of a view of every tab".to_owned());
+            return Err(tr!("Raw is the name of a view of every tab").to_owned());
         }
         match self
             .calc()
@@ -824,7 +825,7 @@ impl GossiaApp {
             .calc()
             .spec(&self.sheet)
             .map(design::generate)
-            .ok_or("there is no such tab")?;
+            .ok_or(tr!("there is no such tab"))?;
         self.put_design(name, Some(design));
         self.show_form(name);
         Ok(())
@@ -858,7 +859,7 @@ impl GossiaApp {
     pub fn delete_form(&mut self) -> Result<(), String> {
         let form = self.form_name();
         if form == DEFAULT_FORM {
-            return Err("the Default form cannot be deleted; reset it instead".to_owned());
+            return Err(tr!("the Default form cannot be deleted; reset it instead").to_owned());
         }
         self.put_design(&form, None);
         self.show_form(DEFAULT_FORM);
@@ -868,7 +869,7 @@ impl GossiaApp {
     /// Discards the design of Default, so that it is generated again.
     pub fn reset_form(&mut self) -> Result<(), String> {
         if self.form_name() != DEFAULT_FORM {
-            return Err("only the Default form is reset; delete the others".to_owned());
+            return Err(tr!("only the Default form is reset; delete the others").to_owned());
         }
         self.put_design(DEFAULT_FORM, None);
         self.form.layout = None;
@@ -926,11 +927,11 @@ impl GossiaApp {
         };
         let form = self.form_name();
         let title = match dialog.command {
-            FormCommand::New => "New form".to_owned(),
-            FormCommand::Duplicate => format!("Duplicate form {form}"),
-            FormCommand::Rename => format!("Rename form {form}"),
-            FormCommand::Delete => format!("Delete form {form}"),
-            FormCommand::Reset => "Reset the Default form".to_owned(),
+            FormCommand::New => tr!("New form").to_owned(),
+            FormCommand::Duplicate => tr!("Duplicate form {form}", form = form),
+            FormCommand::Rename => tr!("Rename form {form}", form = form),
+            FormCommand::Delete => tr!("Delete form {form}", form = form),
+            FormCommand::Reset => tr!("Reset the Default form").to_owned(),
         };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
@@ -942,28 +943,31 @@ impl GossiaApp {
                 match dialog.command {
                     FormCommand::New | FormCommand::Duplicate | FormCommand::Rename => {
                         ui.label(match dialog.command {
-                            FormCommand::New => "Name of the new form",
-                            FormCommand::Duplicate => "Name of the copy",
-                            _ => "New name",
+                            FormCommand::New => tr!("Name of the new form"),
+                            FormCommand::Duplicate => tr!("Name of the copy"),
+                            _ => tr!("New name"),
                         });
                         let response = ui.text_edit_singleline(&mut dialog.name);
-                        named(&response, "Form name");
+                        named(&response, tr!("Form name"));
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             apply = true;
                         }
-                        ui.label(
+                        ui.label(tr!(
                             "A form name follows the rules of a tab name, and is not used \
-                             by another form of this tab.",
-                        );
+                             by another form of this tab."
+                        ));
                     }
                     FormCommand::Delete => {
-                        ui.label(format!("Delete the form {form}? Its design is lost."));
+                        ui.label(tr!(
+                            "Delete the form {form}? Its design is lost.",
+                            form = form
+                        ));
                     }
                     FormCommand::Reset => {
-                        ui.label(
+                        ui.label(tr!(
                             "Discard the design of the Default form? It is generated from \
-                             the schema again.",
-                        );
+                             the schema again."
+                        ));
                     }
                 }
                 if let Some(error) = &dialog.error {
@@ -971,14 +975,14 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     let label = match dialog.command {
-                        FormCommand::New => "Create",
-                        FormCommand::Duplicate => "Duplicate",
-                        FormCommand::Rename => "Rename",
-                        FormCommand::Delete => "Delete",
-                        FormCommand::Reset => "Reset",
+                        FormCommand::New => tr!("Create"),
+                        FormCommand::Duplicate => tr!("Duplicate"),
+                        FormCommand::Rename => tr!("Rename"),
+                        FormCommand::Delete => tr!("Delete"),
+                        FormCommand::Reset => tr!("Reset"),
                     };
                     apply |= ui.button(label).clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply {
@@ -993,7 +997,7 @@ impl GossiaApp {
 
     /// The Forms submenu of the View menu.
     pub(crate) fn forms_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Forms", |ui| {
+        ui.menu_button(tr!("Forms"), |ui| {
             let in_form = self.in_form();
             let form = self.form_name();
             let is_default = form == DEFAULT_FORM;
@@ -1004,30 +1008,35 @@ impl GossiaApp {
                     ui.close();
                 }
             };
-            item(ui, "New form...", true, FormCommand::New);
-            item(ui, "Duplicate form...", in_form, FormCommand::Duplicate);
+            item(ui, tr!("New form..."), true, FormCommand::New);
             item(
                 ui,
-                "Rename form...",
+                tr!("Duplicate form..."),
+                in_form,
+                FormCommand::Duplicate,
+            );
+            item(
+                ui,
+                tr!("Rename form..."),
                 in_form && !is_default,
                 FormCommand::Rename,
             );
             item(
                 ui,
-                "Delete form...",
+                tr!("Delete form..."),
                 in_form && !is_default,
                 FormCommand::Delete,
             );
             item(
                 ui,
-                "Reset Default form...",
+                tr!("Reset Default form..."),
                 in_form && is_default && self.is_customised(&form),
                 FormCommand::Reset,
             );
             ui.separator();
             let mut on = self.layout_active();
             if ui
-                .add_enabled(in_form, egui::Checkbox::new(&mut on, "Edit form"))
+                .add_enabled(in_form, egui::Checkbox::new(&mut on, tr!("Edit form")))
                 .clicked()
             {
                 self.set_layout(on);
@@ -1047,7 +1056,11 @@ impl GossiaApp {
         let report = form == REPORT_FORM;
         ui.horizontal_wrapped(|ui| {
             let mut on = self.layout_active();
-            let switch = if report { "Edit report" } else { "Edit form" };
+            let switch = if report {
+                tr!("Edit report")
+            } else {
+                tr!("Edit form")
+            };
             if ui.checkbox(&mut on, switch).changed() {
                 self.set_layout(on);
             }
@@ -1070,10 +1083,10 @@ impl GossiaApp {
                 if !report && kind == ControlKind::Chart {
                     continue;
                 }
-                let label = format!("Add {}", kind.label().to_lowercase());
+                let label = tr!("Add {kind}", kind = kind.label().to_lowercase());
                 let button = ui
                     .add(egui::Button::new(label).sense(egui::Sense::click_and_drag()))
-                    .on_hover_text("Click to add, or drag onto the form");
+                    .on_hover_text(tr!("Click to add, or drag onto the form"));
                 button.dnd_set_drag_payload((DragItem::New(kind), kind.label().to_owned()));
                 if button.clicked() {
                     if report {
@@ -1085,13 +1098,19 @@ impl GossiaApp {
             }
             ui.separator();
             if ui
-                .add_enabled(self.can_layout_undo(), egui::Button::new("Undo layout"))
+                .add_enabled(
+                    self.can_layout_undo(),
+                    egui::Button::new(tr!("Undo layout")),
+                )
                 .clicked()
             {
                 self.layout_undo();
             }
             if ui
-                .add_enabled(self.can_layout_redo(), egui::Button::new("Redo layout"))
+                .add_enabled(
+                    self.can_layout_redo(),
+                    egui::Button::new(tr!("Redo layout")),
+                )
                 .clicked()
             {
                 self.layout_redo();
@@ -1103,12 +1122,12 @@ impl GossiaApp {
             if form == DEFAULT_FORM {
                 let stored = self.is_customised(form);
                 if ui
-                    .add_enabled(stored, egui::Button::new("Reset to default"))
+                    .add_enabled(stored, egui::Button::new(tr!("Reset to default")))
                     .clicked()
                 {
                     self.begin_form_command(FormCommand::Reset);
                 }
-            } else if ui.button("Delete form").clicked() {
+            } else if ui.button(tr!("Delete form")).clicked() {
                 self.begin_form_command(FormCommand::Delete);
             }
         });
@@ -1123,7 +1142,7 @@ impl GossiaApp {
         let design = self.design_of(&form);
         let selected = self.selected_control();
         let column = self.selected_column();
-        ui.heading("Properties");
+        ui.heading(tr!("Properties"));
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -1148,7 +1167,7 @@ impl GossiaApp {
                         Some((at, control)) => self.control_properties(ui, &design, at, control),
                         None if self.in_report() => self.report_properties(ui),
                         None => {
-                            ui.weak("Select a control on the form to change it.");
+                            ui.weak(tr!("Select a control on the form to change it."));
                         }
                     }
                 }
@@ -1193,7 +1212,9 @@ impl GossiaApp {
             }
         });
         if item_ty.is_some() {
-            ui.weak("In the design of the items: paths are read from the item.");
+            ui.weak(tr!(
+                "In the design of the items: paths are read from the item."
+            ));
         }
 
         // A field shows a node (its path) or an expression (its value), not
@@ -1208,16 +1229,20 @@ impl GossiaApp {
         if kind == ControlKind::Field && !report {
             let before = by_value;
             ui.horizontal(|ui| {
-                ui.label("Source");
+                ui.label(tr!("Source"));
                 let response = egui::ComboBox::from_id_salt("property_source")
-                    .selected_text(if by_value { "Value" } else { "Path" })
+                    .selected_text(if by_value { tr!("Value") } else { tr!("Path") })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut by_value, false, "Path");
-                        ui.selectable_value(&mut by_value, true, "Value");
+                        ui.selectable_value(&mut by_value, false, tr!("Path"));
+                        ui.selectable_value(&mut by_value, true, tr!("Value"));
                     })
                     .response;
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Source of the field")
+                    egui::WidgetInfo::labeled(
+                        egui::Role::ComboBox,
+                        true,
+                        tr!("Source of the field"),
+                    )
                 });
             });
             if by_value != before {
@@ -1248,7 +1273,7 @@ impl GossiaApp {
             let current = edited.path.clone();
             let mut chosen = current.clone();
             ui.horizontal(|ui| {
-                ui.label("Path");
+                ui.label(tr!("Path"));
                 let text = current
                     .as_deref()
                     .map_or_else(|| "(none)".to_owned(), shown);
@@ -1266,7 +1291,11 @@ impl GossiaApp {
                     })
                     .response;
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Path of the control")
+                    egui::WidgetInfo::labeled(
+                        egui::Role::ComboBox,
+                        true,
+                        tr!("Path of the control"),
+                    )
                 });
             });
             if chosen != current {
@@ -1281,11 +1310,11 @@ impl GossiaApp {
                 .bound_path()
                 .and_then(|p| last_name(&p))
                 .unwrap_or_default();
-            if option_text(ui, "Label", &mut edited.label, &hint, false) {
+            if option_text(ui, tr!("Label"), &mut edited.label, &hint, false) {
                 merge = Some(key("label"));
             }
         }
-        if bound && !report && option_text(ui, "Help", &mut edited.help, "", true) {
+        if bound && !report && option_text(ui, tr!("Help"), &mut edited.help, "", true) {
             merge = Some(key("help"));
         }
         match kind {
@@ -1302,21 +1331,21 @@ impl GossiaApp {
                 }
                 self.expression_error(ui, at, None, expr);
                 if report {
-                    ui.weak("The field shows what the value comes to.");
+                    ui.weak(tr!("The field shows what the value comes to."));
                 } else {
                     let names = self.calc().procedure_names();
                     procedure_choice(
                         ui,
-                        "Write procedure",
-                        "Write procedure of the field",
+                        tr!("Write procedure"),
+                        tr!("Write procedure of the field"),
                         &mut edited.write_procedure,
                         &names,
                     );
-                    ui.weak(
+                    ui.weak(tr!(
                         "The field shows what the value comes to. Without a write procedure it is \
                      read-only; with one, what is typed is passed to it, as text, as \
-                     name(form, ctx, value).",
-                    );
+                     name(form, ctx, value)."
+                    ));
                 }
             }
             ControlKind::Repeater => {
@@ -1332,10 +1361,10 @@ impl GossiaApp {
                 }
                 self.expression_error(ui, at, None, expr);
                 if edited.lists_items() {
-                    if option_text(ui, "Item name", &mut edited.item_name, "this", false) {
+                    if option_text(ui, tr!("Item name"), &mut edited.item_name, "this", false) {
                         merge = Some(key("item_name"));
                     }
-                    if option_text(ui, "List name", &mut edited.list_name, "", false) {
+                    if option_text(ui, tr!("List name"), &mut edited.list_name, "", false) {
                         merge = Some(key("list_name"));
                     }
                     for name in [&edited.item_name, &edited.list_name].into_iter().flatten() {
@@ -1347,12 +1376,14 @@ impl GossiaApp {
                             );
                         }
                     }
-                    ui.weak(
+                    ui.weak(tr!(
                         "The items are read-only. The controls inside see each item as this \
-                         and by its item name, and the whole list by its list name.",
-                    );
+                         and by its item name, and the whole list by its list name."
+                    ));
                 }
-                if !edited.is_stacked() && ui.button("Add a column with an expression").clicked() {
+                if !edited.is_stacked()
+                    && ui.button(tr!("Add a column with an expression")).clicked()
+                {
                     add_listed_column(
                         self.column_names(design, at).unwrap_or_default(),
                         &mut edited,
@@ -1360,8 +1391,8 @@ impl GossiaApp {
                 }
             }
             ControlKind::Label => {
-                ui.checkbox(&mut edited.template, "Text is a template")
-                    .on_hover_text("Each {expression} in the text is filled in, as in a Python f-string: {total:,.2f}. Write {{ and }} for the braces themselves.");
+                ui.checkbox(&mut edited.template, tr!("Text is a template"))
+                    .on_hover_text(tr!("Each {expression} in the text is filled in, as in a Python f-string: {total:,.2f}. Write {{ and }} for the braces themselves."));
                 if edited.is_template() {
                     self.expression_error(ui, at, None, ExprKind::Template);
                 }
@@ -1398,7 +1429,7 @@ impl GossiaApp {
             }
             ControlKind::Field => {
                 ui.horizontal(|ui| {
-                    ui.label("Editor");
+                    ui.label(tr!("Editor"));
                     let mut editor = edited.editor.unwrap_or(Editor::Auto);
                     let response = egui::ComboBox::from_id_salt("property_editor")
                         .selected_text(editor.label())
@@ -1409,19 +1440,23 @@ impl GossiaApp {
                         })
                         .response;
                     response.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Editor of the field")
+                        egui::WidgetInfo::labeled(
+                            egui::Role::ComboBox,
+                            true,
+                            tr!("Editor of the field"),
+                        )
                     });
                     edited.editor = (editor != Editor::Auto).then_some(editor);
                 });
-                ui.checkbox(&mut edited.read_only, "Read only");
+                ui.checkbox(&mut edited.read_only, tr!("Read only"));
                 let kind = spec.as_ref().and_then(|spec| {
                     let path = design.path_in_item(at, &edited, 0)?;
                     Some(spec.get(spec.resolve(&path)?.ty).kind.clone())
                 });
                 // A password box: only a string's text can be dots.
                 if matches!(kind, Some(Kind::String(_))) || edited.masked {
-                    ui.checkbox(&mut edited.masked, "Masked")
-                        .on_hover_text("Dots instead of the text, as in a password box");
+                    ui.checkbox(&mut edited.masked, tr!("Masked"))
+                        .on_hover_text(tr!("Dots instead of the text, as in a password box"));
                 }
                 if let Some(kind) = kind
                     && format_properties(
@@ -1441,7 +1476,7 @@ impl GossiaApp {
             }
             ControlKind::Group => {
                 ui.horizontal(|ui| {
-                    ui.label("Layout");
+                    ui.label(tr!("Layout"));
                     let mut layout = edited.layout.unwrap_or(GroupLayout::Flow);
                     let response = egui::ComboBox::from_id_salt("property_group_layout")
                         .selected_text(layout.label())
@@ -1452,7 +1487,11 @@ impl GossiaApp {
                         })
                         .response;
                     response.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Layout of the group")
+                        egui::WidgetInfo::labeled(
+                            egui::Role::ComboBox,
+                            true,
+                            tr!("Layout of the group"),
+                        )
                     });
                     if layout != edited.layout.unwrap_or(GroupLayout::Flow) {
                         let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
@@ -1468,14 +1507,14 @@ impl GossiaApp {
                     }
                 } else {
                     ui.horizontal(|ui| {
-                        ui.label("Columns");
+                        ui.label(tr!("Columns"));
                         let mut columns = edited.columns.unwrap_or(1);
                         let response = ui.add(egui::DragValue::new(&mut columns).range(1..=6));
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::Role::SpinButton,
                                 true,
-                                "Columns of the group",
+                                tr!("Columns of the group"),
                             )
                         });
                         edited.columns = (columns > 1).then_some(columns);
@@ -1487,13 +1526,13 @@ impl GossiaApp {
             }
             ControlKind::Repeater => {
                 ui.horizontal(|ui| {
-                    ui.label("Shown as");
+                    ui.label(tr!("Shown as"));
                     let mut mode = edited.mode;
-                    let text = mode.map_or("Automatic", RepeaterMode::label);
+                    let text = mode.map_or(tr!("Automatic"), RepeaterMode::label);
                     let response = egui::ComboBox::from_id_salt("property_mode")
                         .selected_text(text)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut mode, None, "Automatic");
+                            ui.selectable_value(&mut mode, None, tr!("Automatic"));
                             ui.selectable_value(
                                 &mut mode,
                                 Some(RepeaterMode::Table),
@@ -1510,7 +1549,7 @@ impl GossiaApp {
                         egui::WidgetInfo::labeled(
                             egui::Role::ComboBox,
                             true,
-                            "How the array is shown",
+                            tr!("How the array is shown"),
                         )
                     });
                     edited.mode = mode;
@@ -1521,28 +1560,28 @@ impl GossiaApp {
                     ui,
                     &mut edited.title_font,
                     &mut edited.title_font_size,
-                    "Title ",
-                    "table title",
+                    tr!("Title "),
+                    tr!("table title"),
                 );
                 font_properties(
                     ui,
                     &mut edited.header_font,
                     &mut edited.header_font_size,
-                    "Column title ",
-                    "column titles",
+                    tr!("Column title "),
+                    tr!("column titles"),
                 );
             }
             ControlKind::Label => {
                 let typed = if edited.is_template() {
                     expr_text(
                         ui,
-                        "Text",
+                        tr!("Text"),
                         &mut edited.text,
                         "",
                         draft_id(at, None, ExprKind::Template),
                     )
                 } else {
-                    option_text(ui, "Text", &mut edited.text, "", true)
+                    option_text(ui, tr!("Text"), &mut edited.text, "", true)
                 };
                 if typed {
                     merge = Some(key("text"));
@@ -1552,31 +1591,31 @@ impl GossiaApp {
                 let names = self.calc().procedure_names();
                 procedure_choice(
                     ui,
-                    "Procedure",
-                    "Procedure of the button",
+                    tr!("Procedure"),
+                    tr!("Procedure of the button"),
                     &mut edited.procedure,
                     &names,
                 );
                 if names.is_empty() {
-                    ui.weak(
+                    ui.weak(tr!(
                         "No module has a function yet. Write one, def name(form, ctx):, \
-                         in the code editor (Alt+F11).",
-                    );
+                         in the code editor (Alt+F11)."
+                    ));
                 } else {
-                    ui.weak("A function of a module, called as name(form, ctx).");
+                    ui.weak(tr!("A function of a module, called as name(form, ctx)."));
                 }
             }
             ControlKind::Separator => {
-                ui.checkbox(&mut edited.vertical, "Vertical")
-                    .on_hover_text("A vertical line, as tall as its row or cell");
+                ui.checkbox(&mut edited.vertical, tr!("Vertical"))
+                    .on_hover_text(tr!("A vertical line, as tall as its row or cell"));
                 let before = edited.thickness;
                 optional_number(
                     ui,
-                    "Thickness",
+                    tr!("Thickness"),
                     &mut edited.thickness,
                     &SEPARATOR_THICKNESS,
                     2,
-                    "Thickness of the line in points",
+                    tr!("Thickness of the line in points"),
                 );
                 if edited.thickness != before {
                     merge = Some(key("thickness"));
@@ -1656,16 +1695,16 @@ impl GossiaApp {
             // them as its choices when it has none of its own.
             let has_named = node_type.as_ref().is_some_and(|t| !t.choices.is_empty());
             if edited.choices.is_some() || has_named {
-                ui.checkbox(&mut edited.allow_other, ALLOW_OTHER)
-                    .on_hover_text(ALLOW_OTHER_HELP);
+                ui.checkbox(&mut edited.allow_other, allow_other())
+                    .on_hover_text(allow_other_help());
             }
         }
-        ui.weak(
+        ui.weak(tr!(
             "Python expressions, run where the control is bound. A colour is Fixed (picked; \
              no Python, so it shows in an untrusted workbook too) or an expression giving a \
              name, \"#rrggbb\" or (r, g, b); None is the usual colour. Choices is a list of \
-             values, (code, text) pairs or {\"value\": .., \"label\": ..} dicts.",
-        );
+             values, (code, text) pairs or {\"value\": .., \"label\": ..} dicts."
+        ));
 
         if kind == ControlKind::Field && !report {
             self.formula_editor(ui, design, at, &edited);
@@ -1689,31 +1728,31 @@ impl GossiaApp {
             };
             act(
                 ui,
-                "Move up",
+                tr!("Move up"),
                 index > 0,
                 ControlAction::Shift(at.clone(), true),
             );
             act(
                 ui,
-                "Move down",
+                tr!("Move down"),
                 index + 1 < siblings,
                 ControlAction::Shift(at.clone(), false),
             );
             act(
                 ui,
-                "Move into the group above",
+                tr!("Move into the group above"),
                 above_group,
                 ControlAction::Nest(at.clone(), true),
             );
             act(
                 ui,
-                "Move out of the group",
+                tr!("Move out of the group"),
                 at.len() > 1,
                 ControlAction::Nest(at.clone(), false),
             );
             act(
                 ui,
-                "Delete control",
+                tr!("Delete control"),
                 true,
                 ControlAction::Delete(at.clone()),
             );
@@ -1745,16 +1784,18 @@ impl GossiaApp {
             return;
         }
         ui.strong(format!("{} controls selected", selected.len()));
-        ui.weak("They follow the first one selected. Ctrl and a click adds or removes one.");
+        ui.weak(tr!(
+            "They follow the first one selected. Ctrl and a click adds or removes one."
+        ));
         let rects = last_rects(ui.ctx(), &self.sheet, &self.form_name());
         let mut chosen = None;
         ui.horizontal_wrapped(|ui| {
             for how in Arrange::ALL {
                 let placements = arranged(how, &selected, &rects);
                 let response = ui.add_enabled(placements.is_some(), egui::Button::new(how.label()));
-                let response = response.on_disabled_hover_text(
-                    "Moving needs the controls in one Free group; distributing needs three.",
-                );
+                let response = response.on_disabled_hover_text(tr!(
+                    "Moving needs the controls in one Free group; distributing needs three."
+                ));
                 if response.clicked() {
                     chosen = placements;
                 }
@@ -1783,7 +1824,7 @@ impl GossiaApp {
             .filter(|c| !c.hidden && !c.is_row_number())
             .count();
         let mut action = None;
-        ui.label("Columns of the table");
+        ui.label(tr!("Columns of the table"));
         let last = columns.len().saturating_sub(1);
         egui::Grid::new("table_columns")
             .num_columns(3)
@@ -1799,7 +1840,7 @@ impl GossiaApp {
                     // The last column of the items that is shown stays shown.
                     let can = column.hidden || column.is_row_number() || shown > 1;
                     let response = ui.add_enabled(can, egui::Checkbox::new(&mut on, &title));
-                    let show_name = format!("Show column {name}");
+                    let show_name = tr!("Show column {name}", name = name);
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(egui::Role::CheckBox, can, on, show_name.clone())
                     });
@@ -1811,7 +1852,7 @@ impl GossiaApp {
                         ));
                     }
                     ui.horizontal(|ui| {
-                        let up = format!("Move column {name} up");
+                        let up = tr!("Move column {name} up", name = name);
                         if icons::button(ui, i > 0, icons::ARROW_UP, "^", &up).clicked() {
                             action = Some(ControlAction::Column(
                                 at.clone(),
@@ -1819,7 +1860,7 @@ impl GossiaApp {
                                 ColumnEdit::Step(true),
                             ));
                         }
-                        let down = format!("Move column {name} down");
+                        let down = tr!("Move column {name} down", name = name);
                         if icons::button(ui, i < last, icons::ARROW_DOWN, "v", &down).clicked() {
                             action = Some(ControlAction::Column(
                                 at.clone(),
@@ -1828,8 +1869,8 @@ impl GossiaApp {
                             ));
                         }
                     });
-                    let open = ui.button("Properties");
-                    let open_name = format!("Properties of column {name}");
+                    let open = ui.button(tr!("Properties"));
+                    let open_name = tr!("Properties of column {name}", name = name);
                     open.widget_info(|| {
                         egui::WidgetInfo::labeled(egui::Role::Button, true, open_name.clone())
                     });
@@ -1839,7 +1880,9 @@ impl GossiaApp {
                     ui.end_row();
                 }
             });
-        ui.weak("A click on the title of a column on the form also selects it.");
+        ui.weak(tr!(
+            "A click on the title of a column on the form also selects it."
+        ));
         action
     }
 
@@ -1854,16 +1897,16 @@ impl GossiaApp {
         let mut edited = column.clone();
         let row_number = column.is_row_number();
         ui.strong(crate::form::column_label(&column.name, control));
-        if ui.button("Back to the table").clicked() {
+        if ui.button(tr!("Back to the table")).clicked() {
             self.select_control(Some(at.clone()));
             return;
         }
         let key = |property: &str| format!("{at:?}:{}:{property}", column.name);
         let mut merge = None;
-        if option_text(ui, "Label", &mut edited.label, &column.name, false) {
+        if option_text(ui, tr!("Label"), &mut edited.label, &column.name, false) {
             merge = Some(key("label"));
         }
-        if option_text(ui, "Help", &mut edited.help, "", true) {
+        if option_text(ui, tr!("Help"), &mut edited.help, "", true) {
             merge = Some(key("help"));
         }
         // As a control's width: automatic, or ticked and then a number of
@@ -1875,13 +1918,13 @@ impl GossiaApp {
             ui.horizontal(|ui| {
                 let mut fixed = edited.width.is_some();
                 let on = fixed;
-                let response = ui.checkbox(&mut fixed, "Width");
+                let response = ui.checkbox(&mut fixed, tr!("Width"));
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
                         egui::Role::CheckBox,
                         true,
                         on,
-                        "Fixed width of the column",
+                        tr!("Fixed width of the column"),
                     )
                 });
                 if fixed != on {
@@ -1899,7 +1942,7 @@ impl GossiaApp {
                             egui::WidgetInfo::labeled(
                                 egui::Role::SpinButton,
                                 true,
-                                "Width of the column",
+                                tr!("Width of the column"),
                             )
                         });
                         if response.changed() {
@@ -1907,13 +1950,23 @@ impl GossiaApp {
                         }
                     }
                     None => {
-                        ui.weak("Automatic: as wide as its widest text");
+                        ui.weak(tr!("Automatic: as wide as its widest text"));
                     }
                 }
             })
         });
-        alignment_choice(ui, &mut edited.title_align, "Title alignment", "the title");
-        alignment_choice(ui, &mut edited.align, "Cell alignment", "the cells");
+        alignment_choice(
+            ui,
+            &mut edited.title_align,
+            tr!("Title alignment"),
+            tr!("the title"),
+        );
+        alignment_choice(
+            ui,
+            &mut edited.align,
+            tr!("Cell alignment"),
+            tr!("the cells"),
+        );
         if row_number {
             row_numbering(ui, &mut edited);
         }
@@ -1932,7 +1985,7 @@ impl GossiaApp {
         };
         if !row_number {
             ui.horizontal(|ui| {
-                ui.label("Editor");
+                ui.label(tr!("Editor"));
                 // A cell has one line: several lines count as one.
                 let mut editor = match edited.editor.unwrap_or(Editor::Auto) {
                     Editor::Multiline => Editor::Text,
@@ -1947,13 +2000,17 @@ impl GossiaApp {
                     })
                     .response;
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Editor of the column")
+                    egui::WidgetInfo::labeled(
+                        egui::Role::ComboBox,
+                        true,
+                        tr!("Editor of the column"),
+                    )
                 });
                 if Some(editor) != edited.editor.or(Some(Editor::Auto)) {
                     edited.editor = (editor != Editor::Auto).then_some(editor);
                 }
             });
-            ui.checkbox(&mut edited.read_only, "Read only");
+            ui.checkbox(&mut edited.read_only, tr!("Read only"));
         }
         if let Some(kind) = &kind
             && format_properties(
@@ -1974,7 +2031,7 @@ impl GossiaApp {
             ui,
             &mut edited.font,
             &mut edited.font_size,
-            "Cell ",
+            tr!("Cell "),
             "cells",
         );
         emphasis_properties(ui, &mut edited.bold, &mut edited.italic, "cells");
@@ -2005,18 +2062,18 @@ impl GossiaApp {
             let names = self.calc().procedure_names();
             procedure_choice(
                 ui,
-                "Write procedure",
-                "Write procedure of the column",
+                tr!("Write procedure"),
+                tr!("Write procedure of the column"),
                 &mut edited.write_procedure,
                 &names,
             );
-            ui.weak(
+            ui.weak(tr!(
                 "Value runs for each row, with the item as this (and by the item name, in a \
                  table over an expression); without one the cell is the field of the item of \
                  this name. Without a write procedure the cells are read-only; with one, what \
                  is typed into a cell is passed to it as name(form, ctx, value), with \
-                 ctx.index the row.",
-            );
+                 ctx.index the row."
+            ));
         } else if !row_number {
             let fields = [
                 (ExprKind::Visible, &mut edited.visible_when),
@@ -2043,16 +2100,18 @@ impl GossiaApp {
             self.expression_error(ui, at, Some(&column.name), expr);
             self.choices_note(ui, at, Some(&column.name), kind.as_ref());
             if edited.choices.is_some() || has_named {
-                ui.checkbox(&mut edited.allow_other, ALLOW_OTHER)
-                    .on_hover_text(ALLOW_OTHER_HELP);
+                ui.checkbox(&mut edited.allow_other, allow_other())
+                    .on_hover_text(allow_other_help());
             }
-            ui.weak(
+            ui.weak(tr!(
                 "Visible when runs once, where the table is bound, and hides the whole \
                  column. The others run for each row, with this as the cell and parent \
-                 as the row.",
-            );
+                 as the row."
+            ));
         }
-        ui.weak("Where the column is, and whether it is shown, are properties of the table.");
+        ui.weak(tr!(
+            "Where the column is, and whether it is shown, are properties of the table."
+        ));
         if edited != column {
             self.set_column(merge, at, edited);
         }
@@ -2078,7 +2137,7 @@ impl GossiaApp {
         let current = edited.chart.clone();
         let mut chosen = current.clone();
         ui.horizontal(|ui| {
-            ui.label("Chart type");
+            ui.label(tr!("Chart type"));
             let response = egui::ComboBox::from_id_salt("property_chart")
                 .selected_text(current.as_deref().unwrap_or("(none)"))
                 .width(180.0)
@@ -2093,7 +2152,7 @@ impl GossiaApp {
                 })
                 .response;
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Chart type")
+                egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Chart type"))
             });
         });
         if chosen != current {
@@ -2101,16 +2160,17 @@ impl GossiaApp {
             changed = Some("chart".to_owned());
         }
         let Some(name) = edited.chart.clone() else {
-            ui.weak(
+            ui.weak(tr!(
                 "Bar, Line, Pie, Scatter and Sankey are built in. A function of a module marked \
-                 @chart(\"Name\") is a chart type too.",
-            );
+                 @chart(\"Name\") is a chart type too."
+            ));
             return changed;
         };
         let Some(chart) = types.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) else {
             ui.label(
-                egui::RichText::new(format!(
-                    "There is no chart type named {name}: its module has changed or is gone."
+                egui::RichText::new(tr!(
+                    "There is no chart type named {name}: its module has changed or is gone.",
+                    name = name
                 ))
                 .small()
                 .color(error_color(ui)),
@@ -2148,10 +2208,11 @@ impl GossiaApp {
             Some(module) => format!("{module}.{}", chart.function),
             None => format!("{} (built in)", chart.function),
         };
-        ui.weak(format!(
+        ui.weak(tr!(
             "Each box is a Python expression, passed to {function} as the parameter of \
              its name; * marks one that has to be filled in. The chart is given its width \
-             and height in points."
+             and height in points.",
+            function = function
         ));
         changed
     }
@@ -2179,8 +2240,8 @@ impl GossiaApp {
         let place: String = rows.iter().map(|i| format!("[{i}]")).collect();
         let text = match (rows.is_empty(), column.is_some() && kind.per_row()) {
             (true, _) => first.to_owned(),
-            (false, true) => format!("Row {place}: {first}"),
-            (false, false) => format!("Item {place}: {first}"),
+            (false, true) => tr!("Row {place}: {first}", place = place, first = first),
+            (false, false) => tr!("Item {place}: {first}", place = place, first = first),
         };
         let color = error_color(ui);
         let response = ui.add(egui::Label::new(
@@ -2271,9 +2332,9 @@ impl GossiaApp {
         };
         if edited.children.is_empty() {
             let design_them = ui
-                .button("Design the items")
+                .button(tr!("Design the items"))
                 .on_hover_text(
-                    "Show each item with controls you arrange, as on the rest of the form,                      one item at a time",
+                    tr!("Show each item with controls you arrange, as on the rest of the form, one item at a time"),
                 )
                 .clicked();
             if design_them {
@@ -2283,10 +2344,12 @@ impl GossiaApp {
             return;
         }
         ui.horizontal_wrapped(|ui| {
-            ui.label("The items are designed.");
+            ui.label(tr!("The items are designed."));
             if ui
-                .button("Use the generated items")
-                .on_hover_text("Take away the design of the items: they are drawn from the schema")
+                .button(tr!("Use the generated items"))
+                .on_hover_text(tr!(
+                    "Take away the design of the items: they are drawn from the schema"
+                ))
                 .clicked()
             {
                 edited.children.clear();
@@ -2295,7 +2358,7 @@ impl GossiaApp {
         if !edited.is_stacked() {
             ui.colored_label(
                 error_color(ui),
-                "The design of the items is used only when they are shown stacked.",
+                tr!("The design of the items is used only when they are shown stacked."),
             );
         }
     }
@@ -2311,10 +2374,10 @@ impl GossiaApp {
         control: &Control,
     ) {
         if design.item_scope(at).is_some() {
-            ui.weak(
+            ui.weak(tr!(
                 "A formula for this field in every item is a column formula: \
-                 set it in the data tree, on the array.",
-            );
+                 set it in the data tree, on the array."
+            ));
             return;
         }
         let Some(path) = control.bound_path().filter(|_| control.binds()) else {
@@ -2331,13 +2394,13 @@ impl GossiaApp {
             .map(|(_, t)| t.clone());
         let mut text = draft.clone().unwrap_or_else(|| current.clone());
         ui.horizontal(|ui| {
-            ui.label("Formula =");
+            ui.label(tr!("Formula ="));
             let response = ui.add(
                 egui::TextEdit::singleline(&mut text)
-                    .hint_text("no formula")
+                    .hint_text(tr!("no formula"))
                     .desired_width(f32::INFINITY),
             );
-            named(&response, "Formula of the bound node");
+            named(&response, tr!("Formula of the bound node"));
             if response.changed()
                 && let Some(layout) = self.form.layout.as_mut()
             {
@@ -2400,30 +2463,33 @@ impl GossiaApp {
             return;
         };
         let unplaced = design.unplaced(spec);
-        egui::CollapsingHeader::new(format!("Fields not on the form ({})", unplaced.len()))
-            .id_salt("unplaced")
-            .default_open(true)
-            .show(ui, |ui| {
-                if unplaced.is_empty() {
-                    ui.weak("Every field is on the form.");
-                }
-                for path in &unplaced {
-                    ui.horizontal(|ui| {
-                        ui.label(path.to_string());
-                        let response = ui.button("Add");
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::Role::Button,
-                                true,
-                                format!("Add {path} to the form"),
-                            )
-                        });
-                        if response.clicked() {
-                            self.add_field_to_form(path);
-                        }
+        egui::CollapsingHeader::new(tr!(
+            "Fields not on the form ({unplaced})",
+            unplaced = unplaced.len()
+        ))
+        .id_salt("unplaced")
+        .default_open(true)
+        .show(ui, |ui| {
+            if unplaced.is_empty() {
+                ui.weak(tr!("Every field is on the form."));
+            }
+            for path in &unplaced {
+                ui.horizontal(|ui| {
+                    ui.label(path.to_string());
+                    let response = ui.button(tr!("Add"));
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Button,
+                            true,
+                            tr!("Add {path} to the form", path = path),
+                        )
                     });
-                }
-            });
+                    if response.clicked() {
+                        self.add_field_to_form(path);
+                    }
+                });
+            }
+        });
     }
 
     fn broken_list(&mut self, ui: &mut egui::Ui, design: &FormDesign) {
@@ -2431,34 +2497,34 @@ impl GossiaApp {
             return;
         };
         let broken = design.broken(spec);
-        egui::CollapsingHeader::new(format!("Broken controls ({})", broken.len()))
+        egui::CollapsingHeader::new(tr!("Broken controls ({broken})", broken = broken.len()))
             .id_salt("broken")
             .default_open(true)
             .show(ui, |ui| {
                 if broken.is_empty() {
-                    ui.weak("No control is broken.");
+                    ui.weak(tr!("No control is broken."));
                 }
                 for (at, problem) in &broken {
                     let name = design.get(at).map(control_name).unwrap_or_default();
                     ui.label(format!("{name}: {problem}"));
                     ui.horizontal(|ui| {
-                        let rebind = ui.button("Re-bind");
+                        let rebind = ui.button(tr!("Re-bind"));
                         rebind.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::Role::Button,
                                 true,
-                                format!("Re-bind {name}"),
+                                tr!("Re-bind {name}", name = name),
                             )
                         });
                         if rebind.clicked() {
                             self.select_control(Some(at.clone()));
                         }
-                        let remove = ui.button("Remove");
+                        let remove = ui.button(tr!("Remove"));
                         remove.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::Role::Button,
                                 true,
-                                format!("Remove {name}"),
+                                tr!("Remove {name}", name = name),
                             )
                         });
                         if remove.clicked() {
@@ -2486,8 +2552,15 @@ fn sibling_count(design: &FormDesign, at: &[usize]) -> usize {
 /// The width a column is given when its width is ticked, in points.
 const DEFAULT_COLUMN_WIDTH: u32 = 80;
 
-const ALLOW_OTHER: &str = "Allow other values (write-in codes)";
-const ALLOW_OTHER_HELP: &str = "A dropdown offers Other... to type a code that is not listed; a typeahead enters typed text that matches no item as it is";
+fn allow_other() -> &'static str {
+    tr!("Allow other values (write-in codes)")
+}
+
+fn allow_other_help() -> &'static str {
+    tr!(
+        "A dropdown offers Other... to type a code that is not listed; a typeahead enters typed text that matches no item as it is"
+    )
+}
 
 const FONT_SIZE_CHOICES: [u32; 16] = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 
@@ -2503,7 +2576,7 @@ fn font_properties(
 ) {
     use crate::style::{Typeface, family, typeface_label};
     let (font_label, size_label) = if prefix.is_empty() {
-        ("Font".to_owned(), "Size".to_owned())
+        (tr!("Font").to_owned(), tr!("Size").to_owned())
     } else {
         (format!("{prefix}font"), format!("{prefix}size"))
     };
@@ -2511,10 +2584,10 @@ fn font_properties(
         ui.label(font_label);
         let mut chosen = *font;
         let response = egui::ComboBox::from_id_salt(("property_font", what))
-            .selected_text(chosen.map_or_else(|| "Inherited".to_owned(), typeface_label))
+            .selected_text(chosen.map_or_else(|| tr!("Inherited").to_owned(), typeface_label))
             .width(200.0)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut chosen, None, "Inherited");
+                ui.selectable_value(&mut chosen, None, tr!("Inherited"));
                 for typeface in Typeface::ALL {
                     let text =
                         egui::RichText::new(typeface_label(typeface)).family(family(typeface));
@@ -2522,7 +2595,7 @@ fn font_properties(
                 }
             })
             .response;
-        let name = format!("Font of the {what}");
+        let name = tr!("Font of the {what}", what = what);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
         *font = chosen;
     });
@@ -2530,17 +2603,17 @@ fn font_properties(
         ui.label(size_label);
         let mut size = *font_size;
         let response = egui::ComboBox::from_id_salt(("property_font_size", what))
-            .selected_text(size.map_or_else(|| "Inherited".to_owned(), |s| format!("{s} pt")))
+            .selected_text(size.map_or_else(|| tr!("Inherited").to_owned(), |s| format!("{s} pt")))
             // Tall enough for every size, with no scrolling.
             .height(480.0)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut size, None, "Inherited");
+                ui.selectable_value(&mut size, None, tr!("Inherited"));
                 for choice in FONT_SIZE_CHOICES {
                     ui.selectable_value(&mut size, Some(choice), format!("{choice} pt"));
                 }
             })
             .response;
-        let name = format!("Font size of the {what}");
+        let name = tr!("Font size of the {what}", what = what);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
         *font_size = size;
     });
@@ -2555,13 +2628,13 @@ fn emphasis_properties(
     what: &str,
 ) {
     ui.horizontal(|ui| {
-        for (label, value) in [("Bold", bold), ("Italic", italic)] {
+        for (label, value) in [(tr!("Bold"), bold), (tr!("Italic"), italic)] {
             ui.label(label);
             let mut chosen = *value;
             let text = |v: Option<bool>| match v {
-                None => "Inherited",
-                Some(true) => "Yes",
-                Some(false) => "No",
+                None => tr!("Inherited"),
+                Some(true) => tr!("Yes"),
+                Some(false) => tr!("No"),
             };
             let response = egui::ComboBox::from_id_salt(("property_emphasis", label, what))
                 .width(84.0)
@@ -2584,30 +2657,30 @@ fn emphasis_properties(
 fn border_properties(ui: &mut egui::Ui, edited: &mut Control) -> bool {
     let before = (edited.border_width, edited.border_colour.clone());
     ui.horizontal(|ui| {
-        ui.label("Border");
+        ui.label(tr!("Border"));
         let mut width = edited.border_width;
         let response = egui::ComboBox::from_id_salt("property_border_width")
             .width(84.0)
-            .selected_text(width.map_or_else(|| "Automatic".to_owned(), |w| format!("{w} pt")))
+            .selected_text(width.map_or_else(|| tr!("Automatic").to_owned(), |w| format!("{w} pt")))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut width, None, "Automatic");
+                ui.selectable_value(&mut width, None, tr!("Automatic"));
                 for w in 0..=8 {
                     ui.selectable_value(&mut width, Some(w), format!("{w} pt"));
                 }
             })
             .response;
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Border width of the group")
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Border width of the group"))
         });
         edited.border_width = width;
         let mut own = edited.border_colour.is_some();
-        let response = ui.checkbox(&mut own, "Colour");
+        let response = ui.checkbox(&mut own, tr!("Colour"));
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::Role::CheckBox,
                 true,
                 own,
-                "Border colour of the group",
+                tr!("Border colour of the group"),
             )
         });
         if own != edited.border_colour.is_some() {
@@ -2628,7 +2701,7 @@ fn border_properties(ui: &mut egui::Ui, edited: &mut Control) -> bool {
 /// The alignment of a control in its row or cell: left unless it says.
 fn control_alignment(ui: &mut egui::Ui, edited: &mut Control) {
     ui.horizontal(|ui| {
-        ui.label("Alignment");
+        ui.label(tr!("Alignment"));
         let mut align = edited.align.unwrap_or(Alignment::Left);
         let response = egui::ComboBox::from_id_salt("property_control_align")
             .selected_text(align.label())
@@ -2639,7 +2712,7 @@ fn control_alignment(ui: &mut egui::Ui, edited: &mut Control) {
             })
             .response;
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Alignment in its cell")
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Alignment in its cell"))
         });
         edited.align = (align != Alignment::Left).then_some(align);
     });
@@ -2650,15 +2723,15 @@ fn alignment_choice(ui: &mut egui::Ui, align: &mut Option<Alignment>, label: &st
         ui.label(label);
         let mut chosen = *align;
         let response = egui::ComboBox::from_id_salt(("property_align", what))
-            .selected_text(chosen.map_or("Automatic", Alignment::label))
+            .selected_text(chosen.map_or(tr!("Automatic"), Alignment::label))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut chosen, None, "Automatic");
+                ui.selectable_value(&mut chosen, None, tr!("Automatic"));
                 for a in Alignment::ALL {
                     ui.selectable_value(&mut chosen, Some(a), a.label());
                 }
             })
             .response;
-        let name = format!("Alignment of {what}");
+        let name = tr!("Alignment of {what}", what = what);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
         *align = chosen;
     });
@@ -2670,7 +2743,7 @@ fn row_numbering(ui: &mut egui::Ui, edited: &mut ColumnDesign) {
     use gossia_core::form::Numbering;
     let mut numbering = edited.numbering.unwrap_or(Numbering::Index);
     ui.horizontal(|ui| {
-        ui.label("Numbering");
+        ui.label(tr!("Numbering"));
         let response = egui::ComboBox::from_id_salt("property_numbering")
             .selected_text(numbering.label())
             .show_ui(ui, |ui| {
@@ -2680,17 +2753,17 @@ fn row_numbering(ui: &mut egui::Ui, edited: &mut ColumnDesign) {
             })
             .response;
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Numbering of the rows")
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Numbering of the rows"))
         });
     });
     let mut start = edited
         .start
         .unwrap_or_else(|| edited.numbering.unwrap_or(Numbering::Index).default_start());
     ui.horizontal(|ui| {
-        ui.label("Start at");
+        ui.label(tr!("Start at"));
         let response = ui.add(egui::DragValue::new(&mut start).speed(0.1));
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Number of the first row")
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Number of the first row"))
         });
     });
     // A start that was not given follows the numbering; one that was is kept.
@@ -2704,7 +2777,10 @@ fn row_numbering(ui: &mut egui::Ui, edited: &mut ColumnDesign) {
     edited.numbering = (numbering != Numbering::Index).then_some(numbering);
     edited.start = (start != numbering.default_start()).then_some(start);
     let first: Vec<String> = (0..3).map(|i| edited.row_label(i)).collect();
-    ui.weak(format!("The rows are numbered {}, ...", first.join(", ")));
+    ui.weak(tr!(
+        "The rows are numbered {first}, ...",
+        first = first.join(", ")
+    ));
 }
 
 /// The format of a number (percent, a prefix and suffix, a thousands
@@ -2725,13 +2801,13 @@ fn format_properties(
 ) -> bool {
     use gossia_core::format::{DATE_PRESETS, MAX_DECIMALS, date, is_date, is_number};
     if is_number(kind) {
-        let response = ui.checkbox(percent, "Percent");
-        let name = format!("Percent of the {what}");
+        let response = ui.checkbox(percent, tr!("Percent"));
+        let name = tr!("Percent of the {what}", what = what);
         let on = *percent;
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
-        response.on_hover_text("The value times 100, with %: 0.25 is shown as 25%");
-        let typed = option_text(ui, "Prefix", prefix, "such as € ", false)
-            | option_text(ui, "Suffix", suffix, "such as  kg", false);
+        response.on_hover_text(tr!("The value times 100, with %: 0.25 is shown as 25%"));
+        let typed = option_text(ui, tr!("Prefix"), prefix, tr!("such as € "), false)
+            | option_text(ui, tr!("Suffix"), suffix, tr!("such as kg"), false);
         if typed {
             // As the schema allows.
             for text in [&mut *prefix, &mut *suffix].into_iter().flatten() {
@@ -2740,24 +2816,26 @@ fn format_properties(
                 }
             }
         }
-        let response = ui.checkbox(thousands, "Thousands separator");
-        let name = format!("Thousands separator of the {what}");
+        let response = ui.checkbox(thousands, tr!("Thousands separator"));
+        let name = tr!("Thousands separator of the {what}", what = what);
         let on = *thousands;
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
         ui.horizontal(|ui| {
-            ui.label("Decimal places");
+            ui.label(tr!("Decimal places"));
             let mut chosen = *decimals;
             let response = egui::ComboBox::from_id_salt("property_decimals")
-                .selected_text(chosen.map_or_else(|| "Automatic".to_owned(), |d| d.to_string()))
+                .selected_text(
+                    chosen.map_or_else(|| tr!("Automatic").to_owned(), |d| d.to_string()),
+                )
                 .height(400.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut chosen, None, "Automatic");
+                    ui.selectable_value(&mut chosen, None, tr!("Automatic"));
                     for d in 0..=MAX_DECIMALS {
                         ui.selectable_value(&mut chosen, Some(d), d.to_string());
                     }
                 })
                 .response;
-            let name = format!("Decimal places of the {what}");
+            let name = tr!("Decimal places of the {what}", what = what);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
             *decimals = chosen;
         });
@@ -2765,29 +2843,31 @@ fn format_properties(
     } else if is_date(kind) {
         let sample = chrono::NaiveDate::from_ymd_opt(2026, 3, 7).expect("a valid date");
         ui.horizontal(|ui| {
-            ui.label("Date format");
+            ui.label(tr!("Date format"));
             let mut chosen = date_format.clone();
             let text = chosen.as_deref().map_or_else(
-                || "Automatic (yyyy-mm-dd)".to_owned(),
+                || tr!("Automatic (yyyy-mm-dd)").to_owned(),
                 |p| format!("{p} ({})", date(sample, p)),
             );
             let response = egui::ComboBox::from_id_salt("property_date_format")
                 .selected_text(text)
                 .width(200.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut chosen, None, "Automatic (yyyy-mm-dd)");
+                    ui.selectable_value(&mut chosen, None, tr!("Automatic (yyyy-mm-dd)"));
                     for preset in DATE_PRESETS {
                         let label = format!("{preset} ({})", date(sample, preset));
                         ui.selectable_value(&mut chosen, Some(preset.to_owned()), label);
                     }
                 })
                 .response;
-            let name = format!("Date format of the {what}");
+            let name = tr!("Date format of the {what}", what = what);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
             *date_format = chosen;
         });
-        let typed = option_text(ui, "Pattern", date_format, "yyyy-mm-dd", false);
-        ui.weak("d dd ddd dddd: the day; m mm mmm mmmm: the month; yy yyyy: the year.");
+        let typed = option_text(ui, tr!("Pattern"), date_format, "yyyy-mm-dd", false);
+        ui.weak(tr!(
+            "d dd ddd dddd: the day; m mm mmm mmmm: the month; yy yyyy: the year."
+        ));
         typed
     } else {
         false
@@ -2902,13 +2982,17 @@ fn colour_text(
         let mut fixed = was_fixed;
         let response = egui::ComboBox::from_id_salt(draft.with("kind"))
             .width(96.0)
-            .selected_text(if fixed { "Fixed" } else { "Expression" })
+            .selected_text(if fixed {
+                tr!("Fixed")
+            } else {
+                tr!("Expression")
+            })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut fixed, false, "Expression");
-                ui.selectable_value(&mut fixed, true, "Fixed");
+                ui.selectable_value(&mut fixed, false, tr!("Expression"));
+                ui.selectable_value(&mut fixed, true, tr!("Fixed"));
             })
             .response;
-        let name = format!("Kind of {}", label.to_lowercase());
+        let name = tr!("Kind of {what}", what = label.to_lowercase());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
         if fixed != was_fixed {
             *value = fixed.then(|| hex_colour(first));
@@ -2970,26 +3054,26 @@ fn add_listed_column(names: Vec<String>, edited: &mut Control) {
 /// The name of an expression's field on the property page.
 fn expr_label(kind: ExprKind) -> &'static str {
     match kind {
-        ExprKind::Visible => "Visible when",
-        ExprKind::Enabled => "Enabled when",
-        ExprKind::TextColour => "Text colour",
-        ExprKind::FillColour => "Fill colour",
-        ExprKind::Choices => "Choices",
-        ExprKind::Value => "Value",
-        ExprKind::Template => "Text",
-        ExprKind::Items => "Items",
-        ExprKind::Chart => "Chart",
+        ExprKind::Visible => tr!("Visible when"),
+        ExprKind::Enabled => tr!("Enabled when"),
+        ExprKind::TextColour => tr!("Text colour"),
+        ExprKind::FillColour => tr!("Fill colour"),
+        ExprKind::Choices => tr!("Choices"),
+        ExprKind::Value => tr!("Value"),
+        ExprKind::Template => tr!("Text"),
+        ExprKind::Items => tr!("Items"),
+        ExprKind::Chart => tr!("Chart"),
     }
 }
 
 fn expr_hint(kind: ExprKind) -> &'static str {
     match kind {
         ExprKind::Visible | ExprKind::Enabled => "expression",
-        ExprKind::TextColour | ExprKind::FillColour => "expression giving a colour",
-        ExprKind::Choices => "expression giving a list",
+        ExprKind::TextColour | ExprKind::FillColour => tr!("expression giving a colour"),
+        ExprKind::Choices => tr!("expression giving a list"),
         ExprKind::Value => "expression",
-        ExprKind::Template => "text with {expressions}",
-        ExprKind::Items => "expression giving a list",
+        ExprKind::Template => tr!("text with {expressions}"),
+        ExprKind::Items => tr!("expression giving a list"),
         ExprKind::Chart => "expression",
     }
 }
@@ -3094,11 +3178,11 @@ fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32)
     let before = edited.clone();
     let kind = edited.kind;
     ui.add_space(4.0);
-    ui.strong("Size and place");
+    ui.strong(tr!("Size and place"));
     ui.horizontal(|ui| {
         let mut fill = edited.fill;
-        ui.checkbox(&mut fill, "Fill the width")
-            .on_hover_text("The whole width of its cell or row");
+        ui.checkbox(&mut fill, tr!("Fill the width"))
+            .on_hover_text(tr!("The whole width of its cell or row"));
         if fill != edited.fill {
             edited.fill = fill;
             if fill {
@@ -3109,33 +3193,33 @@ fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32)
     if !edited.fill {
         optional_number(
             ui,
-            "Width",
+            tr!("Width"),
             &mut edited.width,
             &CONTROL_WIDTHS,
             200,
-            "Width in points",
+            tr!("Width in points"),
         );
     }
     if kind != ControlKind::Separator || edited.vertical {
         optional_number(
             ui,
-            "Height",
+            tr!("Height"),
             &mut edited.height,
             &CONTROL_HEIGHTS,
             100,
-            "Height in points",
+            tr!("Height in points"),
         );
     }
     // A field's value is aligned automatically, numbers on the right, until
     // it is given an alignment; other controls are on the left.
     if kind == ControlKind::Field {
-        alignment_choice(ui, &mut edited.align, "Alignment", "the field");
+        alignment_choice(ui, &mut edited.align, tr!("Alignment"), tr!("the field"));
     } else {
         control_alignment(ui, edited);
     }
     if kind == ControlKind::Field {
         ui.horizontal(|ui| {
-            ui.label("Label");
+            ui.label(tr!("Label"));
             let mut position = edited.label_position.unwrap_or(LabelPosition::Left);
             let response = egui::ComboBox::from_id_salt("property_label_position")
                 .selected_text(position.label())
@@ -3146,20 +3230,20 @@ fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32)
                 })
                 .response;
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Position of the label")
+                egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Position of the label"))
             });
             edited.label_position = (position != LabelPosition::Left).then_some(position);
         });
     }
     if matches!(kind, ControlKind::Field | ControlKind::Group) {
         let name = if kind == ControlKind::Group {
-            "Label width of its fields"
+            tr!("Label width of its fields")
         } else {
-            "Label width"
+            tr!("Label width")
         };
         optional_number(
             ui,
-            "Label width",
+            tr!("Label width"),
             &mut edited.label_width,
             &LABEL_WIDTHS,
             DEFAULT_LABEL_WIDTH,
@@ -3168,32 +3252,32 @@ fn size_properties(ui: &mut egui::Ui, edited: &mut Control, parent_columns: u32)
     }
     if parent_columns > 1 {
         ui.horizontal(|ui| {
-            ui.label("Columns it takes");
+            ui.label(tr!("Columns it takes"));
             let mut span = edited.span.unwrap_or(1).min(parent_columns);
             let response = ui.add(egui::DragValue::new(&mut span).range(1..=parent_columns));
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Columns it takes")
+                egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Columns it takes"))
             });
             edited.span = (span > 1).then_some(span);
         });
-        ui.checkbox(&mut edited.new_row, "Start a new row");
+        ui.checkbox(&mut edited.new_row, tr!("Start a new row"));
     }
     if kind == ControlKind::Group {
         optional_number(
             ui,
-            "Spacing",
+            tr!("Spacing"),
             &mut edited.spacing,
             &SPACINGS,
             8,
-            "Spacing in points",
+            tr!("Spacing in points"),
         );
         optional_number(
             ui,
-            "Padding",
+            tr!("Padding"),
             &mut edited.padding,
             &SPACINGS,
             6,
-            "Padding in points",
+            tr!("Padding in points"),
         );
     }
     *edited != before
@@ -3213,7 +3297,7 @@ fn optional_number(
     ui.horizontal(|ui| {
         let mut set = value.is_some();
         ui.checkbox(&mut set, label)
-            .on_hover_text("Automatic unless ticked");
+            .on_hover_text(tr!("Automatic unless ticked"));
         match (set, *value) {
             (false, _) => *value = None,
             (true, None) => *value = Some(default.clamp(*range.start(), *range.end())),
@@ -3307,7 +3391,7 @@ fn set_layout(group: &mut Control, at: &Address, layout: GroupLayout, rects: &Fo
 /// buttons that move one earlier or later. Returns the move asked for.
 fn tab_order(ui: &mut egui::Ui, group: &Control, at: &Address) -> Option<(Address, bool)> {
     ui.add_space(4.0);
-    ui.strong("Tab order");
+    ui.strong(tr!("Tab order"));
     let mut asked = None;
     let n = group.children.len();
     for (i, child) in group.children.iter().enumerate() {
@@ -3317,15 +3401,23 @@ fn tab_order(ui: &mut egui::Ui, group: &Control, at: &Address) -> Option<(Addres
             let name = control_name(child);
             let up = ui
                 .add_enabled(i > 0, egui::Button::new("\u{2191}").small())
-                .on_hover_text("Earlier in the tab order");
+                .on_hover_text(tr!("Earlier in the tab order"));
             up.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, i > 0, format!("Earlier: {name}"))
+                egui::WidgetInfo::labeled(
+                    egui::Role::Button,
+                    i > 0,
+                    tr!("Earlier: {name}", name = name),
+                )
             });
             let down = ui
                 .add_enabled(i + 1 < n, egui::Button::new("\u{2193}").small())
-                .on_hover_text("Later in the tab order");
+                .on_hover_text(tr!("Later in the tab order"));
             down.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, i + 1 < n, format!("Later: {name}"))
+                egui::WidgetInfo::labeled(
+                    egui::Role::Button,
+                    i + 1 < n,
+                    tr!("Later: {name}", name = name),
+                )
             });
             ui.label(format!("{}. {name}", i + 1));
             if up.clicked() {
@@ -3336,7 +3428,9 @@ fn tab_order(ui: &mut egui::Ui, group: &Control, at: &Address) -> Option<(Addres
             }
         });
     }
-    ui.weak("Moving a control on the form does not change its place in the tab order.");
+    ui.weak(tr!(
+        "Moving a control on the form does not change its place in the tab order."
+    ));
     asked
 }
 
@@ -3363,16 +3457,20 @@ fn free_properties(
     let place = free_place(group, control, size);
     let mut asked = None;
     ui.add_space(4.0);
-    ui.strong("Place in the group");
+    ui.strong(tr!("Place in the group"));
     ui.horizontal(|ui| {
         let mut x = place.left.round() as u32;
         let mut y = place.top.round() as u32;
         ui.label("X");
         let rx = ui.add(egui::DragValue::new(&mut x).range(POSITIONS).suffix(" pt"));
-        rx.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "X position"));
+        rx.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("X position"))
+        });
         ui.label("Y");
         let ry = ui.add(egui::DragValue::new(&mut y).range(POSITIONS).suffix(" pt"));
-        ry.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Y position"));
+        ry.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Y position"))
+        });
         if x != place.left.round() as u32 || y != place.top.round() as u32 {
             asked = Some((
                 Placement {
@@ -3396,9 +3494,9 @@ fn free_properties(
         let mut anchor = current;
         ui.horizontal(|ui| {
             ui.label(if across {
-                "Anchored across"
+                tr!("Anchored across")
             } else {
-                "Anchored down"
+                tr!("Anchored down")
             });
             let response = egui::ComboBox::from_id_salt(("property_anchor", across))
                 .selected_text(anchor.label(across))
@@ -3409,9 +3507,9 @@ fn free_properties(
                 })
                 .response;
             let name = if across {
-                "Anchor across"
+                tr!("Anchor across")
             } else {
-                "Anchor down"
+                tr!("Anchor down")
             };
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
         });
@@ -3438,7 +3536,7 @@ fn free_properties(
         }
     }
     if group.height.is_none() {
-        ui.weak("Anchoring to the bottom needs a height on the group.");
+        ui.weak(tr!("Anchoring to the bottom needs a height on the group."));
     }
     asked
 }
@@ -3453,8 +3551,8 @@ fn track_number(index: usize) -> u32 {
 fn grid_tracks(ui: &mut egui::Ui, group: &mut Control) {
     let (_, rows, columns) = grid_cells(group);
     for (what, tracks, shown) in [
-        ("Column", &mut group.grid_columns, columns),
-        ("Row", &mut group.grid_rows, rows),
+        (tr!("Column"), &mut group.grid_columns, columns),
+        (tr!("Row"), &mut group.grid_rows, rows),
     ] {
         ui.add_space(4.0);
         ui.strong(format!("{what}s"));
@@ -3464,21 +3562,21 @@ fn grid_tracks(ui: &mut egui::Ui, group: &mut Control) {
                 ui.label(format!("{what} {}", i + 1));
                 let mut size = tracks.get(i).copied().unwrap_or(TrackSize::Auto);
                 let before = size;
-                let name = format!("Size of {} {}", what.to_lowercase(), i + 1);
+                let name = tr!("Size of {what} {n}", what = what.to_lowercase(), n = i + 1);
                 let response = egui::ComboBox::from_id_salt(("property_track", what, i))
                     .selected_text(size.label())
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut size, TrackSize::Auto, "Automatic");
+                        ui.selectable_value(&mut size, TrackSize::Auto, tr!("Automatic"));
                         let points = match size {
                             TrackSize::Points(p) => p,
                             _ => 100,
                         };
-                        ui.selectable_value(&mut size, TrackSize::Points(points), "Points");
+                        ui.selectable_value(&mut size, TrackSize::Points(points), tr!("Points"));
                         let share = match size {
                             TrackSize::Share(s) => s,
                             _ => 1,
                         };
-                        ui.selectable_value(&mut size, TrackSize::Share(share), "Share");
+                        ui.selectable_value(&mut size, TrackSize::Share(share), tr!("Share"));
                     })
                     .response;
                 response
@@ -3499,7 +3597,7 @@ fn grid_tracks(ui: &mut egui::Ui, group: &mut Control) {
                     tracks[i] = size;
                 }
                 if i < tracks.len() {
-                    let label = format!("Remove {} {}", what.to_lowercase(), i + 1);
+                    let label = tr!("Remove {what} {n}", what = what.to_lowercase(), n = i + 1);
                     let r = ui.small_button("\u{2715}").on_hover_text(&label);
                     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
                     if r.clicked() {
@@ -3511,7 +3609,7 @@ fn grid_tracks(ui: &mut egui::Ui, group: &mut Control) {
         if let Some(i) = remove {
             tracks.remove(i);
         }
-        let add = format!("Add {}", what.to_lowercase());
+        let add = tr!("Add {what}", what = what.to_lowercase());
         if ui
             .add_enabled(
                 (tracks.len() as u32) < MAX_TRACKS,
@@ -3525,10 +3623,10 @@ fn grid_tracks(ui: &mut egui::Ui, group: &mut Control) {
             tracks.push(TrackSize::Auto);
         }
     }
-    ui.weak(
+    ui.weak(tr!(
         "A control placed past the last row or column adds an automatic one. \
-         A share divides what the others leave.",
-    );
+         A share divides what the others leave."
+    ));
 }
 
 /// The cell of a control in a Grid group, as it is placed (a control with
@@ -3542,20 +3640,20 @@ fn cell_properties(ui: &mut egui::Ui, group: &Control, edited: &mut Control, at:
         return;
     };
     ui.add_space(4.0);
-    ui.strong("Cell in the grid");
+    ui.strong(tr!("Cell in the grid"));
     let max = MAX_TRACKS;
     ui.horizontal(|ui| {
         let mut row = cell.row as u32 + 1;
         let mut column = cell.column as u32 + 1;
-        ui.label("Row");
+        ui.label(tr!("Row"));
         let r = ui.add(egui::DragValue::new(&mut row).range(1..=max));
         r.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Row of the cell")
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Row of the cell"))
         });
-        ui.label("Column");
+        ui.label(tr!("Column"));
         let c = ui.add(egui::DragValue::new(&mut column).range(1..=max));
         c.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Column of the cell")
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Column of the cell"))
         });
         if row != cell.row as u32 + 1 || column != cell.column as u32 + 1 {
             edited.grid_row = Some(row);
@@ -3565,13 +3663,15 @@ fn cell_properties(ui: &mut egui::Ui, group: &Control, edited: &mut Control, at:
     ui.horizontal(|ui| {
         let mut rows = edited.row_span.unwrap_or(1);
         let mut columns = edited.span.unwrap_or(1);
-        ui.label("Rows it takes");
+        ui.label(tr!("Rows it takes"));
         let r = ui.add(egui::DragValue::new(&mut rows).range(1..=max));
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Rows it takes"));
-        ui.label("Columns");
+        r.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Rows it takes"))
+        });
+        ui.label(tr!("Columns"));
         let c = ui.add(egui::DragValue::new(&mut columns).range(1..=max));
         c.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, "Columns it takes")
+            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Columns it takes"))
         });
         edited.row_span = (rows > 1).then_some(rows);
         edited.span = (columns > 1).then_some(columns);

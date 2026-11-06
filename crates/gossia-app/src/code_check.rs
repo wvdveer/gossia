@@ -4,6 +4,7 @@
 //! module as a plain `.py` file and *File > Import module...* reads one in as a
 //! new module, the way Excel exports and imports a `.bas`.
 
+use gossia_i18n::tr;
 use std::path::{Path, PathBuf};
 
 use egui::Key;
@@ -70,13 +71,17 @@ impl GossiaApp {
                      it is not loaded)"
                         .to_owned()
                 }
-                (0, _) => "no problems".to_owned(),
+                (0, _) => tr!("no problems").to_owned(),
                 (1, _) => "1 problem".to_owned(),
                 (n, _) => format!("{n} problems"),
             };
-            ui.strong(format!("Compile {module}: {summary}"));
+            ui.strong(tr!(
+                "Compile {module}: {summary}",
+                module = module,
+                summary = summary
+            ));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                close = crate::icons::button(ui, true, crate::icons::X, "x", "Close the list")
+                close = crate::icons::button(ui, true, crate::icons::X, "x", tr!("Close the list"))
                     .clicked();
             });
         });
@@ -87,9 +92,11 @@ impl GossiaApp {
             .show(ui, |ui| {
                 for problem in &problems {
                     let place = match (problem.line, problem.column) {
-                        (Some(line), Some(column)) => format!("Line {line}, column {column}"),
-                        (Some(line), None) => format!("Line {line}"),
-                        _ => "Loading".to_owned(),
+                        (Some(line), Some(column)) => {
+                            tr!("Line {line}, column {column}", line = line, column = column)
+                        }
+                        (Some(line), None) => tr!("Line {line}", line = line),
+                        _ => tr!("Loading").to_owned(),
                     };
                     let text = egui::RichText::new(format!("{place}: {}", problem.message))
                         .color(error_color(ui));
@@ -124,18 +131,21 @@ impl GossiaApp {
                     host.save_file(&name, source.as_bytes().to_vec());
                     self.code.notice = None;
                 }
-                None => self.code.notice = Some(format!("there is no module called {module}")),
+                None => {
+                    self.code.notice =
+                        Some(tr!("there is no module called {module}", module = module))
+                }
             }
             return;
         }
         let purpose = ModuleFile::Export(module.to_owned());
         if self.files.browse {
             let mut browser = new_browser()
-                .title(&format!("Export module {module}"))
+                .title(&tr!("Export module {module}", module = module))
                 .initial_directory(self.start_folder())
                 .default_file_name(&format!("{module}.{PY}"))
-                .add_save_extension("Python files", PY)
-                .default_save_extension("Python files");
+                .add_save_extension(tr!("Python files"), PY)
+                .default_save_extension(tr!("Python files"));
             browser.save_file();
             self.code.files.browser = Some((browser, purpose));
             return;
@@ -157,10 +167,10 @@ impl GossiaApp {
         }
         if self.files.browse {
             let mut browser = new_browser()
-                .title("Import a module")
+                .title(tr!("Import a module"))
                 .initial_directory(self.start_folder())
-                .add_file_filter_extensions("Python files", vec![PY])
-                .default_file_filter("Python files");
+                .add_file_filter_extensions(tr!("Python files"), vec![PY])
+                .default_file_filter(tr!("Python files"));
             browser.pick_file();
             self.code.files.browser = Some((browser, ModuleFile::Import));
             return;
@@ -179,7 +189,7 @@ impl GossiaApp {
         let source = self
             .calc()
             .module_source(module)
-            .ok_or_else(|| format!("there is no module called {module}"))?
+            .ok_or_else(|| tr!("there is no module called {module}", module = module))?
             .to_owned();
         let path = if path.extension().is_some() {
             path.to_path_buf()
@@ -323,8 +333,8 @@ impl GossiaApp {
             return;
         };
         let title = match &dialog.purpose {
-            ModuleFile::Export(module) => format!("Export module {module}"),
-            ModuleFile::Import => "Import a module".to_owned(),
+            ModuleFile::Export(module) => tr!("Export module {module}", module = module),
+            ModuleFile::Import => tr!("Import a module").to_owned(),
         };
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
@@ -333,10 +343,10 @@ impl GossiaApp {
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label("File");
+                ui.label(tr!("File"));
                 let response =
                     ui.add(egui::TextEdit::singleline(&mut dialog.text).desired_width(360.0));
-                named(&response, "Module file");
+                named(&response, tr!("Module file"));
                 if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                     apply = true;
                 }
@@ -348,13 +358,13 @@ impl GossiaApp {
                 }
                 ui.horizontal(|ui| {
                     let label = match dialog.purpose {
-                        ModuleFile::Export(_) => "Export",
-                        ModuleFile::Import => "Import",
+                        ModuleFile::Export(_) => tr!("Export"),
+                        ModuleFile::Import => tr!("Import"),
                     };
                     apply |= ui
                         .add_enabled(!dialog.text.trim().is_empty(), egui::Button::new(label))
                         .clicked();
-                    cancel |= ui.button("Cancel").clicked();
+                    cancel |= ui.button(tr!("Cancel")).clicked();
                 });
             });
         if apply {

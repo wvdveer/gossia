@@ -9,6 +9,7 @@
 //! and width (DESIGN.md, "Forms", "Size and place of a control"). A control is
 //! addressed by its place in the tree, a list of indices ([`Address`]).
 
+use gossia_i18n::tr;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -60,13 +61,13 @@ impl ControlKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            ControlKind::Field => "Field",
-            ControlKind::Group => "Group",
-            ControlKind::Repeater => "Repeater",
-            ControlKind::Label => "Label",
-            ControlKind::Button => "Button",
-            ControlKind::Separator => "Separator",
-            ControlKind::Chart => "Chart",
+            ControlKind::Field => tr!("Field"),
+            ControlKind::Group => tr!("Group"),
+            ControlKind::Repeater => tr!("Repeater"),
+            ControlKind::Label => tr!("Label"),
+            ControlKind::Button => tr!("Button"),
+            ControlKind::Separator => tr!("Separator"),
+            ControlKind::Chart => tr!("Chart"),
         }
     }
 }
@@ -99,11 +100,11 @@ impl Editor {
 
     pub fn label(self) -> &'static str {
         match self {
-            Editor::Auto => "Automatic",
-            Editor::Text => "One line of text",
-            Editor::Multiline => "Several lines of text",
-            Editor::Dropdown => "Dropdown list",
-            Editor::Typeahead => "Type to search",
+            Editor::Auto => tr!("Automatic"),
+            Editor::Text => tr!("One line of text"),
+            Editor::Multiline => tr!("Several lines of text"),
+            Editor::Dropdown => tr!("Dropdown list"),
+            Editor::Typeahead => tr!("Type to search"),
         }
     }
 }
@@ -120,8 +121,8 @@ pub enum RepeaterMode {
 impl RepeaterMode {
     pub fn label(self) -> &'static str {
         match self {
-            RepeaterMode::Table => "Table",
-            RepeaterMode::Stacked => "One at a time",
+            RepeaterMode::Table => tr!("Table"),
+            RepeaterMode::Stacked => tr!("One at a time"),
         }
     }
 }
@@ -167,12 +168,12 @@ impl FontFamily {
 
     pub fn label(self) -> &'static str {
         match self {
-            FontFamily::Sans => "Sans",
-            FontFamily::Serif => "Serif",
-            FontFamily::Monospace => "Monospace",
-            FontFamily::Condensed => "Condensed",
-            FontFamily::Script => "Script",
-            FontFamily::Handwriting => "Handwriting",
+            FontFamily::Sans => tr!("Sans"),
+            FontFamily::Serif => tr!("Serif"),
+            FontFamily::Monospace => tr!("Monospace"),
+            FontFamily::Condensed => tr!("Condensed"),
+            FontFamily::Script => tr!("Script"),
+            FontFamily::Handwriting => tr!("Handwriting"),
         }
     }
 }
@@ -225,9 +226,9 @@ impl GroupLayout {
 
     pub fn label(self) -> &'static str {
         match self {
-            GroupLayout::Flow => "Flow",
-            GroupLayout::Free => "Free",
-            GroupLayout::Grid => "Grid",
+            GroupLayout::Flow => tr!("Flow"),
+            GroupLayout::Free => tr!("Free"),
+            GroupLayout::Grid => tr!("Grid"),
         }
     }
 }
@@ -256,9 +257,9 @@ pub enum TrackSize {
 impl TrackSize {
     pub fn label(self) -> &'static str {
         match self {
-            TrackSize::Auto => "Automatic",
-            TrackSize::Points(_) => "Points",
-            TrackSize::Share(_) => "Share",
+            TrackSize::Auto => tr!("Automatic"),
+            TrackSize::Points(_) => tr!("Points"),
+            TrackSize::Share(_) => tr!("Share"),
         }
     }
 }
@@ -569,9 +570,9 @@ impl LabelPosition {
 
     pub fn label(self) -> &'static str {
         match self {
-            LabelPosition::Left => "On the left",
-            LabelPosition::Top => "Above",
-            LabelPosition::None => "None",
+            LabelPosition::Left => tr!("On the left"),
+            LabelPosition::Top => tr!("Above"),
+            LabelPosition::None => tr!("None"),
         }
     }
 }
@@ -593,9 +594,9 @@ impl Alignment {
 
     pub fn label(self) -> &'static str {
         match self {
-            Alignment::Left => "Left",
-            Alignment::Center => "Centre",
-            Alignment::Right => "Right",
+            Alignment::Left => tr!("Left"),
+            Alignment::Center => tr!("Centre"),
+            Alignment::Right => tr!("Right"),
         }
     }
 }

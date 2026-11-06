@@ -4,6 +4,7 @@
 
 use gossia_core::dataformat::DataFormat;
 use gossia_core::{Value, xml};
+use gossia_i18n::tr;
 
 use super::{Calc, SchemaRole};
 
@@ -36,8 +37,8 @@ impl ExportFormat {
     pub fn label(self) -> &'static str {
         match self {
             ExportFormat::Data(format) => format.label(),
-            ExportFormat::Text => "Text, one line for each string",
-            ExportFormat::Copybook => "COBOL copybook",
+            ExportFormat::Text => tr!("Text, one line for each string"),
+            ExportFormat::Copybook => tr!("COBOL copybook"),
         }
     }
 }
