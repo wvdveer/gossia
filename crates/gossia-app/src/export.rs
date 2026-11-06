@@ -163,6 +163,7 @@ impl GossiaApp {
                 "cpy" => "COBOL copybook",
                 "csv" => "CSV",
                 "tsv" => "TSV",
+                "xlsx" => "Excel",
                 _ => tr!("Text"),
             };
             self.files.browser = crate::workbook_file::new_browser()
@@ -205,11 +206,7 @@ impl GossiaApp {
             path.with_extension(self.export_extension(&plan))
         };
         let bytes = match (&plan.at, plan.format.is_rows()) {
-            (Some(at), true) => self
-                .calc()
-                .export_rows(&plan.tab, at, plan.format)?
-                .0
-                .into_bytes(),
+            (Some(at), true) => self.calc().export_rows(&plan.tab, at, plan.format)?.0,
             _ => self
                 .calc()
                 .export_bytes(&plan.tab, plan.format, plan.pretty)?,

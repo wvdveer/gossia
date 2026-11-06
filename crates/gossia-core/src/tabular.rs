@@ -1,6 +1,6 @@
 //! An array of objects as a table, for the formats that hold rows (DESIGN.md,
-//! "Excel and ODS files, 0.4.0", "Exporting a tab"): CSV and TSV here, and
-//! the spreadsheets of steps 14c and 14d.
+//! "Excel and ODS files, 0.4.0", "Exporting a tab"): CSV, TSV and Excel
+//! workbooks here, and the `.ods` of step 14d.
 //!
 //! The columns are the fields of the items' type in their declared order.
 //! A field that is an object is flattened into dotted columns
@@ -9,7 +9,8 @@
 //! Values are written, never formulas: a computed node as its value, an
 //! error value as its code (`#TYPE!`).
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
+use gossia_i18n::tr;
 
 use crate::delimited::{Cell as ReadCell, reads_as_text};
 use crate::path::{Path, Segment};
@@ -25,8 +26,11 @@ pub enum Cell {
     Bool(bool),
     Text(String),
     Date(NaiveDate),
-    /// A date and time, as text in ISO 8601 (a zone, if it has one, kept).
-    DateTime(String),
+    /// A date and time without a time zone.
+    DateTime(NaiveDateTime),
+    /// A date and time with its time zone, as text in ISO 8601: a
+    /// spreadsheet's cells have no zone, so it is written as text there too.
+    ZonedDateTime(String),
 }
 
 /// An array of objects laid out in rows.
@@ -115,10 +119,8 @@ fn cell_of(node: Option<&Node>) -> Cell {
         Value::Float(x) => Cell::Float(*x),
         Value::Str(s) => Cell::Text(s.clone()),
         Value::Date(d) => Cell::Date(*d),
-        Value::DateTime(DateTimeValue::Naive(dt)) => {
-            Cell::DateTime(dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
-        }
-        Value::DateTime(DateTimeValue::Zoned(dt)) => Cell::DateTime(dt.to_rfc3339()),
+        Value::DateTime(DateTimeValue::Naive(dt)) => Cell::DateTime(*dt),
+        Value::DateTime(DateTimeValue::Zoned(dt)) => Cell::ZonedDateTime(dt.to_rfc3339()),
         Value::Error(e) => Cell::Text(e.kind.code().to_owned()),
         // `any` may hold a list or a record: written as JSON.
         Value::Array(_) | Value::Object(_) => {
@@ -243,13 +245,137 @@ pub fn to_delimited(table: &Table, separator: char) -> String {
                 Cell::Bool(b) => b.to_string(),
                 Cell::Text(s) => field_text(s, separator),
                 Cell::Date(d) => d.format("%Y-%m-%d").to_string(),
-                Cell::DateTime(s) => field_text(s, separator),
+                Cell::DateTime(dt) => dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
+                Cell::ZonedDateTime(s) => field_text(s, separator),
             })
             .collect();
         out.push_str(&cells.join(&sep));
         out.push_str("\r\n");
     }
     out
+}
+
+/// The most rows a worksheet holds, the header row included.
+const MAX_ROWS: usize = 1_048_576;
+/// The most columns a worksheet holds.
+const MAX_COLUMNS: usize = 16_384;
+/// The most characters a cell holds.
+const MAX_TEXT: usize = 32_767;
+/// The largest whole number a cell holds exactly (2^53).
+const EXACT: i64 = 9_007_199_254_740_992;
+
+/// A worksheet name a spreadsheet accepts: at most 31 characters, none of
+/// `[ ] : * ? / \`, not starting or ending with an apostrophe, not empty.
+pub fn sheet_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '[' | ']' | ':' | '*' | '?' | '/' | '\\' => '_',
+            c => c,
+        })
+        .take(31)
+        .collect();
+    let trimmed = cleaned.trim_matches('\'').trim();
+    if trimmed.is_empty() {
+        "Sheet1".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// The table as an Excel workbook (`.xlsx`) of one worksheet: a bold header
+/// row, kept in view when scrolling, and the values typed, as the
+/// spreadsheet reader reads them back. Numbers are numbers, yes or no are
+/// booleans, dates and dates with times are dates with a date format; text
+/// is always text, even when it starts with `=`. A whole number too large
+/// for a cell to hold exactly, a number that is not finite, a date before
+/// 1900 (which Excel cannot hold) and a date and time with a zone are
+/// written as text, so nothing is changed on the way.
+pub fn to_xlsx(table: &Table, sheet: &str) -> Result<Vec<u8>, String> {
+    use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, XlsxError};
+
+    if table.rows.len() + 1 > MAX_ROWS {
+        return Err(tr!(
+            "{rows} rows are more than a worksheet holds ({max})",
+            rows = table.rows.len(),
+            max = MAX_ROWS - 1
+        ));
+    }
+    if table.columns.len() > MAX_COLUMNS {
+        return Err(tr!(
+            "{columns} columns are more than a worksheet holds ({max})",
+            columns = table.columns.len(),
+            max = MAX_COLUMNS
+        ));
+    }
+    let too_long = |text: &str, row: usize, column: usize| {
+        if text.chars().count() > MAX_TEXT {
+            Err(tr!(
+                "the text in row {row}, column {column} is longer than the {max} characters a \
+                 cell holds",
+                row = row + 1,
+                column = table.columns[column],
+                max = MAX_TEXT
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    let failed = |e: XlsxError| tr!("the workbook could not be written: {e}", e = e);
+    let excel_date = |d: &NaiveDate| {
+        ExcelDateTime::from_ymd(d.year() as u16, d.month() as u8, d.day() as u8).map_err(failed)
+    };
+
+    let mut book = Workbook::new();
+    let bold = Format::new().set_bold();
+    let date = Format::new().set_num_format("yyyy-mm-dd");
+    let date_time = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
+    let ws = book.add_worksheet();
+    ws.set_name(sheet_name(sheet)).map_err(failed)?;
+    for (c, name) in table.columns.iter().enumerate() {
+        too_long(name, 0, c)?;
+        ws.write_string_with_format(0, c as u16, name, &bold)
+            .map_err(failed)?;
+    }
+    for (r, row) in table.rows.iter().enumerate() {
+        let at = (r + 1) as u32;
+        for (c, cell) in row.iter().enumerate() {
+            let col = c as u16;
+            let excel_year = |year: i32| (1900..=9999).contains(&year);
+            match cell {
+                Cell::Empty => continue,
+                Cell::Int(i) if i.unsigned_abs() <= EXACT as u64 => {
+                    ws.write_number(at, col, *i as f64)
+                }
+                Cell::Int(i) => ws.write_string(at, col, i.to_string()),
+                Cell::Float(x) if x.is_finite() => ws.write_number(at, col, *x),
+                Cell::Float(x) => ws.write_string(at, col, x.to_string()),
+                Cell::Bool(b) => ws.write_boolean(at, col, *b),
+                Cell::Date(d) if excel_year(d.year()) => {
+                    ws.write_datetime_with_format(at, col, excel_date(d)?, &date)
+                }
+                Cell::Date(d) => ws.write_string(at, col, d.format("%Y-%m-%d").to_string()),
+                Cell::DateTime(dt) if excel_year(dt.year()) => {
+                    let seconds = dt.time().second() as f64 + dt.time().nanosecond() as f64 / 1e9;
+                    let value = excel_date(&dt.date())?
+                        .and_hms(dt.hour() as u16, dt.minute() as u8, seconds)
+                        .map_err(failed)?;
+                    ws.write_datetime_with_format(at, col, value, &date_time)
+                }
+                Cell::DateTime(dt) => {
+                    ws.write_string(at, col, dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
+                }
+                Cell::Text(s) | Cell::ZonedDateTime(s) => {
+                    too_long(s, r + 1, c)?;
+                    ws.write_string(at, col, s)
+                }
+            }
+            .map_err(failed)?;
+        }
+    }
+    ws.set_freeze_panes(1, 0).map_err(failed)?;
+    ws.autofit();
+    book.save_to_buffer().map_err(failed)
 }
 
 #[cfg(test)]

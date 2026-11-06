@@ -49,6 +49,7 @@ fn the_dialog_starts_on_the_tabs_own_format_indented_without_the_schema() {
             ExportFormat::Data(DataFormat::Yaml),
             ExportFormat::Csv,
             ExportFormat::Tsv,
+            ExportFormat::Xlsx,
         ]
     );
     assert_eq!(plan.rows, ["items".parse::<gossia_core::Path>().unwrap()]);
@@ -146,6 +147,64 @@ fn a_list_of_records_is_exported_as_csv_and_tsv_rows() {
         &json!({"tab": "Orders", "format": "csv", "rows": "customer", "path": path.display().to_string()}),
     );
     assert!(refused.is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The items of an order as an Excel workbook: a worksheet named after the
+/// array, the computed totals as values, read back by the workbook import.
+#[test]
+fn a_list_of_records_is_exported_as_an_excel_workbook() {
+    let dir = folder("export-xlsx");
+    let mut app = sample();
+    let plan = app.export_plan("Orders").unwrap();
+    assert!(plan.formats.contains(&ExportFormat::Xlsx));
+    // Without an extension, the file is given .xlsx.
+    control::run(
+        &mut app,
+        "export",
+        &json!({"tab": "Orders", "format": "xlsx", "rows": "items", "path": dir.join("items").display().to_string()}),
+    )
+    .unwrap();
+    let path = dir.join("items.xlsx");
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(!dir.join("items.schema.json").exists());
+    let plan = app.plan_import("items.xlsx", &bytes).unwrap();
+    assert_eq!(plan.sheets.len(), 1);
+    assert_eq!(plan.sheets[0].title, "items");
+    app.import(&plan).unwrap();
+    let name = plan.sheets[0].plan.name.clone();
+    let back = app.calc().data(&name).unwrap();
+    let orders = app.calc().data("Orders").unwrap();
+    // The totals are all whole, so they read back as whole numbers: a cell
+    // does not tell a whole number from a number.
+    let total = |node: &gossia_core::Node, at: &str| match node
+        .get(&at.parse().unwrap())
+        .unwrap()
+        .value()
+    {
+        gossia_core::Value::Int(i) => *i as f64,
+        gossia_core::Value::Float(x) => *x,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(total(back, "[1].total"), total(orders, "items[1].total"));
+    for field in ["sku", "qty"] {
+        assert_eq!(
+            back.get(&format!("[0].{field}").parse().unwrap())
+                .unwrap()
+                .value(),
+            orders
+                .get(&format!("items[0].{field}").parse().unwrap())
+                .unwrap()
+                .value(),
+            "{field}"
+        );
+    }
+    // An Excel workbook is not text.
+    assert!(
+        app.calc()
+            .export_text("Orders", ExportFormat::Xlsx, true)
+            .is_err()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

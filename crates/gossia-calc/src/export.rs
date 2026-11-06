@@ -23,6 +23,8 @@ pub enum ExportFormat {
     Csv,
     /// The same, separated by tabs.
     Tsv,
+    /// The same as an Excel workbook of one worksheet.
+    Xlsx,
 }
 
 impl ExportFormat {
@@ -37,6 +39,7 @@ impl ExportFormat {
             ExportFormat::Copybook => "cpy",
             ExportFormat::Csv => "csv",
             ExportFormat::Tsv => "tsv",
+            ExportFormat::Xlsx => "xlsx",
         }
     }
 
@@ -48,12 +51,16 @@ impl ExportFormat {
             ExportFormat::Copybook => tr!("COBOL copybook"),
             ExportFormat::Csv => tr!("CSV, a row for each item"),
             ExportFormat::Tsv => tr!("TSV, a row for each item"),
+            ExportFormat::Xlsx => tr!("Excel workbook, a row for each item"),
         }
     }
 
     /// Whether it writes rows of an array of objects.
     pub fn is_rows(self) -> bool {
-        matches!(self, ExportFormat::Csv | ExportFormat::Tsv)
+        matches!(
+            self,
+            ExportFormat::Csv | ExportFormat::Tsv | ExportFormat::Xlsx
+        )
     }
 }
 
@@ -86,7 +93,7 @@ impl Calc {
             formats.push(ExportFormat::Text);
         }
         if !self.is_schema_sheet(tab) && !self.export_row_arrays(tab).is_empty() {
-            formats.extend([ExportFormat::Csv, ExportFormat::Tsv]);
+            formats.extend([ExportFormat::Csv, ExportFormat::Tsv, ExportFormat::Xlsx]);
         }
         formats
     }
@@ -110,23 +117,23 @@ impl Calc {
         tabular::columns_of(&self.sheets.get(tab)?.spec, at)
     }
 
-    /// The array of objects at `at` in a tab as rows of CSV or TSV, with the
-    /// fields left out because they are lists or maps.
+    /// The array of objects at `at` in a tab as rows of CSV, TSV or an Excel
+    /// workbook, with the fields left out because they are lists or maps.
+    /// The worksheet is named after the tab, or after the array if it is not
+    /// the tab's root.
     pub fn export_rows(
         &self,
         tab: &str,
         at: &gossia_core::Path,
         format: ExportFormat,
-    ) -> Result<(String, Vec<String>), String> {
+    ) -> Result<(Vec<u8>, Vec<String>), String> {
         let sheet = self
             .sheets
             .get(tab)
             .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
-        let separator = match format {
-            ExportFormat::Csv => ',',
-            ExportFormat::Tsv => '\t',
-            _ => return Err(tr!("{format} does not hold rows", format = format.label())),
-        };
+        if !format.is_rows() {
+            return Err(tr!("{format} does not hold rows", format = format.label()));
+        }
         let table = tabular::table(&sheet.spec, &sheet.data, at).ok_or_else(|| {
             tr!(
                 "{at} of tab {tab} is not a list of records, so it cannot be written as rows",
@@ -134,7 +141,30 @@ impl Calc {
                 tab = tab
             )
         })?;
-        Ok((tabular::to_delimited(&table, separator), table.left_out))
+        let bytes = match format {
+            ExportFormat::Csv => tabular::to_delimited(&table, ',').into_bytes(),
+            ExportFormat::Tsv => tabular::to_delimited(&table, '\t').into_bytes(),
+            _ => {
+                let name = if at.is_root() {
+                    tab.to_owned()
+                } else {
+                    at.to_string()
+                };
+                tabular::to_xlsx(&table, &name)?
+            }
+        };
+        Ok((bytes, table.left_out))
+    }
+
+    /// The first array of objects of a tab as rows: what is written when no
+    /// array is chosen.
+    fn export_first_rows(&self, tab: &str, format: ExportFormat) -> Result<Vec<u8>, String> {
+        let at = self
+            .export_row_arrays(tab)
+            .into_iter()
+            .next()
+            .ok_or_else(|| tr!("tab {tab} has no list of records", tab = tab))?;
+        self.export_rows(tab, &at, format).map(|(bytes, _)| bytes)
     }
 
     /// The schema tab whose file can be written beside the tab's: the one it
@@ -159,6 +189,9 @@ impl Calc {
                 return Err(tr!("tab {tab} does not hold COBOL records", tab = tab));
             }
             return self.records_bytes(tab);
+        }
+        if format == ExportFormat::Xlsx {
+            return self.export_first_rows(tab, format);
         }
         self.export_text(tab, format, pretty)
             .map(String::into_bytes)
@@ -188,12 +221,14 @@ impl Calc {
         }
         let mut text = match format {
             ExportFormat::Csv | ExportFormat::Tsv => {
-                let at = self
-                    .export_row_arrays(tab)
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| tr!("tab {tab} has no list of records", tab = tab))?;
-                return self.export_rows(tab, &at, format).map(|(text, _)| text);
+                let bytes = self.export_first_rows(tab, format)?;
+                return Ok(String::from_utf8(bytes).expect("CSV is written as UTF-8"));
+            }
+            ExportFormat::Xlsx => {
+                return Err(tr!(
+                    "tab {tab} as an Excel workbook is bytes, not text",
+                    tab = tab
+                ));
             }
             ExportFormat::Text => {
                 let lines = self.text_lines(tab)?;
