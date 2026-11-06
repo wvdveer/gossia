@@ -1,11 +1,12 @@
-name: Linux packages
+name: Packages
 
-# The Linux packages of Gossia (DESIGN.md, Testing and CI), on the Gitea
+# The packages of Gossia (DESIGN.md, Testing and CI), on the Gitea
 # mirror's runners on acer, one for each family of distributions, so that each
 # package links against its family's libraries:
 #   selfhosted  Debian (the gitslave host, no root)   .deb
 #   fedora      the fedora-runner container           .rpm
 #   arch        the arch-runner container             .pkg.tar.zst
+# and the Windows MSI, cross-built on selfhosted after them.
 # Each is then published to the Gitea package registry of ward
 # (packaging/linux/publish-package.sh), once the repository has the Actions
 # secret PACKAGE_REGISTRY_TOKEN (an access token of ward with the package write
@@ -143,3 +144,38 @@ jobs:
           GITEA_URL: ${{ gitea.server_url }}
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
         run: cd "$HOME/ci/gossia" && bash packaging/linux/publish-package.sh arch
+
+  # The Windows installer, cross-built on the Debian runner
+  # (packaging/windows/build-msi.sh: cargo-xwin and wixl, no root) and put in
+  # the generic package registry beside the MSIX and the .vsix
+  # (packaging/windows/publish-msi.sh). Moved here from GitHub CI on
+  # 2026-11-06, whose artifacts filled the account's Actions storage.
+  msi:
+    name: Windows installer
+    needs: arch
+    if: always()
+    runs-on: selfhosted
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          set -e
+          dir="$HOME/ci/gossia"
+          mkdir -p "$dir"
+          cd "$dir"
+          [ -d .git ] || git init -q .
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          export GIT_TERMINAL_PROMPT=0
+          timeout 300 git -c http.extraHeader="Authorization: Basic $auth" \
+            fetch -q --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git checkout -q -f FETCH_HEAD
+          git clean -ffdxq -e target -e vendor
+          git log --oneline -1
+      - name: Build
+        run: cd "$HOME/ci/gossia" && bash packaging/windows/build-msi.sh
+      - name: Publish
+        env:
+          GITEA_URL: ${{ gitea.server_url }}
+          PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+        run: cd "$HOME/ci/gossia" && bash packaging/windows/publish-msi.sh

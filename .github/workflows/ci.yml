@@ -98,6 +98,7 @@ jobs:
         with:
           name: snapshot-differences
           path: crates/gossia-app/tests/snapshots/linux/
+          retention-days: 7
 
 
   # The wasm version in headless Chromium: the test build driven by the harness
@@ -128,6 +129,7 @@ jobs:
         with:
           name: web-screenshots
           path: target/web-test/screenshots/
+          retention-days: 7
 
   # The VS Code extension (DESIGN.md, Web port, 0.3.0, In VS Code): its tests
   # in a downloaded VS Code under a virtual display, then, for pushes to main,
@@ -154,11 +156,6 @@ jobs:
       - name: Pack the .vsix
         if: github.event_name == 'push'
         run: cargo xtask vsix
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push'
-        with:
-          name: vscode-extension
-          path: target/vsix/*.vsix
       # Without the secrets the .vsix is packed but not published; the runner
       # must reach the Gitea server.
       - name: Publish the .vsix
@@ -168,26 +165,10 @@ jobs:
           PACKAGE_REGISTRY_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
         run: bash packaging/vscode/publish-vsix.sh
 
-  # The Windows installer, cross-built on Linux (packaging/windows/build-msi.sh:
-  # cargo-xwin and wixl). Advisory, and only for pushes to main: a first run
-  # downloads the Windows SDK and every run compiles the release application.
-  # The MSI is unsigned.
-  windows-installer:
-    name: Windows installer
-    runs-on: [self-hosted, gossia]
-    continue-on-error: true
-    if: github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-      - name: Install the pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
-      - run: packaging/windows/build-msi.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-installer
-          path: target/msi/*.msi
+  # The Windows installer is built on the Gitea mirror's runner on acer
+  # (.gitea/workflows/packages.yml) and kept in the Gitea package registry,
+  # not here: GitHub's Actions storage is small. Build outputs go to Gitea;
+  # only the failure-only artifacts above stay, for a week.
 
   # target/ is kept between runs, and every push leaves new test programs of
   # about 1 GB each behind; on 2026-10-30 it had reached 171 GB in a week.
@@ -197,7 +178,7 @@ jobs:
   sweep:
     name: Sweep target
     runs-on: [self-hosted, gossia]
-    needs: [lint, test, vendor, e2e, snapshots, web, vscode, windows-installer]
+    needs: [lint, test, vendor, e2e, snapshots, web, vscode]
     if: always()
     steps:
       - name: Delete stale build files
