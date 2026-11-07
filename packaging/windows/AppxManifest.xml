@@ -9,9 +9,10 @@
   not change: Store ID 9P505WS779KW, package family name
   WardvanderVeer.Gossia_bd1w97kxbkr6y.
 
-  Two applications: the window, with the .gossia files, and bidwillii, a
-  console program kept off the Start menu, which scripts run by the alias
-  bidwillii.exe.
+  One application, the window, with the .gossia and .ics files. bidwillii,
+  the console program, is reached by the alias bidwillii.exe on that same
+  application: a second application kept off the Start menu would be a
+  headless app, which the Store refuses without a waiver.
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -41,7 +42,8 @@
   </Resources>
 
   <Applications>
-    <Application Id="Gossia" Executable="gossia.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="Gossia" Executable="gossia.exe" EntryPoint="Windows.FullTrustApplication"
+                 desktop4:SupportsMultipleInstances="true">
       <uap:VisualElements DisplayName="Gossia"
                           Description="Workbooks of JSON and XML with Python formulas, forms and reports."
                           BackgroundColor="transparent"
@@ -67,18 +69,7 @@
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
-      </Extensions>
-    </Application>
-
-    <Application Id="GossiaCli" Executable="bidwillii.exe" EntryPoint="Windows.FullTrustApplication"
-                 desktop4:Subsystem="console" desktop4:SupportsMultipleInstances="true">
-      <uap:VisualElements DisplayName="Gossia command line"
-                          Description="Runs a workbook's report to PDF, without a window."
-                          BackgroundColor="transparent"
-                          Square150x150Logo="Assets\Square150x150Logo.png"
-                          Square44x44Logo="Assets\Square44x44Logo.png"
-                          AppListEntry="none"/>
-      <Extensions>
+        <!-- bidwillii, the command line, by its name from any console. -->
         <uap5:Extension Category="windows.appExecutionAlias" Executable="bidwillii.exe"
                         EntryPoint="Windows.FullTrustApplication">
           <uap5:AppExecutionAlias desktop4:Subsystem="console">
