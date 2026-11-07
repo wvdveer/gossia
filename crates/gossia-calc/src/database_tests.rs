@@ -53,9 +53,14 @@ pub(crate) fn server(kind: SourceKind) -> Option<SourceDef> {
     })
 }
 
+/// How long a call to a live test server may take. Generous: in CI the
+/// servers share a machine with the build, and a `CREATE TABLE` took longer
+/// than 10 seconds while it was compiling.
+const LIVE_TIMEOUT: Duration = Duration::from_secs(60);
+
 fn limits() -> Limits {
     Limits {
-        timeout: Duration::from_secs(10),
+        timeout: LIVE_TIMEOUT,
         max_bytes: 1 << 20,
     }
 }
@@ -126,7 +131,7 @@ fn live(kind: SourceKind) {
     let Some(def) = server(kind) else {
         return;
     };
-    let outcome = test(&def, Duration::from_secs(10));
+    let outcome = test(&def, LIVE_TIMEOUT);
     assert!(outcome.ok, "{}", outcome.message);
     eprintln!("{}", outcome.message);
     let name = format!("gossia_test_{}", std::process::id());
@@ -286,7 +291,7 @@ fn a_wrong_password_is_refused_by_the_test() {
             continue;
         };
         def.password = Some("not the password".into());
-        let outcome = test(&def, Duration::from_secs(10));
+        let outcome = test(&def, LIVE_TIMEOUT);
         assert!(!outcome.ok, "{}", outcome.message);
         eprintln!("{}", outcome.message);
     }
@@ -331,7 +336,7 @@ fn odbc_reads_writes_and_pools() {
     let Some(def) = odbc_server() else {
         return;
     };
-    let outcome = test(&def, Duration::from_secs(10));
+    let outcome = test(&def, LIVE_TIMEOUT);
     assert!(outcome.ok, "{}", outcome.message);
     eprintln!("{}", outcome.message);
     let name = format!("gossia_odbc_{}", std::process::id());
@@ -450,7 +455,7 @@ fn odbc_reads_writes_and_pools() {
 
     let mut wrong = def.clone();
     wrong.password = Some("not the password".into());
-    let outcome = test(&wrong, Duration::from_secs(10));
+    let outcome = test(&wrong, LIVE_TIMEOUT);
     assert!(!outcome.ok, "{}", outcome.message);
     eprintln!("{}", outcome.message);
 }
@@ -475,7 +480,7 @@ fn odbc_reads_a_csv_file() {
         )),
         ..SourceDef::new("Csv", SourceKind::Odbc)
     };
-    let outcome = test(&def, Duration::from_secs(10));
+    let outcome = test(&def, LIVE_TIMEOUT);
     if !outcome.ok && outcome.message.contains("not found") {
         eprintln!(
             "the Access text driver is not installed: skipped ({})",

@@ -186,14 +186,13 @@ pub fn system_font(language: Language) -> Option<SystemFont> {
     })
 }
 
-#[cfg(test)]
+/// Windows has fonts for both scripts; elsewhere it depends on what is
+/// installed, so only Windows is checked.
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
-    /// Windows has fonts for both scripts; elsewhere it depends on what is
-    /// installed, so only Windows is checked.
     #[test]
-    #[cfg(windows)]
     fn windows_has_a_font_for_japanese_and_for_chinese() {
         for language in [Language::Japanese, Language::Chinese] {
             let font = system_font(language).unwrap();
