@@ -212,7 +212,7 @@ fn live(kind: SourceKind) {
     )
     .unwrap_err();
     assert!(
-        why.contains("1 parameter, and 0 values were given"),
+        why.contains("1 parameter, and no values were given"),
         "{why}"
     );
     if kind == SourceKind::Mariadb {
@@ -398,7 +398,7 @@ fn odbc_reads_writes_and_pools() {
     )
     .unwrap_err();
     assert!(
-        why.contains("1 parameter, and 0 values were given"),
+        why.contains("1 parameter, and no values were given"),
         "{why}"
     );
     let why = query(&def, "SELECT 1", &json!({"id": 1}), limits()).unwrap_err();
