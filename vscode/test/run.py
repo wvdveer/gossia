@@ -153,6 +153,10 @@ def main():
         str(work / "extensions"),
         str(work / "workspace"),
     ]
+    if sys.platform.startswith("linux"):
+        # WebGL without a graphics adapter (the CI runner under xvfb-run), as
+        # the web harness gives Chromium: without it the panel cannot start.
+        args[1:1] = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]
     print("+ " + " ".join(args))
     try:
         code = subprocess.call(args, env=env)
