@@ -25,6 +25,50 @@ pub fn write(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The sizes in the `.ico` file: what Windows asks for on shortcuts, menus
+/// and Add/Remove Programs.
+pub const ICO_SIZES: &[u32] = &[16, 24, 32, 48, 256];
+
+/// Writes the icon as a Windows `.ico` file to `file`, for the MSI: an
+/// advertised shortcut takes its icon from the installer, not from the
+/// program. Each size is held as a PNG, which `.ico` files allow since
+/// Windows Vista.
+pub fn write_ico(file: &Path) -> Result<(), String> {
+    if let Some(dir) = file.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let images: Vec<(u32, Vec<u8>)> = ICO_SIZES
+        .iter()
+        .map(|&size| (size, png(size, &app_icon::pixels(size))))
+        .collect();
+    std::fs::write(file, ico(&images)).map_err(|e| format!("{}: {e}", file.display()))?;
+    println!("wrote {}", file.display());
+    Ok(())
+}
+
+/// PNG images of the given sizes as one `.ico` file.
+pub fn ico(images: &[(u32, Vec<u8>)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    out.extend_from_slice(&1u16.to_le_bytes()); // an icon, not a cursor
+    out.extend_from_slice(&(images.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * images.len() as u32;
+    for (size, data) in images {
+        // A width or height of 256 is written as 0.
+        let side = if *size >= 256 { 0 } else { *size as u8 };
+        out.extend_from_slice(&[side, side, 0, 0]); // no palette, reserved
+        out.extend_from_slice(&1u16.to_le_bytes()); // colour planes
+        out.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&offset.to_le_bytes());
+        offset += data.len() as u32;
+    }
+    for (_, data) in images {
+        out.extend_from_slice(data);
+    }
+    out
+}
+
 /// Writes the icon at one size to `file`.
 pub fn write_one(size: u32, file: &Path) -> Result<(), String> {
     std::fs::write(file, png(size, &app_icon::pixels(size)))
@@ -99,6 +143,21 @@ fn adler32(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ico_lists_each_image_where_it_is() {
+        let images = vec![(16, vec![1u8; 10]), (256, vec![2u8; 20])];
+        let ico = ico(&images);
+        assert_eq!(&ico[..6], &[0, 0, 1, 0, 2, 0]);
+        // The first entry: 16 by 16, 10 bytes, after the 38-byte directory.
+        assert_eq!(&ico[6..10], &[16, 16, 0, 0]);
+        assert_eq!(&ico[14..22], &[10, 0, 0, 0, 38, 0, 0, 0]);
+        // The second: 256 written as 0, 20 bytes, after the first image.
+        assert_eq!(&ico[22..26], &[0, 0, 0, 0]);
+        assert_eq!(&ico[30..38], &[20, 0, 0, 0, 48, 0, 0, 0]);
+        assert_eq!(ico.len(), 68);
+        assert_eq!(&ico[38..48], &[1u8; 10]);
+    }
 
     #[test]
     fn the_checksums_are_the_known_ones() {

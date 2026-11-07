@@ -21,6 +21,7 @@ cargo xtask <command>
   e2e                            end-to-end tests on the running application (under xvfb-run on Linux without a display)
   snapshots                      visual snapshot tests (needs a graphics adapter)
   icons <dir>                    the icon as PNG files for the packages (16 to 512 pixels)
+  ico <file>                     the icon as a Windows .ico file, for the MSI's shortcut
   web [--test-control]           the wasm version and its pages, in target/web (serve that folder);
                                  with --test-control the test build and the harness, in target/web-test
   web-test                       the test build of the wasm version, driven by the harness page in
@@ -92,6 +93,10 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("icons") => match args.get(1) {
             Some(dir) => icons::write(Path::new(dir)),
             None => Err("icons needs the folder to write to".to_owned()),
+        },
+        Some("ico") => match args.get(1) {
+            Some(file) => icons::write_ico(Path::new(file)),
+            None => Err("ico needs the file to write".to_owned()),
         },
         Some("ci") => {
             fetch_vendor::ensure_required(&root)?;

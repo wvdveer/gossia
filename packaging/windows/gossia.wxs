@@ -2,7 +2,7 @@
 <!--
   The Windows installer of Gossia, in the WiX 3 dialect that wixl (msitools)
   reads, so that it can be built on Linux by build-msi.sh. Variables: Version,
-  Exe, CliExe and License, given with -D.
+  Exe, CliExe, Icon (the .ico from cargo xtask ico) and License, given with -D.
   bidwillii.exe is installed next to gossia.exe, not on the PATH: scripts
   name it by its full path.
   The UpgradeCode never changes: it is what lets a newer MSI replace an older one.
@@ -15,6 +15,11 @@
              Description="Gossia installer"/>
     <MajorUpgrade DowngradeErrorMessage="A newer version of Gossia is already installed."/>
     <Media Id="1" Cabinet="gossia.cab" EmbedCab="yes"/>
+    <!-- An advertised shortcut takes its icon from the MSI's Icon table, not
+         from the executable it starts: without this it shows a blank page.
+         A small .ico, not the executable, which would be stored twice. -->
+    <Icon Id="GossiaIcon.ico" SourceFile="$(var.Icon)"/>
+    <Property Id="ARPPRODUCTICON" Value="GossiaIcon.ico"/>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -22,7 +27,7 @@
           <Component Id="MainExecutable" Guid="0b7e4c52-8a1d-4f6e-b3a9-71c5d2e8f4a0" Win64="yes">
             <File Id="GossiaExe" Name="gossia.exe" Source="$(var.Exe)" KeyPath="yes">
               <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Gossia"
-                        WorkingDirectory="INSTALLDIR" Advertise="yes"/>
+                        WorkingDirectory="INSTALLDIR" Advertise="yes" Icon="GossiaIcon.ico"/>
             </File>
           </Component>
           <Component Id="CliExecutable" Guid="e5a8c1f3-6b2d-4e97-8a40-3f9d7c2b1e86" Win64="yes">

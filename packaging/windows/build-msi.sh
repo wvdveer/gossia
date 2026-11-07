@@ -43,8 +43,11 @@ cargo xwin build --release -p gossia-app -p gossia-cli --bin gossia --bin bidwil
 
 out=$root/target/msi
 mkdir -p "$out"
+# The Start menu shortcut's icon (an advertised shortcut takes it from the MSI).
+(cd "$root/tools/xtask" && cargo run --quiet -- ico "$out/gossia.ico")
 "$wixl" -a x64 -o "$out/Gossia-$version-x64.msi" \
     -D "Version=$version" \
+    -D "Icon=$out/gossia.ico" \
     -D "Exe=$root/target/$target/release/gossia.exe" \
     -D "CliExe=$root/target/$target/release/bidwillii.exe" \
     -D "License=$root/LICENSE" \
