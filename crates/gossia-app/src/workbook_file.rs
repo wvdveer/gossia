@@ -544,9 +544,10 @@ impl GossiaApp {
                 .title(tr!("Import a file"))
                 .initial_directory(self.start_folder())
                 .add_file_filter_extensions(
-                    "JSON, XML, CSV, TSV, Excel and ODS",
+                    "JSON, XML, CSV, TSV, Excel, ODS, calendars and contacts",
                     vec![
                         "json", "xml", "csv", "tsv", "tab", "xlsx", "xlsm", "xlsb", "xls", "ods",
+                        "ics", "vcf",
                     ],
                 )
                 .add_file_filter_extensions("JSON", vec!["json"])
@@ -556,7 +557,9 @@ impl GossiaApp {
                     "Excel and ODS",
                     vec!["xlsx", "xlsm", "xlsb", "xls", "ods"],
                 )
-                .default_file_filter("JSON, XML, CSV, TSV, Excel and ODS");
+                .add_file_filter_extensions("iCalendar", vec!["ics", "ical"])
+                .add_file_filter_extensions("vCard", vec!["vcf", "vcard"])
+                .default_file_filter("JSON, XML, CSV, TSV, Excel, ODS, calendars and contacts");
             self.files.browser.pick_file();
             self.files.browsing = Some(Browsing::Import);
             return;

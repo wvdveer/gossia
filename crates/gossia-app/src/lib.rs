@@ -202,6 +202,8 @@ mod workbook_state_tests;
 #[cfg(test)]
 mod copybook_tests;
 #[cfg(test)]
+mod entries_import_tests;
+#[cfg(test)]
 mod export_tests;
 #[cfg(test)]
 mod map_keys_tests;

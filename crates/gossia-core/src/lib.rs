@@ -5,11 +5,14 @@
 //! reused by a later web port (see DESIGN.md, Application structure).
 
 pub mod binary;
+pub mod calendar;
+pub mod contentline;
 pub mod copybook;
 pub mod dataformat;
 pub mod delimited;
 #[cfg(test)]
 mod delimited_tests;
+pub mod entries_write;
 pub mod form;
 pub mod format;
 pub mod infer;
@@ -27,10 +30,13 @@ pub mod report;
 mod report_tests;
 pub mod spreadsheet;
 pub mod tabular;
+pub mod timezone;
 pub mod toml_format;
 mod typespec;
 pub mod validate;
 mod value;
+pub mod vcard;
+mod windows_zones;
 pub mod xml;
 pub mod xmltree;
 pub mod xsd;

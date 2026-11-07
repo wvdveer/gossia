@@ -75,6 +75,7 @@ impl ExportPlan {
             && self.schema.is_some()
             && self.format != ExportFormat::Text
             && !self.format.is_rows()
+            && !self.format.is_entries()
     }
 }
 
@@ -165,6 +166,8 @@ impl GossiaApp {
                 "tsv" => "TSV",
                 "xlsx" => "Excel",
                 "ods" => "ODS",
+                "ics" => "iCalendar",
+                "vcf" => "vCard",
                 _ => tr!("Text"),
             };
             self.files.browser = crate::workbook_file::new_browser()
@@ -281,7 +284,9 @@ impl GossiaApp {
                 if plan.format.is_rows() {
                     rows_choice(ui, self.calc(), &mut plan);
                 }
-                let shaped = plan.format != ExportFormat::Text && !plan.format.is_rows();
+                let shaped = plan.format != ExportFormat::Text
+                    && !plan.format.is_rows()
+                    && !plan.format.is_entries();
                 ui.add_enabled_ui(shaped, |ui| {
                     ui.horizontal(|ui| {
                         if ui.radio(plan.pretty, tr!("Indented")).clicked() {

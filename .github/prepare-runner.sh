@@ -1,9 +1,13 @@
 #!/bin/bash
 # Readies a fresh GitHub-hosted Ubuntu runner for the build
 # (.github/workflows/ci.yml): the libraries the application links against,
-# the build folder on the second disk, and the toolchain pinned in
-# rust-toolchain.toml.
+# the build folder, and the toolchain pinned in rust-toolchain.toml.
 set -euo pipefail
+
+# The runner's one disk is nearly full of toolkits the build never uses
+# (.NET, Android, Haskell, CodeQL), and the test binaries need the room.
+sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+    /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
 
 sudo apt-get update -qq
 sudo apt-get install -y -qq --no-install-recommends \

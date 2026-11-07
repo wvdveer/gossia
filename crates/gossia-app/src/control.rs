@@ -202,11 +202,18 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                 }
                 None => {}
             }
+            // Calendar entries or contacts added to a tab of their kind.
+            if let Some(tab) = args.get("add_to").and_then(Json::as_str) {
+                plan.choice = crate::import::SchemaChoice::AddTo(tab.to_owned());
+            }
             let schema = match &plan.choice {
                 crate::import::SchemaChoice::Inferred => plan.schema_name.clone(),
                 crate::import::SchemaChoice::SchemaTab => plan.name.clone(),
                 crate::import::SchemaChoice::Existing(s)
                 | crate::import::SchemaChoice::Replace(s) => s.clone(),
+                crate::import::SchemaChoice::AddTo(tab) => {
+                    app.calc().schema_of(tab).unwrap_or_default().to_owned()
+                }
             };
             app.import(&plan)?;
             app.refresh_rows();
@@ -256,7 +263,7 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             Ok(Json::Null)
         }
         // Exports a tab (`tab`, or the current one) to `path`, with what the
-        // dialog starts with, or `format` (`json`, `xml`, `text`, `csv`, `tsv`, `xlsx` or `ods`),
+        // dialog starts with, or `format` (`json`, `xml`, `text`, `csv`, `tsv`, `xlsx`, `ods`, `ics` or `vcf`),
         // `compact` and `schema` (also write the schema tab beside it).
         "export" => {
             let path = std::path::PathBuf::from(text_arg(args, "path")?);
@@ -272,6 +279,8 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
                     "tsv" => gossia_calc::ExportFormat::Tsv,
                     "xlsx" => gossia_calc::ExportFormat::Xlsx,
                     "ods" => gossia_calc::ExportFormat::Ods,
+                    "ics" => gossia_calc::ExportFormat::Calendar,
+                    "vcf" => gossia_calc::ExportFormat::Contacts,
                     code => match gossia_core::dataformat::DataFormat::from_code(code) {
                         Some(f) => gossia_calc::ExportFormat::Data(f),
                         None => return Err(format!("there is no format {code:?}")),

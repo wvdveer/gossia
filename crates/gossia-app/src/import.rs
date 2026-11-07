@@ -18,6 +18,7 @@ use std::path::Path as FsPath;
 use gossia_calc::SchemaFormat;
 use gossia_calc::names::{self, Subject};
 use gossia_core::binary::BinaryText;
+use gossia_core::calendar::{self, EntryKind};
 use gossia_core::copybook::{self, CodePage};
 use gossia_core::dataformat::DataFormat;
 use gossia_core::infer::{self, JsonInference};
@@ -55,6 +56,12 @@ pub enum ImportFormat {
     /// `.ods`): each worksheet chosen is read as CSV is, into a JSON tab of
     /// its own (DESIGN.md, "Excel and ODS files, 0.4.0").
     Workbook,
+    /// An iCalendar file (`.ics`): its events and its tasks, each a list of
+    /// entries for a tab of their own or one there already (DESIGN.md,
+    /// "Calendars and contacts, 0.4.0").
+    Calendar,
+    /// vCard contacts (`.vcf`), likewise.
+    Contacts,
     /// Anything else: an array of its lines.
     Text,
 }
@@ -77,6 +84,8 @@ impl ImportFormat {
             ImportFormat::Blk => "COBOL records",
             ImportFormat::Text => tr!("lines of text"),
             ImportFormat::Workbook => tr!("a spreadsheet workbook"),
+            ImportFormat::Calendar => tr!("an iCalendar file"),
+            ImportFormat::Contacts => tr!("vCard contacts"),
         }
     }
 
@@ -97,7 +106,9 @@ impl ImportFormat {
             | ImportFormat::Csv
             | ImportFormat::Tsv
             | ImportFormat::Text
-            | ImportFormat::Workbook => DataFormat::Json,
+            | ImportFormat::Workbook
+            | ImportFormat::Calendar
+            | ImportFormat::Contacts => DataFormat::Json,
         }
     }
 
@@ -181,6 +192,9 @@ pub enum SchemaChoice {
     /// No new tab: the text replaces the data of this tab, if it conforms to
     /// its schema. Offered for a paste in the tab's own format.
     Replace(String),
+    /// No new tab: calendar entries or contacts are added to this tab of
+    /// their kind, an entry with the key of one there replacing it.
+    AddTo(String),
 }
 
 /// A file read for importing, and the choices of the dialog.
@@ -225,6 +239,10 @@ pub struct ImportPlan {
     pub sheets: Vec<SheetPlan>,
     /// The worksheet whose settings the dialog shows.
     pub sheet: usize,
+    /// For calendar entries and contacts, their kind, and the tabs of that
+    /// kind they can be added to.
+    pub entries: Option<EntryKind>,
+    pub add_to: Vec<String>,
 }
 
 /// One worksheet of a workbook being imported.
@@ -239,6 +257,14 @@ pub struct SheetPlan {
 }
 
 impl ImportPlan {
+    /// The tab the import ends on: the data tab, or the tab added to.
+    fn target(&self) -> String {
+        match &self.choice {
+            SchemaChoice::AddTo(tab) | SchemaChoice::Replace(tab) => tab.clone(),
+            _ => self.name.trim().to_owned(),
+        }
+    }
+
     /// What the report lists for the choice made.
     pub fn report(&self) -> Vec<String> {
         let mut lines = self.notes.clone();
@@ -269,7 +295,7 @@ impl ImportPlan {
                     });
                 }
             }
-            SchemaChoice::Replace(_) => {}
+            SchemaChoice::Replace(_) | SchemaChoice::AddTo(_) => {}
             SchemaChoice::SchemaTab => {
                 if let Some(why) = &self.schema_problem {
                     lines.push(tr!("It cannot be used as a schema as it is: {why}. It can be corrected on its tab.", why = why));
@@ -298,6 +324,8 @@ pub fn format_of(file: &str) -> ImportFormat {
         Some("cpy") => ImportFormat::Copybook,
         Some("blk") => ImportFormat::Blk,
         Some("xlsx" | "xlsm" | "xlsb" | "xls" | "ods") => ImportFormat::Workbook,
+        Some("ics" | "ical" | "ifb") => ImportFormat::Calendar,
+        Some("vcf" | "vcard") => ImportFormat::Contacts,
         _ => ImportFormat::Text,
     }
 }
@@ -309,7 +337,17 @@ pub fn format_of(file: &str) -> ImportFormat {
 pub fn format_of_text(text: &str) -> ImportFormat {
     let text = text.trim_start_matches('\u{FEFF}').trim_start();
     let first_line = text.lines().next().unwrap_or_default();
-    if is_json_lines(text) {
+    let begins = |what: &str| {
+        first_line
+            .trim_end()
+            .get(..what.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(what))
+    };
+    if begins("BEGIN:VCALENDAR") {
+        ImportFormat::Calendar
+    } else if begins("BEGIN:VCARD") {
+        ImportFormat::Contacts
+    } else if is_json_lines(text) {
         ImportFormat::JsonLines
     } else if is_toml(text) {
         ImportFormat::Toml
@@ -546,7 +584,11 @@ impl GossiaApp {
             return Ok(plan);
         }
         let same_format = match format {
-            ImportFormat::Csv | ImportFormat::Tsv | ImportFormat::Text => false,
+            ImportFormat::Csv
+            | ImportFormat::Tsv
+            | ImportFormat::Text
+            | ImportFormat::Calendar
+            | ImportFormat::Contacts => false,
             _ => self.calc().format(&self.sheet) == Some(format.data_format()),
         };
         if same_format && !self.calc().is_schema_sheet(&self.sheet) {
@@ -591,6 +633,8 @@ impl GossiaApp {
                 error: None,
                 sheets: Vec::new(),
                 sheet: 0,
+                entries: None,
+                add_to: Vec::new(),
             },
         };
         plan.notes.insert(
@@ -646,6 +690,9 @@ impl GossiaApp {
             )
         })?;
         let format = format.refine(&text);
+        if let Some(kinds) = entry_kinds(format) {
+            return self.plan_entries(file, name_from, format, kinds, &text);
+        }
         let calc = self.calc();
         let mut notes = Vec::new();
         let mut schema_file = None;
@@ -663,7 +710,10 @@ impl GossiaApp {
                 )));
                 (None, Err(tr!("it is a copybook").to_owned()), Vec::new())
             }
-            ImportFormat::Blk | ImportFormat::Workbook => {
+            ImportFormat::Blk
+            | ImportFormat::Workbook
+            | ImportFormat::Calendar
+            | ImportFormat::Contacts => {
                 unreachable!("COBOL records and workbooks are planned above")
             }
             ImportFormat::Json5
@@ -796,6 +846,8 @@ impl GossiaApp {
             error: None,
             sheets: Vec::new(),
             sheet: 0,
+            entries: None,
+            add_to: Vec::new(),
         })
     }
 
@@ -873,6 +925,8 @@ impl GossiaApp {
             error: None,
             sheets: Vec::new(),
             sheet: 0,
+            entries: None,
+            add_to: Vec::new(),
         })
     }
 
@@ -937,6 +991,8 @@ impl GossiaApp {
                 error: None,
                 sheets: Vec::new(),
                 sheet: 0,
+                entries: None,
+                add_to: Vec::new(),
             };
             sheets.push(SheetPlan {
                 title: sheet.name,
@@ -944,6 +1000,126 @@ impl GossiaApp {
                 rows: sheet.rows,
                 plan,
             });
+        }
+        let first = sheets.iter().position(|s| s.ticked).unwrap_or(0);
+        let mut frame = sheets[first].plan.clone();
+        frame.sheets = sheets;
+        frame.sheet = first;
+        Ok(frame)
+    }
+
+    /// Plans calendar entries or contacts: a part for each kind the file
+    /// can hold (events and tasks for a calendar), each ticked when it has
+    /// entries. A part goes into the first tab of its kind when there is
+    /// one, and otherwise into a new tab with the kind's schema, or a
+    /// schema tab of that kind there already.
+    fn plan_entries(
+        &self,
+        file: &str,
+        name_from: &str,
+        format: ImportFormat,
+        kinds: &[EntryKind],
+        text: &str,
+    ) -> Result<ImportPlan, String> {
+        let (lists, notes) = if format == ImportFormat::Calendar {
+            let read = calendar::read(text, &gossia_core::timezone::system()).map_err(|e| {
+                tr!(
+                    "{file} cannot be read as a calendar: {e}",
+                    file = capital(file),
+                    e = e
+                )
+            })?;
+            (vec![read.events, read.tasks], read.notes)
+        } else {
+            let read = gossia_core::vcard::read(text).map_err(|e| {
+                tr!(
+                    "{file} cannot be read as contacts: {e}",
+                    file = capital(file),
+                    e = e
+                )
+            })?;
+            (vec![read.contacts], read.notes)
+        };
+        if lists.iter().all(Vec::is_empty) {
+            return Err(if format == ImportFormat::Calendar {
+                tr!("{file} has no events or tasks.", file = capital(file))
+            } else {
+                tr!("{file} has no contacts.", file = capital(file))
+            });
+        }
+        let calc = self.calc();
+        let stem = FsPath::new(name_from).file_stem().map_or_else(
+            || name_from.to_owned(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+        let mut used: Vec<String> = Vec::new();
+        let mut sheets = Vec::new();
+        for (&kind, entries) in kinds.iter().zip(lists) {
+            let taken = |n: &str| {
+                calc.tab_name_problem(n, None).is_some()
+                    || used.iter().any(|u| u.eq_ignore_ascii_case(n))
+            };
+            let part = part_title(kind);
+            let name = if kinds.len() > 1 {
+                name_from_file(&format!("{stem}_{part}.ics"), taken)
+            } else {
+                name_from_file(&format!("{stem}.vcf"), taken)
+            };
+            let schema_name = unique(&format!("{name}Schema"), |n| {
+                taken(n) || n.eq_ignore_ascii_case(&name)
+            });
+            used.push(name.clone());
+            used.push(schema_name.clone());
+            let data = calendar::data(&entries);
+            let candidates =
+                self.schema_tabs(SchemaFormat::Json, |spec| Some(validate(spec, &data).len()));
+            let add_to = calc.tabs_of_kind(kind);
+            let choice = match add_to.first() {
+                Some(tab) => SchemaChoice::AddTo(tab.clone()),
+                None => match candidates
+                    .iter()
+                    .find(|c| c.problems == 0 && schema_kind(calc, &c.schema) == Some(kind))
+                {
+                    Some(fits) => SchemaChoice::Existing(fits.schema.clone()),
+                    None => SchemaChoice::Inferred,
+                },
+            };
+            let plan = ImportPlan {
+                file: file.to_owned(),
+                format,
+                text: String::new(),
+                bytes: Vec::new(),
+                record: None,
+                data: Some(data.clone()),
+                notes: notes.clone(),
+                inferred: Ok(Inferred::Json(JsonInference {
+                    schema: kind.schema(),
+                    data,
+                    dropped: Vec::new(),
+                    warnings: Vec::new(),
+                })),
+                candidates,
+                name,
+                schema_name,
+                choice,
+                replace: None,
+                schema_file: None,
+                schema_problem: None,
+                error: None,
+                sheets: Vec::new(),
+                sheet: 0,
+                entries: Some(kind),
+                add_to,
+            };
+            sheets.push(SheetPlan {
+                title: part.to_owned(),
+                ticked: !entries.is_empty(),
+                rows: entries.len(),
+                plan,
+            });
+        }
+        if sheets.len() == 1 {
+            return Ok(sheets.remove(0).plan);
         }
         let first = sheets.iter().position(|s| s.ticked).unwrap_or(0);
         let mut frame = sheets[first].plan.clone();
@@ -982,8 +1158,13 @@ impl GossiaApp {
         if !plan.sheets.is_empty() {
             return self.workbook_problem(plan);
         }
-        if let SchemaChoice::Replace(_) = plan.choice {
-            return None;
+        match &plan.choice {
+            SchemaChoice::Replace(_) => return None,
+            SchemaChoice::AddTo(tab) => {
+                return (self.calc().entry_kind(tab) != plan.entries)
+                    .then(|| tr!("{tab} no longer holds entries of this kind.", tab = tab));
+            }
+            _ => {}
         }
         let name = plan.name.trim();
         if let Some(why) = self.calc().tab_name_problem(name, None) {
@@ -1016,7 +1197,10 @@ impl GossiaApp {
             if let Some(why) = self.import_problem(&sheet.plan) {
                 return Some(tr!("Sheet {sheet}: {why}", sheet = sheet.title, why = why));
             }
-            let mut new = vec![sheet.plan.name.trim().to_owned()];
+            let mut new = Vec::new();
+            if !matches!(sheet.plan.choice, SchemaChoice::AddTo(_)) {
+                new.push(sheet.plan.name.trim().to_owned());
+            }
             if sheet.plan.choice == SchemaChoice::Inferred {
                 new.push(sheet.plan.schema_name.trim().to_owned());
             }
@@ -1056,7 +1240,7 @@ impl GossiaApp {
         }
         self.follow_tabs();
         if let Some(first) = plan.sheets.iter().find(|s| s.ticked) {
-            self.show_tab(first.plan.name.trim());
+            self.show_tab(&first.plan.target());
         }
         self.notice = None;
         self.session.tick();
@@ -1109,7 +1293,7 @@ impl GossiaApp {
             self.session.tick();
             return Ok(());
         }
-        let name = plan.name.trim();
+        let name = plan.target();
         let before = self.calc().history_len().0;
         let calc = self.session.calc_mut();
         calc.begin_entry(&tr!("Import {file}", file = plan.file));
@@ -1124,7 +1308,7 @@ impl GossiaApp {
             return Err(e.to_string());
         }
         self.follow_tabs();
-        self.show_tab(name);
+        self.show_tab(&name);
         self.notice = None;
         self.session.tick();
         Ok(())
@@ -1159,7 +1343,8 @@ impl GossiaApp {
                     let at = plan.sheet;
                     &mut plan.sheets[at].plan
                 };
-                let replacing = matches!(shown.choice, SchemaChoice::Replace(_));
+                let replacing =
+                    matches!(shown.choice, SchemaChoice::Replace(_) | SchemaChoice::AddTo(_));
                 ui.horizontal(|ui| {
                     ui.label(tr!("Tab name"));
                     let response =
@@ -1201,6 +1386,25 @@ impl GossiaApp {
                         shown.choice = SchemaChoice::SchemaTab;
                     }
                     ui.label(tr!("Or as data, with the schema"));
+                } else if let (Some(kind), false) = (shown.entries, shown.add_to.is_empty()) {
+                    for tab in shown.add_to.clone() {
+                        let chosen = shown.choice == SchemaChoice::AddTo(tab.clone());
+                        let text = if kind == EntryKind::Contacts {
+                            tr!(
+                                "Add to the tab {tab}: a contact with the same UID, or without one the same name, replaces the one there",
+                                tab = tab
+                            )
+                        } else {
+                            tr!(
+                                "Add to the tab {tab}: an entry with the same UID replaces the one there",
+                                tab = tab
+                            )
+                        };
+                        if ui.radio(chosen, text).clicked() {
+                            shown.choice = SchemaChoice::AddTo(tab);
+                        }
+                    }
+                    ui.label(tr!("Or as a new tab, with the schema"));
                 } else {
                     ui.label(tr!("Schema"));
                 }
@@ -1225,11 +1429,15 @@ impl GossiaApp {
                 match &shown.inferred {
                     _ if copybook => {}
                     Ok(_) => {
+                        let text = match shown.entries {
+                            Some(EntryKind::Events) => tr!("A new schema for calendar events, called"),
+                            Some(EntryKind::Tasks) => tr!("A new schema for calendar tasks, called"),
+                            Some(EntryKind::Contacts) => tr!("A new schema for contacts, called"),
+                            None => tr!("A new schema, inferred from the data, called"),
+                        };
                         ui.horizontal(|ui| {
                             let chosen = shown.choice == SchemaChoice::Inferred;
-                            if ui
-                                .radio(chosen, tr!("A new schema, inferred from the data, called"))
-                                .clicked()
+                            if ui.radio(chosen, text).clicked()
                             {
                                 shown.choice = SchemaChoice::Inferred;
                             }
@@ -1263,7 +1471,9 @@ impl GossiaApp {
                         shown.choice = SchemaChoice::Replace(tab);
                     }
                 }
-                if let (SchemaChoice::Inferred, Ok(inferred)) = (&shown.choice, &shown.inferred) {
+                if let (SchemaChoice::Inferred, Ok(inferred), None) =
+                    (&shown.choice, &shown.inferred, shown.entries)
+                {
                     egui::CollapsingHeader::new(tr!("The inferred schema"))
                         .id_salt("inferred_schema")
                         .show(ui, |ui| {
@@ -1368,7 +1578,12 @@ impl GossiaApp {
 /// The worksheets of a workbook in the import dialog: a tick for each that
 /// has rows, and a click on its name shows its settings.
 fn sheet_list(ui: &mut egui::Ui, plan: &mut ImportPlan) {
-    ui.label(tr!("Sheets to import"));
+    let parts = plan.entries.is_some();
+    ui.label(if parts {
+        tr!("Parts to import")
+    } else {
+        tr!("Sheets to import")
+    });
     egui::ScrollArea::vertical()
         .id_salt("import_sheets")
         .max_height(140.0)
@@ -1385,13 +1600,19 @@ fn sheet_list(ui: &mut egui::Ui, plan: &mut ImportPlan) {
                             egui::Role::CheckBox,
                             sheet.rows > 0,
                             sheet.ticked,
-                            tr!("Import sheet {sheet}", sheet = title),
+                            if parts {
+                                tr!("Import part {part}", part = title)
+                            } else {
+                                tr!("Import sheet {sheet}", sheet = title)
+                            },
                         )
                     });
-                    let text = match sheet.rows {
-                        0 => tr!("{sheet}: empty", sheet = sheet.title),
-                        1 => tr!("{sheet}: 1 row", sheet = sheet.title),
-                        n => tr!("{sheet}: {n} rows", sheet = sheet.title, n = n),
+                    let text = match (sheet.rows, parts) {
+                        (0, _) => tr!("{sheet}: empty", sheet = sheet.title),
+                        (1, false) => tr!("{sheet}: 1 row", sheet = sheet.title),
+                        (n, false) => tr!("{sheet}: {n} rows", sheet = sheet.title, n = n),
+                        (1, true) => tr!("{sheet}: 1 entry", sheet = sheet.title),
+                        (n, true) => tr!("{sheet}: {n} entries", sheet = sheet.title, n = n),
                     };
                     if ui.selectable_label(plan.sheet == index, text).clicked() {
                         plan.sheet = index;
@@ -1399,6 +1620,38 @@ fn sheet_list(ui: &mut egui::Ui, plan: &mut ImportPlan) {
                 });
             }
         });
+}
+
+/// The kinds of entry a file of this format holds, in the order of its
+/// parts; None for formats of other data.
+fn entry_kinds(format: ImportFormat) -> Option<&'static [EntryKind]> {
+    match format {
+        ImportFormat::Calendar => Some(&[EntryKind::Events, EntryKind::Tasks]),
+        ImportFormat::Contacts => Some(&[EntryKind::Contacts]),
+        _ => None,
+    }
+}
+
+/// What a part of a calendar file is called in the dialog, and in its tab's
+/// name.
+fn part_title(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::Events => tr!("Events"),
+        EntryKind::Tasks => tr!("Tasks"),
+        EntryKind::Contacts => tr!("Contacts"),
+    }
+}
+
+/// The kind of entry a schema tab is for, by its root's title.
+fn schema_kind(calc: &gossia_calc::Calc, schema: &str) -> Option<EntryKind> {
+    let title = calc
+        .data(schema)?
+        .value()
+        .as_object()?
+        .get("title")?
+        .value()
+        .as_str()?;
+    EntryKind::from_title(title)
 }
 
 /// Makes the tabs of one plan: the schema tab, if a new one, and the data
@@ -1424,6 +1677,19 @@ fn create_tabs(
                 )
             }),
         (SchemaChoice::Inferred, Err(why)) => Err(gossia_calc::EditError::Path(why.clone())),
+        (SchemaChoice::AddTo(tab), _) => {
+            let kind = plan
+                .entries
+                .ok_or_else(|| gossia_calc::EditError::Path("not calendar entries".into()))?;
+            let entries = plan
+                .data
+                .as_ref()
+                .and_then(|d| d.value().as_array())
+                .map(|a| a.to_vec())
+                .unwrap_or_default();
+            calc.add_entries(tab, kind, &entries, &tr!("Import {file}", file = plan.file))
+                .map(|_| ())
+        }
         (SchemaChoice::Replace(_) | SchemaChoice::SchemaTab, _) => {
             unreachable!("replacing and schema tabs returned above")
         }

@@ -163,5 +163,9 @@ mod formats_tests;
 mod copybooks_tests;
 
 #[cfg(test)]
+#[path = "entries_tests.rs"]
+mod entries_tests;
+
+#[cfg(test)]
 #[path = "node_bytes_tests.rs"]
 mod node_bytes_tests;

@@ -21,8 +21,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # The build is larger than the free space on the runner's system disk; the
-  # second disk at /mnt has room for it.
+  # Where the runner has a second disk at /mnt, the build goes there; the
+  # Prepare step also clears unused toolkits off the system disk.
   CARGO_TARGET_DIR: /mnt/target
   # Without debug information the test programs are a fraction of their
   # size: with it, linking them filled the runner's disk (ld died with a bus
@@ -35,7 +35,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Prepare
         run: bash .github/prepare-runner.sh
       - run: cargo xtask lint
@@ -47,7 +47,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Prepare
         run: bash .github/prepare-runner.sh
       - run: cargo xtask test

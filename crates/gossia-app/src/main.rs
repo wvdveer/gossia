@@ -11,7 +11,8 @@ use gossia_app::GossiaApp;
 use gossia_app::prefs::{Config, User};
 
 /// A blank workbook, as *File > New* makes it, or the workbook named on the
-/// command line (as *Save and restart* starts it), with the user's
+/// command line (as *Save and restart* starts it), or a blank one with the
+/// import dialog of another file named there, with the user's
 /// preferences and trust record from disk. What could not be read is said
 /// in the notice line. The window driven by the end-to-end tests starts
 /// blank too: they drop a file on it to have data.
@@ -21,10 +22,18 @@ fn start() -> GossiaApp {
     // The interface's language (DESIGN.md, step 13f), before anything is
     // shown: the one chosen in Options, or the system's.
     gossia_i18n::set_language(app.language_for(app.user.prefs.appearance.language));
-    if let Some(path) = std::env::args_os().nth(1)
-        && let Err(e) = app.open_path(std::path::Path::new(&path))
-    {
-        warnings.push(e);
+    // A workbook opens; any other file (a calendar the system hands over,
+    // say) is imported into the blank workbook, as dropping it would.
+    if let Some(path) = std::env::args_os().nth(1).map(std::path::PathBuf::from) {
+        let workbook = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case(gossia_app::workbook_file::EXTENSION));
+        let opened = if workbook {
+            app.open_path(&path)
+        } else {
+            app.begin_import_path(&path)
+        };
+        warnings.extend(opened.err());
     }
     if !warnings.is_empty() {
         app.notice = Some(warnings.join(" "));

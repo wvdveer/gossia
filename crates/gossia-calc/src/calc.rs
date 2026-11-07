@@ -155,6 +155,9 @@ pub use disconnect::{
     Disconnect, DisconnectError, DisconnectPlan, DisconnectRunner, apply_and_rerun, find_disconnect,
 };
 
+#[path = "entries.rs"]
+mod entries;
+
 #[path = "trust.rs"]
 mod trust;
 pub use trust::{Change, ChangeKind, Decision, Fingerprint, TrustStore};

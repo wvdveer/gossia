@@ -2,8 +2,9 @@
 //! "Exporting"): the text of the file, in the tab's own format or as lines of
 //! text. Writing it to disk is the application's job.
 
+use gossia_core::calendar::EntryKind;
 use gossia_core::dataformat::DataFormat;
-use gossia_core::{Value, tabular, xml};
+use gossia_core::{Value, entries_write, tabular, xml};
 use gossia_i18n::tr;
 
 use super::{Calc, SchemaRole};
@@ -27,6 +28,11 @@ pub enum ExportFormat {
     Xlsx,
     /// The same as an OpenDocument spreadsheet of one sheet.
     Ods,
+    /// A tab of calendar events or tasks as an iCalendar file (DESIGN.md,
+    /// "Calendars and contacts, 0.4.0").
+    Calendar,
+    /// A tab of contacts as vCard.
+    Contacts,
 }
 
 impl ExportFormat {
@@ -43,6 +49,8 @@ impl ExportFormat {
             ExportFormat::Tsv => "tsv",
             ExportFormat::Xlsx => "xlsx",
             ExportFormat::Ods => "ods",
+            ExportFormat::Calendar => "ics",
+            ExportFormat::Contacts => "vcf",
         }
     }
 
@@ -56,7 +64,14 @@ impl ExportFormat {
             ExportFormat::Tsv => tr!("TSV, a row for each item"),
             ExportFormat::Xlsx => tr!("Excel workbook, a row for each item"),
             ExportFormat::Ods => tr!("ODS spreadsheet, a row for each item"),
+            ExportFormat::Calendar => tr!("iCalendar file"),
+            ExportFormat::Contacts => tr!("vCard contacts"),
         }
+    }
+
+    /// Whether it writes calendar entries or contacts, in their own format.
+    pub fn is_entries(self) -> bool {
+        matches!(self, ExportFormat::Calendar | ExportFormat::Contacts)
     }
 
     /// Whether it writes rows of an array of objects.
@@ -103,6 +118,11 @@ impl Calc {
                 ExportFormat::Xlsx,
                 ExportFormat::Ods,
             ]);
+        }
+        match self.entry_kind(tab) {
+            Some(EntryKind::Contacts) => formats.push(ExportFormat::Contacts),
+            Some(_) => formats.push(ExportFormat::Calendar),
+            None => {}
         }
         formats
     }
@@ -243,6 +263,9 @@ impl Calc {
                     tab = tab
                 ));
             }
+            ExportFormat::Calendar | ExportFormat::Contacts => {
+                return self.entries_text(tab);
+            }
             ExportFormat::Text => {
                 let lines = self.text_lines(tab)?;
                 let mut text = String::new();
@@ -274,6 +297,25 @@ impl Calc {
             text.push('\n');
         }
         Ok(text)
+    }
+
+    /// A tab of calendar entries as iCalendar, or of contacts as vCard.
+    fn entries_text(&self, tab: &str) -> Result<String, String> {
+        let kind = self
+            .entry_kind(tab)
+            .ok_or_else(|| tr!("tab {tab} holds no calendar entries or contacts", tab = tab))?;
+        let data = self
+            .data(tab)
+            .ok_or_else(|| tr!("there is no tab {tab}", tab = tab))?;
+        let text =
+            gossia_core::json::to_string(data, false).map_err(|e| format!("tab {tab}: {e}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("tab {tab}: {e}"))?;
+        let entries = value.as_array().cloned().unwrap_or_default();
+        Ok(match kind {
+            EntryKind::Contacts => entries_write::write_contacts(&entries),
+            _ => entries_write::write_calendar_now(kind, &entries),
+        })
     }
 
     /// The strings of a tab whose root is an array of strings, without its
