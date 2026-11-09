@@ -121,6 +121,13 @@ impl TypeSpec {
                         required: field.required,
                     }
                 }
+                (Kind::Choice { fields }, Segment::Key(name)) => {
+                    let field = fields.iter().find(|f| &f.name == name)?;
+                    Resolved {
+                        ty: field.ty,
+                        required: false,
+                    }
+                }
                 (Kind::Map { value }, Segment::Key(_)) => Resolved {
                     ty: *value,
                     required: true,
@@ -173,6 +180,7 @@ impl TypeSpec {
             Kind::DateTime => "dateTime".to_owned(),
             Kind::Enum { .. } => "string (choice)".to_owned(),
             Kind::Object { .. } => "object".to_owned(),
+            Kind::Choice { .. } => "choice".to_owned(),
             Kind::Array { items, .. } => format!("array of {}", self.describe(*items)),
             Kind::Map { value } => format!("map of {}", self.describe(*value)),
             Kind::Any => "any".to_owned(),
@@ -226,6 +234,12 @@ pub enum Kind {
     Object {
         fields: Vec<Field>,
     },
+    /// One of several fields, exactly one of which is present: an item of
+    /// an ordered list of child elements (`#children`), lowered from an XSD
+    /// `xs:choice` that repeats. Its value is an object with one key.
+    Choice {
+        fields: Vec<Field>,
+    },
     /// A string-keyed dictionary with one value type. JSON Schema only.
     Map {
         value: TypeId,
@@ -247,6 +261,15 @@ impl Kind {
     /// of mixed content, kept as written ([`StringFormat::Markup`]).
     pub fn is_markup(&self) -> bool {
         matches!(self, Kind::String(c) if c.format == Some(StringFormat::Markup))
+    }
+
+    /// The fields of a record or of a choice: what a key below a node of
+    /// this kind names.
+    pub fn fields(&self) -> Option<&[Field]> {
+        match self {
+            Kind::Object { fields } | Kind::Choice { fields } => Some(fields),
+            _ => None,
+        }
     }
 }
 

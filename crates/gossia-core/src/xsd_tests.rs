@@ -347,9 +347,9 @@ fn a_prefix_of_any_name_means_the_xml_schema_namespace() {
 fn excluded_constructs_are_refused_by_name() {
     let cases: &[(&str, &str, &str)] = &[
         (
-            r#"<xs:choice><xs:element name="a" type="xs:string"/></xs:choice>"#,
+            r#"<xs:sequence><xs:choice maxOccurs="unbounded"><xs:element name="a" type="xs:string"/></xs:choice></xs:sequence>"#,
             "choice",
-            "alternatives",
+            "whole content",
         ),
         (r#"<xs:all/>"#, "all", "alternatives"),
         (
@@ -771,4 +771,89 @@ fn an_exported_schema_leaves_out_the_xsi_attributes() {
     // Nothing to leave out: unchanged.
     let mut doc = xmltree::parse(DC).unwrap();
     assert_eq!(without_xsi(&mut doc), 0);
+}
+
+// ------------------------------------------------- ordered lists (15c)
+
+/// XML Schemas and namespaces, 0.5.0: a repeating `xs:choice` is the ordered
+/// list `#children`, each item one of its elements; attributes stay fields.
+#[test]
+fn a_repeating_choice_is_the_ordered_list_of_children() {
+    let spec = lowered(&schema(
+        r#"<xs:choice minOccurs="0" maxOccurs="unbounded">
+             <xs:element name="rect" type="xs:string"/>
+             <xs:element name="circle">
+               <xs:complexType><xs:attribute name="r" type="xs:integer"/></xs:complexType>
+             </xs:element>
+           </xs:choice>
+           <xs:attribute name="width" type="xs:integer"/>"#,
+    ));
+    assert_eq!(field_names(at(&spec, "")), ["@width", "#children"]);
+    assert!(
+        matches!(
+            at(&spec, "[\"#children\"]").kind,
+            Kind::Array {
+                min_items: None,
+                max_items: None,
+                ..
+            }
+        ),
+        "{:?}",
+        at(&spec, "[\"#children\"]").kind
+    );
+    match &at(&spec, "[\"#children\"][0]").kind {
+        Kind::Choice { fields } => {
+            let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+            assert_eq!(names, ["rect", "circle"]);
+            assert!(fields.iter().all(|f| !f.required));
+        }
+        other => panic!("not a choice: {other:?}"),
+    }
+    assert!(matches!(
+        at(&spec, "[\"#children\"][3].circle[\"@r\"]").kind,
+        Kind::Integer(_)
+    ));
+    let required = lowered(&schema(
+        r#"<xs:choice minOccurs="1" maxOccurs="unbounded"><xs:element name="a" type="xs:string"/></xs:choice>"#,
+    ));
+    let field = &required
+        .resolve(&"[\"#children\"]".parse().unwrap())
+        .unwrap();
+    assert!(field.required);
+}
+
+#[test]
+fn a_choice_that_does_not_repeat_or_whose_elements_repeat_is_refused() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            r#"<xs:choice><xs:element name="a" type="xs:string"/></xs:choice>"#,
+            "maxOccurs",
+            "does not repeat",
+        ),
+        (
+            r#"<xs:choice maxOccurs="unbounded"><xs:element name="a" type="xs:string" maxOccurs="2"/></xs:choice>"#,
+            "maxOccurs",
+            "occurs once",
+        ),
+        (
+            r#"<xs:choice maxOccurs="unbounded"><xs:element name="a" type="xs:string"/><xs:element name="a" type="xs:string"/></xs:choice>"#,
+            "element",
+            "two elements",
+        ),
+        (
+            r#"<xs:choice maxOccurs="unbounded"/>"#,
+            "choice",
+            "at least one",
+        ),
+        (
+            r#"<xs:sequence/><xs:choice maxOccurs="unbounded"><xs:element name="a" type="xs:string"/></xs:choice>"#,
+            "sequence",
+            "one `choice`",
+        ),
+    ];
+    for (body, keyword, reason) in cases {
+        let e = refused(&schema(body));
+        assert_eq!(e.keyword, *keyword, "{body}: {e}");
+        assert!(e.message.contains(reason), "{body}: {e}");
+    }
 }

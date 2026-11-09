@@ -149,7 +149,7 @@ pub fn parse_literal(kind: &Kind, text: &str) -> Result<Value, EntryError> {
                 _ => Value::Str(text.to_owned()),
             })
         }
-        Kind::Array { .. } | Kind::Object { .. } | Kind::Map { .. } => Err(EntryError::Invalid(
+        Kind::Array { .. } | Kind::Object { .. } | Kind::Choice { .. } | Kind::Map { .. } => Err(EntryError::Invalid(
             tr!(
                 "this holds other values: edit them, or enter a formula that gives the whole value"
             )

@@ -123,6 +123,7 @@ pub fn xsd_source() -> &'static str {
     <xs:sequence>
       <xs:element name="annotation" type="xs:Annotation" minOccurs="0"/>
       <xs:element name="sequence" type="xs:Sequence" minOccurs="0"/>
+      <xs:element name="choice" type="xs:Choice" minOccurs="0"/>
       <xs:element name="simpleContent" type="xs:SimpleContent" minOccurs="0"/>
       <xs:element name="attribute" type="xs:Attribute" minOccurs="0" maxOccurs="unbounded"/>
     </xs:sequence>
@@ -136,6 +137,15 @@ pub fn xsd_source() -> &'static str {
       <xs:element name="element" type="xs:Element" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="any" type="xs:Any" minOccurs="0"/>
     </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Choice">
+    <xs:sequence>
+      <xs:element name="annotation" type="xs:Annotation" minOccurs="0"/>
+      <xs:element name="element" type="xs:Element" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="minOccurs" type="xs:Occurs"/>
+    <xs:attribute name="maxOccurs" type="xs:MaxOccurs"/>
   </xs:complexType>
 
   <xs:complexType name="Any">
@@ -395,7 +405,7 @@ mod tests {
     fn the_meta_schema_flags_what_is_not_in_the_subset() {
         let meta = xsd_meta();
         for body in [
-            "<xs:choice/>",
+            "<xs:all/>",
             "<xs:group ref=\"g\"/>",
             "<xs:sequence><xs:element name=\"a\" type=\"xs:string\" nillable=\"true\"/></xs:sequence>",
             "<xs:sequence><xs:element name=\"a\" type=\"xs:string\" maxOccurs=\"many\"/></xs:sequence>",

@@ -681,3 +681,89 @@ fn typed_values_keep_their_spelling_until_they_change() {
     let written = to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
     assert!(written.contains("<n>2</n>"), "{written}");
 }
+
+// ------------------------------------------------- ordered lists (15c)
+
+const LIST: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="svg">
+    <xs:complexType>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="rect">
+          <xs:complexType><xs:attribute name="w" type="xs:integer"/></xs:complexType>
+        </xs:element>
+        <xs:element name="title" type="xs:string"/>
+      </xs:choice>
+      <xs:attribute name="id" type="xs:string"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+/// XML Schemas and namespaces, 0.5.0: the ordered list keeps the elements in
+/// the document's order, with their comments, and an element the choice does
+/// not name stays in its place, flagged.
+#[test]
+fn an_ordered_list_keeps_the_order_and_the_comments() {
+    let spec = lower_str(LIST).unwrap();
+    let text =
+        r#"<svg id="s"><rect w="1"/><!--note--><title>T</title><rect w="2"/><odd>x</odd></svg>"#;
+    let parsed = parse(text, &spec).unwrap();
+    assert_eq!(
+        value_at(&parsed.node, "[\"#children\"][2].rect[\"@w\"]"),
+        Value::Int(2)
+    );
+    let title = parsed
+        .node
+        .get(&"[\"#children\"][1].title".parse().unwrap())
+        .unwrap();
+    assert_eq!(title.comment(), Some("note"));
+    let issues = validate(&spec, &parsed.node);
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].kind, IssueKind::UndeclaredField);
+    assert_eq!(issues[0].path.to_string(), "[\"#children\"][3].odd");
+    let written = to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert!(written.ends_with(text), "{written}");
+    // No children: no list.
+    let parsed = parse(r#"<svg id="s"/>"#, &spec).unwrap();
+    assert!(validate(&spec, &parsed.node).is_empty());
+    assert!(
+        parsed
+            .node
+            .get(&"[\"#children\"]".parse().unwrap())
+            .is_none()
+    );
+}
+
+#[test]
+fn an_item_holds_exactly_one_element() {
+    let spec = lower_str(LIST).unwrap();
+    let mut parsed = parse(r#"<svg><rect w="1"/></svg>"#, &spec).unwrap();
+    let Value::Object(root) = parsed.node.value_mut() else {
+        panic!()
+    };
+    let Value::Array(items) = root["#children"].value_mut() else {
+        panic!()
+    };
+    let Value::Object(item) = items[0].value_mut() else {
+        panic!()
+    };
+    item.insert("title".into(), Node::new(Value::Str("T".into())));
+    items.push(Node::new(Value::Object(Default::default())));
+    let issues = validate(&spec, &parsed.node);
+    let messages: Vec<String> = issues
+        .iter()
+        .map(|i| format!("{}: {}", i.path, i.message))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "[\"#children\"][0]: holds 2 elements, but an item holds one of: rect, title",
+            "[\"#children\"][1]: holds 0 elements, but an item holds one of: rect, title",
+        ]
+    );
+    // Written in the item's order all the same.
+    let written = to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert!(
+        written.contains(r#"<svg><rect w="1"/><title>T</title></svg>"#),
+        "{written}"
+    );
+}

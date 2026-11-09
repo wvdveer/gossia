@@ -190,7 +190,7 @@ fn fit(
     misfits: &mut Vec<(Path, String)>,
 ) -> Value {
     match (&spec.get(ty).kind, value) {
-        (Kind::Object { fields }, Value::Object(map)) => {
+        (Kind::Object { fields } | Kind::Choice { fields }, Value::Object(map)) => {
             let mut out = IndexMap::new();
             for (name, node) in map {
                 match fields.iter().find(|f| &f.name == name) {

@@ -1334,7 +1334,7 @@ fn collect_objects(
     out: &mut Vec<Path>,
 ) {
     match (&spec.get(ty).kind, node.value()) {
-        (Kind::Object { fields }, Value::Object(map)) => {
+        (Kind::Object { fields } | Kind::Choice { fields }, Value::Object(map)) => {
             if ty == target {
                 out.push(path.clone());
             }
@@ -1365,7 +1365,7 @@ fn location_of(spec: &TypeSpec, path: &Path) -> String {
     let mut ty = spec.root();
     for segment in path.segments() {
         match (&spec.get(ty).kind, segment) {
-            (Kind::Object { fields }, Segment::Key(name)) => {
+            (Kind::Object { fields } | Kind::Choice { fields }, Segment::Key(name)) => {
                 out.push('.');
                 out.push_str(name);
                 match fields.iter().find(|f| &f.name == name) {
@@ -1406,7 +1406,7 @@ fn collect_locations(
     stack.push(ty);
     let length = here.len();
     match &spec.get(ty).kind {
-        Kind::Object { fields } => {
+        Kind::Object { fields } | Kind::Choice { fields } => {
             for field in fields {
                 here.push('.');
                 here.push_str(&field.name);

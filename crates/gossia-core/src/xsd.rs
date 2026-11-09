@@ -230,7 +230,11 @@ fn err<T>(keyword: &str, location: &str, message: impl Into<String>) -> Res<T> {
 /// Why a construct that this project knows is refused.
 fn excluded_element(name: &str) -> Option<&'static str> {
     Some(match name {
-        "choice" | "union" | "all" => {
+        "choice" => tr!(
+            "`xs:choice` is supported only as the whole content of a type, repeating: \
+             an ordered list of child elements"
+        ),
+        "union" | "all" => {
             tr!("unions and alternatives are not supported in version 1")
         }
         "any" => tr!("`xs:any` is supported only as the content of a mixed type"),
@@ -1126,7 +1130,13 @@ impl<'a> Lowerer<'a> {
         check_attributes(ct, &["name", "mixed"], location)?;
         check_children(
             ct,
-            &["annotation", "sequence", "simpleContent", "attribute"],
+            &[
+                "annotation",
+                "sequence",
+                "choice",
+                "simpleContent",
+                "attribute",
+            ],
             location,
         )?;
         let description = documentation(ct, location)?;
@@ -1136,12 +1146,13 @@ impl<'a> Lowerer<'a> {
             Some(_) => return err("mixed", location, tr!("must be `true` or `false`")),
         }
         let sequences = named_children(ct, "sequence");
+        let choices = named_children(ct, "choice");
         let simple_content = named_children(ct, "simpleContent");
-        if sequences.len() + simple_content.len() > 1 {
+        if sequences.len() + choices.len() + simple_content.len() > 1 {
             return err(
                 "sequence",
                 location,
-                tr!("a type has one `sequence` or one `simpleContent`"),
+                tr!("a type has one `sequence`, one `choice` or one `simpleContent`"),
             );
         }
         // Attributes first, then the content.
@@ -1244,7 +1255,70 @@ impl<'a> Lowerer<'a> {
                 fields.push(field);
             }
         }
+        if let Some(choice) = choices.first() {
+            fields.push(self.children_field(choice, &format!("{location}/choice"))?);
+        }
         Ok((Kind::Object { fields }, description))
+    }
+
+    /// The field `#children` for a repeating `xs:choice`: an ordered list
+    /// whose items are each one of the choice's elements. An element in it
+    /// occurs once, since the choice itself repeats.
+    fn children_field(&mut self, choice: &'a Element, here: &str) -> Res<Field> {
+        check_attributes(choice, &["minOccurs", "maxOccurs"], here)?;
+        let (min, max) = occurs(choice, here)?;
+        if max.is_some_and(|m| m < 2) {
+            return err(
+                "maxOccurs",
+                here,
+                tr!(
+                    "a `choice` that does not repeat is not supported; a repeating one \
+                     (maxOccurs=\"unbounded\") is the ordered list `#children`"
+                ),
+            );
+        }
+        check_children(choice, &["annotation", "element"], here)?;
+        documentation(choice, here)?;
+        let mut fields: Vec<Field> = Vec::new();
+        for element in named_children(choice, "element") {
+            if occurs(element, here)? != (1, Some(1)) {
+                return err(
+                    "maxOccurs",
+                    here,
+                    tr!("an element in a `choice` occurs once; the `choice` itself repeats"),
+                );
+            }
+            let (name, field) = self.element_field(element, here)?;
+            if fields.iter().any(|f| f.name == name) {
+                return err(
+                    "element",
+                    here,
+                    tr!("there are two elements named `{name}`", name = name),
+                );
+            }
+            fields.push(Field {
+                required: false,
+                ..field
+            });
+        }
+        if fields.is_empty() {
+            return err("choice", here, tr!("a `choice` needs at least one element"));
+        }
+        let item = self.push(Kind::Choice { fields }, here);
+        let list = self.push(
+            Kind::Array {
+                items: item,
+                min_items: (min >= 1).then_some(min),
+                max_items: max,
+            },
+            here,
+        );
+        Ok(Field {
+            name: "#children".to_string(),
+            ty: list,
+            required: min >= 1,
+            namespace: None,
+        })
     }
 
     /// A type of mixed content: a string of markup, with the attributes beside

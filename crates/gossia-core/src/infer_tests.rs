@@ -168,6 +168,7 @@ fn disagreeing_orders_are_reported() {
     let (_, warnings, _) = round_trip("<r><a><x>1</x><y>2</y></a><a><y>3</y><x>4</x></a></r>");
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].starts_with("<r/a>: the child elements"));
+    assert!(warnings[0].contains("#children"), "{warnings:?}");
 }
 
 /// XML Schemas and namespaces, 0.5.0: mixed content is inferred as a mixed
@@ -200,6 +201,69 @@ fn mixed_content_is_kept_as_markup() {
     let parsed = xml::parse(text, &spec).unwrap();
     let written = xml::to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
     assert_eq!(written, text, "no declaration, as in the text");
+}
+
+/// XML Schemas and namespaces, 0.5.0: children in a varying order become the
+/// ordered list `#children`, read and written back in their order.
+#[test]
+fn children_in_a_varying_order_become_an_ordered_list() {
+    let text = "<plist><dict><key>a</key><string>x</string><key>b</key><true/></dict></plist>";
+    let (xsd, warnings, node) = round_trip(text);
+    assert!(
+        xsd.contains(r#"<xs:choice minOccurs="0" maxOccurs="unbounded">"#),
+        "{xsd}"
+    );
+    assert!(
+        xsd.contains(r#"<xs:element name="key" type="xs:string"/>"#),
+        "{xsd}"
+    );
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("#children"), "{warnings:?}");
+    let at = |path: &str| node.get(&path.parse().unwrap()).map(|n| n.value().clone());
+    assert_eq!(
+        at("dict[\"#children\"][0].key"),
+        Some(Value::Str("a".into()))
+    );
+    assert_eq!(
+        at("dict[\"#children\"][2].key"),
+        Some(Value::Str("b".into()))
+    );
+    assert_eq!(
+        at("dict[\"#children\"][3].true"),
+        Some(Value::Str(String::new()))
+    );
+    let doc = xmltree::parse(text).unwrap();
+    let inferred = infer_xsd(&doc).unwrap();
+    let spec = xsd::lower_str(&inferred.text).unwrap();
+    let parsed = xml::parse(text, &spec).unwrap();
+    let written = xml::to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert!(written.ends_with(text), "{written}");
+}
+
+/// Attributes with the document's own prefix (Word's `w:id`) are in its
+/// namespace: qualified by default when they all are, one by one otherwise.
+#[test]
+fn attributes_in_the_documents_namespace_are_qualified() {
+    let text = r#"<w:doc xmlns:w="urn:w"><w:mark w:id="1"/><w:mark w:id="2"/></w:doc>"#;
+    let (xsd, _, node) = round_trip(text);
+    assert!(xsd.contains(r#"attributeFormDefault="qualified""#), "{xsd}");
+    assert_eq!(
+        node.get(&"mark[1][\"@id\"]".parse().unwrap())
+            .map(|n| n.value().clone()),
+        Some(Value::Int(2))
+    );
+    let text = r#"<w:doc xmlns:w="urn:w" plain="x"><w:mark w:id="1"/></w:doc>"#;
+    let (xsd, _, _) = round_trip(text);
+    assert!(!xsd.contains("attributeFormDefault"), "{xsd}");
+    assert!(
+        xsd.contains(
+            r#"<xs:attribute name="id" type="xs:integer" use="required" form="qualified"/>"#
+        ),
+        "{xsd}"
+    );
+    let both = r#"<w:doc xmlns:w="urn:w"><w:mark w:id="1"/><w:mark id="2"/></w:doc>"#;
+    let e = infer_xsd(&xmltree::parse(both).unwrap()).unwrap_err();
+    assert!(e.contains("both with and without a prefix"), "{e}");
 }
 
 #[test]

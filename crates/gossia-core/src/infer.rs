@@ -341,7 +341,8 @@ fn object(fields: Vec<(&str, Node)>) -> Node {
 /// Infers an XSD from an XML document. More than one namespace is outside the
 /// subset, and refused with a message, except for the built-in `xml:` and
 /// `xsi:` attributes, which the schema names with `ref`. Mixed content is
-/// inferred as a mixed type, whose inside is kept as markup.
+/// inferred as a mixed type, whose inside is kept as markup, and children
+/// in a varying order as a repeating choice, the ordered list `#children`.
 pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
     let namespace = doc.root.namespace.clone();
     let mut qualified = None;
@@ -352,6 +353,10 @@ pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
     // The prefixes of the built-in attributes, as the document writes them.
     let mut builtin: Vec<(String, String)> = Vec::new();
     builtin_prefixes(&doc.root, &mut builtin);
+    // Attributes in the document's namespace (`w:id` in Word) are qualified:
+    // by default when they all are, one by one otherwise.
+    let (qualified_attributes, plain_attributes) = shape.attribute_forms();
+    let attributes_qualified = qualified_attributes > 0 && plain_attributes == 0;
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"");
     for (prefix, uri) in builtin.iter().filter(|(p, _)| p != "xml") {
@@ -370,6 +375,9 @@ pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
                 "unqualified"
             }
         ));
+        if attributes_qualified {
+            out.push_str(" attributeFormDefault=\"qualified\"");
+        }
     }
     out.push_str(">\n");
     if builtin.iter().any(|(_, uri)| uri == XML_NS) {
@@ -382,6 +390,7 @@ pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
         &doc.root.name,
         "",
         1,
+        attributes_qualified,
         &mut out,
         &mut warnings,
     );
@@ -423,7 +432,8 @@ fn attribute_key(attribute: &xmltree::Attribute) -> String {
 }
 
 /// One namespace at most: the root's. The other elements are all in it
-/// (`qualified`) or all in none (`unqualified`), and no attribute has a prefix.
+/// (`qualified`) or all in none (`unqualified`), and an attribute with a
+/// prefix is in the root's namespace or is a built-in one.
 fn check_namespaces(
     element: &Element,
     namespace: Option<&str>,
@@ -453,7 +463,7 @@ fn check_namespaces(
     if let Some(attribute) = element
         .attributes
         .iter()
-        .find(|a| a.prefix.is_some() && !is_builtin(a))
+        .find(|a| a.prefix.is_some() && !is_builtin(a) && a.namespace.as_deref() != namespace)
     {
         return Err(tr!(
             "the attribute {prefix}:{name} of <{name2}> is in a namespace, which version 1 does not support",
@@ -568,8 +578,8 @@ fn plain_digits(digits: &str) -> bool {
 struct ElementShape {
     instances: usize,
     /// The attributes, in the order merged from every instance (as the
-    /// children are), with how many instances had each.
-    attributes: IndexMap<String, (usize, TextShape)>,
+    /// children are).
+    attributes: IndexMap<String, AttributeShape>,
     /// The child elements, in the order merged from every instance.
     children: IndexMap<String, ChildShape>,
     /// The instances that held child elements.
@@ -581,6 +591,15 @@ struct ElementShape {
     /// An instance held text next to child elements: the position is mixed
     /// content, kept as markup, and what is inside it is not looked at.
     mixed: bool,
+}
+
+#[derive(Debug, Default)]
+struct AttributeShape {
+    /// How many instances of the element had it.
+    present: usize,
+    text: TextShape,
+    /// It is in the document's namespace (it has its prefix).
+    qualified: bool,
 }
 
 #[derive(Debug, Default)]
@@ -605,14 +624,25 @@ impl ElementShape {
                 Some(i) => i,
                 None => {
                     let at = after.map_or(0, |a| a + 1);
-                    self.attributes.shift_insert(at, key, Default::default());
+                    self.attributes
+                        .shift_insert(at, key.clone(), Default::default());
                     at
                 }
             };
             after = Some(after.map_or(at, |a| a.max(at)));
+            let qualified = attribute.namespace.is_some() && !is_builtin(attribute);
             let entry = &mut self.attributes[at];
-            entry.0 += 1;
-            entry.1.observe(&attribute.value);
+            if entry.present > 0 && entry.qualified != qualified {
+                return Err(tr!(
+                    "<{path}> has the attribute {name} both with and without a prefix, \
+                     which version 1 does not support",
+                    path = path,
+                    name = key
+                ));
+            }
+            entry.present += 1;
+            entry.qualified = qualified;
+            entry.text.observe(&attribute.value);
         }
         let mut here: IndexMap<&str, usize> = IndexMap::new();
         let mut last_name: Option<&str> = None;
@@ -667,13 +697,37 @@ impl ElementShape {
         Ok(())
     }
 
+    /// How many attributes, here and below, are in the document's namespace
+    /// and how many in none (the built-in ones are neither).
+    fn attribute_forms(&self) -> (usize, usize) {
+        let mut counts = (0, 0);
+        for (name, a) in &self.attributes {
+            if a.qualified {
+                counts.0 += 1;
+            } else if !name.contains(':') {
+                counts.1 += 1;
+            }
+        }
+        if !self.mixed {
+            for child in self.children.values() {
+                let (q, p) = child.shape.attribute_forms();
+                counts.0 += q;
+                counts.1 += p;
+            }
+        }
+        counts
+    }
+
     /// Writes the declaration of the element, with `occurs` already made.
+    /// `qualified` says whether the schema qualifies attributes by default.
+    #[allow(clippy::too_many_arguments)]
     fn write(
         &self,
         name: &str,
         path: &str,
         occurs: &str,
         depth: usize,
+        qualified: bool,
         out: &mut String,
         warnings: &mut Vec<String>,
     ) {
@@ -692,16 +746,9 @@ impl ElementShape {
                  {pad}      <xs:any processContents=\"skip\" minOccurs=\"0\" maxOccurs=\"unbounded\"/>\n\
                  {pad}    </xs:sequence>\n"
             ));
-            self.write_attributes(&format!("{pad}    "), out);
+            self.write_attributes(&format!("{pad}    "), qualified, out);
             out.push_str(&format!("{pad}  </xs:complexType>\n{pad}</xs:element>\n"));
             return;
-        }
-        if self.order_differs {
-            warnings.push(tr!(
-                "<{path}>: the child elements are not always in the same order; the order \
-                 seen first is used, and the elements are written in it.",
-                path = path
-            ));
         }
         if self.with_elements == 0 && self.attributes.is_empty() {
             out.push_str(&format!(
@@ -722,13 +769,28 @@ impl ElementShape {
                     path = path
                 ));
             }
-            out.push_str(&format!("{inner}<xs:sequence>\n"));
+            // Children in a varying order are one ordered list, of which
+            // each item is one of them.
+            let group = if self.order_differs {
+                warnings.push(tr!(
+                    "<{path}>: the child elements are not always in the same order, so they \
+                     are kept in their order as one list, #children.",
+                    path = path
+                ));
+                out.push_str(&format!(
+                    "{inner}<xs:choice minOccurs=\"0\" maxOccurs=\"unbounded\">\n"
+                ));
+                "choice"
+            } else {
+                out.push_str(&format!("{inner}<xs:sequence>\n"));
+                "sequence"
+            };
             for (child_name, child) in &self.children {
                 let mut occurs = String::new();
-                if child.present < self.instances {
+                if child.present < self.instances && !self.order_differs {
                     occurs.push_str(" minOccurs=\"0\"");
                 }
-                if child.most > 1 {
+                if child.most > 1 && !self.order_differs {
                     occurs.push_str(" maxOccurs=\"unbounded\"");
                 }
                 child.shape.write(
@@ -736,30 +798,31 @@ impl ElementShape {
                     &format!("{path}/{child_name}"),
                     &occurs,
                     depth + 3,
+                    qualified,
                     out,
                     warnings,
                 );
             }
-            out.push_str(&format!("{inner}</xs:sequence>\n"));
-            self.write_attributes(&inner, out);
+            out.push_str(&format!("{inner}</xs:{group}>\n"));
+            self.write_attributes(&inner, qualified, out);
         } else if self.text.filled > 0 {
             out.push_str(&format!(
                 "{inner}<xs:simpleContent>\n{inner}  <xs:extension base=\"xs:{}\">\n",
                 self.text.xsd_type()
             ));
-            self.write_attributes(&format!("{inner}    "), out);
+            self.write_attributes(&format!("{inner}    "), qualified, out);
             out.push_str(&format!(
                 "{inner}  </xs:extension>\n{inner}</xs:simpleContent>\n"
             ));
         } else {
-            self.write_attributes(&inner, out);
+            self.write_attributes(&inner, qualified, out);
         }
         out.push_str(&format!("{pad}  </xs:complexType>\n{pad}</xs:element>\n"));
     }
 
-    fn write_attributes(&self, pad: &str, out: &mut String) {
-        for (name, (present, text)) in &self.attributes {
-            let required = if *present == self.instances {
+    fn write_attributes(&self, pad: &str, qualified: bool, out: &mut String) {
+        for (name, a) in &self.attributes {
+            let required = if a.present == self.instances {
                 " use=\"required\""
             } else {
                 ""
@@ -772,10 +835,15 @@ impl ElementShape {
                 ));
                 continue;
             }
+            let form = if a.qualified && !qualified {
+                " form=\"qualified\""
+            } else {
+                ""
+            };
             out.push_str(&format!(
-                "{pad}<xs:attribute name=\"{}\" type=\"xs:{}\"{required}/>\n",
+                "{pad}<xs:attribute name=\"{}\" type=\"xs:{}\"{required}{form}/>\n",
                 xmltree::escape_attribute(name),
-                text.xsd_type()
+                a.text.xsd_type()
             ));
         }
     }

@@ -289,6 +289,19 @@ impl GossiaApp {
             )),
             Kind::Array { .. } => Value::Array(Vec::new()),
             Kind::Map { .. } => Value::Object(Default::default()),
+            // An item of an ordered list: its first element.
+            Kind::Choice { fields } => Value::Object(
+                fields
+                    .iter()
+                    .take(1)
+                    .map(|f| {
+                        (
+                            f.name.clone(),
+                            gossia_core::Node::new(GossiaApp::default_value(spec, f.ty)),
+                        )
+                    })
+                    .collect(),
+            ),
             Kind::Object { fields } => Value::Object(
                 fields
                     .iter()

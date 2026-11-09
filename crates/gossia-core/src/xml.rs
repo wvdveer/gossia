@@ -354,6 +354,13 @@ impl Reader<'_> {
             }
             None => {}
         }
+        if let Some((list, choices)) = self.children_list(fields) {
+            let items = self.children(element, &choices, &path.key("#children"));
+            if !items.is_empty() || list.required {
+                map.insert("#children".to_string(), Node::new(Value::Array(items)));
+            }
+            return Node::new(Value::Object(map));
+        }
         // The child elements, grouped by name; a comment goes to the next element.
         let mut groups: IndexMap<String, Vec<(&Element, Option<String>)>> = IndexMap::new();
         let mut pending: Vec<&str> = Vec::new();
@@ -409,6 +416,52 @@ impl Reader<'_> {
             map.insert(name, node);
         }
         Node::new(Value::Object(map))
+    }
+
+    /// The field `#children` among `fields`, if there is one: the type of the
+    /// list and the fields of its choice.
+    fn children_list<'f>(&self, fields: &'f [Field]) -> Option<(&'f Field, Vec<Field>)> {
+        let field = fields.iter().find(|f| f.name == "#children")?;
+        let Kind::Array { items, .. } = &self.spec.get(field.ty).kind else {
+            return None;
+        };
+        match &self.spec.get(*items).kind {
+            Kind::Choice { fields } => Some((field, fields.clone())),
+            _ => None,
+        }
+    }
+
+    /// The child elements as one ordered list, each item `{name: value}`;
+    /// one the choice does not name is kept untyped, for validation to flag.
+    /// A comment goes with the element after it.
+    fn children(&mut self, element: &Element, choices: &[Field], path: &Path) -> Vec<Node> {
+        let mut items: Vec<Node> = Vec::new();
+        let mut pending: Vec<&str> = Vec::new();
+        for child in &element.children {
+            match child {
+                Child::Comment(c) => pending.push(c),
+                Child::Element(e) => {
+                    let comment = (!pending.is_empty()).then(|| {
+                        pending.join(
+                            "
+",
+                        )
+                    });
+                    pending.clear();
+                    let key = self.element_key(choices, e);
+                    let here = path.index(items.len()).key(key.clone());
+                    let node = match choices.iter().find(|f| f.name == key) {
+                        Some(field) => self.element(e, field.ty, &here),
+                        None => self.generic(e, &here),
+                    };
+                    let mut item = IndexMap::new();
+                    item.insert(key, node.with_comment(comment));
+                    items.push(Node::new(Value::Object(item)));
+                }
+                Child::Text(_) => {}
+            }
+        }
+        items
     }
 
     fn occurrences(
@@ -569,7 +622,9 @@ fn scalar_of(kind: &Kind, text: &str) -> Value {
                 Value::Str(text.to_string())
             }
         }
-        Kind::Array { .. } | Kind::Object { .. } | Kind::Map { .. } => Value::Str(text.to_string()),
+        Kind::Array { .. } | Kind::Object { .. } | Kind::Choice { .. } | Kind::Map { .. } => {
+            Value::Str(text.to_string())
+        }
     }
 }
 
@@ -684,10 +739,12 @@ type Scope = [(Option<String>, String)];
 impl Writer<'_> {
     /// The field of a record of type `ty`.
     fn field(&self, ty: Option<TypeId>, name: &str) -> Option<&Field> {
-        match &self.spec.get(ty?).kind {
-            Kind::Object { fields } => fields.iter().find(|f| f.name == name),
-            _ => None,
-        }
+        self.spec
+            .get(ty?)
+            .kind
+            .fields()?
+            .iter()
+            .find(|f| f.name == name)
     }
 
     /// The type of a field of a record of type `ty`.
@@ -826,6 +883,8 @@ impl Writer<'_> {
                                 namespace: None,
                             });
                         }
+                    } else if key == "#children" {
+                        self.push_list(element, child, field.map(|f| f.ty), scope);
                     } else if key == "#text" {
                         let field = self.field_type(ty, key);
                         if let Some(text) = self.text_of(child, field)
@@ -844,6 +903,26 @@ impl Writer<'_> {
                 {
                     push_text(element, text, self.markup(ty));
                 }
+            }
+        }
+    }
+
+    /// Adds the elements of an ordered list `#children`, in its order: each
+    /// item is `{name: value}`, and its type the list's choice.
+    fn push_list(&self, parent: &mut Element, node: &Node, ty: Option<TypeId>, scope: &Scope) {
+        let Value::Array(items) = node.value() else {
+            return;
+        };
+        let choice = ty.and_then(|ty| match &self.spec.get(ty).kind {
+            Kind::Array { items, .. } => Some(*items),
+            _ => None,
+        });
+        for item in items {
+            let Value::Object(fields) = item.value() else {
+                continue;
+            };
+            for (key, child) in fields {
+                self.push_children(parent, key, child, self.field(choice, key), scope);
             }
         }
     }

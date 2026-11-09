@@ -212,7 +212,7 @@ impl Palette {
             Kind::Bool => self.boolean,
             Kind::Date | Kind::DateTime => self.date,
             Kind::Array { .. } => self.array,
-            Kind::Object { .. } | Kind::Map { .. } => self.object,
+            Kind::Object { .. } | Kind::Choice { .. } | Kind::Map { .. } => self.object,
             Kind::Any => self.any,
         }
     }

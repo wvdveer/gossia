@@ -62,6 +62,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::DateTime => "dateTime",
         Kind::Array { .. } => "array",
         Kind::Object { .. } => "object",
+        Kind::Choice { .. } => "object",
         Kind::Map { .. } => "map",
         Kind::Enum { .. } => "string",
         Kind::Any => "any",
@@ -167,6 +168,39 @@ fn check(spec: &TypeSpec, ty: TypeId, node: &Node, path: &Path, issues: &mut Vec
                         kind: IssueKind::UndeclaredField,
                         message: tr!("`{key}` is not a field of this object", key = key),
                     });
+                }
+            }
+        }
+        (Kind::Choice { fields }, Value::Object(map)) => {
+            let names = || {
+                fields
+                    .iter()
+                    .map(|f| f.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            if map.len() != 1 {
+                push(
+                    IssueKind::Constraint,
+                    tr!(
+                        "holds {count} elements, but an item holds one of: {names}",
+                        count = map.len(),
+                        names = names()
+                    ),
+                );
+            }
+            for (key, child) in map {
+                match fields.iter().find(|f| &f.name == key) {
+                    Some(field) => check(spec, field.ty, child, &path.key(key.clone()), issues),
+                    None => issues.push(Issue {
+                        path: path.key(key.clone()),
+                        kind: IssueKind::UndeclaredField,
+                        message: tr!(
+                            "`{key}` is not one of the elements here: {names}",
+                            key = key,
+                            names = names()
+                        ),
+                    }),
                 }
             }
         }
