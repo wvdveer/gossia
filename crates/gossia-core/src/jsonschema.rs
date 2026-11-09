@@ -663,6 +663,7 @@ impl<'a> Lowerer<'a> {
                 name: name.clone(),
                 ty,
                 required: required.contains(name),
+                namespace: None,
             });
         }
         Ok(Kind::Object { fields })

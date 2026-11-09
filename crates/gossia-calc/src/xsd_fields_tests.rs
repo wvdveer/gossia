@@ -288,3 +288,35 @@ fn a_field_is_defined_by_its_element_in_the_xsd() {
         p("element.complexType")
     );
 }
+
+/// 0.5.0: the `xsi:` attributes Gossia declares are left out of an exported
+/// `.xsd`; the tab keeps them.
+#[test]
+fn an_exported_xsd_leaves_out_the_xsi_attributes() {
+    const WITH_XSI: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="http://www.w3.org/2001/xml.xsd"/>
+  <xs:element name="note">
+    <xs:complexType>
+      <xs:attribute ref="xsi:type"/>
+      <xs:attribute ref="xml:lang"/>
+      <xs:attribute name="id" type="xs:string"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
+"#;
+    let mut calc = Calc::new(Arc::new(FakeEngine::new()));
+    let schema = xml::parse(WITH_XSI, metaschema::xsd_meta()).unwrap();
+    calc.add_xsd_sheet("Note schema", schema.node, schema.document)
+        .unwrap();
+    assert_eq!(calc.schema_error("Note schema"), None);
+    let text = calc
+        .export_text("Note schema", ExportFormat::XML, true)
+        .unwrap();
+    assert!(!text.contains("xsi"), "{text}");
+    assert!(text.contains(r#"<xs:attribute ref="xml:lang"/>"#), "{text}");
+    assert!(
+        text.contains(r#"<xs:attribute name="id" type="xs:string"/>"#),
+        "{text}"
+    );
+}

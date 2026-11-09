@@ -13,7 +13,7 @@ use gossia_i18n::tr;
 use indexmap::IndexMap;
 
 use crate::value::{Node, Value};
-use crate::xmltree::{self, Document, Element};
+use crate::xmltree::{self, Document, Element, XML_NS, XSI_NS};
 
 /// A JSON Schema inferred from JSON data, and the data as it is imported.
 #[derive(Debug, Clone)]
@@ -339,8 +339,9 @@ fn object(fields: Vec<(&str, Node)>) -> Node {
 // ------------------------------------------------------------------- XML
 
 /// Infers an XSD from an XML document. More than one namespace is outside the
-/// subset, and refused with a message. Mixed content is inferred as a mixed
-/// type, whose inside is kept as markup.
+/// subset, and refused with a message, except for the built-in `xml:` and
+/// `xsi:` attributes, which the schema names with `ref`. Mixed content is
+/// inferred as a mixed type, whose inside is kept as markup.
 pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
     let namespace = doc.root.namespace.clone();
     let mut qualified = None;
@@ -348,8 +349,17 @@ pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
     let mut shape = ElementShape::default();
     shape.observe(&doc.root, &doc.root.name)?;
     let mut warnings = doc.warnings.clone();
+    // The prefixes of the built-in attributes, as the document writes them.
+    let mut builtin: Vec<(String, String)> = Vec::new();
+    builtin_prefixes(&doc.root, &mut builtin);
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"");
+    for (prefix, uri) in builtin.iter().filter(|(p, _)| p != "xml") {
+        out.push_str(&format!(
+            " xmlns:{prefix}=\"{}\"",
+            xmltree::escape_attribute(uri)
+        ));
+    }
     if let Some(ns) = &namespace {
         out.push_str(&format!(
             " targetNamespace=\"{}\" elementFormDefault=\"{}\"",
@@ -362,6 +372,11 @@ pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
         ));
     }
     out.push_str(">\n");
+    if builtin.iter().any(|(_, uri)| uri == XML_NS) {
+        out.push_str(&format!(
+            "  <xs:import namespace=\"{XML_NS}\" schemaLocation=\"http://www.w3.org/2001/xml.xsd\"/>\n"
+        ));
+    }
     shape.write(
         &doc.root.name,
         &doc.root.name,
@@ -375,6 +390,36 @@ pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
         text: out,
         warnings,
     })
+}
+
+/// Whether an attribute is one of the built-in `xml:` and `xsi:` ones.
+fn is_builtin(attribute: &xmltree::Attribute) -> bool {
+    matches!(attribute.namespace.as_deref(), Some(XML_NS | XSI_NS))
+}
+
+/// The prefixes the built-in attributes are written with, each namespace
+/// once, in the order first seen.
+fn builtin_prefixes(element: &Element, out: &mut Vec<(String, String)>) {
+    for a in element.attributes.iter().filter(|a| is_builtin(a)) {
+        let (Some(prefix), Some(uri)) = (&a.prefix, &a.namespace) else {
+            continue;
+        };
+        if !out.iter().any(|(_, u)| u == uri) {
+            out.push((prefix.clone(), uri.clone()));
+        }
+    }
+    for child in element.elements() {
+        builtin_prefixes(child, out);
+    }
+}
+
+/// The key of an attribute in a shape: its name, with the prefix for a
+/// built-in one.
+fn attribute_key(attribute: &xmltree::Attribute) -> String {
+    match &attribute.prefix {
+        Some(p) if is_builtin(attribute) => format!("{p}:{}", attribute.name),
+        _ => attribute.name.clone(),
+    }
 }
 
 /// One namespace at most: the root's. The other elements are all in it
@@ -405,7 +450,11 @@ fn check_namespaces(
             _ => return Err(more()),
         }
     }
-    if let Some(attribute) = element.attributes.iter().find(|a| a.prefix.is_some()) {
+    if let Some(attribute) = element
+        .attributes
+        .iter()
+        .find(|a| a.prefix.is_some() && !is_builtin(a))
+    {
         return Err(tr!(
             "the attribute {prefix}:{name} of <{name2}> is in a namespace, which version 1 does not support",
             prefix = attribute.prefix.as_deref().unwrap_or_default(),
@@ -518,8 +567,8 @@ fn plain_digits(digits: &str) -> bool {
 #[derive(Debug, Default)]
 struct ElementShape {
     instances: usize,
-    /// The attributes, in the order first seen, with how many instances had
-    /// each.
+    /// The attributes, in the order merged from every instance (as the
+    /// children are), with how many instances had each.
     attributes: IndexMap<String, (usize, TextShape)>,
     /// The child elements, in the order merged from every instance.
     children: IndexMap<String, ChildShape>,
@@ -546,8 +595,22 @@ struct ChildShape {
 impl ElementShape {
     fn observe(&mut self, element: &Element, path: &str) -> Result<(), String> {
         self.instances += 1;
+        // A new attribute goes after the one before it in this instance, so
+        // that writing keeps the order of documents whose instances leave out
+        // different attributes.
+        let mut after: Option<usize> = None;
         for attribute in &element.attributes {
-            let entry = self.attributes.entry(attribute.name.clone()).or_default();
+            let key = attribute_key(attribute);
+            let at = match self.attributes.get_index_of(&key) {
+                Some(i) => i,
+                None => {
+                    let at = after.map_or(0, |a| a + 1);
+                    self.attributes.shift_insert(at, key, Default::default());
+                    at
+                }
+            };
+            after = Some(after.map_or(at, |a| a.max(at)));
+            let entry = &mut self.attributes[at];
             entry.0 += 1;
             entry.1.observe(&attribute.value);
         }
@@ -701,6 +764,14 @@ impl ElementShape {
             } else {
                 ""
             };
+            if name.contains(':') {
+                // A built-in attribute: the schema refers to it.
+                out.push_str(&format!(
+                    "{pad}<xs:attribute ref=\"{}\"{required}/>\n",
+                    xmltree::escape_attribute(name)
+                ));
+                continue;
+            }
             out.push_str(&format!(
                 "{pad}<xs:attribute name=\"{}\" type=\"xs:{}\"{required}/>\n",
                 xmltree::escape_attribute(name),

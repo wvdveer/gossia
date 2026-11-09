@@ -14,7 +14,7 @@ use gossia_core::{infer, xml, xsd};
 
 /// The build step that is done. A document of a later step only has to read
 /// and write back as a tree.
-const DONE: &str = "15a";
+const DONE: &str = "15b";
 
 /// Each document, and the step after which it imports.
 const CORPUS: &[(&str, &str)] = &[
@@ -23,19 +23,20 @@ const CORPUS: &[(&str, &str)] = &[
     ("kml.xml", "15a"),
     ("project.csproj", "15a"),
     ("docbook.xml", "15a"),
-    // `xml:` and `xsi:` attributes, prefixed names, several namespaces.
+    // `xml:` and `xsi:` attributes beside one namespace.
     ("page.xhtml", "15b"),
-    ("feed.rss", "15b"),
     ("pom.xml", "15b"),
     ("track.gpx", "15b"),
-    ("AndroidManifest.xml", "15b"),
-    ("envelope.soap.xml", "15b"),
-    ("MainWindow.xaml", "15b"),
     ("model.archimate", "15b"),
     // Children in a varying order.
     ("settings.plist", "15c"),
     ("drawing.svg", "15c"),
     ("document.xml", "15c"),
+    // Several namespaces, one XSD tab each.
+    ("feed.rss", "15d"),
+    ("AndroidManifest.xml", "15d"),
+    ("envelope.soap.xml", "15d"),
+    ("MainWindow.xaml", "15d"),
 ];
 
 fn text_of(name: &str) -> String {

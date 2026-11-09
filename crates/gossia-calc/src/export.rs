@@ -7,7 +7,7 @@ use gossia_core::dataformat::DataFormat;
 use gossia_core::{Value, entries_write, tabular, xml};
 use gossia_i18n::tr;
 
-use super::{Calc, SchemaRole};
+use super::{Calc, SchemaFormat, SchemaRole};
 
 /// What an exported file is written as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +288,15 @@ impl Calc {
             }
             ExportFormat::Data(DataFormat::Xml) => {
                 let document = sheet.xml.clone().unwrap_or_default();
-                xml::to_string(&sheet.data, &sheet.spec, &document, pretty)
+                let text = xml::to_string(&sheet.data, &sheet.spec, &document, pretty);
+                match text {
+                    // A schema for other programs, without the `xsi:`
+                    // attributes Gossia declares for itself.
+                    Ok(text) if self.schema_format(tab) == Some(SchemaFormat::Xsd) => {
+                        Ok(without_xsi(text, pretty))
+                    }
+                    other => other,
+                }
             }
             ExportFormat::Data(format) => format.write(&sheet.data, pretty),
         }
@@ -349,4 +357,15 @@ impl Calc {
         }
         Ok(lines)
     }
+}
+
+/// An XSD's text without its `xs:attribute ref="xsi:…"` lines.
+fn without_xsi(text: String, pretty: bool) -> String {
+    let Ok(mut doc) = gossia_core::xmltree::parse(&text) else {
+        return text;
+    };
+    if gossia_core::xsd::without_xsi(&mut doc) == 0 {
+        return text;
+    }
+    gossia_core::xmltree::write(&doc, pretty)
 }

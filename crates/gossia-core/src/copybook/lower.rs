@@ -896,6 +896,7 @@ fn add_fields(
                 name: key.clone(),
                 ty,
                 required: slot.redefines.is_none(),
+                namespace: None,
             },
         );
     }

@@ -83,13 +83,20 @@ pub fn xsd_source() -> &'static str {
   <xs:complexType name="Schema">
     <xs:sequence>
       <xs:element name="annotation" type="xs:Annotation" minOccurs="0"/>
+      <xs:element name="import" type="xs:Import" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="element" type="xs:Element"/>
+      <xs:element name="attribute" type="xs:Attribute" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="complexType" type="xs:ComplexType" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="simpleType" type="xs:SimpleType" minOccurs="0" maxOccurs="unbounded"/>
     </xs:sequence>
     <xs:attribute name="targetNamespace" type="xs:string"/>
     <xs:attribute name="elementFormDefault" type="xs:FormDefault"/>
-    <xs:attribute name="attributeFormDefault" type="xs:AttributeForm"/>
+    <xs:attribute name="attributeFormDefault" type="xs:FormDefault"/>
+  </xs:complexType>
+
+  <xs:complexType name="Import">
+    <xs:attribute name="namespace" type="xs:string" use="required"/>
+    <xs:attribute name="schemaLocation" type="xs:string"/>
   </xs:complexType>
 
   <xs:complexType name="Annotation">
@@ -109,6 +116,7 @@ pub fn xsd_source() -> &'static str {
     <xs:attribute name="type" type="xs:string"/>
     <xs:attribute name="minOccurs" type="xs:Occurs"/>
     <xs:attribute name="maxOccurs" type="xs:MaxOccurs"/>
+    <xs:attribute name="form" type="xs:FormDefault"/>
   </xs:complexType>
 
   <xs:complexType name="ComplexType">
@@ -155,9 +163,11 @@ pub fn xsd_source() -> &'static str {
       <xs:element name="annotation" type="xs:Annotation" minOccurs="0"/>
       <xs:element name="simpleType" type="xs:SimpleType" minOccurs="0"/>
     </xs:sequence>
-    <xs:attribute name="name" type="xs:string" use="required"/>
+    <xs:attribute name="name" type="xs:string"/>
+    <xs:attribute name="ref" type="xs:string"/>
     <xs:attribute name="type" type="xs:string"/>
     <xs:attribute name="use" type="xs:Use"/>
+    <xs:attribute name="form" type="xs:FormDefault"/>
   </xs:complexType>
 
   <xs:complexType name="SimpleType">
@@ -187,12 +197,6 @@ pub fn xsd_source() -> &'static str {
   <xs:simpleType name="FormDefault">
     <xs:restriction base="xs:string">
       <xs:enumeration value="qualified"/>
-      <xs:enumeration value="unqualified"/>
-    </xs:restriction>
-  </xs:simpleType>
-
-  <xs:simpleType name="AttributeForm">
-    <xs:restriction base="xs:string">
       <xs:enumeration value="unqualified"/>
     </xs:restriction>
   </xs:simpleType>

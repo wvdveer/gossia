@@ -465,14 +465,9 @@ fn excluded_constructs_are_refused_by_name() {
 
 #[test]
 fn the_shape_of_the_document_is_checked() {
-    // Two global elements, none, an unnamed type, a type in another namespace.
-    let two = refused(
-        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
-          <xs:element name="a" type="xs:string"/><xs:element name="b" type="xs:string"/></xs:schema>"#,
-    );
-    assert!(two.message.contains("one global"), "{two}");
+    // No global element, an unnamed type, a type in another namespace.
     let none = refused(r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"/>"#);
-    assert!(none.message.contains("one global"), "{none}");
+    assert!(none.message.contains("global `xs:element`"), "{none}");
     let missing = refused(
         r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
           <xs:element name="a" type="Nope"/></xs:schema>"#,
@@ -493,7 +488,12 @@ fn the_shape_of_the_document_is_checked() {
         r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:o="urn:o">
           <xs:element name="a" type="o:T"/></xs:schema>"#,
     );
-    assert!(foreign.message.contains("another namespace"), "{foreign}");
+    assert!(
+        foreign
+            .message
+            .contains("no schema for the namespace urn:o"),
+        "{foreign}"
+    );
 }
 
 #[test]
@@ -660,4 +660,115 @@ fn a_schema_held_as_a_tree_lowers_the_same_as_its_text() {
     let spec = lower_node(&doc, &[(Some("xs".to_string()), XSD_NS.to_string())]).unwrap();
     assert_eq!(field_names(at(&spec, "")), ["a", "b"]);
     assert!(matches!(at(&spec, "b").kind, Kind::Integer(_)));
+}
+
+fn fields(def: &TypeDef) -> Vec<(String, Option<String>)> {
+    match &def.kind {
+        Kind::Object { fields } => fields
+            .iter()
+            .map(|f| (f.name.clone(), f.namespace.clone()))
+            .collect(),
+        other => panic!("not an object: {other:?}"),
+    }
+}
+
+const MAIN: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:dc="urn:dc" xmlns:m="urn:main" targetNamespace="urn:main"
+    elementFormDefault="qualified">
+  <xs:import namespace="urn:dc" schemaLocation="dc.xsd"/>
+  <xs:element name="book">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="dc:title"/>
+        <xs:element ref="m:note" minOccurs="0"/>
+        <xs:element name="local" type="xs:string" form="unqualified"/>
+      </xs:sequence>
+      <xs:attribute ref="dc:lang"/>
+      <xs:attribute ref="xml:lang"/>
+      <xs:attribute ref="xsi:type" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>
+      <xs:attribute name="id" type="xs:string"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="note" type="xs:string"/>
+</xs:schema>"#;
+
+const DC: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    targetNamespace="urn:dc" elementFormDefault="qualified">
+  <xs:element name="title" type="xs:string"/>
+  <xs:attribute name="lang" type="xs:language"/>
+</xs:schema>"#;
+
+fn lowered_with(main: &str, dc: Option<&str>, root: Option<&str>) -> Result<TypeSpec, SchemaError> {
+    let main = xmltree::parse(main).unwrap().root;
+    let dc = dc.map(|t| xmltree::parse(t).unwrap().root);
+    lower_with(
+        &main,
+        &|location| (location == "dc.xsd").then(|| dc.clone()).flatten(),
+        root,
+    )
+}
+
+/// 0.5.0: an imported namespace, refs to global elements and attributes, the
+/// built-in `xml:` and `xsi:` attributes, and `form`.
+#[test]
+fn imports_and_refs_name_fields_by_namespace() {
+    let spec = lowered_with(MAIN, Some(DC), None).unwrap();
+    let info = spec.xml().unwrap();
+    assert_eq!(info.root, "book");
+    assert_eq!(info.target_namespace.as_deref(), Some("urn:main"));
+    let main = Some("urn:main".to_string());
+    let dc = Some("urn:dc".to_string());
+    assert_eq!(
+        fields(at(&spec, "")),
+        [
+            ("@dc:lang".to_string(), dc.clone()),
+            ("@xml:lang".to_string(), Some(xmltree::XML_NS.to_string())),
+            ("@xsi:type".to_string(), Some(xmltree::XSI_NS.to_string())),
+            ("@id".to_string(), None),
+            ("dc:title".to_string(), dc.clone()),
+            ("note".to_string(), main.clone()),
+            ("local".to_string(), None),
+        ]
+    );
+    assert!(matches!(at(&spec, "[\"dc:title\"]").kind, Kind::String(_)));
+    // The prefixes used by field names are kept, for writing.
+    assert!(
+        info.prefixes
+            .contains(&("dc".to_string(), "urn:dc".to_string()))
+    );
+}
+
+#[test]
+fn another_global_element_can_be_the_root() {
+    let spec = lowered_with(MAIN, Some(DC), Some("note")).unwrap();
+    assert_eq!(spec.xml().unwrap().root, "note");
+    assert!(matches!(at(&spec, "").kind, Kind::String(_)));
+    let e = lowered_with(MAIN, Some(DC), Some("nope")).unwrap_err();
+    assert!(e.message.contains("no global element named `nope`"), "{e}");
+}
+
+#[test]
+fn an_import_that_cannot_be_found_or_does_not_fit_is_an_error() {
+    let e = lowered_with(MAIN, None, None).unwrap_err();
+    assert!(e.message.contains("dc.xsd"), "{e}");
+    let wrong = DC.replace(
+        "targetNamespace=\"urn:dc\"",
+        "targetNamespace=\"urn:other\"",
+    );
+    let e = lowered_with(MAIN, Some(&wrong), None).unwrap_err();
+    assert!(e.message.contains("urn:other"), "{e}");
+    let e = lowered_with(&MAIN.replace("dc:title", "dc:nope"), Some(DC), None).unwrap_err();
+    assert!(e.message.contains("nope"), "{e}");
+}
+
+#[test]
+fn an_exported_schema_leaves_out_the_xsi_attributes() {
+    let mut doc = xmltree::parse(MAIN).unwrap();
+    assert_eq!(without_xsi(&mut doc), 1);
+    let text = xmltree::write(&doc, true);
+    assert!(!text.contains("xsi"), "{text}");
+    assert!(text.contains("ref=\"xml:lang\""), "{text}");
+    // Nothing to leave out: unchanged.
+    let mut doc = xmltree::parse(DC).unwrap();
+    assert_eq!(without_xsi(&mut doc), 0);
 }

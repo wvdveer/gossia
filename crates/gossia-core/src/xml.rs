@@ -25,6 +25,7 @@
 //! (accepted)".
 
 use gossia_i18n::tr;
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
@@ -32,7 +33,7 @@ use indexmap::IndexMap;
 
 use crate::json::{Warning, WriteError};
 use crate::path::Path;
-use crate::typespec::{Kind, TypeId, TypeSpec};
+use crate::typespec::{Field, Kind, TypeId, TypeSpec};
 use crate::value::{CommentPlace, DateTimeValue, Node, Value};
 use crate::xmltree::{self, Attribute, Child, Declaration, Element, Misc, XmlError};
 
@@ -156,7 +157,59 @@ struct Reader<'a> {
     warnings: Vec<Warning>,
 }
 
+/// A field's name without its `@` and prefix.
+fn local_name(field: &str) -> &str {
+    let name = field.strip_prefix('@').unwrap_or(field);
+    name.rsplit_once(':').map_or(name, |(_, local)| local)
+}
+
 impl Reader<'_> {
+    /// The key of content the schema does not define: bare when it is in the
+    /// schema's namespace or in none, or written without a prefix; otherwise
+    /// with the prefix it was written with.
+    fn undefined_key(&self, namespace: Option<&str>, prefix: Option<&str>, local: &str) -> String {
+        let target = self.spec.xml().and_then(|x| x.target_namespace.as_deref());
+        match prefix {
+            Some(p) if namespace.is_some() && namespace != target => format!("{p}:{local}"),
+            _ => local.to_string(),
+        }
+    }
+
+    /// The key of a child element: the field for its namespace and name, or
+    /// what [`Self::undefined_key`] says.
+    fn element_key(&self, fields: &[Field], e: &Element) -> String {
+        fields
+            .iter()
+            .find(|f| {
+                !f.name.starts_with('@')
+                    && f.name != "#text"
+                    && local_name(&f.name) == e.name
+                    && f.namespace == e.namespace
+            })
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| {
+                self.undefined_key(e.namespace.as_deref(), e.prefix.as_deref(), &e.name)
+            })
+    }
+
+    /// The key of an attribute, as [`Self::element_key`] does for elements.
+    fn attribute_key(&self, fields: &[Field], a: &Attribute) -> String {
+        fields
+            .iter()
+            .find(|f| {
+                f.name.starts_with('@')
+                    && local_name(&f.name) == a.name
+                    && f.namespace == a.namespace
+            })
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "@{}",
+                    self.undefined_key(a.namespace.as_deref(), a.prefix.as_deref(), &a.name)
+                )
+            })
+    }
+
     fn warn(&mut self, path: &Path, message: impl Into<String>) {
         self.warnings.push(Warning {
             path: path.clone(),
@@ -260,11 +313,7 @@ impl Reader<'_> {
         // Attributes, in the order of the schema, then any the schema lacks.
         let mut attributes: HashMap<String, &Attribute> = HashMap::new();
         for a in &element.attributes {
-            let key = match &a.prefix {
-                Some(p) => format!("@{p}:{}", a.name),
-                None => format!("@{}", a.name),
-            };
-            attributes.insert(key, a);
+            attributes.insert(self.attribute_key(fields, a), a);
         }
         for field in fields.iter().filter(|f| f.name.starts_with('@')) {
             if let Some(a) = attributes.remove(&field.name) {
@@ -273,10 +322,7 @@ impl Reader<'_> {
             }
         }
         for a in &element.attributes {
-            let key = match &a.prefix {
-                Some(p) => format!("@{p}:{}", a.name),
-                None => format!("@{}", a.name),
-            };
+            let key = self.attribute_key(fields, a);
             if attributes.contains_key(&key) {
                 map.insert(key, Node::new(Value::Str(a.value.clone())));
             }
@@ -317,7 +363,10 @@ impl Reader<'_> {
                 Child::Element(e) => {
                     let comment = (!pending.is_empty()).then(|| pending.join("\n"));
                     pending.clear();
-                    groups.entry(e.name.clone()).or_default().push((e, comment));
+                    groups
+                        .entry(self.element_key(fields, e))
+                        .or_default()
+                        .push((e, comment));
                 }
                 Child::Text(_) => {}
             }
@@ -396,11 +445,10 @@ impl Reader<'_> {
         }
         let mut map: IndexMap<String, Node> = IndexMap::new();
         for a in &element.attributes {
-            let key = match &a.prefix {
-                Some(p) => format!("@{p}:{}", a.name),
-                None => format!("@{}", a.name),
-            };
-            map.insert(key, Node::new(Value::Str(a.value.clone())));
+            map.insert(
+                self.attribute_key(&[], a),
+                Node::new(Value::Str(a.value.clone())),
+            );
         }
         if element.has_text() {
             map.insert("#text".to_string(), Node::new(Value::Str(element.text())));
@@ -413,7 +461,10 @@ impl Reader<'_> {
                 Child::Element(e) => {
                     let comment = (!pending.is_empty()).then(|| pending.join("\n"));
                     pending.clear();
-                    groups.entry(e.name.clone()).or_default().push((e, comment));
+                    groups
+                        .entry(self.element_key(&[], e))
+                        .or_default()
+                        .push((e, comment));
                 }
                 Child::Text(_) => {}
             }
@@ -581,10 +632,18 @@ pub fn to_string(
     }
     let writer = Writer {
         spec,
+        target: info.target_namespace.clone(),
+        root_prefix: root_prefix.clone(),
         prefix: child_prefix,
+        added: RefCell::new(Vec::new()),
     };
-    let mut root = writer.emit(&info.root, node, Some(spec.root()));
+    let mut root = writer.emit(&info.root, node, Some(spec.root()), &declarations);
     root.prefix = root_prefix;
+    for added in writer.added.into_inner() {
+        if !declarations.contains(&added) {
+            declarations.push(added);
+        }
+    }
     root.declarations = declarations;
     let mut before = document.prolog.clone();
     before.extend(node.comment().map(|c| Misc::Comment(c.to_string())));
@@ -603,20 +662,37 @@ pub fn to_string(
 }
 
 /// Writes nodes as elements. The type of a node, when the schema has one,
-/// says whether a string is markup, written as the elements it holds.
+/// says whether a string is markup, written as the elements it holds, and the
+/// namespace of each field says which prefix it is written with.
 struct Writer<'a> {
     spec: &'a TypeSpec,
-    /// The prefix the elements below the root are written with.
+    /// The schema's namespace.
+    target: Option<String>,
+    /// The prefix the root is written with, which is the target namespace's.
+    root_prefix: Option<String>,
+    /// The prefix the elements below the root are written with when they are
+    /// in the target namespace and the schema qualifies them.
     prefix: Option<String>,
+    /// Declarations the root needs for prefixes the document did not declare.
+    added: RefCell<Vec<(Option<String>, String)>>,
 }
 
+/// The namespace declarations in scope: the root's, then those of each
+/// element on the way down.
+type Scope = [(Option<String>, String)];
+
 impl Writer<'_> {
-    /// The type of a field of a record of type `ty`.
-    fn field_type(&self, ty: Option<TypeId>, name: &str) -> Option<TypeId> {
+    /// The field of a record of type `ty`.
+    fn field(&self, ty: Option<TypeId>, name: &str) -> Option<&Field> {
         match &self.spec.get(ty?).kind {
-            Kind::Object { fields } => fields.iter().find(|f| f.name == name).map(|f| f.ty),
+            Kind::Object { fields } => fields.iter().find(|f| f.name == name),
             _ => None,
         }
+    }
+
+    /// The type of a field of a record of type `ty`.
+    fn field_type(&self, ty: Option<TypeId>, name: &str) -> Option<TypeId> {
+        self.field(ty, name).map(|f| f.ty)
     }
 
     fn markup(&self, ty: Option<TypeId>) -> bool {
@@ -634,13 +710,90 @@ impl Writer<'_> {
         scalar_text(node.value())
     }
 
-    /// The element for a node, named `name`, with the comments inside it: the
-    /// one at the start before its text, and the one at the end after the
-    /// rest. With no text to stand before, the one at the start goes with the
-    /// end.
-    fn emit(&self, name: &str, node: &Node, ty: Option<TypeId>) -> Element {
-        let mut element = self.emit_value(name, node, ty);
+    /// Makes sure `prefix` stands for `uri` where it is used: if nothing in
+    /// scope binds it, the root declares it.
+    fn declare(&self, prefix: &str, uri: &str, scope: &Scope) {
+        if prefix == "xml" {
+            return;
+        }
+        let bound = scope
+            .iter()
+            .rev()
+            .find(|(p, _)| p.as_deref() == Some(prefix))
+            .is_some_and(|(_, u)| u == uri);
+        let added = self
+            .added
+            .borrow()
+            .iter()
+            .any(|(p, _)| p.as_deref() == Some(prefix));
+        if !bound && !added {
+            self.added
+                .borrow_mut()
+                .push((Some(prefix.to_string()), uri.to_string()));
+        }
+    }
+
+    /// The prefix for something in the target namespace that must have one
+    /// (a qualified attribute): the root's, or `tns`, declared.
+    fn target_prefix(&self, scope: &Scope) -> Option<String> {
+        let target = self.target.as_deref()?;
+        let prefix = self
+            .root_prefix
+            .clone()
+            .unwrap_or_else(|| "tns".to_string());
+        self.declare(&prefix, target, scope);
+        Some(prefix)
+    }
+
+    /// The prefix and local name for a field `key`: from its namespace when
+    /// the schema defines it, from the key itself otherwise.
+    fn qualify(
+        &self,
+        key: &str,
+        field: Option<&Field>,
+        attribute: bool,
+        scope: &Scope,
+    ) -> (Option<String>, String) {
+        let bare = key.strip_prefix('@').unwrap_or(key);
+        let (written, local) = match bare.split_once(':') {
+            Some((p, l)) => (Some(p.to_string()), l.to_string()),
+            None => (None, bare.to_string()),
+        };
+        let Some(field) = field else {
+            // Undefined content keeps the prefix it was read with.
+            return match written {
+                Some(p) => (Some(p), local),
+                None if attribute => (None, local),
+                None => (self.prefix.clone(), local),
+            };
+        };
+        match field.namespace.as_deref() {
+            None => (None, local),
+            Some(uri) if Some(uri) == self.target.as_deref() => {
+                if attribute {
+                    (self.target_prefix(scope), local)
+                } else {
+                    (self.root_prefix.clone(), local)
+                }
+            }
+            Some(uri) => {
+                let prefix = written.unwrap_or_else(|| "ns".to_string());
+                self.declare(&prefix, uri, scope);
+                (Some(prefix), local)
+            }
+        }
+    }
+
+    /// The element for a node, named `name` (a field name, or the root's),
+    /// with the comments inside it: the one at the start before its text,
+    /// and the one at the end after the rest. With no text to stand before,
+    /// the one at the start goes with the end.
+    fn emit(&self, name: &str, node: &Node, ty: Option<TypeId>, scope: &Scope) -> Element {
+        let mut element = Element::new(name);
         element.declarations = node.xml_declarations().to_vec();
+        let mut inner: Vec<(Option<String>, String)> = scope.to_vec();
+        inner.extend(element.declarations.iter().cloned());
+        self.emit_value(&mut element, node, ty, &inner);
         let start = node.comment_at(CommentPlace::Start);
         let end = node.comment_at(CommentPlace::End);
         let text_first = matches!(element.children.first(), Some(Child::Text(_)));
@@ -658,22 +811,19 @@ impl Writer<'_> {
         element
     }
 
-    fn emit_value(&self, name: &str, node: &Node, ty: Option<TypeId>) -> Element {
-        let mut element = Element::new(name);
-        element.prefix = self.prefix.clone();
+    fn emit_value(&self, element: &mut Element, node: &Node, ty: Option<TypeId>, scope: &Scope) {
         match node.value() {
             Value::Object(fields) => {
                 for (key, child) in fields {
-                    if let Some(attribute) = key.strip_prefix('@') {
-                        if let Some(value) = self.text_of(child, self.field_type(ty, key)) {
-                            let (p, local) = match attribute.split_once(':') {
-                                Some((p, l)) => (Some(p.to_string()), l.to_string()),
-                                None => (None, attribute.to_string()),
-                            };
+                    let field = self.field(ty, key);
+                    if key.starts_with('@') {
+                        if let Some(value) = self.text_of(child, field.map(|f| f.ty)) {
+                            let (prefix, name) = self.qualify(key, field, true, scope);
                             element.attributes.push(Attribute {
-                                prefix: p,
-                                name: local,
+                                prefix,
+                                name,
                                 value,
+                                namespace: None,
                             });
                         }
                     } else if key == "#text" {
@@ -681,11 +831,10 @@ impl Writer<'_> {
                         if let Some(text) = self.text_of(child, field)
                             && !text.is_empty()
                         {
-                            push_text(&mut element, text, self.markup(field));
+                            push_text(element, text, self.markup(field));
                         }
                     } else {
-                        let field = self.field_type(ty, key);
-                        self.push_children(&mut element, key, child, field);
+                        self.push_children(element, key, child, field, scope);
                     }
                 }
             }
@@ -693,34 +842,58 @@ impl Writer<'_> {
                 if let Some(text) = self.text_of(node, ty)
                     && !text.is_empty()
                 {
-                    push_text(&mut element, text, self.markup(ty));
+                    push_text(element, text, self.markup(ty));
                 }
             }
         }
-        element
     }
 
-    /// Adds the element or elements a field of type `ty` stands for. A node
-    /// that holds an error value, or null, is absent.
-    fn push_children(&self, parent: &mut Element, name: &str, node: &Node, ty: Option<TypeId>) {
+    /// Adds the element or elements a field stands for. A node that holds an
+    /// error value, or null, is absent.
+    fn push_children(
+        &self,
+        parent: &mut Element,
+        key: &str,
+        node: &Node,
+        field: Option<&Field>,
+        scope: &Scope,
+    ) {
         match node.value() {
             Value::Error(_) | Value::Null => {}
             Value::Array(items) => {
-                let item = match ty.map(|ty| &self.spec.get(ty).kind) {
-                    Some(Kind::Array { items, .. }) => Some(*items),
-                    _ => ty,
-                };
                 for child in items {
-                    self.push_children(parent, name, child, item);
+                    self.push_children(parent, key, child, field, scope);
                 }
             }
             _ => {
                 if let Some(comment) = node.comment() {
                     parent.children.push(Child::Comment(comment.to_string()));
                 }
-                parent
-                    .children
-                    .push(Child::Element(self.emit(name, node, ty)));
+                // The type of one element: the field's, or its items'.
+                let ty = field.map(|f| match &self.spec.get(f.ty).kind {
+                    Kind::Array { items, .. } => *items,
+                    _ => f.ty,
+                });
+                let (prefix, local) = self.qualify(key, field, false, scope);
+                let mut element = self.emit(key, node, ty, scope);
+                element.name = local;
+                element.prefix = prefix;
+                // An unqualified element where the default namespace is the
+                // target's would fall into it.
+                let unqualified = field.is_some_and(|f| f.namespace.is_none());
+                let default_is_target = self.target.is_some()
+                    && scope
+                        .iter()
+                        .rev()
+                        .find(|(p, _)| p.is_none())
+                        .is_some_and(|(_, u)| Some(u) == self.target.as_ref());
+                if unqualified
+                    && default_is_target
+                    && !element.declarations.iter().any(|(p, _)| p.is_none())
+                {
+                    element.declarations.push((None, String::new()));
+                }
+                parent.children.push(Child::Element(element));
             }
         }
     }

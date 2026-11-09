@@ -143,6 +143,19 @@ impl Parser<'_> {
         while self.peek().is_some_and(is_name_char) {
             self.pos += 1;
         }
+        // A prefixed name (`dc:creator`), as fields outside the schema's own
+        // namespace are named.
+        if self.peek() == Some(b':')
+            && self
+                .text
+                .get(self.pos + 1)
+                .is_some_and(|c| is_name_start(*c))
+        {
+            self.pos += 1;
+            while self.peek().is_some_and(is_name_char) {
+                self.pos += 1;
+            }
+        }
         // A name does not end in `.` or `-`; those belong to what follows.
         Some(String::from_utf8_lossy(&self.text[start..self.pos]).into_owned())
     }
@@ -715,6 +728,31 @@ mod tests {
         assert_eq!(run("line[1]/@*"), ["1"]);
         assert_eq!(run("customer/text()"), ["Acme"]);
         assert_eq!(paths("line/@id")[0], r#"line[0]["@id"]"#);
+    }
+
+    /// 0.5.0: names outside the schema's namespace have a prefix.
+    #[test]
+    fn prefixed_names_are_steps() {
+        let spec = gossia_core::xsd::lower_str(
+            r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xs:element name="doc"><xs:complexType>
+                <xs:sequence><xs:element name="p" type="xs:string" maxOccurs="unbounded"/></xs:sequence>
+                <xs:attribute ref="xml:lang"/>
+              </xs:complexType></xs:element>
+            </xs:schema>"#,
+        )
+        .unwrap();
+        let node = gossia_core::xml::parse(r#"<doc xml:lang="nl"><p>a</p><p>b</p></doc>"#, &spec)
+            .unwrap()
+            .node;
+        let q = parse("@xml:lang").unwrap();
+        let found: Vec<String> = select(&q, &node)
+            .into_iter()
+            .map(|(_, n)| node_text(&n))
+            .collect();
+        assert_eq!(found, ["nl"]);
+        // A colon that does not start a name is not part of it.
+        assert!(parse("p:").is_err());
     }
 
     #[test]

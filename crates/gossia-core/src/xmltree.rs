@@ -29,7 +29,29 @@ pub struct Attribute {
     pub prefix: Option<String>,
     pub name: String,
     pub value: String,
+    /// The namespace the name belongs to: that of its prefix, or none for an
+    /// attribute without one (the default namespace does not apply).
+    pub namespace: Option<String>,
 }
+
+impl Attribute {
+    /// An attribute with no prefix and no namespace.
+    pub fn plain(name: &str, value: &str) -> Attribute {
+        Attribute {
+            prefix: None,
+            name: name.to_string(),
+            value: value.to_string(),
+            namespace: None,
+        }
+    }
+}
+
+/// The namespace of the prefix `xml`, which is always bound.
+pub const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+
+/// The namespace of the attributes `xsi:type`, `xsi:nil` and the schema
+/// locations, which a schema cannot declare.
+pub const XSI_NS: &str = "http://www.w3.org/2001/XMLSchema-instance";
 
 /// What an element holds, in document order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,7 +237,7 @@ fn lookup(scopes: &[Scope], prefix: Option<&str>) -> Option<String> {
         }
     }
     match prefix {
-        Some("xml") => Some("http://www.w3.org/XML/1998/namespace".to_string()),
+        Some("xml") => Some(XML_NS.to_string()),
         _ => None,
     }
 }
@@ -383,6 +405,18 @@ fn parse_with(text: &str, lenient: bool) -> Result<Document, XmlError> {
                         ),
                     );
                 }
+                for attribute in &mut element.attributes {
+                    let Some(prefix) = attribute.prefix.as_deref() else {
+                        continue;
+                    };
+                    attribute.namespace = lookup(&scopes, Some(prefix));
+                    if attribute.namespace.is_none() && !lenient {
+                        return fail(
+                            at,
+                            tr!("the prefix `{prefix}` is not declared", prefix = prefix),
+                        );
+                    }
+                }
                 open.push(element);
             }
             Event::End(_) => {
@@ -482,6 +516,7 @@ fn start_element(start: &BytesStart<'_>, at: usize) -> Result<Element, XmlError>
                 prefix,
                 name,
                 value,
+                namespace: None,
             });
         }
     }
@@ -801,11 +836,8 @@ mod tests {
     #[test]
     fn text_is_written_exactly_and_special_characters_survive() {
         let mut e = Element::new("a");
-        e.attributes.push(Attribute {
-            prefix: None,
-            name: "v".into(),
-            value: "tab\there\nline \"q\" <&>".into(),
-        });
+        e.attributes
+            .push(Attribute::plain("v", "tab\there\nline \"q\" <&>"));
         e.children
             .push(Child::Text("  keep \r\n spaces & <tags>  ".into()));
         let doc = Document {

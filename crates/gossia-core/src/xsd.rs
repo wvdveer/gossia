@@ -14,11 +14,15 @@
 //!
 //! Decisions that refine the design (recorded in DESIGN.md under "Decisions
 //! made while building step 6"):
-//! - There is exactly one global `xs:element`, the root; every other global
-//!   declaration is a named type. `ref` may name that element (recursion).
-//! - One target namespace at most. Local elements are matched by their local
-//!   name; `elementFormDefault` says whether they are in the namespace when
-//!   the document is written. `attributeFormDefault` must be `unqualified`.
+//! - Global elements, attributes and types (0.5.0: more than one global
+//!   element; the root is the one chosen, by default the first). `ref` names
+//!   a global element or attribute, of this schema or of one it imports.
+//! - Namespaces (0.5.0): the schema and those it imports with `xs:import`,
+//!   one document per namespace, found through [`Imports`]. The `xml:` and
+//!   `xsi:` attributes are built in. `elementFormDefault`,
+//!   `attributeFormDefault` and `form` say whether local declarations are in
+//!   the namespace. A field outside the schema's own namespace has the prefix
+//!   in its name (`dc:title`, `@xml:lang`).
 //! - The built-in types are `string`-like, `boolean`, integer-like,
 //!   `decimal`-like, `date` and `dateTime`; the sign-restricted integers
 //!   (`nonNegativeInteger`, `positiveInteger`, ...) carry their bound.
@@ -41,7 +45,7 @@ use crate::typespec::{
     XmlInfo,
 };
 use crate::value::{Node, Value};
-use crate::xmltree::{self, Attribute, Child, Element, XmlError};
+use crate::xmltree::{self, Attribute, Child, Element, XML_NS, XSI_NS, XmlError};
 
 /// The namespace every XSD construct is in.
 pub const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema";
@@ -100,6 +104,57 @@ pub fn default_document() -> crate::xml::XmlDocument {
     }
 }
 
+/// Leaves out of a schema document the `xs:attribute ref="xsi:…"` lines and
+/// the declarations of the `xsi` namespace (DESIGN.md, XML Schemas and
+/// namespaces, 0.5.0): Gossia declares those attributes so that documents
+/// keep them, but a schema written for other programs must not, since the
+/// XSD rules give every element those attributes already. Says how many
+/// were left out.
+pub fn without_xsi(doc: &mut xmltree::Document) -> usize {
+    fn walk(element: &mut Element, scopes: &mut Vec<Vec<(Option<String>, String)>>) -> usize {
+        scopes.push(element.declarations.clone());
+        let mut dropped = 0;
+        element.children.retain(|child| {
+            let Child::Element(e) = child else {
+                return true;
+            };
+            let is_ref_to_xsi = e.name == "attribute"
+                && e.namespace.as_deref() == Some(XSD_NS)
+                && e.attribute("ref").is_some_and(|r| {
+                    let prefix = r.split_once(':').map(|(p, _)| p.to_string());
+                    let uri = std::iter::once(&e.declarations)
+                        .chain(scopes.iter().rev())
+                        .find_map(|scope| scope.iter().find(|(p, _)| *p == prefix));
+                    uri.is_some_and(|(_, u)| u == XSI_NS)
+                });
+            if is_ref_to_xsi {
+                dropped += 1;
+            }
+            !is_ref_to_xsi
+        });
+        for child in &mut element.children {
+            if let Child::Element(e) = child {
+                dropped += walk(e, scopes);
+            }
+        }
+        scopes.pop();
+        dropped
+    }
+    fn undeclare(element: &mut Element) {
+        element.declarations.retain(|(_, uri)| uri != XSI_NS);
+        for child in &mut element.children {
+            if let Child::Element(e) = child {
+                undeclare(e);
+            }
+        }
+    }
+    let dropped = walk(&mut doc.root, &mut Vec::new());
+    if dropped > 0 {
+        undeclare(&mut doc.root);
+    }
+    dropped
+}
+
 /// Reads XSD text and lowers it.
 pub fn lower_str(text: &str) -> Result<TypeSpec, LoadError> {
     let doc = xmltree::parse(text).map_err(LoadError::NotXml)?;
@@ -113,9 +168,14 @@ pub fn lower_node(
     root: &Node,
     namespaces: &[(Option<String>, String)],
 ) -> Result<TypeSpec, SchemaError> {
+    lower(&schema_element(root, namespaces))
+}
+
+/// The schema document a schema sheet's tree stands for, as elements.
+pub fn schema_element(root: &Node, namespaces: &[(Option<String>, String)]) -> Element {
     let mut element = element_from_node("schema", root);
     element.declarations = namespaces.to_vec();
-    lower(&element)
+    element
 }
 
 /// The elements of an XSD, from the tree that the meta-schema types: keys that
@@ -129,11 +189,7 @@ fn element_from_node(name: &str, node: &Node) -> Element {
             for (key, child) in fields {
                 if let Some(attribute) = key.strip_prefix('@') {
                     if let Some(value) = crate::xml::scalar_text(child.value()) {
-                        element.attributes.push(Attribute {
-                            prefix: None,
-                            name: attribute.to_string(),
-                            value,
-                        });
+                        element.attributes.push(Attribute::plain(attribute, &value));
                     }
                 } else if key == "#text" {
                     if let Some(text) = crate::xml::scalar_text(child.value()) {
@@ -184,8 +240,10 @@ fn excluded_element(name: &str) -> Option<&'static str> {
         "complexContent" | "extension" | "restriction" => {
             tr!("type extension and derivation of complex types are not supported in version 1")
         }
-        "import" | "include" | "redefine" | "override" => {
-            tr!("imports, includes and non-local references are not supported in version 1")
+        "include" | "redefine" | "override" => {
+            tr!(
+                "includes and redefinitions are not supported; use `xs:import`, one schema for each namespace"
+            )
         }
         "key" | "keyref" | "unique" | "selector" | "field" => {
             tr!("identity constraints are not supported in version 1")
@@ -203,9 +261,6 @@ fn excluded_attribute(name: &str) -> Option<&'static str> {
         "substitutionGroup" | "abstract" | "block" | "final" | "blockDefault" | "finalDefault" => {
             tr!("substitution and derivation control are not supported in version 1")
         }
-        "form" | "attributeFormDefault" => {
-            tr!("per-declaration forms are not supported in version 1")
-        }
         "minExclusive" | "maxExclusive" => tr!("exclusive ranges are not supported in version 1"),
         _ => return None,
     })
@@ -218,6 +273,7 @@ fn resolve_names(
     element: &mut Element,
     scopes: &mut Vec<Vec<(Option<String>, String)>>,
     depth: usize,
+    prefixes: &mut Vec<(String, String)>,
 ) -> Res<()> {
     if depth >= MAX_DEPTH {
         return err(
@@ -231,6 +287,9 @@ fn resolve_names(
     }
     scopes.push(element.declarations.clone());
     let lookup = |scopes: &[Vec<(Option<String>, String)>], prefix: Option<&str>| {
+        if prefix == Some("xml") {
+            return Some(XML_NS.to_string());
+        }
         scopes
             .iter()
             .rev()
@@ -259,6 +318,9 @@ fn resolve_names(
                 ),
             );
         }
+        if let (Some(prefix), Some(uri)) = (prefix, &namespace) {
+            remember_prefix(prefixes, prefix, uri);
+        }
         attribute.value = match namespace {
             Some(uri) => format!("{{{uri}}}{local}"),
             None => local.to_string(),
@@ -266,7 +328,7 @@ fn resolve_names(
     }
     for child in &mut element.children {
         if let Child::Element(e) = child {
-            resolve_names(e, scopes, depth + 1)?;
+            resolve_names(e, scopes, depth + 1, prefixes)?;
         }
     }
     scopes.pop();
@@ -281,34 +343,200 @@ fn clark(name: &str) -> (Option<&str>, &str) {
     }
 }
 
-/// Lowers a schema document.
+/// Notes the prefix a namespace is written with, unless the prefix already
+/// stands for another namespace or the namespace has one.
+fn remember_prefix(prefixes: &mut Vec<(String, String)>, prefix: &str, uri: &str) {
+    if !prefixes.iter().any(|(p, u)| p == prefix || u == uri) {
+        prefixes.push((prefix.to_string(), uri.to_string()));
+    }
+}
+
+/// Where the schemas that `xs:import` names come from: given the import's
+/// `schemaLocation`, the schema document, or `None` if there is none by that
+/// name. The `xml:` and `xsi:` namespaces need none.
+pub type Imports<'r> = dyn Fn(&str) -> Option<Element> + 'r;
+
+/// The schema of the `xml:` attributes, built in (the W3C `xml.xsd`, as far
+/// as the subset goes).
+const XML_SCHEMA: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    targetNamespace="http://www.w3.org/XML/1998/namespace">
+  <xs:attribute name="lang" type="xs:string"/>
+  <xs:attribute name="space">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:enumeration value="default"/>
+        <xs:enumeration value="preserve"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:attribute>
+  <xs:attribute name="base" type="xs:string"/>
+  <xs:attribute name="id" type="xs:string"/>
+</xs:schema>"#;
+
+/// The `xsi:` attributes, which XSD itself defines and a schema cannot
+/// declare; Gossia lets a schema name them with `ref` (DESIGN.md, XML
+/// Schemas and namespaces, 0.5.0).
+const XSI_SCHEMA: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    targetNamespace="http://www.w3.org/2001/XMLSchema-instance">
+  <xs:attribute name="type" type="xs:string"/>
+  <xs:attribute name="nil" type="xs:boolean"/>
+  <xs:attribute name="schemaLocation" type="xs:string"/>
+  <xs:attribute name="noNamespaceSchemaLocation" type="xs:string"/>
+</xs:schema>"#;
+
+/// Lowers a schema document that imports nothing but the built-in namespaces.
 pub fn lower(root: &Element) -> Res<TypeSpec> {
-    let mut root = root.clone();
-    resolve_names(&mut root, &mut Vec::new(), 0)?;
+    lower_with(root, &|_| None, None)
+}
+
+/// Lowers a schema document, with the schemas it imports found through
+/// `imports`. The root of its documents is the global element `root_element`,
+/// or the first one.
+pub fn lower_with(
+    root: &Element,
+    imports: &Imports<'_>,
+    root_element: Option<&str>,
+) -> Res<TypeSpec> {
+    let mut prefixes: Vec<(String, String)> = Vec::new();
+    let mut main = root.clone();
+    resolve_names(&mut main, &mut Vec::new(), 0, &mut prefixes)?;
+    for (prefix, uri) in &main.declarations {
+        if let Some(prefix) = prefix {
+            remember_prefix(&mut prefixes, prefix, uri);
+        }
+    }
+    let main_target = main.attribute("targetNamespace").map(str::to_string);
+    let mut docs: Vec<(Element, String)> = vec![(main, "schema".to_string())];
+    let mut namespaces: Vec<Option<String>> = vec![main_target];
+    // The imports, and theirs, each namespace once.
+    let mut at = 0;
+    while at < docs.len() {
+        let mut wanted: Vec<(String, String, String)> = Vec::new();
+        let (doc, location) = &docs[at];
+        for import in doc
+            .elements()
+            .filter(|e| e.name == "import" && e.namespace.as_deref() == Some(XSD_NS))
+        {
+            let Some(namespace) = import.attribute("namespace") else {
+                return err(
+                    "import",
+                    location,
+                    tr!("an `xs:import` needs a `namespace`"),
+                );
+            };
+            let here = format!("{location}/import[{namespace}]");
+            check_attributes(import, &["namespace", "schemaLocation"], &here)?;
+            check_children(import, &["annotation"], &here)?;
+            if namespace == XML_NS || namespace == XSI_NS {
+                continue;
+            }
+            if namespaces.iter().any(|n| n.as_deref() == Some(namespace)) {
+                continue;
+            }
+            let Some(place) = import.attribute("schemaLocation") else {
+                return err(
+                    "import",
+                    &here,
+                    tr!(
+                        "an `xs:import` needs a `schemaLocation`: the schema tab for its namespace"
+                    ),
+                );
+            };
+            wanted.push((namespace.to_string(), place.to_string(), here));
+        }
+        for (namespace, place, here) in wanted {
+            if namespaces
+                .iter()
+                .any(|n| n.as_deref() == Some(namespace.as_str()))
+            {
+                continue;
+            }
+            let Some(mut imported) = imports(&place) else {
+                return err(
+                    "schemaLocation",
+                    &here,
+                    tr!("there is no schema `{place}` to import", place = place),
+                );
+            };
+            resolve_names(&mut imported, &mut Vec::new(), 0, &mut prefixes)?;
+            for (prefix, uri) in &imported.declarations {
+                if let Some(prefix) = prefix {
+                    remember_prefix(&mut prefixes, prefix, uri);
+                }
+            }
+            if imported.attribute("targetNamespace") != Some(namespace.as_str()) {
+                return err(
+                    "namespace",
+                    &here,
+                    tr!(
+                        "the schema `{place}` is for the namespace {found}, not {namespace}",
+                        place = place,
+                        found = imported.attribute("targetNamespace").unwrap_or("(none)"),
+                        namespace = namespace
+                    ),
+                );
+            }
+            namespaces.push(Some(namespace));
+            docs.push((imported, format!("import[{place}]/schema")));
+        }
+        at += 1;
+    }
+    for (uri, text, name) in [
+        (XML_NS, XML_SCHEMA, "builtin:xml"),
+        (XSI_NS, XSI_SCHEMA, "builtin:xsi"),
+    ] {
+        if !namespaces.iter().any(|n| n.as_deref() == Some(uri)) {
+            let mut builtin = xmltree::parse(text)
+                .expect("the built-in schema is XML")
+                .root;
+            resolve_names(&mut builtin, &mut Vec::new(), 0, &mut Vec::new())?;
+            docs.push((builtin, format!("{name}/schema")));
+        }
+    }
     let mut lowerer = Lowerer {
         types: Vec::new(),
-        complex: HashMap::new(),
-        simple: HashMap::new(),
+        docs: Vec::new(),
+        current: 0,
         done: HashMap::new(),
-        target: None,
-        qualified: false,
-        root_name: String::new(),
-        root_id: TypeId(0),
+        done_elements: HashMap::new(),
+        prefixes,
+        used_prefixes: Vec::new(),
         depth: 0,
     };
-    lowerer.run(&root)
+    lowerer.run(&docs, root_element)
+}
+
+/// One schema document taking part: the one lowered (the first), or one it
+/// imports, or a built-in one.
+struct Doc<'a> {
+    target: Option<String>,
+    /// `elementFormDefault="qualified"`.
+    qualified: bool,
+    /// `attributeFormDefault="qualified"`.
+    attributes_qualified: bool,
+    complex: HashMap<String, &'a Element>,
+    simple: HashMap<String, &'a Element>,
+    /// The global elements, in the order written.
+    elements: Vec<(String, &'a Element)>,
+    attributes: HashMap<String, &'a Element>,
+    /// Where it is, for messages and the sources of its types: `schema` for
+    /// the one lowered.
+    location: String,
 }
 
 struct Lowerer<'a> {
     types: Vec<TypeDef>,
-    complex: HashMap<String, &'a Element>,
-    simple: HashMap<String, &'a Element>,
-    /// Named types already lowered or being lowered.
-    done: HashMap<String, TypeId>,
-    target: Option<String>,
-    qualified: bool,
-    root_name: String,
-    root_id: TypeId,
+    docs: Vec<Doc<'a>>,
+    /// The document whose declarations are being lowered.
+    current: usize,
+    /// Named types already lowered or being lowered, by document.
+    done: HashMap<(usize, String), TypeId>,
+    /// Global elements already lowered or being lowered, by document.
+    done_elements: HashMap<(usize, String), TypeId>,
+    /// The prefixes the schemas write namespaces with.
+    prefixes: Vec<(String, String)>,
+    /// The prefixes in field names.
+    used_prefixes: Vec<(String, String)>,
     depth: usize,
 }
 
@@ -466,6 +694,33 @@ fn occurs(element: &Element, location: &str) -> Res<(usize, Option<usize>)> {
     Ok((min, max))
 }
 
+/// `form="qualified"` or `form="unqualified"`.
+fn form_of(form: &str, location: &str) -> Res<bool> {
+    match form {
+        "qualified" => Ok(true),
+        "unqualified" => Ok(false),
+        _ => err(
+            "form",
+            location,
+            tr!("must be `qualified` or `unqualified`"),
+        ),
+    }
+}
+
+/// Whether an attribute is required, from its `use`.
+fn attribute_use(attribute: &Element, location: &str) -> Res<bool> {
+    match attribute.attribute("use") {
+        None | Some("optional") => Ok(false),
+        Some("required") => Ok(true),
+        Some("prohibited") => err(
+            "use",
+            location,
+            tr!("`prohibited` is not supported in version 1"),
+        ),
+        Some(_) => err("use", location, tr!("must be `optional` or `required`")),
+    }
+}
+
 impl<'a> Lowerer<'a> {
     fn push(&mut self, kind: Kind, location: &str) -> TypeId {
         self.types.push(TypeDef {
@@ -479,8 +734,8 @@ impl<'a> Lowerer<'a> {
         TypeId(u32::try_from(self.types.len() - 1).expect("fewer than 2^32 types"))
     }
 
-    fn run(&mut self, root: &'a Element) -> Res<TypeSpec> {
-        let location = "schema";
+    /// Reads what a schema document declares at its top.
+    fn load_doc(root: &'a Element, location: &str) -> Res<Doc<'a>> {
         if xs_name(root, location)? != "schema" {
             return err(
                 &root.name,
@@ -504,49 +759,77 @@ impl<'a> Lowerer<'a> {
                 return err(banned, location, tr!("is not supported in version 1"));
             }
         }
-        self.target = root.attribute("targetNamespace").map(str::to_string);
-        self.qualified = match root.attribute("elementFormDefault") {
-            None | Some("unqualified") => false,
-            Some("qualified") => true,
-            Some(_) => {
-                return err(
-                    "elementFormDefault",
-                    location,
-                    tr!("must be `qualified` or `unqualified`"),
-                );
+        let form = |name: &str| -> Res<bool> {
+            match root.attribute(name) {
+                None | Some("unqualified") => Ok(false),
+                Some("qualified") => Ok(true),
+                Some(_) => err(name, location, tr!("must be `qualified` or `unqualified`")),
             }
         };
-        if let Some(v) = root.attribute("attributeFormDefault")
-            && v != "unqualified"
-        {
-            return err(
-                "attributeFormDefault",
-                location,
-                tr!("only `unqualified` is supported in version 1"),
-            );
-        }
+        let mut doc = Doc {
+            target: root.attribute("targetNamespace").map(str::to_string),
+            qualified: form("elementFormDefault")?,
+            attributes_qualified: form("attributeFormDefault")?,
+            complex: HashMap::new(),
+            simple: HashMap::new(),
+            elements: Vec::new(),
+            attributes: HashMap::new(),
+            location: location.to_string(),
+        };
         check_children(
             root,
-            &["element", "complexType", "simpleType", "annotation"],
+            &[
+                "import",
+                "element",
+                "attribute",
+                "complexType",
+                "simpleType",
+                "annotation",
+            ],
             location,
         )?;
         documentation(root, location)?;
-        let mut globals: Vec<&'a Element> = Vec::new();
         for child in root.elements() {
-            match child.name.as_str() {
-                "element" => globals.push(child),
-                kind @ ("complexType" | "simpleType") => {
-                    let Some(name) = child.attribute("name") else {
-                        return err(kind, location, tr!("a global type needs a `name`"));
-                    };
-                    let table = if kind == "complexType" {
-                        &mut self.complex
-                    } else {
-                        &mut self.simple
-                    };
-                    let clash = table.contains_key(name)
-                        || self.complex.contains_key(name)
-                        || self.simple.contains_key(name);
+            let kind = child.name.as_str();
+            if !matches!(kind, "element" | "attribute" | "complexType" | "simpleType") {
+                continue;
+            }
+            let Some(name) = child.attribute("name") else {
+                return err(
+                    kind,
+                    location,
+                    match kind {
+                        "element" => tr!("the global element needs a `name`"),
+                        "attribute" => tr!("a global attribute needs a `name`"),
+                        _ => tr!("a global type needs a `name`"),
+                    },
+                );
+            };
+            match kind {
+                "element" => {
+                    if doc.elements.iter().any(|(n, _)| n == name) {
+                        return err(
+                            kind,
+                            location,
+                            tr!("there are two global elements named `{name}`", name = name),
+                        );
+                    }
+                    doc.elements.push((name.to_string(), child));
+                }
+                "attribute" => {
+                    if doc.attributes.insert(name.to_string(), child).is_some() {
+                        return err(
+                            kind,
+                            location,
+                            tr!(
+                                "there are two global attributes named `{name}`",
+                                name = name
+                            ),
+                        );
+                    }
+                }
+                _ => {
+                    let clash = doc.complex.contains_key(name) || doc.simple.contains_key(name);
                     if clash {
                         return err(
                             kind,
@@ -555,64 +838,153 @@ impl<'a> Lowerer<'a> {
                         );
                     }
                     if kind == "complexType" {
-                        self.complex.insert(name.to_string(), child);
+                        doc.complex.insert(name.to_string(), child);
                     } else {
-                        self.simple.insert(name.to_string(), child);
+                        doc.simple.insert(name.to_string(), child);
                     }
                 }
-                _ => {}
             }
         }
-        let root_element = match globals.as_slice() {
-            [one] => *one,
-            [] => {
-                return err(
-                    "element",
-                    location,
-                    tr!("a schema needs one global `xs:element`, the root of its documents"),
-                );
+        Ok(doc)
+    }
+
+    fn run(&mut self, docs: &'a [(Element, String)], root_element: Option<&str>) -> Res<TypeSpec> {
+        for (root, location) in docs {
+            self.docs.push(Self::load_doc(root, location)?);
+        }
+        let location = "schema";
+        let root_name = match root_element {
+            Some(name) => {
+                if !self.docs[0].elements.iter().any(|(n, _)| n == name) {
+                    return err(
+                        "element",
+                        location,
+                        tr!("there is no global element named `{name}`", name = name),
+                    );
+                }
+                name.to_string()
             }
-            _ => {
-                return err(
-                    "element",
-                    location,
-                    tr!(
-                        "a schema has one global `xs:element`; the other global declarations must be types"
-                    ),
-                );
-            }
+            None => match self.docs[0].elements.first() {
+                Some((name, _)) => name.clone(),
+                None => {
+                    return err(
+                        "element",
+                        location,
+                        tr!("a schema needs a global `xs:element`, the root of its documents"),
+                    );
+                }
+            },
         };
-        let Some(root_name) = root_element.attribute("name") else {
-            return err(
-                "element",
-                location,
-                tr!("the global element needs a `name`"),
-            );
-        };
-        self.root_name = root_name.to_string();
-        let here = format!("{location}/element[{root_name}]");
-        check_attributes(root_element, &["name", "type"], &here)?;
-        self.root_id = self.push(Kind::Bool, &here);
-        let ty = self.element_type(root_element, &here)?;
-        self.types[self.root_id.0 as usize] = self.types[ty.0 as usize].clone();
-        // Lower every named type, used or not, so that mistakes in them surface.
-        let mut names: Vec<String> = self
+        let root_id = self.global_element(0, &root_name, location)?;
+        // Lower every global declaration, used or not, so that mistakes in
+        // them surface.
+        let mut names: Vec<String> = self.docs[0]
             .complex
             .keys()
-            .chain(self.simple.keys())
+            .chain(self.docs[0].simple.keys())
             .cloned()
             .collect();
         names.sort();
         for name in names {
-            self.named_type(&name, &format!("{location}/type[{name}]"))?;
+            self.named_type(0, &name, &format!("{location}/type[{name}]"))?;
+        }
+        let elements: Vec<String> = self.docs[0]
+            .elements
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect();
+        for name in elements {
+            self.global_element(0, &name, location)?;
+        }
+        let mut attributes: Vec<&'a Element> = self.docs[0].attributes.values().copied().collect();
+        attributes.sort_by_key(|a| a.attribute("name").unwrap_or_default().to_string());
+        for attribute in attributes {
+            self.attribute_field(attribute, location)?;
         }
         Ok(
-            TypeSpec::new(std::mem::take(&mut self.types), self.root_id).with_xml(XmlInfo {
-                root: self.root_name.clone(),
-                target_namespace: self.target.clone(),
-                qualified: self.qualified,
+            TypeSpec::new(std::mem::take(&mut self.types), root_id).with_xml(XmlInfo {
+                root: root_name,
+                target_namespace: self.docs[0].target.clone(),
+                qualified: self.docs[0].qualified,
+                prefixes: std::mem::take(&mut self.used_prefixes),
             }),
         )
+    }
+
+    /// The document for a namespace, or an error at `location` if no schema
+    /// taking part is for it.
+    fn doc_of(&self, uri: Option<&str>, keyword: &str, location: &str) -> Res<usize> {
+        match self.docs.iter().position(|d| d.target.as_deref() == uri) {
+            Some(doc) => Ok(doc),
+            None => err(
+                keyword,
+                location,
+                tr!(
+                    "no schema for the namespace {namespace} is imported",
+                    namespace = uri.unwrap_or(tr!("no namespace"))
+                ),
+            ),
+        }
+    }
+
+    /// The name of a field for a declaration in `namespace`: bare in the
+    /// schema's own namespace or in none, and with a prefix otherwise.
+    fn field_name(&mut self, namespace: Option<&str>, local: &str, attribute: bool) -> String {
+        let at = if attribute { "@" } else { "" };
+        let Some(uri) = namespace.filter(|n| Some(*n) != self.docs[0].target.as_deref()) else {
+            return format!("{at}{local}");
+        };
+        let prefix = if uri == XML_NS {
+            "xml".to_string()
+        } else if let Some((p, _)) = self.prefixes.iter().find(|(_, u)| u == uri) {
+            p.clone()
+        } else {
+            let mut n = 1;
+            let mut prefix = if uri == XSI_NS {
+                "xsi".to_string()
+            } else {
+                format!("ns{n}")
+            };
+            while self.prefixes.iter().any(|(p, _)| *p == prefix) {
+                n += 1;
+                prefix = format!("ns{n}");
+            }
+            self.prefixes.push((prefix.clone(), uri.to_string()));
+            prefix
+        };
+        if prefix != "xml" && !self.used_prefixes.iter().any(|(p, _)| *p == prefix) {
+            self.used_prefixes.push((prefix.clone(), uri.to_string()));
+        }
+        format!("{at}{prefix}:{local}")
+    }
+
+    /// The type of a global element, lowered the first time it is needed.
+    fn global_element(&mut self, doc: usize, name: &str, from: &str) -> Res<TypeId> {
+        if let Some(&id) = self.done_elements.get(&(doc, name.to_string())) {
+            return Ok(id);
+        }
+        let Some(element) = self.docs[doc]
+            .elements
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, e)| *e)
+        else {
+            return err(
+                "ref",
+                from,
+                tr!("there is no global element named `{name}`", name = name),
+            );
+        };
+        let here = format!("{}/element[{name}]", self.docs[doc].location);
+        check_attributes(element, &["name", "type"], &here)?;
+        let id = self.push(Kind::Bool, &here);
+        self.done_elements.insert((doc, name.to_string()), id);
+        let saved = std::mem::replace(&mut self.current, doc);
+        let ty = self.element_type(element, &here);
+        self.current = saved;
+        let ty = ty?;
+        self.types[id.0 as usize] = self.types[ty.0 as usize].clone();
+        Ok(id)
     }
 
     /// The type of an element: from `type=`, or from the type written inside it.
@@ -692,43 +1064,36 @@ impl<'a> Lowerer<'a> {
     /// Resolves a type name (`{uri}local`) to a type.
     fn resolve_type(&mut self, name: &str, location: &str) -> Res<TypeId> {
         let (uri, local) = clark(name);
+        let doc = self.docs.iter().position(|d| d.target.as_deref() == uri);
         // A schema that describes XSD itself (the meta-schema) has the XML Schema
         // namespace as its target, so a name there may be one of its own types;
         // its own types come first.
-        let own = uri == self.target.as_deref()
-            && (self.complex.contains_key(local) || self.simple.contains_key(local));
+        let own = doc.is_some_and(|d| {
+            self.docs[d].complex.contains_key(local) || self.docs[d].simple.contains_key(local)
+        });
         if uri == Some(XSD_NS) && !own {
             let kind = builtin(local, location)?;
             return Ok(self.push(kind, location));
         }
-        if uri != self.target.as_deref() {
-            return err(
-                "type",
-                location,
-                tr!(
-                    "`{name}` is in another namespace; only one namespace is supported in version 1",
-                    name = name
-                ),
-            );
-        }
-        self.named_type(local, location)
+        let doc = self.doc_of(uri, "type", location)?;
+        self.named_type(doc, local, location)
     }
 
     /// A type declared at the top level, lowered the first time it is used.
-    fn named_type(&mut self, name: &str, location: &str) -> Res<TypeId> {
-        if let Some(&id) = self.done.get(name) {
+    fn named_type(&mut self, doc: usize, name: &str, location: &str) -> Res<TypeId> {
+        if let Some(&id) = self.done.get(&(doc, name.to_string())) {
             return Ok(id);
         }
-        let here = format!("schema/type[{name}]");
-        let (element, is_complex) = if let Some(e) = self.complex.get(name) {
+        let here = format!("{}/type[{name}]", self.docs[doc].location);
+        let (element, is_complex) = if let Some(e) = self.docs[doc].complex.get(name) {
             (*e, true)
-        } else if let Some(e) = self.simple.get(name) {
+        } else if let Some(e) = self.docs[doc].simple.get(name) {
             (*e, false)
         } else {
             return err(
                 "type",
                 location,
-                if self.target.is_some() {
+                if self.docs[doc].target.is_some() {
                     tr!(
                         "there is no type named `{name}` in the target namespace",
                         name = name
@@ -739,12 +1104,15 @@ impl<'a> Lowerer<'a> {
             );
         };
         let id = self.push(Kind::Bool, &here);
-        self.done.insert(name.to_string(), id);
-        let (kind, description) = if is_complex {
-            self.complex_kind(element, &here)?
+        self.done.insert((doc, name.to_string()), id);
+        let saved = std::mem::replace(&mut self.current, doc);
+        let lowered = if is_complex {
+            self.complex_kind(element, &here)
         } else {
-            self.simple_kind(element, &here)?
+            self.simple_kind(element, &here)
         };
+        self.current = saved;
+        let (kind, description) = lowered?;
         let def = &mut self.types[id.0 as usize];
         def.kind = kind;
         def.name = Some(name.to_string());
@@ -835,7 +1203,10 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "attribute",
                     &owner_here,
-                    tr!("there are two attributes named `{name}`", name = name),
+                    tr!(
+                        "there are two attributes named `{name}`",
+                        name = name.trim_start_matches('@')
+                    ),
                 );
             }
             fields.push(field);
@@ -845,6 +1216,7 @@ impl<'a> Lowerer<'a> {
                 name: "#text".to_string(),
                 ty,
                 required: false,
+                namespace: None,
             });
         }
         if let Some(sequence) = sequences.first() {
@@ -939,7 +1311,10 @@ impl<'a> Lowerer<'a> {
                 return err(
                     "attribute",
                     location,
-                    tr!("there are two attributes named `{name}`", name = name),
+                    tr!(
+                        "there are two attributes named `{name}`",
+                        name = name.trim_start_matches('@')
+                    ),
                 );
             }
             fields.push(field);
@@ -952,35 +1327,98 @@ impl<'a> Lowerer<'a> {
             name: "#text".to_string(),
             ty: markup,
             required: false,
+            namespace: None,
         });
         Ok((Kind::Object { fields }, description))
     }
 
     /// A field for an `xs:attribute`: named `@name`, a simple type.
     fn attribute_field(&mut self, attribute: &'a Element, parent: &str) -> Res<(String, Field)> {
+        if let Some(reference) = attribute.attribute("ref") {
+            return self.attribute_ref(attribute, reference, parent);
+        }
         let Some(name) = attribute.attribute("name") else {
             return err(
                 "attribute",
                 parent,
-                tr!("an attribute needs a `name` (`ref` is not supported in version 1)"),
+                tr!("an attribute needs a `name` or a `ref`"),
             );
         };
         let here = format!("{parent}/attribute[{name}]");
-        check_attributes(attribute, &["name", "type", "use"], &here)?;
+        check_attributes(attribute, &["name", "type", "use", "form"], &here)?;
         check_children(attribute, &["annotation", "simpleType"], &here)?;
         documentation(attribute, &here)?;
-        let required = match attribute.attribute("use") {
-            None | Some("optional") => false,
-            Some("required") => true,
-            Some("prohibited") => {
-                return err(
-                    "use",
-                    &here,
-                    tr!("`prohibited` is not supported in version 1"),
-                );
-            }
-            Some(_) => return err("use", &here, tr!("must be `optional` or `required`")),
+        let required = attribute_use(attribute, &here)?;
+        let qualified = match attribute.attribute("form") {
+            None => self.docs[self.current].attributes_qualified,
+            Some(form) => form_of(form, &here)?,
         };
+        let ty = self.attribute_type(attribute, &here)?;
+        if name.contains(':') || name.is_empty() {
+            return err("name", &here, tr!("is not a valid attribute name"));
+        }
+        let namespace = if qualified {
+            self.docs[self.current].target.clone()
+        } else {
+            None
+        };
+        let field_name = self.field_name(namespace.as_deref(), name, true);
+        Ok((
+            field_name.clone(),
+            Field {
+                name: field_name,
+                ty,
+                required,
+                namespace,
+            },
+        ))
+    }
+
+    /// A field for an `xs:attribute ref`: the global attribute it names, of
+    /// this schema or another, with this one's `use`.
+    fn attribute_ref(
+        &mut self,
+        attribute: &'a Element,
+        reference: &str,
+        parent: &str,
+    ) -> Res<(String, Field)> {
+        let (uri, local) = clark(reference);
+        let here = format!("{parent}/attribute[{local}]");
+        check_attributes(attribute, &["ref", "use"], &here)?;
+        check_children(attribute, &["annotation"], &here)?;
+        documentation(attribute, &here)?;
+        let required = attribute_use(attribute, &here)?;
+        let doc = self.doc_of(uri, "ref", &here)?;
+        let Some(declaration) = self.docs[doc].attributes.get(local).copied() else {
+            return err(
+                "ref",
+                &here,
+                tr!("there is no global attribute named `{name}`", name = local),
+            );
+        };
+        let there = format!("{}/attribute[{local}]", self.docs[doc].location);
+        check_attributes(declaration, &["name", "type"], &there)?;
+        check_children(declaration, &["annotation", "simpleType"], &there)?;
+        let saved = std::mem::replace(&mut self.current, doc);
+        let ty = self.attribute_type(declaration, &there);
+        self.current = saved;
+        let ty = ty?;
+        let namespace = self.docs[doc].target.clone();
+        let field_name = self.field_name(namespace.as_deref(), local, true);
+        Ok((
+            field_name.clone(),
+            Field {
+                name: field_name,
+                ty,
+                required,
+                namespace,
+            },
+        ))
+    }
+
+    /// The simple type of an attribute declaration.
+    fn attribute_type(&mut self, attribute: &'a Element, here: &str) -> Res<TypeId> {
+        let here = here.to_string();
         let inner = named_children(attribute, "simpleType");
         let ty = match (attribute.attribute("type"), inner.first()) {
             (Some(_), Some(_)) => {
@@ -1008,38 +1446,25 @@ impl<'a> Lowerer<'a> {
         ) {
             return err("type", &here, tr!("an attribute has a simple type"));
         }
-        if name.contains(':') || name.is_empty() {
-            return err("name", &here, tr!("is not a valid attribute name"));
-        }
-        Ok((
-            name.to_string(),
-            Field {
-                name: format!("@{name}"),
-                ty,
-                required,
-            },
-        ))
+        Ok(ty)
     }
 
     /// A field for an `xs:element` in a sequence.
     fn element_field(&mut self, element: &'a Element, parent: &str) -> Res<(String, Field)> {
         let (min, max) = occurs(element, parent)?;
-        let (name, ty, here) = if let Some(reference) = element.attribute("ref") {
+        let (name, ty, namespace) = if let Some(reference) = element.attribute("ref") {
             let (uri, local) = clark(reference);
             let here = format!("{parent}/element[{local}]");
             check_attributes(element, &["ref", "minOccurs", "maxOccurs"], &here)?;
             check_children(element, &["annotation"], &here)?;
-            if uri != self.target.as_deref() || local != self.root_name {
-                return err(
-                    "ref",
-                    &here,
-                    tr!(
-                        "only the global element `{root_name}` can be referred to",
-                        root_name = self.root_name
-                    ),
-                );
-            }
-            (local.to_string(), self.root_id, here)
+            let doc = self.doc_of(uri, "ref", &here)?;
+            let ty = self.global_element(doc, local, &here)?;
+            let namespace = self.docs[doc].target.clone();
+            (
+                self.field_name(namespace.as_deref(), local, false),
+                ty,
+                namespace,
+            )
         } else {
             let Some(name) = element.attribute("name") else {
                 return err(
@@ -1060,25 +1485,50 @@ impl<'a> Lowerer<'a> {
                 );
             }
             let here = format!("{parent}/element[{name}]");
-            check_attributes(element, &["name", "type", "minOccurs", "maxOccurs"], &here)?;
+            check_attributes(
+                element,
+                &["name", "type", "minOccurs", "maxOccurs", "form"],
+                &here,
+            )?;
+            let qualified = match element.attribute("form") {
+                None => self.docs[self.current].qualified,
+                Some(form) => form_of(form, &here)?,
+            };
             let ty = self.element_type(element, &here)?;
-            (name.to_string(), ty, here)
+            let namespace = if qualified {
+                self.docs[self.current].target.clone()
+            } else {
+                None
+            };
+            (
+                self.field_name(namespace.as_deref(), name, false),
+                ty,
+                namespace,
+            )
         };
-        let _ = here;
         let (ty, required) = if max == Some(1) {
             (ty, min >= 1)
         } else {
+            let local = name.rsplit(':').next().unwrap_or(&name);
             let array = self.push(
                 Kind::Array {
                     items: ty,
                     min_items: (min >= 1).then_some(min),
                     max_items: max,
                 },
-                &format!("{parent}/element[{name}]"),
+                &format!("{parent}/element[{local}]"),
             );
             (array, min >= 1)
         };
-        Ok((name.clone(), Field { name, ty, required }))
+        Ok((
+            name.clone(),
+            Field {
+                name,
+                ty,
+                required,
+                namespace,
+            },
+        ))
     }
 
     // ------------------------------------------------------------- simple

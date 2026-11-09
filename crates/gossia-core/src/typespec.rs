@@ -43,6 +43,10 @@ pub struct XmlInfo {
     /// Whether local elements are in the target namespace too
     /// (`elementFormDefault="qualified"`).
     pub qualified: bool,
+    /// The prefixes of the fields outside the target namespace, with their
+    /// namespaces, so that writing can declare them.
+    #[serde(default)]
+    pub prefixes: Vec<(String, String)>,
 }
 
 impl TypeSpec {
@@ -252,6 +256,11 @@ pub struct Field {
     pub name: String,
     pub ty: TypeId,
     pub required: bool,
+    /// For a field of an XSD, the namespace of its element or attribute
+    /// (none for an unqualified one). A field outside the schema's own
+    /// namespace has the prefix in its name: `dc:title`, `@xml:lang`.
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
 /// Inclusive bounds. The bounds are kept as written, integer or float.
