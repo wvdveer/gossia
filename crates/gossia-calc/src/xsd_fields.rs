@@ -3,8 +3,10 @@
 //! document as a tree described by the XSD meta-schema: a record type is a
 //! `complexType` node, its elements are the `element` items of its `sequence`,
 //! and its attributes are its `attribute` items (or those of its
-//! `simpleContent/extension`, when the element has text). A command changes
-//! that node; the data is changed as it is for JSON Schema.
+//! `simpleContent/extension`, when the element has text). The elements of an
+//! ordered list (`#children`) are the `element` items of its `choice`, the
+//! fields of the list's items. A command changes that node; the data is
+//! changed as it is for JSON Schema.
 
 use gossia_core::xsd::{self, XSD_NS};
 use gossia_core::{Node, Path, Value};
@@ -40,11 +42,13 @@ const COMPLEX_ORDER: &[&str] = &[
     "@name",
     "annotation",
     "sequence",
+    "choice",
     "simpleContent",
     "attribute",
 ];
 const EXTENSION_ORDER: &[&str] = &["@base", "attribute"];
 const SEQUENCE_ORDER: &[&str] = &["annotation", "element"];
+const CHOICE_ORDER: &[&str] = &["@minOccurs", "@maxOccurs", "annotation", "element"];
 
 impl FieldKind {
     /// The built-in XSD type of a field of this type, without a prefix.
@@ -225,6 +229,9 @@ impl Calc {
         places: &FieldPlaces,
         change: &XsdChange<'_>,
     ) -> Result<Value, EditError> {
+        if places.choice {
+            return self.xsd_edited_choice(places, change);
+        }
         let node = self
             .sheets
             .get(&places.schema_sheet)
@@ -234,6 +241,28 @@ impl Calc {
             })?;
         let mut complex = object_of(node)?;
         let simple_content = complex.contains_key("simpleContent");
+        let children = || {
+            EditError::Path(
+                tr!(
+                    "#children is the ordered list of child elements; change its elements \
+                     from one of its items"
+                )
+                .to_owned(),
+            )
+        };
+        match change {
+            XsdChange::Rename { from: name, .. } | XsdChange::Delete { name }
+                if *name == "#children" =>
+            {
+                return Err(children());
+            }
+            XsdChange::Add { name, .. }
+                if !name.starts_with('@') && complex.contains_key("choice") =>
+            {
+                return Err(children());
+            }
+            _ => {}
+        }
         // Where the attributes are, and their list.
         let mut extension = match complex.get("simpleContent") {
             Some(sc) => {
@@ -393,7 +422,7 @@ impl Calc {
                 let kind = |f: &str| {
                     if f.starts_with('@') {
                         0
-                    } else if f == "#text" {
+                    } else if f == "#text" || f == "#children" {
                         1
                     } else {
                         2
@@ -421,7 +450,7 @@ impl Calc {
                             reordered_attributes
                                 .push(attributes[find(&attributes, attribute)?].clone());
                         }
-                        None if field == "#text" => {}
+                        None if field == "#text" || field == "#children" => {}
                         None => reordered_elements.push(elements[find(&elements, field)?].clone()),
                     }
                 }
@@ -456,6 +485,116 @@ impl Calc {
             None => set_items(&mut complex, "attribute", attributes, COMPLEX_ORDER),
         }
         Ok(Value::Object(complex))
+    }
+}
+
+impl Calc {
+    /// The value of an ordered list's `choice` with `change` made to its
+    /// elements, each of which occurs once in an item.
+    fn xsd_edited_choice(
+        &self,
+        places: &FieldPlaces,
+        change: &XsdChange<'_>,
+    ) -> Result<Value, EditError> {
+        let node = self
+            .sheets
+            .get(&places.schema_sheet)
+            .and_then(|d| d.data.get(&places.document_path))
+            .ok_or_else(|| {
+                EditError::Path(tr!("the type is not in the schema any more").to_owned())
+            })?;
+        let mut choice = object_of(node)?;
+        let mut elements = items_at(&choice, "element");
+        let find = |list: &[Node], name: &str| {
+            list.iter()
+                .position(|item| names_field(item, name))
+                .ok_or_else(|| {
+                    EditError::Path(tr!(
+                        "cannot find {name} in the schema's choice",
+                        name = name
+                    ))
+                })
+        };
+        let one_element = || {
+            EditError::Path(
+                tr!(
+                    "an item of an ordered list is one element, so it has no attributes; add \
+                     the attribute to that element"
+                )
+                .to_owned(),
+            )
+        };
+        match change {
+            XsdChange::Add { name, kind, .. } => {
+                if name.starts_with('@') {
+                    return Err(one_element());
+                }
+                check_xml_name(name)?;
+                if *kind == FieldKind::Array {
+                    return Err(EditError::Path(
+                        tr!(
+                            "an element of an ordered list occurs once in each item; add more \
+                             items instead"
+                        )
+                        .to_owned(),
+                    ));
+                }
+                let mut element = if kind.is_structured() {
+                    declaration(&[("@name", (*name).to_owned())])
+                } else {
+                    let ty = format!(
+                        "{}{}",
+                        self.xsd_prefix(&places.schema_sheet),
+                        kind.xsd_type()
+                    );
+                    declaration(&[("@name", (*name).to_owned()), ("@type", ty)])
+                };
+                if kind.is_structured()
+                    && let Value::Object(map) = element.value_mut()
+                {
+                    map.insert(
+                        "complexType".to_owned(),
+                        Node::new(Value::Object(IndexMap::new())),
+                    );
+                }
+                elements.push(element);
+            }
+            XsdChange::Rename { from, to } => {
+                if to.starts_with('@') {
+                    return Err(one_element());
+                }
+                check_xml_name(to)?;
+                let i = find(&elements, from)?;
+                if attribute_value(&elements[i], "@ref").is_some() {
+                    return Err(EditError::Path(tr!(
+                        "{from} refers to the global element, so it takes that \
+                         element's name; rename it on {schema_sheet}",
+                        from = from,
+                        schema_sheet = places.schema_sheet
+                    )));
+                }
+                set_name(&mut elements[i], to);
+            }
+            XsdChange::Delete { name } => {
+                let i = find(&elements, name)?;
+                if elements.len() == 1 {
+                    return Err(EditError::Path(
+                        tr!("an ordered list needs at least one element that its items can be")
+                            .to_owned(),
+                    ));
+                }
+                elements.remove(i);
+            }
+            XsdChange::Reorder { order } => {
+                let mut reordered = Vec::new();
+                for name in order.iter() {
+                    reordered.push(elements[find(&elements, name)?].clone());
+                }
+                elements = reordered;
+            }
+        }
+        set_items(&mut choice, "element", elements, CHOICE_ORDER);
+        Ok(Value::Object(choice))
     }
 }
 

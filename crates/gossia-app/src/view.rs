@@ -59,6 +59,9 @@ pub(crate) enum Action {
     EnterText(Path, String),
     AddItem(Path),
     InsertAbove(Path),
+    /// Adds an item holding the element named to an ordered list of child
+    /// elements, at the end or at an index.
+    AddElement(Path, Option<usize>, String),
     // The entries of a map: the dialog asks for the key.
     AddEntry(Path),
     RenameKey(Path),
@@ -1211,6 +1214,7 @@ impl GossiaApp {
                 self.enter_directly(&path, &text);
             }
             Action::AddItem(path) => self.insert_item(&path, None),
+            Action::AddElement(list, at, element) => self.insert_element(&list, at, &element),
             Action::AddEntry(path) => self.begin_add_entry(&path),
             Action::RenameKey(path) => self.begin_rename_key(&path),
             Action::InsertAbove(path) => {
@@ -1744,8 +1748,10 @@ impl GossiaApp {
                 ui.close();
             }
         }
+        // The element of an item of an ordered list stands for the item.
+        let item = row.item.as_ref().unwrap_or(path);
         if !path.is_empty() && ui.button(tr!("Hide")).clicked() {
-            actions.push(Action::HideNode(path.clone()));
+            actions.push(Action::HideNode(item.clone()));
             ui.close();
         }
         if row.hidden > 0 {
@@ -1753,9 +1759,26 @@ impl GossiaApp {
                 self.hidden_list(ui, path, actions);
             });
         }
-        if row.kind == RowKind::Array && ui.button(tr!("Add item")).clicked() {
-            actions.push(Action::AddItem(path.clone()));
-            ui.close();
+        let elements = (row.kind == RowKind::Array)
+            .then(|| self.list_elements(path))
+            .flatten();
+        match elements {
+            // An ordered list asks which element.
+            Some(elements) => {
+                ui.menu_button(tr!("Add item"), |ui| {
+                    for element in elements {
+                        if ui.button(&element).clicked() {
+                            actions.push(Action::AddElement(path.clone(), None, element));
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            None if row.kind == RowKind::Array && ui.button(tr!("Add item")).clicked() => {
+                actions.push(Action::AddItem(path.clone()));
+                ui.close();
+            }
+            None => {}
         }
         if row.kind == RowKind::Map && ui.button(tr!("Add entry...")).clicked() {
             actions.push(Action::AddEntry(path.clone()));
@@ -1787,14 +1810,33 @@ impl GossiaApp {
                 ui.close();
             }
         }
-        match path.segments().last() {
-            Some(Segment::Index(_)) => {
-                if ui.button(tr!("Insert item above")).clicked() {
-                    actions.push(Action::InsertAbove(path.clone()));
-                    ui.close();
+        match item.segments().last() {
+            Some(Segment::Index(i)) => {
+                let list = item.parent().unwrap_or_default();
+                match self.list_elements(&list) {
+                    Some(elements) => {
+                        ui.menu_button(tr!("Insert item above"), |ui| {
+                            for element in elements {
+                                if ui.button(&element).clicked() {
+                                    actions.push(Action::AddElement(
+                                        list.clone(),
+                                        Some(*i),
+                                        element,
+                                    ));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
+                    None => {
+                        if ui.button(tr!("Insert item above")).clicked() {
+                            actions.push(Action::InsertAbove(item.clone()));
+                            ui.close();
+                        }
+                    }
                 }
                 if ui.button(tr!("Delete item")).clicked() {
-                    actions.push(Action::Delete(path.clone()));
+                    actions.push(Action::Delete(item.clone()));
                     ui.close();
                 }
             }

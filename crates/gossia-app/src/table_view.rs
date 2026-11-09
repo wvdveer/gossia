@@ -600,5 +600,6 @@ fn cell_row(spec: &TypeSpec, array: &Path, index: usize, item: &Node, column: &C
         tabular: false,
         hidden: 0,
         marker: None,
+        item: None,
     }
 }

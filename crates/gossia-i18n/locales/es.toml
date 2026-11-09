@@ -2,6 +2,7 @@
 # Drafted by Claude (2026-11-06); corrections by a native speaker are welcome.
 # Each key is the English text; named places such as {tab} must stay, in any order.
 
+"#children is the ordered list of child elements; change its elements from one of its items" = "#children es la lista ordenada de elementos hijos; cambie sus elementos desde uno de sus elementos de lista"
 "1 entry repeats an earlier one in the file; the later is kept." = "1 entrada repite otra anterior del archivo; se conserva la última."
 "<{path}> has the attribute {name} both with and without a prefix, which version 1 does not support" = "<{path}> tiene el atributo {name} con y sin prefijo, lo que la versión 1 no admite"
 "<{path}> holds text next to elements (mixed content); what is inside it is kept as XML, which is edited in the Raw view." = "<{path}> contiene texto junto a elementos (contenido mixto); lo que contiene se guarda como XML, que se edita en la vista sin formato."
@@ -300,6 +301,7 @@
 "an element in a `choice` occurs once; the `choice` itself repeats" = "un elemento de un `choice` aparece una vez; el que se repite es el propio `choice`"
 "an element needs a `name` (or a `ref`)" = "un elemento necesita un `name` (o un `ref`)"
 "an element needs a `type`, or a `complexType` or `simpleType` inside it" = "un elemento necesita un `type`, o un `complexType` o `simpleType` dentro"
+"an element of an ordered list occurs once in each item; add more items instead" = "un elemento de una lista ordenada aparece una vez en cada elemento de la lista; añada más elementos a la lista"
 "an element that may occur 0 times is not supported" = "no se admite un elemento que pueda aparecer 0 veces"
 "An empty box takes that comment away." = "Un cuadro vacío elimina ese comentario."
 "an empty {} in the template: put an expression in it" = "un {} vacío en la plantilla: ponga una expresión dentro"
@@ -312,6 +314,7 @@
 "an included file must be in the journal's folder or a folder below it" = "un archivo incluido debe estar en la carpeta del diario o en una carpeta por debajo"
 "an integer" = "un entero"
 "an item cannot be left empty; remove it instead" = "un elemento no puede quedar vacío; quítelo en su lugar"
+"an item of an ordered list is one element, so it has no attributes; add the attribute to that element" = "un elemento de una lista ordenada es un solo elemento, así que no tiene atributos; añada el atributo a ese elemento"
 "an item of {loc} has no field {name}" = "un elemento de {loc} no tiene ningún campo {name}"
 "an item renamed has OCCURS" = "un elemento renombrado tiene OCCURS"
 "an item renamed is in a REDEFINES, or renamed already" = "un elemento renombrado está en un REDEFINES, o ya está renombrado"
@@ -324,6 +327,7 @@
 "Anchored across" = "Anclado en horizontal"
 "Anchored down" = "Anclado en vertical"
 "Anchoring to the bottom needs a height on the group." = "Anclar abajo requiere una altura en el grupo."
+"an ordered list needs at least one element that its items can be" = "una lista ordenada necesita al menos un elemento que puedan ser sus elementos de lista"
 "answered {status}" = "respondió {status}"
 "answered {status} in {ms} ms" = "respondió {status} en {ms} ms"
 "any facet" = "ninguna faceta"
@@ -388,6 +392,7 @@
 "Cannot be switched on: {why}" = "No se puede activar: {why}"
 "Cannot disconnect from the data sources: {e}." = "No se puede desconectar de los orígenes de datos: {e}."
 "cannot find the type of {at} in {schema_sheet}" = "no se encuentra el tipo de {at} en {schema_sheet}"
+"cannot find {name} in the schema's choice" = "no se encuentra {name} en el choice del esquema"
 "cannot find {name} in the schema's complexType" = "no se encuentra {name} en el complexType del esquema"
 "cannot make {folder}: {e}" = "no se puede crear {folder}: {e}"
 "cannot open {path} with {program}: {e}" = "no se puede abrir {path} con {program}: {e}"
@@ -1982,6 +1987,7 @@
 "{kind} is not an error kind" = "{kind} no es un tipo de error"
 "{k} cannot be a metadata key: it starts with a small letter and has letters, digits, - and _" = "{k} no puede ser una clave de metadatos: empieza por minúscula y tiene letras, dígitos, - y _"
 "{k} is not a tag this version knows" = "{k} no es una etiqueta que conozca esta versión"
+"{label} does not hold one of: {names}" = "{label} no contiene uno solo de: {names}"
 "{len} characters, but at least {min} are required" = "{len} caracteres, pero se requieren al menos {min}"
 "{len} characters, but at most {max} are allowed" = "{len} caracteres, pero se permiten como máximo {max}"
 "{level} is not a level number" = "{level} no es un número de nivel"

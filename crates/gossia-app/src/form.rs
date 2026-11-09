@@ -118,6 +118,8 @@ pub(crate) enum FormAction {
     Create(Path),
     Select(Path),
     Add(Path),
+    /// Add an item holding the element named to an ordered list.
+    AddElement(Path, String),
     Delete(Path, usize),
     Move(Path, usize, bool),
     Sort(Path, String),
@@ -537,6 +539,16 @@ impl GossiaApp {
                 self.add_item_to(&array);
                 if self.array_len(&array) > before {
                     self.pin_form_row(&array.index(before));
+                }
+            }
+            FormAction::AddElement(list, element) => {
+                let before = self.array_len(&list);
+                self.insert_element(&list, None, &element);
+                if self.array_len(&list) > before {
+                    self.form
+                        .steps
+                        .insert((self.sheet.clone(), list.clone()), before);
+                    self.pin_form_row(&list.index(before));
                 }
             }
             FormAction::Delete(array, index) => {
@@ -2375,6 +2387,7 @@ impl Painter<'_> {
             },
             (Kind::Map { .. }, _) => self.map(ui, &path, ty, &label),
             (Kind::Object { .. }, _) => self.object(ui, &path, ty, &label, resolved.required),
+            (Kind::Choice { .. }, _) => self.choice_item(ui, &path, ty, &label),
             _ => self.field(ui, &path, ty, &label, resolved.required),
         }
         self.look = None;
@@ -2398,7 +2411,41 @@ impl Painter<'_> {
             Kind::Object { .. } => self.object(ui, path, ty, label, required),
             Kind::Array { .. } => self.repeater(ui, path, ty, label),
             Kind::Map { .. } => self.map(ui, path, ty, label),
+            Kind::Choice { .. } => self.choice_item(ui, path, ty, label),
             _ => self.field(ui, path, ty, label, required),
+        }
+    }
+
+    /// An item of an ordered list: the control of the element it holds,
+    /// named after it.
+    fn choice_item(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str) {
+        let Kind::Choice { fields } = &self.spec.get(ty).kind else {
+            return;
+        };
+        let held = match self.data.get(path).map(Node::value) {
+            Some(Value::Object(map)) if map.len() == 1 => map
+                .keys()
+                .next()
+                .and_then(|name| fields.iter().find(|f| &f.name == name))
+                .map(|f| (f.name.clone(), f.ty)),
+            _ => None,
+        };
+        match held {
+            Some((name, field_ty)) => {
+                self.node(ui, &path.key(name.as_str()), field_ty, &name, true)
+            }
+            None => {
+                let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+                let color = error_color(ui);
+                ui.label(
+                    RichText::new(tr!(
+                        "{label} does not hold one of: {names}",
+                        label = label,
+                        names = names.join(", ")
+                    ))
+                    .color(color),
+                );
+            }
         }
     }
 
@@ -3223,11 +3270,30 @@ impl Painter<'_> {
                 let response = in_font(ui, title_font, |ui| ui.strong(label));
                 self.arrive(path, &response);
                 ui.label(RichText::new(count_text(items.len())).weak());
-                if ui
-                    .add_enabled(can_add, egui::Button::new(tr!("New")))
-                    .clicked()
-                {
-                    self.actions.push(FormAction::Add(path.clone()));
+                match self.spec.list_choices(ty) {
+                    // An ordered list asks which element.
+                    Some(fields) => {
+                        let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                        ui.add_enabled_ui(can_add, |ui| {
+                            ui.menu_button(tr!("New"), |ui| {
+                                for name in names {
+                                    if ui.button(&name).clicked() {
+                                        self.actions
+                                            .push(FormAction::AddElement(path.clone(), name));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
+                    }
+                    None => {
+                        if ui
+                            .add_enabled(can_add, egui::Button::new(tr!("New")))
+                            .clicked()
+                        {
+                            self.actions.push(FormAction::Add(path.clone()));
+                        }
+                    }
                 }
                 if let Some(shown) = &shown {
                     self.table_strip(ui, path, shown);
@@ -4678,7 +4744,8 @@ fn item_columns(spec: &TypeSpec, item_ty: TypeId) -> Option<Vec<Column>> {
             let columns = table::columns(spec, item_ty);
             (!columns.is_empty() && columns.iter().all(|c| !c.summary)).then_some(columns)
         }
-        Kind::Array { .. } | Kind::Map { .. } => None,
+        // An ordered list of elements is shown one item at a time.
+        Kind::Array { .. } | Kind::Map { .. } | Kind::Choice { .. } => None,
         _ => Some(vec![Column {
             name: "value".to_owned(),
             fields: Vec::new(),

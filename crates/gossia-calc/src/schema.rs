@@ -168,6 +168,9 @@ pub struct FieldPlaces {
     /// The schema tab is an XSD: the type is a `complexType`, and attribute
     /// fields are named with a leading `@`.
     pub xsd: bool,
+    /// The type is an item of an ordered list (`#children`): its fields are
+    /// the elements of an `xs:choice`, where the document path leads.
+    pub choice: bool,
 }
 
 impl Calc {
@@ -731,11 +734,15 @@ impl Calc {
             .resolve(object)
             .ok_or_else(|| EditError::NotInSchema(at.clone()))?
             .ty;
-        let Kind::Object { fields } = &spec.get(ty).kind else {
-            return Err(EditError::Path(tr!(
-                "{at} is not a record, so it has no fields to change",
-                at = at
-            )));
+        let (fields, choice) = match &spec.get(ty).kind {
+            Kind::Object { fields } => (fields, false),
+            Kind::Choice { fields } if is_xsd => (fields, true),
+            _ => {
+                return Err(EditError::Path(tr!(
+                    "{at} is not a record, so it has no fields to change",
+                    at = at
+                )));
+            }
         };
         let source = &spec.get(ty).source;
         if is_xsd && let Some(place) = imported_from(source) {
@@ -798,6 +805,7 @@ impl Calc {
             objects,
             also_used_at,
             xsd: is_xsd,
+            choice,
         })
     }
 
@@ -1021,6 +1029,17 @@ impl Calc {
         kind: FieldKind,
         required: bool,
     ) -> Result<(), EditError> {
+        // An element added to one whose children are an ordered list goes
+        // into the list's choice.
+        let list = (!name.starts_with('@'))
+            .then(|| self.spec_of(sheet).ok())
+            .flatten()
+            .and_then(|spec| {
+                let list = object.key("#children");
+                spec.list_choices(spec.resolve(&list)?.ty)
+                    .map(|_| list.index(0))
+            });
+        let object = list.as_ref().unwrap_or(object);
         let places = self.field_places(sheet, object)?;
         check_name(name)?;
         if places.fields.iter().any(|f| f == name) {
@@ -1171,10 +1190,24 @@ impl Calc {
                     calc.remove_formula(sheet, &path)?;
                 }
             }
-            for place in &places.objects {
-                calc.rewrite_object(sheet, place, |map| {
-                    map.shift_remove(name);
-                })?;
+            if places.choice {
+                // An item of an ordered list that held the element goes; the
+                // last first, so that the places before it stay where they are.
+                for place in places.objects.iter().rev() {
+                    let holds = matches!(
+                        calc.sheets[sheet].data.get(place).map(Node::value),
+                        Some(Value::Object(map)) if map.contains_key(name)
+                    );
+                    if holds {
+                        calc.remove(sheet, place)?;
+                    }
+                }
+            } else {
+                for place in &places.objects {
+                    calc.rewrite_object(sheet, place, |map| {
+                        map.shift_remove(name);
+                    })?;
+                }
             }
             calc.put(&places.schema_sheet, &places.document_path, document)
         })

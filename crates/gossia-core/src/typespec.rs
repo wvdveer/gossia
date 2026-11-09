@@ -187,6 +187,18 @@ impl TypeSpec {
         }
     }
 
+    /// For an ordered list of child elements (`#children`, an array of a
+    /// choice), the elements its items can be.
+    pub fn list_choices(&self, ty: TypeId) -> Option<&[Field]> {
+        match &self.get(ty).kind {
+            Kind::Array { items, .. } => match &self.get(*items).kind {
+                Kind::Choice { fields } => Some(fields),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The number of types in the arena, including any that are not reachable.
     pub fn len(&self) -> usize {
         self.types.len()

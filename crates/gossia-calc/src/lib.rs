@@ -104,6 +104,9 @@ mod schema_tests;
 mod package_tests;
 
 #[cfg(test)]
+#[path = "xsd_children_tests.rs"]
+mod xsd_children_tests;
+#[cfg(test)]
 #[path = "xsd_fields_tests.rs"]
 mod xsd_fields_tests;
 #[cfg(test)]

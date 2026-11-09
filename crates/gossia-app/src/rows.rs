@@ -6,7 +6,8 @@
 //! absent optional field is an empty cell that can be filled. Content the
 //! schema does not define is shown greyed and read-only after the declared
 //! fields. Only the rows of expanded nodes are made, and none for a node
-//! hidden by hand or for what is inside it.
+//! hidden by hand or for what is inside it. An item of an ordered list of
+//! child elements (`#children`) is one row, the element it holds.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -46,6 +47,9 @@ pub struct Row {
     pub hidden: usize,
     /// Hidden nodes come right after this row: their parent and how many.
     pub marker: Option<(Path, usize)>,
+    /// For the element of an item of an ordered list, the item: the row
+    /// stands for both, and the item is what is inserted, moved or deleted.
+    pub item: Option<Path>,
 }
 
 impl Row {
@@ -147,7 +151,7 @@ fn walk(
 ) {
     let expanded = open_state.expanded;
     let kind = match &spec.get(ty).kind {
-        Kind::Object { .. } => RowKind::Object,
+        Kind::Object { .. } | Kind::Choice { .. } => RowKind::Object,
         Kind::Array { .. } => RowKind::Array,
         Kind::Map { .. } => RowKind::Map,
         // Any value: shown as what it holds, a record as a map of its keys.
@@ -181,6 +185,7 @@ fn walk(
         tabular,
         hidden: 0,
         marker: None,
+        item: None,
     });
     if !open {
         return;
@@ -237,11 +242,13 @@ fn walk(
                         tabular: false,
                         hidden: 0,
                         marker: None,
+                        item: None,
                     });
                 }
             }
         }
         Kind::Array { items, .. } => {
+            let choices = spec.list_choices(ty);
             if let Some(Value::Array(present)) = node.map(Node::value) {
                 for (i, child) in present.iter().enumerate() {
                     if tabular && !drilled.contains(&i) {
@@ -249,6 +256,36 @@ fn walk(
                     }
                     key.push(Step::Item(child.id()));
                     if skipped.hidden(open_state, key, out) {
+                        key.pop();
+                        continue;
+                    }
+                    // An item of an ordered list that holds one element is
+                    // that element's row.
+                    let element = choices.and_then(|fields| match child.value() {
+                        Value::Object(map) if map.len() == 1 => {
+                            let (name, inner) = map.first()?;
+                            let field = fields.iter().find(|f| &f.name == name)?;
+                            Some((field, inner))
+                        }
+                        _ => None,
+                    });
+                    if let Some((field, inner)) = element {
+                        let at = out.len();
+                        key.push(Step::Key(field.name.clone()));
+                        walk(
+                            spec,
+                            field.ty,
+                            path.index(i).key(field.name.as_str()),
+                            key,
+                            format!("[{i}] {}", field.name),
+                            Some(inner),
+                            true,
+                            depth + 1,
+                            open_state,
+                            out,
+                        );
+                        key.pop();
+                        out[at].item = Some(path.index(i));
                         key.pop();
                         continue;
                     }
@@ -320,6 +357,50 @@ fn walk(
                         open_state,
                         out,
                     );
+                    key.pop();
+                }
+            }
+        }
+        // An item of an ordered list that does not hold exactly one element:
+        // what it holds, the keys that are no element of it unrecognised.
+        Kind::Choice { fields } => {
+            if let Some(Value::Object(present)) = node.map(Node::value) {
+                for (name, child) in present {
+                    key.push(Step::Key(name.clone()));
+                    if skipped.hidden(open_state, key, out) {
+                        key.pop();
+                        continue;
+                    }
+                    match fields.iter().find(|f| &f.name == name) {
+                        Some(field) => walk(
+                            spec,
+                            field.ty,
+                            path.key(name.as_str()),
+                            key,
+                            name.clone(),
+                            Some(child),
+                            true,
+                            depth + 1,
+                            open_state,
+                            out,
+                        ),
+                        None => out.push(Row {
+                            path: path.key(name.as_str()),
+                            depth: depth + 1,
+                            name: name.clone(),
+                            ty: None,
+                            type_label: "unrecognised".to_owned(),
+                            node: Some(child.clone()),
+                            kind: RowKind::Scalar,
+                            required: false,
+                            expanded: false,
+                            unrecognised: true,
+                            tabular: false,
+                            hidden: 0,
+                            marker: None,
+                            item: None,
+                        }),
+                    }
                     key.pop();
                 }
             }

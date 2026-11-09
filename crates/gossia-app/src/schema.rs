@@ -124,7 +124,9 @@ impl GossiaApp {
         };
         let parent = Path::from(parent.to_vec());
         match &spec.get(spec.resolve(&parent)?.ty).kind {
-            Kind::Object { fields } if fields.iter().any(|f| &f.name == name) => {
+            Kind::Object { fields } | Kind::Choice { fields }
+                if fields.iter().any(|f| &f.name == name) =>
+            {
                 Some((parent, name.clone()))
             }
             _ => None,

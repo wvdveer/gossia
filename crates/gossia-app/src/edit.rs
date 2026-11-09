@@ -350,6 +350,61 @@ impl GossiaApp {
         }
     }
 
+    /// The elements an item of the ordered list at `list` can hold, when it
+    /// is one (`#children`).
+    pub fn list_elements(&self, list: &Path) -> Option<Vec<String>> {
+        let spec = self.calc().spec(&self.sheet)?;
+        let fields = spec.list_choices(spec.resolve(list)?.ty)?;
+        Some(fields.iter().map(|f| f.name.clone()).collect())
+    }
+
+    /// Adds an item holding `element` to the ordered list at `list`, at the
+    /// end or at `index`, making the list if it is absent.
+    pub fn insert_element(&mut self, list: &Path, index: Option<usize>, element: &str) {
+        let sheet = self.sheet.clone();
+        let calc = self.session.calc_mut();
+        let Some(spec) = calc.spec(&sheet) else {
+            return;
+        };
+        let Some(field) = spec
+            .resolve(list)
+            .and_then(|r| spec.list_choices(r.ty))
+            .and_then(|fields| fields.iter().find(|f| f.name == element))
+        else {
+            return;
+        };
+        let item = Value::Object(
+            std::iter::once((
+                element.to_owned(),
+                gossia_core::Node::new(GossiaApp::default_value(spec, field.ty)),
+            ))
+            .collect(),
+        );
+        let existing = calc
+            .data(&sheet)
+            .and_then(|d| d.get(list))
+            .map(|n| n.value());
+        let result = match existing {
+            Some(Value::Array(items)) => {
+                let at = index.unwrap_or(items.len()).min(items.len());
+                calc.insert_item(&sheet, list, at, item)
+            }
+            _ => calc.set_value(
+                &sheet,
+                list,
+                Value::Array(vec![gossia_core::Node::new(item)]),
+            ),
+        };
+        match result {
+            Ok(()) => {
+                self.notice = None;
+                self.set_open(list, true);
+                self.session.tick();
+            }
+            Err(e) => self.notice = Some(e.to_string()),
+        }
+    }
+
     /// Removes the node at `path`: an item of an array, a key of a map, or a
     /// field of an object (which then shows as missing, if it is required).
     pub fn delete_node(&mut self, path: &Path) {
