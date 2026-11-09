@@ -516,10 +516,12 @@ fn xml_is_imported_with_an_inferred_xsd() {
 #[test]
 fn xml_outside_the_subset_can_still_go_into_an_xsd_tab_or_is_refused() {
     let app = sample();
+    // Mixed content imports (0.5.0), kept as markup.
+    assert!(app.plan_import("p.xml", b"<p>Hello <b>you</b></p>").is_ok());
     let refused = app
-        .plan_import("p.xml", b"<p>Hello <b>you</b></p>")
+        .plan_import("n.xml", br#"<r xmlns="urn:a"><x xmlns="urn:b"/></r>"#)
         .unwrap_err();
-    assert!(refused.contains("mixed content"), "{refused}");
+    assert!(refused.contains("more than one namespace"), "{refused}");
     let broken = app.plan_import("x.xml", b"<a><b></a>").unwrap_err();
     assert!(
         broken.starts_with("x.xml is not well-formed XML"),

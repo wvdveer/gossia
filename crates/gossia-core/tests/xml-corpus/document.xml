@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>Hello</w:t>
+      </w:r>
+      <w:bookmarkStart w:id="0" w:name="here"/>
+      <w:r>
+        <w:t xml:space="preserve"> world</w:t>
+      </w:r>
+      <w:bookmarkEnd w:id="0"/>
+    </w:p>
+    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+    </w:sectPr>
+  </w:body>
+</w:document>

@@ -38,13 +38,15 @@ impl GossiaApp {
         }
     }
 
-    /// Whether the node can be edited by the user: the schema defines it, and
-    /// it is not inside the result of a formula, which owns it.
+    /// Whether the node can be edited by the user: the schema defines it, it
+    /// is not XML markup (edited in the Raw view), and it is not inside the
+    /// result of a formula, which owns it.
     pub fn can_edit(&self, path: &Path) -> bool {
         let calc = self.session.calc();
-        let defined = calc
-            .spec(&self.sheet)
-            .is_some_and(|spec| spec.resolve(path).is_some());
+        let defined = calc.spec(&self.sheet).is_some_and(|spec| {
+            spec.resolve(path)
+                .is_some_and(|r| !spec.get(r.ty).kind.is_markup())
+        });
         defined
             && calc
                 .cell(&self.sheet, path)
@@ -122,10 +124,22 @@ impl GossiaApp {
                     "{name} is computed by the formula at {}; change that formula instead",
                     self.name_of(&by)
                 ),
+                None if self.is_markup(path) => tr!(
+                    "{name} holds XML markup, which is edited in the Raw view",
+                    name = name
+                ),
                 None => format!("{name} cannot be edited"),
             },
             None => format!("{name} cannot be edited"),
         }
+    }
+
+    /// Whether the node holds XML markup, the inside of mixed content.
+    fn is_markup(&self, path: &Path) -> bool {
+        self.session.calc().spec(&self.sheet).is_some_and(|spec| {
+            spec.resolve(path)
+                .is_some_and(|r| spec.get(r.ty).kind.is_markup())
+        })
     }
 
     pub fn cancel_editing(&mut self) {

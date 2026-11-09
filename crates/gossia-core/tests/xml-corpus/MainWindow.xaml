@@ -1,0 +1,6 @@
+<Window x:Class="Example.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Example" Height="200" Width="300">
+  <Grid>
+    <TextBlock x:Name="Greeting" Text="Hello"/>
+    <Button Content="OK" Width="80"/>
+  </Grid>
+</Window>

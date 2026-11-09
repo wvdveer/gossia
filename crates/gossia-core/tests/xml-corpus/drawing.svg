@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100" height="60" viewBox="0 0 100 60">
+  <rect x="0" y="0" width="100" height="60" fill="#eee"/>
+  <circle cx="30" cy="30" r="20" fill="tomato"/>
+  <rect x="60" y="10" width="30" height="40" fill="teal"/>
+  <a xlink:href="https://example.com">
+    <text x="5" y="55">Example <tspan font-weight="bold">bold</tspan></text>
+  </a>
+</svg>

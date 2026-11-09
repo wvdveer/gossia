@@ -77,6 +77,9 @@ fn string_rules(strings: &StringConstraints, out: &mut Vec<String>) {
         Some(StringFormat::DateTime) => {
             out.push(tr!("a date and time (2026-10-30T14:30:00Z)").to_owned());
         }
+        Some(StringFormat::Markup) => {
+            out.push(tr!("XML markup, edited in the Raw view").to_owned());
+        }
         None => {}
     }
 }

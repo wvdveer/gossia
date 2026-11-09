@@ -119,13 +119,22 @@ pub fn xsd_source() -> &'static str {
       <xs:element name="attribute" type="xs:Attribute" minOccurs="0" maxOccurs="unbounded"/>
     </xs:sequence>
     <xs:attribute name="name" type="xs:string"/>
+    <xs:attribute name="mixed" type="xs:boolean"/>
   </xs:complexType>
 
   <xs:complexType name="Sequence">
     <xs:sequence>
       <xs:element name="annotation" type="xs:Annotation" minOccurs="0"/>
       <xs:element name="element" type="xs:Element" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="any" type="xs:Any" minOccurs="0"/>
     </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Any">
+    <xs:attribute name="processContents" type="xs:ProcessContents"/>
+    <xs:attribute name="minOccurs" type="xs:Occurs"/>
+    <xs:attribute name="maxOccurs" type="xs:MaxOccurs"/>
+    <xs:attribute name="namespace" type="xs:string"/>
   </xs:complexType>
 
   <xs:complexType name="SimpleContent">
@@ -185,6 +194,12 @@ pub fn xsd_source() -> &'static str {
   <xs:simpleType name="AttributeForm">
     <xs:restriction base="xs:string">
       <xs:enumeration value="unqualified"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ProcessContents">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="skip"/>
     </xs:restriction>
   </xs:simpleType>
 

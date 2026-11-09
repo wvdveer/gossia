@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A short article -->
+<article xmlns="http://docbook.org/ns/docbook" version="5.0">
+  <title>Getting started</title>
+  <section>
+    <title>Install</title>
+    <para>Run the <command>installer</command> and pick <emphasis>Typical</emphasis>.</para>
+    <para>That is all.</para>
+  </section>
+  <section>
+    <title>First steps</title>
+    <para>Open a file with <keycombo><keycap>Ctrl</keycap><keycap>O</keycap></keycombo> &amp; look around.</para>
+  </section>
+</article>

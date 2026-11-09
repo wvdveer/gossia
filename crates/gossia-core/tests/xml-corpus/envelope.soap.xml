@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <m:GetPriceResponse xmlns:m="https://example.com/prices">
+      <m:Price>34.5</m:Price>
+      <m:Discount xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>
+    </m:GetPriceResponse>
+  </soap:Body>
+</soap:Envelope>

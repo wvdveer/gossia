@@ -26,6 +26,10 @@
 //!   `xs:pattern` facets in one restriction are alternatives.
 //! - The text of an element with attributes is `#text` and is never required,
 //!   since an empty element is a valid way to write an empty string.
+//! - Mixed content (0.5.0) is `mixed="true"` with a `sequence` of one
+//!   `xs:any processContents="skip"`: the inside is a string of markup
+//!   ([`StringFormat::Markup`]), the element's value or, beside attributes,
+//!   its `#text`.
 
 use gossia_i18n::tr;
 use std::collections::{HashMap, HashSet};
@@ -33,7 +37,8 @@ use std::fmt;
 
 use crate::num::Num;
 use crate::typespec::{
-    Field, Kind, Pattern, Range, StringConstraints, TypeDef, TypeId, TypeSpec, XmlInfo,
+    Field, Kind, Pattern, Range, StringConstraints, StringFormat, TypeDef, TypeId, TypeSpec,
+    XmlInfo,
 };
 use crate::value::{Node, Value};
 use crate::xmltree::{self, Attribute, Child, Element, XmlError};
@@ -89,7 +94,9 @@ pub fn default_document() -> crate::xml::XmlDocument {
         declaration: Some(xmltree::Declaration::default()),
         root_prefix: Some("xs".to_string()),
         declarations: vec![(Some("xs".to_string()), XSD_NS.to_string())],
+        prolog: Vec::new(),
         after: Vec::new(),
+        without_declaration: false,
     }
 }
 
@@ -167,9 +174,10 @@ fn err<T>(keyword: &str, location: &str, message: impl Into<String>) -> Res<T> {
 /// Why a construct that this project knows is refused.
 fn excluded_element(name: &str) -> Option<&'static str> {
     Some(match name {
-        "choice" | "any" | "union" | "all" => {
+        "choice" | "union" | "all" => {
             tr!("unions and alternatives are not supported in version 1")
         }
+        "any" => tr!("`xs:any` is supported only as the content of a mixed type"),
         "group" | "attributeGroup" | "anyAttribute" => {
             tr!("groups and open content are not supported in version 1")
         }
@@ -192,7 +200,6 @@ fn excluded_attribute(name: &str) -> Option<&'static str> {
     Some(match name {
         "nillable" => tr!("nullable elements are not supported in version 1"),
         "default" | "fixed" => tr!("default and fixed values are not supported in version 1"),
-        "mixed" => tr!("mixed content is not supported in version 1"),
         "substitutionGroup" | "abstract" | "block" | "final" | "blockDefault" | "finalDefault" => {
             tr!("substitution and derivation control are not supported in version 1")
         }
@@ -362,11 +369,7 @@ fn check_children(element: &Element, allowed: &[&str], location: &str) -> Res<()
             Child::Comment(_) => {}
             Child::Text(t) if t.trim().is_empty() => {}
             Child::Text(_) => {
-                return err(
-                    &element.name,
-                    location,
-                    tr!("text is not allowed here (mixed content is not supported in version 1)"),
-                );
+                return err(&element.name, location, tr!("text is not allowed here"));
             }
             Child::Element(e) => {
                 let name = xs_name(e, location)?;
@@ -752,13 +755,18 @@ impl<'a> Lowerer<'a> {
     // ------------------------------------------------------------ complex
 
     fn complex_kind(&mut self, ct: &'a Element, location: &str) -> Res<(Kind, Option<String>)> {
-        check_attributes(ct, &["name"], location)?;
+        check_attributes(ct, &["name", "mixed"], location)?;
         check_children(
             ct,
             &["annotation", "sequence", "simpleContent", "attribute"],
             location,
         )?;
         let description = documentation(ct, location)?;
+        match ct.attribute("mixed").map(str::trim) {
+            None | Some("false" | "0") => {}
+            Some("true" | "1") => return self.mixed_kind(ct, location, description),
+            Some(_) => return err("mixed", location, tr!("must be `true` or `false`")),
+        }
         let sequences = named_children(ct, "sequence");
         let simple_content = named_children(ct, "simpleContent");
         if sequences.len() + simple_content.len() > 1 {
@@ -864,6 +872,87 @@ impl<'a> Lowerer<'a> {
                 fields.push(field);
             }
         }
+        Ok((Kind::Object { fields }, description))
+    }
+
+    /// A type of mixed content: a string of markup, with the attributes beside
+    /// it as fields when there are any (the markup is then `#text`). Its
+    /// content must be the one form that says "any markup": a `sequence` of
+    /// one `xs:any` that is skipped, optional and unbounded.
+    fn mixed_kind(
+        &mut self,
+        ct: &'a Element,
+        location: &str,
+        description: Option<String>,
+    ) -> Res<(Kind, Option<String>)> {
+        let form = || {
+            tr!(
+                "mixed content is written as a `sequence` holding one `xs:any` with \
+                 processContents=\"skip\", minOccurs=\"0\" and maxOccurs=\"unbounded\""
+            )
+        };
+        if !named_children(ct, "simpleContent").is_empty() {
+            return err("simpleContent", location, form());
+        }
+        let sequences = named_children(ct, "sequence");
+        let [sequence] = sequences.as_slice() else {
+            return err("mixed", location, form());
+        };
+        let here = format!("{location}/sequence");
+        check_attributes(sequence, &[], &here)?;
+        if sequence
+            .elements()
+            .any(|e| e.name != "annotation" && e.name != "any")
+        {
+            return err("sequence", &here, form());
+        }
+        check_children(sequence, &["annotation", "any"], &here)?;
+        documentation(sequence, &here)?;
+        let anys = named_children(sequence, "any");
+        let [any] = anys.as_slice() else {
+            return err("sequence", &here, form());
+        };
+        let any_here = format!("{here}/any");
+        check_attributes(
+            any,
+            &["processContents", "minOccurs", "maxOccurs", "namespace"],
+            &any_here,
+        )?;
+        check_children(any, &["annotation"], &any_here)?;
+        let skipped = any.attribute("processContents") == Some("skip");
+        let any_namespace = matches!(any.attribute("namespace"), None | Some("##any"));
+        if !skipped || !any_namespace || occurs(any, &any_here)? != (0, None) {
+            return err("any", &any_here, form());
+        }
+        let markup = self.push(
+            Kind::String(StringConstraints {
+                format: Some(StringFormat::Markup),
+                ..StringConstraints::default()
+            }),
+            &any_here,
+        );
+        let mut fields: Vec<Field> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for attribute in named_children(ct, "attribute") {
+            let (name, field) = self.attribute_field(attribute, location)?;
+            if !seen.insert(name.clone()) {
+                return err(
+                    "attribute",
+                    location,
+                    tr!("there are two attributes named `{name}`", name = name),
+                );
+            }
+            fields.push(field);
+        }
+        if fields.is_empty() {
+            let kind = self.types[markup.0 as usize].kind.clone();
+            return Ok((kind, description));
+        }
+        fields.push(Field {
+            name: "#text".to_string(),
+            ty: markup,
+            required: false,
+        });
         Ok((Kind::Object { fields }, description))
     }
 

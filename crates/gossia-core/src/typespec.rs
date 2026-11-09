@@ -238,6 +238,14 @@ pub enum Kind {
     Any,
 }
 
+impl Kind {
+    /// Whether values of this kind are markup: the inside of an XML element
+    /// of mixed content, kept as written ([`StringFormat::Markup`]).
+    pub fn is_markup(&self) -> bool {
+        matches!(self, Kind::String(c) if c.format == Some(StringFormat::Markup))
+    }
+}
+
 /// A field of an object type.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Field {
@@ -270,6 +278,11 @@ pub enum StringFormat {
     Date,
     /// `format: date-time`, an RFC 3339 date and time (`2026-10-23T14:30:00Z`).
     DateTime,
+    /// A piece of XML content written as it is: the inside of an XSD element
+    /// of mixed content (`mixed="true"` with an `xs:any` that is skipped).
+    /// Only XSD produces it. The string holds text, elements and comments
+    /// and must be well-formed; prefixes in it are those of the document.
+    Markup,
 }
 
 /// A regular expression, kept with its source text. It matches anywhere in the

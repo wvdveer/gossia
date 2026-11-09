@@ -89,7 +89,10 @@ fn one_occurrence_of_a_repeating_element_is_an_array_of_one() {
 fn the_declaration_and_the_comments_are_kept() {
     let parsed = read(DOC);
     assert_eq!(parsed.node.comment(), Some(" the first order "));
-    assert_eq!(parsed.document.after, [" trailer "]);
+    assert_eq!(
+        parsed.document.after,
+        [Misc::Comment(" trailer ".to_string())]
+    );
     let decl = parsed.document.declaration.as_ref().unwrap();
     assert_eq!(
         (decl.version.as_str(), decl.encoding.as_deref()),
@@ -476,13 +479,14 @@ fn unqualified_local_elements_are_not_put_in_the_namespace() {
 }
 
 #[test]
-fn a_dropped_doctype_is_reported_and_entities_are_not_expanded() {
+fn a_doctype_is_kept_and_entities_are_not_expanded() {
     let parsed = read("<!DOCTYPE order><order><customer>c</customer></order>");
-    assert!(
-        parsed
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("document type"))
+    assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    assert_eq!(
+        parsed.document.prolog,
+        [Misc::DocType {
+            doctype: "order".to_string()
+        }]
     );
     assert!(
         parse(
@@ -591,4 +595,89 @@ fn numbers_in_text_follow_xml_not_rust() {
     );
     assert_eq!(items[3].value(), &Value::Float(2.5));
     assert_eq!(items[4].value(), &Value::Float(3.0));
+}
+
+/// XML Schemas and namespaces, 0.5.0: the document type declaration and the
+/// processing instructions outside the root are written back where they were.
+#[test]
+fn the_doctype_and_processing_instructions_are_written_back() {
+    let spec = lower_str(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:element name="plist" type="xs:string"/></xs:schema>"#,
+    )
+    .unwrap();
+    let text = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\
+        <?xml-stylesheet href=\"s.xsl\"?><!--about--><plist>x</plist><?tail?><!--end-->";
+    let parsed = parse(text, &spec).unwrap();
+    assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    assert_eq!(parsed.document.prolog.len(), 2);
+    assert_eq!(parsed.node.comment(), Some("about"));
+    let written = to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert_eq!(written, text);
+}
+
+/// XML Schemas and namespaces, 0.5.0: namespace declarations on an element
+/// below the root stay on it.
+#[test]
+fn declarations_below_the_root_stay_where_they_were() {
+    let text = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <order status=\"open\"><customer xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">Acme</customer>\
+        <line xmlns:p=\"urn:p\" id=\"1\"><sku>A</sku><qty>1</qty><price>2</price></line><placed>2026-10-23</placed></order>";
+    let parsed = read(text);
+    let customer = parsed.node.get(&"customer".parse().unwrap()).unwrap();
+    assert_eq!(customer.xml_declarations().len(), 1);
+    assert!(parsed.node.xml_declarations().is_empty());
+    let written = to_string(&parsed.node, &spec(), &parsed.document, false).unwrap();
+    assert_eq!(written, text);
+}
+
+/// XML Schemas and namespaces, 0.5.0: markup that is not well-formed is
+/// flagged, and written as text so that nothing is lost.
+#[test]
+fn markup_that_is_not_well_formed_is_flagged_and_kept() {
+    let spec = lower_str(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:element name="p"><xs:complexType mixed="true"><xs:sequence>
+            <xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded"/>
+          </xs:sequence></xs:complexType></xs:element></xs:schema>"#,
+    )
+    .unwrap();
+    let node = Node::new(Value::Str("a <b>c".to_string()));
+    let issues = validate(&spec, &node);
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].kind, IssueKind::Constraint);
+    assert!(issues[0].message.contains("well-formed"), "{issues:?}");
+    let written = to_string(&node, &spec, &XmlDocument::default(), false).unwrap();
+    assert!(written.ends_with("<p>a &lt;b&gt;c</p>"), "{written}");
+    let node = Node::new(Value::Str("a <b>c</b>".to_string()));
+    assert!(validate(&spec, &node).is_empty());
+    let written = to_string(&node, &spec, &XmlDocument::default(), false).unwrap();
+    assert!(written.ends_with("<p>a <b>c</b></p>"), "{written}");
+}
+
+/// XML Schemas and namespaces, 0.5.0: a typed value is written back as it
+/// was written while it is unchanged, and as it is written now once changed.
+#[test]
+fn typed_values_keep_their_spelling_until_they_change() {
+    let spec = lower_str(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:element name="r"><xs:complexType><xs:sequence>
+            <xs:element name="n" type="xs:decimal"/>
+            <xs:element name="t" type="xs:dateTime"/>
+            <xs:element name="b" type="xs:boolean"/>
+          </xs:sequence><xs:attribute name="a" type="xs:integer"/></xs:complexType></xs:element></xs:schema>"#,
+    )
+    .unwrap();
+    let text = "<r a=\"+7\"><n> 1.50 </n><t>2026-11-08T18:30:02Z</t><b>1</b></r>";
+    let mut parsed = parse(text, &spec).unwrap();
+    assert_eq!(value_at(&parsed.node, "n"), Value::Float(1.5));
+    let written = to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert_eq!(written, text);
+    parsed
+        .node
+        .set(&"n".parse().unwrap(), Value::Float(2.0))
+        .unwrap();
+    let written = to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert!(written.contains("<n>2</n>"), "{written}");
 }

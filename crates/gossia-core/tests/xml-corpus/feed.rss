@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="feed.xsl"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Example News</title>
+    <link>https://example.com/</link>
+    <description>News from nowhere</description>
+    <atom:link href="https://example.com/feed" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>Item one</title>
+      <link>https://example.com/1</link>
+      <dc:creator>A. Writer</dc:creator>
+      <pubDate>Sun, 08 Nov 2026 10:00:00 GMT</pubDate>
+      <content:encoded><![CDATA[<p>Rich text</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>

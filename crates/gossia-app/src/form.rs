@@ -4470,7 +4470,7 @@ fn date_kind(kind: &Kind) -> Option<bool> {
         Kind::String(c) => match c.format {
             Some(StringFormat::Date) => Some(false),
             Some(StringFormat::DateTime) => Some(true),
-            None => None,
+            Some(StringFormat::Markup) | None => None,
         },
         _ => None,
     }

@@ -177,6 +177,10 @@ impl Value {
 #[derive(Debug, Clone)]
 pub struct Node(Arc<NodeData>);
 
+/// A namespace declaration: `(prefix, uri)`, with `None` for the default
+/// namespace.
+pub type Declaration = (Option<String>, String);
+
 #[derive(Debug, Clone)]
 struct NodeData {
     id: NodeId,
@@ -191,6 +195,14 @@ struct NodeData {
     /// file (DESIGN.md, "Other file formats"). Like a comment, it goes where
     /// the node goes.
     blank: bool,
+    /// The namespace declarations written on the node's element, when it is
+    /// not the root (XML tabs only; the root's are the document's). Rare, so
+    /// boxed; they go where the node goes.
+    xmlns: Option<Box<[Declaration]>>,
+    /// How the value was written in an XML file, when that differs from how
+    /// it would be written now (`1.0` for the number 1, `Z` for a zero
+    /// offset). It is used only while the value is still the one it spells.
+    lexical: Option<Box<str>>,
 }
 
 /// A node as the Web Worker of the wasm version receives it (DESIGN.md, Web
@@ -202,16 +214,22 @@ struct NodeWire {
     comment: Option<String>,
     inner: Option<Box<[Option<String>; 2]>>,
     blank: bool,
+    #[serde(default)]
+    xmlns: Option<Box<[Declaration]>>,
+    #[serde(default)]
+    lexical: Option<Box<str>>,
 }
 
 impl serde::Serialize for Node {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("NodeWire", 4)?;
+        let mut s = serializer.serialize_struct("NodeWire", 6)?;
         s.serialize_field("value", &self.0.value)?;
         s.serialize_field("comment", &self.0.comment)?;
         s.serialize_field("inner", &self.0.inner)?;
         s.serialize_field("blank", &self.0.blank)?;
+        s.serialize_field("xmlns", &self.0.xmlns)?;
+        s.serialize_field("lexical", &self.0.lexical)?;
         s.end()
     }
 }
@@ -225,6 +243,8 @@ impl<'de> serde::Deserialize<'de> for Node {
             comment: wire.comment,
             inner: wire.inner,
             blank: wire.blank,
+            xmlns: wire.xmlns,
+            lexical: wire.lexical,
         })))
     }
 }
@@ -278,7 +298,35 @@ impl Node {
             comment: None,
             inner: None,
             blank: false,
+            xmlns: None,
+            lexical: None,
         }))
+    }
+
+    /// How the value was written in its XML file, if that differs from how it
+    /// is written now. It may be stale: check that it still reads as the value.
+    pub fn lexical(&self) -> Option<&str> {
+        self.0.lexical.as_deref()
+    }
+
+    pub fn set_lexical(&mut self, lexical: Option<String>) {
+        let new = lexical.map(String::into_boxed_str);
+        if self.0.lexical != new {
+            Arc::make_mut(&mut self.0).lexical = new;
+        }
+    }
+
+    /// The namespace declarations written on the node's element: `(prefix,
+    /// uri)`, with `None` for the default namespace.
+    pub fn xml_declarations(&self) -> &[(Option<String>, String)] {
+        self.0.xmlns.as_deref().unwrap_or_default()
+    }
+
+    pub fn set_xml_declarations(&mut self, declarations: Vec<(Option<String>, String)>) {
+        let new = (!declarations.is_empty()).then(|| declarations.into_boxed_slice());
+        if self.0.xmlns != new {
+            Arc::make_mut(&mut self.0).xmlns = new;
+        }
     }
 
     /// Whether an empty line comes before the node in a YAML or TOML file.
@@ -344,13 +392,14 @@ impl Node {
         self.0.comment.is_some() || self.0.inner.is_some()
     }
 
-    /// The same node with the comments of `other`, at every place, and its
-    /// empty line before.
+    /// The same node with the comments of `other`, at every place, its empty
+    /// line before and its namespace declarations.
     pub fn with_comments_of(mut self, other: &Node) -> Node {
         let data = Arc::make_mut(&mut self.0);
         data.comment = other.0.comment.clone();
         data.inner = other.0.inner.clone();
         data.blank = other.0.blank;
+        data.xmlns = other.0.xmlns.clone();
         self
     }
 

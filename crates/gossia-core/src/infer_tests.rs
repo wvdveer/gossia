@@ -170,10 +170,41 @@ fn disagreeing_orders_are_reported() {
     assert!(warnings[0].starts_with("<r/a>: the child elements"));
 }
 
+/// XML Schemas and namespaces, 0.5.0: mixed content is inferred as a mixed
+/// type, its inside kept as markup, and written back as it was.
 #[test]
-fn mixed_content_and_more_namespaces_are_refused() {
+fn mixed_content_is_kept_as_markup() {
+    let text = "<doc><p class=\"a\">Hello <b>you</b> &amp; <i>them</i><!--c--></p><p>plain</p><title>T</title><note>Odd <x:y xmlns:x=\"urn:x\"/></note></doc>";
+    let (xsd, warnings, node) = round_trip(text);
+    assert!(xsd.contains(r#"<xs:complexType mixed="true">"#), "{xsd}");
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(warnings[0].starts_with("<doc/p> holds text next to elements"));
+    let Value::Object(doc) = node.value() else {
+        panic!("{node:?}")
+    };
+    let Value::Array(ps) = doc["p"].value() else {
+        panic!("{node:?}")
+    };
+    let Value::Object(first) = ps[0].value() else {
+        panic!("{node:?}")
+    };
+    assert_eq!(
+        first["#text"].value(),
+        &Value::Str("Hello <b>you</b> &amp; <i>them</i><!--c-->".to_string())
+    );
+    assert_eq!(
+        doc["note"].value(),
+        &Value::Str("Odd <x:y xmlns:x=\"urn:x\"/>".to_string())
+    );
+    let spec = xsd::lower_str(&xsd).unwrap();
+    let parsed = xml::parse(text, &spec).unwrap();
+    let written = xml::to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert_eq!(written, text, "no declaration, as in the text");
+}
+
+#[test]
+fn more_namespaces_are_refused() {
     let refused = |text: &str| infer_xsd(&xmltree::parse(text).unwrap()).unwrap_err();
-    assert!(refused("<p>Hello <b>you</b></p>").contains("mixed content"));
     assert!(
         refused(r#"<r xmlns="urn:a"><x xmlns="urn:b"/></r>"#).contains("more than one namespace")
     );

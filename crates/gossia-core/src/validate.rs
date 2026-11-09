@@ -228,6 +228,14 @@ fn check_string(c: &StringConstraints, s: &str, push: &mut dyn FnMut(IssueKind, 
                 tr!("is not a date and time (expected YYYY-MM-DDThh:mm:ssZ)").to_string(),
             );
         }
+        Some(StringFormat::Markup) => {
+            if let Err(e) = crate::xmltree::parse_fragment(s) {
+                push(
+                    IssueKind::Constraint,
+                    tr!("is not well-formed XML: {error}", error = e),
+                );
+            }
+        }
         _ => {}
     }
 }

@@ -192,6 +192,26 @@ fn simple_content_is_the_text_field_beside_the_attributes() {
     );
 }
 
+/// XML Schemas and namespaces, 0.5.0: mixed content is a string of markup,
+/// the element's value, or its `#text` beside attributes.
+#[test]
+fn mixed_content_is_a_string_of_markup() {
+    const ANY: &str = r#"<xs:sequence><xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded"/></xs:sequence>"#;
+    let spec = lowered(&schema(&format!(
+        r#"<xs:sequence>
+             <xs:element name="p"><xs:complexType mixed="true">{ANY}</xs:complexType></xs:element>
+             <xs:element name="q"><xs:complexType mixed="true">{ANY}
+               <xs:attribute name="class" type="xs:string"/>
+             </xs:complexType></xs:element>
+           </xs:sequence>"#
+    )));
+    let markup =
+        |kind: &Kind| matches!(kind, Kind::String(c) if c.format == Some(StringFormat::Markup));
+    assert!(markup(&at(&spec, "p").kind));
+    assert_eq!(field_names(at(&spec, "q")), ["@class", "#text"]);
+    assert!(markup(&at(&spec, "q[\"#text\"]").kind));
+}
+
 #[test]
 fn an_element_with_a_simple_type_and_no_attributes_is_its_value() {
     let spec = lowered(&schema(
@@ -335,7 +355,7 @@ fn excluded_constructs_are_refused_by_name() {
         (
             r#"<xs:sequence><xs:any/></xs:sequence>"#,
             "any",
-            "alternatives",
+            "mixed type",
         ),
         (r#"<xs:group ref="g"/>"#, "group", "groups"),
         (r#"<xs:complexContent/>"#, "complexContent", "derivation"),
@@ -413,10 +433,25 @@ fn excluded_constructs_are_refused_by_name() {
         assert!(e.message.contains(reason), "{body}: {e}");
         assert!(!e.location.is_empty());
     }
-    // Mixed content, as the attribute and as text.
+    // Mixed content in any other form than the one that means "any markup".
+    for body in [
+        r#"<xs:sequence/>"#,
+        r#"<xs:sequence><xs:element name="b" type="xs:string"/></xs:sequence>"#,
+        r#"<xs:sequence><xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:sequence>"#,
+        r#"<xs:sequence><xs:any processContents="skip" maxOccurs="unbounded"/></xs:sequence>"#,
+        r###"<xs:sequence><xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded" namespace="##other"/></xs:sequence>"###,
+        "",
+    ] {
+        let e = refused(&format!(
+            r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+              <xs:element name="r"><xs:complexType mixed="true">{body}</xs:complexType></xs:element>
+            </xs:schema>"#
+        ));
+        assert!(e.message.contains("processContents"), "{body}: {e}");
+    }
     let e = refused(
         r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
-          <xs:element name="r"><xs:complexType mixed="true"><xs:sequence/></xs:complexType></xs:element>
+          <xs:element name="r"><xs:complexType mixed="maybe"/></xs:element>
         </xs:schema>"#,
     );
     assert_eq!(e.keyword, "mixed");

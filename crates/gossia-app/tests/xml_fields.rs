@@ -164,3 +164,33 @@ fn add_field_has_its_type_on_the_left_and_offers_an_object_and_an_array() {
     settle(&mut harness);
     assert_eq!(fields(&harness), ["@id", "name", "city", "phone"]);
 }
+
+/// XML Schemas and namespaces, 0.5.0: the inside of an element of mixed
+/// content is XML markup, which is edited in the Raw view, not in a cell.
+#[test]
+fn markup_is_read_only_in_the_tree() {
+    const MIXED: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+      <xs:element name="doc"><xs:complexType><xs:sequence>
+        <xs:element name="title" type="xs:string"/>
+        <xs:element name="para"><xs:complexType mixed="true"><xs:sequence>
+          <xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded"/>
+        </xs:sequence></xs:complexType></xs:element>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>"#;
+    let mut calc = gossia_calc::Calc::new(Arc::new(gossia_calc::python::PythonSyntax));
+    let spec = xsd::lower_str(MIXED).unwrap();
+    let data = xml::parse(
+        "<doc><title>T</title><para>A <b>bold</b> word</para></doc>",
+        &spec,
+    )
+    .unwrap();
+    calc.add_sheet("Doc", spec, data.node).unwrap();
+    calc.set_xml_document("Doc", data.document).unwrap();
+    let mut app = GossiaApp::new(calc);
+    let para: Path = "para".parse().unwrap();
+    assert!(app.can_edit(&"title".parse().unwrap()));
+    assert!(!app.can_edit(&para));
+    assert!(!app.begin_editing(&para, true, None));
+    let notice = app.notice.clone().unwrap_or_default();
+    assert!(notice.contains("Raw view"), "{notice}");
+}

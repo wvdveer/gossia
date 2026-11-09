@@ -4,10 +4,11 @@
 //! This is the layer under both the XSD lowering and the XML data adapter. It
 //! knows nothing about schemas. It keeps what the design says is kept: the
 //! declaration, prefixes and namespace declarations, attribute order, element
-//! order and comments. It drops what the design says is dropped: processing
-//! instructions and the document type declaration (with a warning; entities
-//! declared there are never expanded and nothing external is ever fetched).
-//! CDATA sections become ordinary text.
+//! order, comments, and the document type declaration and processing
+//! instructions outside the root, as written (entities declared in a document
+//! type declaration are never expanded and nothing external is ever fetched).
+//! It drops what the design says is dropped: processing instructions inside
+//! the root (with a warning). CDATA sections become ordinary text.
 //!
 //! Reading is bounded: nesting deeper than [`MAX_DEPTH`] is refused, and the
 //! tree is built without recursion so that depth cannot overflow the stack.
@@ -119,15 +120,42 @@ impl Default for Declaration {
     }
 }
 
+/// What may stand outside the root element besides the XML declaration.
+/// Saved untagged, so a plain string is a comment, as in workbooks that kept
+/// only comments there.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum Misc {
+    /// A comment: the text between `<!--` and `-->`.
+    Comment(String),
+    /// A processing instruction: the text between `<?` and `?>`, its target
+    /// first.
+    Pi { pi: String },
+    /// The document type declaration: the text between `<!DOCTYPE ` and the
+    /// closing `>`, as written. It is never expanded.
+    DocType { doctype: String },
+}
+
+impl Misc {
+    /// The text of a comment, or `None` for anything else.
+    pub fn comment(&self) -> Option<&str> {
+        match self {
+            Misc::Comment(c) => Some(c),
+            _ => None,
+        }
+    }
+}
+
 /// A document: its root and what sits around it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     pub declaration: Option<Declaration>,
-    /// Comments before the root element.
-    pub before: Vec<String>,
+    /// Comments, processing instructions and the document type declaration
+    /// before the root element, in order.
+    pub before: Vec<Misc>,
     pub root: Element,
-    /// Comments after the root element.
-    pub after: Vec<String>,
+    /// Comments and processing instructions after the root element.
+    pub after: Vec<Misc>,
     /// What was dropped or changed on reading, for the import report.
     pub warnings: Vec<String>,
 }
@@ -194,6 +222,50 @@ fn lookup(scopes: &[Scope], prefix: Option<&str>) -> Option<String> {
 
 /// Reads an XML document.
 pub fn parse(text: &str) -> Result<Document, XmlError> {
+    parse_with(text, false)
+}
+
+/// The element a fragment is read inside.
+const FRAGMENT: &str = "gossia-fragment";
+
+/// Reads a piece of XML content with no root of its own: text, elements and
+/// comments, as the inside of an element of mixed content holds them.
+/// Prefixes need not be declared, because the piece is read away from the
+/// document it belongs in, where they are.
+pub fn parse_fragment(text: &str) -> Result<Vec<Child>, XmlError> {
+    let start = format!("<{FRAGMENT}>");
+    let wrapped = format!("{start}{text}</{FRAGMENT}>");
+    let doc = parse_with(&wrapped, true).map_err(|mut e| {
+        e.position = e
+            .position
+            .map(|at| at.saturating_sub(start.len()).min(text.len()));
+        e
+    })?;
+    if doc.root.name != FRAGMENT || doc.declaration.is_some() || !doc.after.is_empty() {
+        return Err(XmlError {
+            position: None,
+            message: tr!("this is not a piece of XML content").to_string(),
+        });
+    }
+    Ok(doc.root.children)
+}
+
+/// Writes a piece of XML content as [`parse_fragment`] reads it, on one line.
+pub fn write_fragment(children: &[Child]) -> String {
+    let mut out = String::new();
+    for child in children {
+        match child {
+            Child::Text(t) => out.push_str(&escape_text(t)),
+            Child::Comment(c) => out.push_str(&format!("<!--{c}-->")),
+            Child::Element(e) => write_element(e, false, 0, &mut out),
+        }
+    }
+    out
+}
+
+/// Reads a document; with `lenient`, a prefix that is not declared leaves its
+/// element in no namespace instead of being refused.
+fn parse_with(text: &str, lenient: bool) -> Result<Document, XmlError> {
     let mut reader = Reader::from_str(text);
     reader.config_mut().expand_empty_elements = true;
     let mut doc = Document {
@@ -252,24 +324,36 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
                     standalone: attribute(decl.standalone()),
                 });
             }
-            Event::DocType(_) => {
-                doc.warnings.push(
-                    tr!(
-                        "the document type declaration was dropped; entities declared in it are \
-                     not expanded and nothing external is fetched"
-                    )
-                    .to_string(),
-                );
+            Event::DocType(d) => {
+                let doctype = d.into_inner().trim().to_string();
+                if doctype.contains('[') {
+                    doc.warnings.push(
+                        tr!(
+                            "the document type declaration is kept as written, but entities \
+                         declared in it are not expanded"
+                        )
+                        .to_string(),
+                    );
+                }
+                doc.before.push(Misc::DocType { doctype });
             }
-            Event::PI(_) => doc
-                .warnings
-                .push(tr!("a processing instruction was dropped").to_string()),
+            Event::PI(pi) => {
+                let pi = pi.into_inner().into_owned();
+                match open.last() {
+                    Some(_) => doc.warnings.push(
+                        tr!("a processing instruction inside the root element was dropped")
+                            .to_string(),
+                    ),
+                    None if root.is_none() => doc.before.push(Misc::Pi { pi }),
+                    None => doc.after.push(Misc::Pi { pi }),
+                }
+            }
             Event::Comment(c) => {
                 let comment = c.xml_content(XmlVersion::Explicit1_0).into_owned();
                 match open.last_mut() {
                     Some(parent) => parent.children.push(Child::Comment(comment)),
-                    None if root.is_none() => doc.before.push(comment),
-                    None => doc.after.push(comment),
+                    None if root.is_none() => doc.before.push(Misc::Comment(comment)),
+                    None => doc.after.push(Misc::Comment(comment)),
                 }
             }
             Event::Start(start) => {
@@ -290,7 +374,7 @@ pub fn parse(text: &str) -> Result<Document, XmlError> {
                     declarations: element.declarations.clone(),
                 });
                 element.namespace = lookup(&scopes, element.prefix.as_deref());
-                if element.prefix.is_some() && element.namespace.is_none() {
+                if element.prefix.is_some() && element.namespace.is_none() && !lenient {
                     return fail(
                         at,
                         tr!(
@@ -449,7 +533,7 @@ fn qualified(prefix: &Option<String>, name: &str) -> String {
 
 /// Writes a document. With `pretty`, elements that hold only elements and
 /// comments are indented by two spaces; an element that holds text is written
-/// on one line with its text exactly as it is.
+/// on one line with its text exactly as it is, and everything inside it too.
 pub fn write(doc: &Document, pretty: bool) -> String {
     let mut out = String::new();
     if let Some(d) = &doc.declaration {
@@ -468,23 +552,31 @@ pub fn write(doc: &Document, pretty: bool) -> String {
             out.push('\n');
         }
     }
-    for comment in &doc.before {
-        out.push_str(&format!("<!--{comment}-->"));
+    for misc in &doc.before {
+        write_misc(misc, &mut out);
         if pretty {
             out.push('\n');
         }
     }
     write_element(&doc.root, pretty, 0, &mut out);
-    for comment in &doc.after {
+    for misc in &doc.after {
         if pretty {
             out.push('\n');
         }
-        out.push_str(&format!("<!--{comment}-->"));
+        write_misc(misc, &mut out);
     }
     if pretty {
         out.push('\n');
     }
     out
+}
+
+fn write_misc(misc: &Misc, out: &mut String) {
+    match misc {
+        Misc::Comment(c) => out.push_str(&format!("<!--{c}-->")),
+        Misc::Pi { pi } => out.push_str(&format!("<?{pi}?>")),
+        Misc::DocType { doctype } => out.push_str(&format!("<!DOCTYPE {doctype}>")),
+    }
 }
 
 fn write_element(element: &Element, pretty: bool, depth: usize, out: &mut String) {
@@ -524,7 +616,8 @@ fn write_element(element: &Element, pretty: bool, depth: usize, out: &mut String
                 if indent {
                     newline(out, depth + 1);
                 }
-                write_element(e, pretty, depth + 1, out);
+                // Inside text, any layout would change the text.
+                write_element(e, indent, depth + 1, out);
             }
         }
     }
@@ -570,8 +663,8 @@ mod tests {
         assert_eq!(decl.version, "1.0");
         assert_eq!(decl.encoding.as_deref(), Some("UTF-8"));
         assert_eq!(decl.standalone.as_deref(), Some("yes"));
-        assert_eq!(d.before, ["first"]);
-        assert_eq!(d.after, ["last"]);
+        assert_eq!(d.before, [Misc::Comment("first".to_string())]);
+        assert_eq!(d.after, [Misc::Comment("last".to_string())]);
     }
 
     #[test]
@@ -590,12 +683,59 @@ mod tests {
     }
 
     #[test]
-    fn a_doctype_and_processing_instructions_are_dropped_with_warnings_and_never_expanded() {
+    fn a_doctype_and_processing_instructions_outside_the_root_are_kept_and_never_expanded() {
         let d = parse("<!DOCTYPE a [<!ENTITY e \"boom\">]><?pi data?><a>&e;</a>");
         // The entity is not defined, because the declaration is not read.
         assert!(d.is_err());
-        let d = parse("<!DOCTYPE a><?pi data?><a/>").unwrap();
-        assert_eq!(d.warnings.len(), 2);
+        let text = "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><?xml-stylesheet type=\"text/xsl\" href=\"s.xsl\"?><a><?inner x?></a><?tail y?>";
+        let d = parse(text).unwrap();
+        assert_eq!(
+            d.before,
+            [
+                Misc::DocType {
+                    doctype: "plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"".to_string()
+                },
+                Misc::Pi {
+                    pi: "xml-stylesheet type=\"text/xsl\" href=\"s.xsl\"".to_string()
+                },
+            ]
+        );
+        assert_eq!(
+            d.after,
+            [Misc::Pi {
+                pi: "tail y".to_string()
+            }]
+        );
+        // Only the one inside the root is dropped.
+        assert_eq!(d.warnings.len(), 1, "{:?}", d.warnings);
+        assert_eq!(write(&d, false), text.replace("<a><?inner x?></a>", "<a/>"));
+        // An internal subset is kept, with a warning that it is not used.
+        let d = parse("<!DOCTYPE a [<!ELEMENT a EMPTY>]><a/>").unwrap();
+        assert_eq!(d.warnings.len(), 1);
+        assert_eq!(write(&d, false), "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a/>");
+    }
+
+    #[test]
+    fn a_fragment_reads_and_writes_back_with_undeclared_prefixes() {
+        let text = "Some <b>bold</b> and <x:y a=\"1\">odd</x:y><!--c--> &amp; more";
+        let children = parse_fragment(text).unwrap();
+        assert_eq!(children.len(), 6);
+        assert_eq!(write_fragment(&children), text);
+        assert!(parse_fragment("").unwrap().is_empty());
+        assert_eq!(
+            write_fragment(&parse_fragment("just text").unwrap()),
+            "just text"
+        );
+        for bad in [
+            "<b>open",
+            "a < b",
+            "</gossia-fragment><x>",
+            "<?xml version=\"1.0\"?>",
+        ] {
+            assert!(parse_fragment(bad).is_err(), "{bad:?}");
+        }
+        let e = parse_fragment("ab<c>").unwrap_err();
+        assert!(e.position.is_some_and(|at| at <= 5), "{e:?}");
     }
 
     #[test]

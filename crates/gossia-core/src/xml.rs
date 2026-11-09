@@ -12,11 +12,15 @@
 //! flagged, never refused); content the schema does not define is kept too,
 //! under its own name, for validation to flag as unrecognised.
 //!
-//! What is kept: the declaration, the prefix and the namespace declarations of
-//! the root (in [`XmlDocument`]), attribute order, element order, text exactly,
-//! and comments: the comment before an element is that node's comment, and a
-//! comment inside an element that is before no child element is the node's
-//! comment at the start (before its text) or at the end ([`CommentPlace`]).
+//! What is kept: the declaration, the document type declaration and the
+//! processing instructions outside the root, the prefix and the namespace
+//! declarations of the root (in [`XmlDocument`]), the namespace declarations
+//! of other elements (on their nodes), attribute order, element order, text
+//! exactly, and comments: the comment before an element is that node's
+//! comment, and a comment inside an element that is before no child element
+//! is the node's comment at the start (before its text) or at the end
+//! ([`CommentPlace`]). An element of mixed content holds its inside as
+//! written, a string of markup ([`crate::StringFormat::Markup`]).
 //! What is not kept: see [`crate::xmltree`] and DESIGN.md, "Not preserved
 //! (accepted)".
 
@@ -30,7 +34,7 @@ use crate::json::{Warning, WriteError};
 use crate::path::Path;
 use crate::typespec::{Kind, TypeId, TypeSpec};
 use crate::value::{CommentPlace, DateTimeValue, Node, Value};
-use crate::xmltree::{self, Attribute, Child, Declaration, Element, XmlError};
+use crate::xmltree::{self, Attribute, Child, Declaration, Element, Misc, XmlError};
 
 /// What a document says about itself beyond its tree.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -40,8 +44,16 @@ pub struct XmlDocument {
     pub root_prefix: Option<String>,
     /// The namespace declarations on the root element.
     pub declarations: Vec<(Option<String>, String)>,
-    /// Comments after the root element.
-    pub after: Vec<String>,
+    /// The document type declaration and processing instructions before the
+    /// root element, in order. Comments there are the root node's comment.
+    #[serde(default)]
+    pub prolog: Vec<Misc>,
+    /// Comments and processing instructions after the root element.
+    pub after: Vec<Misc>,
+    /// The file had no XML declaration, so none is written. A new document
+    /// (where `declaration` is `None` too) gets the default one.
+    #[serde(default)]
+    pub without_declaration: bool,
 }
 
 /// The result of reading XML text.
@@ -113,15 +125,26 @@ pub fn parse(text: &str, spec: &TypeSpec) -> Result<Parsed, XmlError> {
             .collect(),
     };
     let mut node = reader.element(&doc.root, spec.root(), &Path::root());
-    if !doc.before.is_empty() {
-        node.set_comment(Some(doc.before.join("\n")));
+    // The root's declarations are the document's.
+    node.set_xml_declarations(Vec::new());
+    let comments: Vec<&str> = doc.before.iter().filter_map(Misc::comment).collect();
+    if !comments.is_empty() {
+        node.set_comment(Some(comments.join("\n")));
     }
+    let prolog = doc
+        .before
+        .iter()
+        .filter(|m| m.comment().is_none())
+        .cloned()
+        .collect();
     Ok(Parsed {
         node,
         document: XmlDocument {
+            without_declaration: doc.declaration.is_none(),
             declaration: doc.declaration,
             root_prefix: doc.root.prefix.clone(),
             declarations: doc.root.declarations.clone(),
+            prolog,
             after: doc.after,
         },
         warnings: reader.warnings,
@@ -141,10 +164,17 @@ impl Reader<'_> {
         });
     }
 
-    /// The node for an element, typed as `ty`, with the comments inside it.
+    /// The node for an element, typed as `ty`, with the comments inside it
+    /// (those of mixed content are part of its markup) and the namespaces it
+    /// declares.
     fn element(&mut self, element: &Element, ty: TypeId, path: &Path) -> Node {
-        let inner = self.comments_inside(element, path);
-        let node = self.element_value(element, ty, path);
+        let inner = if holds_markup(self.spec, ty) {
+            (None, None)
+        } else {
+            self.comments_inside(element, path)
+        };
+        let mut node = self.element_value(element, ty, path);
+        node.set_xml_declarations(element.declarations.clone());
         with_inner(node, inner)
     }
 
@@ -153,6 +183,15 @@ impl Reader<'_> {
             Kind::Object { fields } => {
                 let fields = fields.clone();
                 self.object(element, &fields, path)
+            }
+            kind if is_markup(kind) => {
+                if !element.attributes.is_empty() {
+                    self.warn(
+                        path,
+                        tr!("attributes on an element of a simple type were dropped"),
+                    );
+                }
+                Node::new(Value::Str(xmltree::write_fragment(&element.children)))
             }
             kind => {
                 let kind = kind.clone();
@@ -166,7 +205,7 @@ impl Reader<'_> {
                         tr!("attributes on an element of a simple type were dropped"),
                     );
                 }
-                Node::new(scalar_of(&kind, &element.text()))
+                typed(&kind, &element.text())
             }
         }
     }
@@ -230,7 +269,7 @@ impl Reader<'_> {
         for field in fields.iter().filter(|f| f.name.starts_with('@')) {
             if let Some(a) = attributes.remove(&field.name) {
                 let kind = self.spec.get(field.ty).kind.clone();
-                map.insert(field.name.clone(), Node::new(scalar_of(&kind, &a.value)));
+                map.insert(field.name.clone(), typed(&kind, &a.value));
             }
         }
         for a in &element.attributes {
@@ -244,6 +283,14 @@ impl Reader<'_> {
         }
         // The text.
         let text_field = fields.iter().find(|f| f.name == "#text");
+        if let Some(field) = text_field.filter(|f| is_markup(&self.spec.get(f.ty).kind)) {
+            // Mixed content: everything inside is the markup.
+            let markup = xmltree::write_fragment(&element.children);
+            if !markup.is_empty() || field.required {
+                map.insert("#text".to_string(), Node::new(Value::Str(markup)));
+            }
+            return Node::new(Value::Object(map));
+        }
         let has_children = element.elements().next().is_some();
         let text = element.text();
         match text_field {
@@ -253,7 +300,7 @@ impl Reader<'_> {
                 }
                 if !text.is_empty() || field.required {
                     let kind = self.spec.get(field.ty).kind.clone();
-                    map.insert("#text".to_string(), Node::new(scalar_of(&kind, &text)));
+                    map.insert("#text".to_string(), typed(&kind, &text));
                 }
             }
             None if element.has_text() => {
@@ -337,7 +384,8 @@ impl Reader<'_> {
     /// are kept as on any element.
     fn generic(&mut self, element: &Element, path: &Path) -> Node {
         let inner = self.comments_inside(element, path);
-        let node = self.generic_value(element, path);
+        let mut node = self.generic_value(element, path);
+        node.set_xml_declarations(element.declarations.clone());
         with_inner(node, inner)
     }
 
@@ -390,9 +438,38 @@ impl Reader<'_> {
 /// The comments inside an element: at its start and at its end.
 type Inner = (Option<String>, Option<String>);
 
+/// Whether values of this kind are markup, the inside of mixed content.
+fn is_markup(kind: &Kind) -> bool {
+    kind.is_markup()
+}
+
+/// Whether an element of this type holds mixed content: it is markup, or its
+/// text is.
+fn holds_markup(spec: &TypeSpec, ty: TypeId) -> bool {
+    match &spec.get(ty).kind {
+        Kind::Object { fields } => fields
+            .iter()
+            .any(|f| f.name == "#text" && is_markup(&spec.get(f.ty).kind)),
+        kind => is_markup(kind),
+    }
+}
+
 fn with_inner(mut node: Node, (start, end): Inner) -> Node {
     node.set_comment_at(CommentPlace::Start, start);
     node.set_comment_at(CommentPlace::End, end);
+    node
+}
+
+/// The node for the text of an element or attribute, typed as `kind`. When the
+/// value would be written differently (`1.0` read as 1), the text is kept
+/// with it, so that the file is written back as it was.
+fn typed(kind: &Kind, text: &str) -> Node {
+    let value = scalar_of(kind, text);
+    let mut node = Node::new(value);
+    if !matches!(node.value(), Value::Str(_)) && scalar_text(node.value()).as_deref() != Some(text)
+    {
+        node.set_lexical(Some(text.to_string()));
+    }
     node
 }
 
@@ -502,15 +579,22 @@ pub fn to_string(
     } else {
         root_prefix = None;
     }
-    let mut root = emit(&info.root, node, &child_prefix);
+    let writer = Writer {
+        spec,
+        prefix: child_prefix,
+    };
+    let mut root = writer.emit(&info.root, node, Some(spec.root()));
     root.prefix = root_prefix;
     root.declarations = declarations;
+    let mut before = document.prolog.clone();
+    before.extend(node.comment().map(|c| Misc::Comment(c.to_string())));
     let doc = xmltree::Document {
-        declaration: Some(document.declaration.clone().unwrap_or_default()),
-        before: node
-            .comment()
-            .map(|c| vec![c.to_string()])
-            .unwrap_or_default(),
+        declaration: if document.without_declaration {
+            None
+        } else {
+            Some(document.declaration.clone().unwrap_or_default())
+        },
+        before,
         root,
         after: document.after.clone(),
         warnings: Vec::new(),
@@ -518,86 +602,138 @@ pub fn to_string(
     Ok(xmltree::write(&doc, pretty))
 }
 
-/// The element for a node, named `name`, with the comments inside it: the
-/// one at the start before its text, and the one at the end after the rest.
-/// With no text to stand before, the one at the start goes with the end.
-fn emit(name: &str, node: &Node, prefix: &Option<String>) -> Element {
-    let mut element = emit_value(name, node, prefix);
-    let start = node.comment_at(CommentPlace::Start);
-    let end = node.comment_at(CommentPlace::End);
-    let text_first = matches!(element.children.first(), Some(Child::Text(_)));
-    if let Some(start) = start.filter(|_| text_first) {
-        element
-            .children
-            .insert(0, Child::Comment(start.to_string()));
-    }
-    if let Some(start) = start.filter(|_| !text_first) {
-        element.children.push(Child::Comment(start.to_string()));
-    }
-    if let Some(end) = end {
-        element.children.push(Child::Comment(end.to_string()));
-    }
-    element
+/// Writes nodes as elements. The type of a node, when the schema has one,
+/// says whether a string is markup, written as the elements it holds.
+struct Writer<'a> {
+    spec: &'a TypeSpec,
+    /// The prefix the elements below the root are written with.
+    prefix: Option<String>,
 }
 
-fn emit_value(name: &str, node: &Node, prefix: &Option<String>) -> Element {
-    let mut element = Element::new(name);
-    element.prefix = prefix.clone();
-    match node.value() {
-        Value::Object(fields) => {
-            for (key, child) in fields {
-                if let Some(attribute) = key.strip_prefix('@') {
-                    if let Some(value) = scalar_text(child.value()) {
-                        let (p, local) = match attribute.split_once(':') {
-                            Some((p, l)) => (Some(p.to_string()), l.to_string()),
-                            None => (None, attribute.to_string()),
-                        };
-                        element.attributes.push(Attribute {
-                            prefix: p,
-                            name: local,
-                            value,
-                        });
+impl Writer<'_> {
+    /// The type of a field of a record of type `ty`.
+    fn field_type(&self, ty: Option<TypeId>, name: &str) -> Option<TypeId> {
+        match &self.spec.get(ty?).kind {
+            Kind::Object { fields } => fields.iter().find(|f| f.name == name).map(|f| f.ty),
+            _ => None,
+        }
+    }
+
+    fn markup(&self, ty: Option<TypeId>) -> bool {
+        ty.is_some_and(|ty| is_markup(&self.spec.get(ty).kind))
+    }
+
+    /// The text of a scalar node: as it was written in the file while it
+    /// still reads as the same value, and as it is written now otherwise.
+    fn text_of(&self, node: &Node, ty: Option<TypeId>) -> Option<String> {
+        if let (Some(lexical), Some(ty)) = (node.lexical(), ty)
+            && scalar_of(&self.spec.get(ty).kind, lexical) == *node.value()
+        {
+            return Some(lexical.to_string());
+        }
+        scalar_text(node.value())
+    }
+
+    /// The element for a node, named `name`, with the comments inside it: the
+    /// one at the start before its text, and the one at the end after the
+    /// rest. With no text to stand before, the one at the start goes with the
+    /// end.
+    fn emit(&self, name: &str, node: &Node, ty: Option<TypeId>) -> Element {
+        let mut element = self.emit_value(name, node, ty);
+        element.declarations = node.xml_declarations().to_vec();
+        let start = node.comment_at(CommentPlace::Start);
+        let end = node.comment_at(CommentPlace::End);
+        let text_first = matches!(element.children.first(), Some(Child::Text(_)));
+        if let Some(start) = start.filter(|_| text_first) {
+            element
+                .children
+                .insert(0, Child::Comment(start.to_string()));
+        }
+        if let Some(start) = start.filter(|_| !text_first) {
+            element.children.push(Child::Comment(start.to_string()));
+        }
+        if let Some(end) = end {
+            element.children.push(Child::Comment(end.to_string()));
+        }
+        element
+    }
+
+    fn emit_value(&self, name: &str, node: &Node, ty: Option<TypeId>) -> Element {
+        let mut element = Element::new(name);
+        element.prefix = self.prefix.clone();
+        match node.value() {
+            Value::Object(fields) => {
+                for (key, child) in fields {
+                    if let Some(attribute) = key.strip_prefix('@') {
+                        if let Some(value) = self.text_of(child, self.field_type(ty, key)) {
+                            let (p, local) = match attribute.split_once(':') {
+                                Some((p, l)) => (Some(p.to_string()), l.to_string()),
+                                None => (None, attribute.to_string()),
+                            };
+                            element.attributes.push(Attribute {
+                                prefix: p,
+                                name: local,
+                                value,
+                            });
+                        }
+                    } else if key == "#text" {
+                        let field = self.field_type(ty, key);
+                        if let Some(text) = self.text_of(child, field)
+                            && !text.is_empty()
+                        {
+                            push_text(&mut element, text, self.markup(field));
+                        }
+                    } else {
+                        let field = self.field_type(ty, key);
+                        self.push_children(&mut element, key, child, field);
                     }
-                } else if key == "#text" {
-                    if let Some(text) = scalar_text(child.value())
-                        && !text.is_empty()
-                    {
-                        element.children.push(Child::Text(text));
-                    }
-                } else {
-                    push_children(&mut element, key, child, prefix);
+                }
+            }
+            _ => {
+                if let Some(text) = self.text_of(node, ty)
+                    && !text.is_empty()
+                {
+                    push_text(&mut element, text, self.markup(ty));
                 }
             }
         }
-        other => {
-            if let Some(text) = scalar_text(other)
-                && !text.is_empty()
-            {
-                element.children.push(Child::Text(text));
+        element
+    }
+
+    /// Adds the element or elements a field of type `ty` stands for. A node
+    /// that holds an error value, or null, is absent.
+    fn push_children(&self, parent: &mut Element, name: &str, node: &Node, ty: Option<TypeId>) {
+        match node.value() {
+            Value::Error(_) | Value::Null => {}
+            Value::Array(items) => {
+                let item = match ty.map(|ty| &self.spec.get(ty).kind) {
+                    Some(Kind::Array { items, .. }) => Some(*items),
+                    _ => ty,
+                };
+                for child in items {
+                    self.push_children(parent, name, child, item);
+                }
+            }
+            _ => {
+                if let Some(comment) = node.comment() {
+                    parent.children.push(Child::Comment(comment.to_string()));
+                }
+                parent
+                    .children
+                    .push(Child::Element(self.emit(name, node, ty)));
             }
         }
     }
-    element
 }
 
-/// Adds the element or elements a field stands for. A node that holds an error
-/// value, or null, is absent.
-fn push_children(parent: &mut Element, name: &str, node: &Node, prefix: &Option<String>) {
-    match node.value() {
-        Value::Error(_) | Value::Null => {}
-        Value::Array(items) => {
-            for item in items {
-                push_children(parent, name, item, prefix);
-            }
-        }
-        _ => {
-            if let Some(comment) = node.comment() {
-                parent.children.push(Child::Comment(comment.to_string()));
-            }
-            parent
-                .children
-                .push(Child::Element(emit(name, node, prefix)));
-        }
+/// Adds text to an element: as it is, or, for markup, as the content it
+/// holds. Markup that is not well-formed is written as text, so that nothing
+/// is lost; validation says what is wrong with it.
+fn push_text(element: &mut Element, text: String, markup: bool) {
+    if markup && let Ok(children) = xmltree::parse_fragment(&text) {
+        element.children.extend(children);
+    } else {
+        element.children.push(Child::Text(text));
     }
 }
 

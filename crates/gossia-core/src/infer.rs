@@ -338,8 +338,9 @@ fn object(fields: Vec<(&str, Node)>) -> Node {
 
 // ------------------------------------------------------------------- XML
 
-/// Infers an XSD from an XML document. Mixed content and more than one
-/// namespace are outside the v1 subset, and refused with a message.
+/// Infers an XSD from an XML document. More than one namespace is outside the
+/// subset, and refused with a message. Mixed content is inferred as a mixed
+/// type, whose inside is kept as markup.
 pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
     let namespace = doc.root.namespace.clone();
     let mut qualified = None;
@@ -411,6 +412,10 @@ fn check_namespaces(
             name = attribute.name,
             name2 = element.name
         ));
+    }
+    // What is inside mixed content is kept as markup, whatever it holds.
+    if element.has_text() {
+        return Ok(());
     }
     for child in element.elements() {
         check_namespaces(child, namespace, false, qualified)?;
@@ -524,6 +529,9 @@ struct ElementShape {
     text: TextShape,
     /// The instances disagreed about the order of the children.
     order_differs: bool,
+    /// An instance held text next to child elements: the position is mixed
+    /// content, kept as markup, and what is inside it is not looked at.
+    mixed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -556,14 +564,11 @@ impl ElementShape {
         if here.is_empty() {
             self.text.observe(&element.text());
         } else {
-            if element.has_text() {
-                return Err(tr!(
-                    "<{path}> holds text next to elements (mixed content), which version 1 \
-                     does not support",
-                    path = path
-                ));
-            }
+            self.mixed |= element.has_text();
             self.with_elements += 1;
+        }
+        if self.mixed {
+            return Ok(());
         }
         // Merges the order of this instance into the order so far: a new name
         // goes after the name before it.
@@ -611,6 +616,23 @@ impl ElementShape {
     ) {
         let pad = "  ".repeat(depth);
         let name_attr = xmltree::escape_attribute(name);
+        if self.mixed {
+            warnings.push(tr!(
+                "<{path}> holds text next to elements (mixed content); what is inside it is \
+                 kept as XML, which is edited in the Raw view.",
+                path = path
+            ));
+            out.push_str(&format!(
+                "{pad}<xs:element name=\"{name_attr}\"{occurs}>\n\
+                 {pad}  <xs:complexType mixed=\"true\">\n\
+                 {pad}    <xs:sequence>\n\
+                 {pad}      <xs:any processContents=\"skip\" minOccurs=\"0\" maxOccurs=\"unbounded\"/>\n\
+                 {pad}    </xs:sequence>\n"
+            ));
+            self.write_attributes(&format!("{pad}    "), out);
+            out.push_str(&format!("{pad}  </xs:complexType>\n{pad}</xs:element>\n"));
+            return;
+        }
         if self.order_differs {
             warnings.push(tr!(
                 "<{path}>: the child elements are not always in the same order; the order \

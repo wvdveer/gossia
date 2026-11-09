@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="Example" id="id-1" version="4.6.0">
+  <folder name="Business" id="id-2" type="business">
+    <element xsi:type="archimate:BusinessActor" name="Customer" id="id-3"/>
+  </folder>
+  <folder name="Application" id="id-4" type="application">
+    <element xsi:type="archimate:ApplicationComponent" name="Web shop" id="id-5"/>
+  </folder>
+  <folder name="Relations" id="id-6" type="relations">
+    <element xsi:type="archimate:ServingRelationship" id="id-7" source="id-5" target="id-3"/>
+  </folder>
+  <folder name="Views" id="id-8" type="diagrams">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Default View" id="id-9">
+      <child xsi:type="archimate:DiagramObject" id="id-10" archimateElement="id-3">
+        <bounds x="36" y="60" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-11" source="id-10" target="id-12" archimateRelationship="id-7"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-12" targetConnections="id-11" archimateElement="id-5">
+        <bounds x="240" y="60" width="120" height="55"/>
+      </child>
+    </element>
+  </folder>
+</archimate:model>
