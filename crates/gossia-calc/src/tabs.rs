@@ -154,6 +154,21 @@ impl Calc {
         let Some(at) = self.sheets.get_index_of(from) else {
             return;
         };
+        // The imports that name the tab follow it (undoing names it back).
+        let importing: Vec<(String, Path)> = self
+            .xsd_importers(from)
+            .into_iter()
+            .flat_map(|tab| {
+                self.xsd_imports(&tab)
+                    .into_iter()
+                    .filter(|(_, location)| {
+                        self.xsd_import_tab(location)
+                            .is_some_and(|t| t.eq_ignore_ascii_case(from))
+                    })
+                    .map(move |(path, _)| (tab.clone(), path))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         self.rename_in_order(from, to);
         let (_, sheet) = self
             .sheets
@@ -181,6 +196,13 @@ impl Calc {
                 *schema = to.to_owned();
             }
         }
+        for (tab, path) in &importing {
+            if let Some(s) = self.sheets.get_mut(tab) {
+                let _ = s
+                    .data
+                    .replace(path, Node::new(gossia_core::Value::Str(to.to_owned())));
+            }
+        }
         self.forms.rename_tab(from, to);
         self.exprs.resync = true;
         self.forms_version += 1;
@@ -204,6 +226,19 @@ impl Calc {
         xml: Option<XmlDocument>,
     ) -> Result<(), EditError> {
         self.create_tab_of(name, schema_sheet, None, data, xml)
+    }
+
+    /// Adds an XML tab bound to an XSD tab whose documents have the global
+    /// element `root` as their root (None is the first).
+    pub fn create_xml_tab(
+        &mut self,
+        name: &str,
+        schema_sheet: &str,
+        root: Option<&str>,
+        data: Node,
+        xml: XmlDocument,
+    ) -> Result<(), EditError> {
+        self.create_tab_of(name, schema_sheet, root, data, Some(xml))
     }
 
     /// Adds a tab of COBOL records bound to a copybook schema tab, holding
@@ -377,6 +412,20 @@ impl Calc {
         if self.sheets.len() == 1 {
             return Some(tr!("a workbook keeps at least one tab").to_owned());
         }
+        let importers = self.xsd_importers(name);
+        if !importers.is_empty() {
+            let tabs = importers.join(", ");
+            return Some(match importers.len() {
+                1 => tr!(
+                    "{tabs} imports this schema; take out its `xs:import` first",
+                    tabs = tabs
+                ),
+                _ => tr!(
+                    "{tabs} import this schema; take out their `xs:import` first",
+                    tabs = tabs
+                ),
+            });
+        }
         let users = self.schema_users(name);
         if !users.is_empty() {
             let tabs = users.join(", ");
@@ -480,7 +529,7 @@ impl Calc {
             return Ok(());
         }
         let before_spec = Arc::clone(&self.sheet_mut(sheet)?.spec);
-        let record = self.sheets[sheet].record.clone();
+        let record = self.binding_record(sheet, schema_sheet);
         let spec = self.lowered_for(schema_sheet, record.as_deref())?;
         self.store_binding(sheet, Some(schema_sheet.to_owned()), Arc::new(spec))?;
         self.history.record(
@@ -529,7 +578,10 @@ impl Calc {
         if let Err(e) = self.refuse_auto_update_in_use(schema_sheet, sheet) {
             return Some(e.to_string());
         }
-        let spec = match self.lowered_for(schema_sheet, s.record.as_deref()) {
+        let spec = match self.lowered_for(
+            schema_sheet,
+            self.binding_record(sheet, schema_sheet).as_deref(),
+        ) {
             Ok(spec) => spec,
             Err(e) => return Some(e.to_string()),
         };
@@ -550,7 +602,8 @@ impl Calc {
         self.lowered(schema_sheet)
     }
 
-    /// The type of a copybook schema tab for its 01 record `record`.
+    /// The type of a copybook schema tab for its 01 record `record`, or of an
+    /// XSD tab for documents whose root is its global element `record`.
     pub fn record_spec(&self, schema_sheet: &str, record: &str) -> Result<TypeSpec, EditError> {
         self.lowered_for(schema_sheet, Some(record))
     }
@@ -580,8 +633,17 @@ impl Calc {
         schema: Option<String>,
         spec: Arc<TypeSpec>,
     ) -> Result<(), EditError> {
+        // A tab bound to an XSD holds the global element its type is of.
+        let record = match &schema {
+            Some(schema) if self.schema_format(schema) == Some(SchemaFormat::Xsd) => spec
+                .xml()
+                .map(|info| info.root.clone())
+                .filter(|root| self.xsd_roots(schema).first() != Some(root)),
+            _ => self.sheets.get(sheet).and_then(|s| s.record.clone()),
+        };
         let s = self.sheet_mut(sheet)?;
         s.spec = spec;
+        s.record = record;
         s.schema = match schema {
             Some(schema) => SchemaRole::Bound(schema),
             None => SchemaRole::Free,

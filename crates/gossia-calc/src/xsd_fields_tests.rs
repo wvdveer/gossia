@@ -285,7 +285,7 @@ fn a_field_is_defined_by_its_element_in_the_xsd() {
     assert_eq!(name_at("item[1].qty"), "qty");
     assert_eq!(
         calc.definition_of("Order", &p("")).unwrap().1,
-        p("element.complexType")
+        p("element[0].complexType")
     );
 }
 

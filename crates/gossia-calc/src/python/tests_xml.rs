@@ -197,7 +197,7 @@ fn editing_the_xsd_changes_the_type_of_the_tab_bound_to_it() {
     // The type of `qty` is the `type` attribute of the third element in the
     // sequence of the repeated `line`'s complex type.
     let at =
-        p("element.complexType.sequence.element[1].complexType.sequence.element[1][\"@type\"]");
+        p("element[0].complexType.sequence.element[1].complexType.sequence.element[1][\"@type\"]");
     assert_eq!(
         b.calc
             .data("OrderSchema")
@@ -221,7 +221,7 @@ fn editing_the_xsd_changes_the_type_of_the_tab_bound_to_it() {
 fn an_xsd_that_cannot_be_lowered_says_why_and_leaves_the_tab_as_it_was() {
     let mut b = Book::new();
     let at =
-        p("element.complexType.sequence.element[1].complexType.sequence.element[1][\"@type\"]");
+        p("element[0].complexType.sequence.element[1].complexType.sequence.element[1][\"@type\"]");
     b.calc
         .set_value("OrderSchema", &at, Value::Str("xs:time".into()))
         .unwrap();

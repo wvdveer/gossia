@@ -938,3 +938,38 @@ fn a_yaml_file_becomes_a_yaml_tab() {
     app.import(&plan).unwrap();
     assert_eq!(app.calc().format("pods"), Some(DataFormat::YamlDocuments));
 }
+
+/// 0.5.0: an XSD tab with several global elements offers the one that is the
+/// document's root, and the new tab holds that element.
+#[test]
+fn an_xml_file_is_typed_by_the_global_element_of_its_root() {
+    let mut app = sample();
+    let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="book">
+    <xs:complexType><xs:sequence><xs:element name="title" type="xs:string"/></xs:sequence></xs:complexType>
+  </xs:element>
+  <xs:element name="shelf">
+    <xs:complexType><xs:sequence><xs:element ref="book" maxOccurs="unbounded"/></xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+    let parsed = gossia_core::xml::parse(xsd, gossia_core::metaschema::xsd_meta()).unwrap();
+    app.session
+        .calc_mut()
+        .create_xsd_schema_tab("Books", parsed.node, parsed.document)
+        .unwrap();
+    let text = "<shelf><book><title>Emma</title></book></shelf>";
+    let plan = app.plan_import("shelf.xml", text.as_bytes()).unwrap();
+    assert_eq!(plan.choice, SchemaChoice::Existing("Books".to_owned()));
+    assert_eq!(plan.record.as_deref(), Some("shelf"));
+    assert!(
+        plan.candidates
+            .iter()
+            .all(|c| c.schema != "Books" || c.record.as_deref() == Some("shelf")),
+        "the book element does not read a shelf"
+    );
+    app.import(&plan).unwrap();
+    let calc = app.calc();
+    assert_eq!(calc.schema_of("shelf"), Some("Books"));
+    assert_eq!(calc.spec("shelf").unwrap().xml().unwrap().root, "shelf");
+    assert!(valid(&app, "shelf"));
+}

@@ -84,7 +84,7 @@ pub fn xsd_source() -> &'static str {
     <xs:sequence>
       <xs:element name="annotation" type="xs:Annotation" minOccurs="0"/>
       <xs:element name="import" type="xs:Import" minOccurs="0" maxOccurs="unbounded"/>
-      <xs:element name="element" type="xs:Element"/>
+      <xs:element name="element" type="xs:Element" maxOccurs="unbounded"/>
       <xs:element name="attribute" type="xs:Attribute" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="complexType" type="xs:ComplexType" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="simpleType" type="xs:SimpleType" minOccurs="0" maxOccurs="unbounded"/>

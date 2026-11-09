@@ -293,7 +293,7 @@ impl Calc {
                     // A schema for other programs, without the `xsi:`
                     // attributes Gossia declares for itself.
                     Ok(text) if self.schema_format(tab) == Some(SchemaFormat::Xsd) => {
-                        Ok(without_xsi(text, pretty))
+                        Ok(self.xsd_for_export(text, pretty))
                     }
                     other => other,
                 }
@@ -359,13 +359,41 @@ impl Calc {
     }
 }
 
-/// An XSD's text without its `xs:attribute ref="xsi:…"` lines.
-fn without_xsi(text: String, pretty: bool) -> String {
-    let Ok(mut doc) = gossia_core::xmltree::parse(&text) else {
-        return text;
-    };
-    if gossia_core::xsd::without_xsi(&mut doc) == 0 {
-        return text;
+impl Calc {
+    /// An XSD tab's text as a file for other programs: without its
+    /// `xs:attribute ref="xsi:…"` lines, and with each `schemaLocation` that
+    /// names a tab written as that tab's file, `<tab>.xsd`, beside it.
+    fn xsd_for_export(&self, text: String, pretty: bool) -> String {
+        use gossia_core::xmltree::{self, Child};
+        let Ok(mut doc) = xmltree::parse(&text) else {
+            return text;
+        };
+        let mut changed = gossia_core::xsd::without_xsi(&mut doc) > 0;
+        for child in &mut doc.root.children {
+            let Child::Element(import) = child else {
+                continue;
+            };
+            if import.name != "import"
+                || import.namespace.as_deref() != Some(gossia_core::xsd::XSD_NS)
+            {
+                continue;
+            }
+            for attribute in &mut import.attributes {
+                if attribute.name != "schemaLocation" || attribute.prefix.is_some() {
+                    continue;
+                }
+                if let Some(tab) = self.xsd_import_tab(&attribute.value) {
+                    let file = format!("{tab}.xsd");
+                    if attribute.value != file {
+                        attribute.value = file;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            return text;
+        }
+        xmltree::write(&doc, pretty)
     }
-    gossia_core::xmltree::write(&doc, pretty)
 }

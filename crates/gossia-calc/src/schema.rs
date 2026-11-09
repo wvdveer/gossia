@@ -300,10 +300,11 @@ impl Calc {
                 schema_sheet = schema_sheet
             )));
         }
-        let record = self.sheets.get(sheet).and_then(|s| s.record.clone());
+        let record = self.binding_record(sheet, schema_sheet);
         let spec = self.lowered_for(schema_sheet, record.as_deref())?;
         let s = self.sheet_mut(sheet)?;
         s.spec = Arc::new(spec);
+        s.record = record;
         s.schema = SchemaRole::Bound(schema_sheet.to_owned());
         self.changed(sheet, &Path::root());
         Ok(())
@@ -472,12 +473,14 @@ impl Calc {
                 format: SchemaFormat::Xsd,
                 ..
             } => {
-                let declarations = s
-                    .xml
-                    .as_ref()
-                    .map(|d| d.declarations.clone())
-                    .unwrap_or_else(|| xsd::default_document().declarations);
-                xsd::lower_node(&s.data, &declarations).map_err(|e| e.to_string())
+                let main = self.xsd_element(schema_sheet).expect("the tab is there");
+                // An `xs:import` names the schema tab of its namespace.
+                let imports = |location: &str| {
+                    let tab = self.xsd_import_tab(location)?;
+                    self.xsd_element(&tab)
+                };
+                // `record` is the global element a tab holds, if not the first.
+                xsd::lower_with(&main, &imports, record).map_err(|e| e.to_string())
             }
             SchemaRole::Document {
                 format: SchemaFormat::Copybook,
@@ -500,9 +503,149 @@ impl Calc {
         }
     }
 
+    /// What a tab holds of `schema_sheet` when bound to it: for a copybook
+    /// its 01 record, as before; for an XSD the global element of the name of
+    /// the tab's root now, when that is not the first (None is the first).
+    pub(super) fn binding_record(&self, sheet: &str, schema_sheet: &str) -> Option<String> {
+        let s = self.sheets.get(sheet)?;
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Xsd) {
+            return s.record.clone();
+        }
+        let root = &s.spec.xml()?.root;
+        let roots = self.xsd_roots(schema_sheet);
+        roots
+            .iter()
+            .position(|r| r == root)
+            .is_some_and(|i| i > 0)
+            .then(|| root.clone())
+    }
+
+    /// The schema document of an XSD tab, as elements.
+    fn xsd_element(&self, schema_sheet: &str) -> Option<gossia_core::xmltree::Element> {
+        let s = self.sheets.get(schema_sheet)?;
+        let declarations = s
+            .xml
+            .as_ref()
+            .map(|d| d.declarations.clone())
+            .unwrap_or_else(|| xsd::default_document().declarations);
+        Some(xsd::schema_element(&s.data, &declarations))
+    }
+
+    /// The XSD tab an `xs:import`'s `schemaLocation` names: the tab of that
+    /// name, or of the file's name without `.xsd` (`dc.xsd`, `schemas/dc.xsd`
+    /// for a tab `dc`). Tab names ignore case.
+    pub fn xsd_import_tab(&self, location: &str) -> Option<String> {
+        let file = location.rsplit(['/', '\\']).next().unwrap_or(location);
+        let stem = match file.len().checked_sub(4) {
+            Some(at) if file.is_char_boundary(at) && file[at..].eq_ignore_ascii_case(".xsd") => {
+                &file[..at]
+            }
+            _ => file,
+        };
+        [location, stem].into_iter().find_map(|wanted| {
+            self.sheets
+                .iter()
+                .find(|(name, s)| {
+                    name.eq_ignore_ascii_case(wanted)
+                        && matches!(
+                            s.schema,
+                            SchemaRole::Document {
+                                format: SchemaFormat::Xsd,
+                                ..
+                            }
+                        )
+                })
+                .map(|(name, _)| name.clone())
+        })
+    }
+
+    /// The `schemaLocation`s of an XSD tab's imports, with where each is in
+    /// its tree.
+    pub(super) fn xsd_imports(&self, schema_sheet: &str) -> Vec<(Path, String)> {
+        let Some(s) = self.sheets.get(schema_sheet) else {
+            return Vec::new();
+        };
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Xsd) {
+            return Vec::new();
+        }
+        let list = Path::root().key("import");
+        let items = match s.data.get(&list).map(Node::value) {
+            Some(Value::Array(items)) => items.clone(),
+            _ => return Vec::new(),
+        };
+        items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| {
+                let at = list.index(i).key("@schemaLocation");
+                let location = item.get(&Path::root().key("@schemaLocation"))?;
+                Some((at, location.value().as_str()?.to_owned()))
+            })
+            .collect()
+    }
+
+    /// The XSD tabs that import `schema_sheet`, directly.
+    pub fn xsd_importers(&self, schema_sheet: &str) -> Vec<String> {
+        self.sheet_names()
+            .filter(|tab| *tab != schema_sheet)
+            .filter(|tab| {
+                self.xsd_imports(tab).iter().any(|(_, location)| {
+                    self.xsd_import_tab(location)
+                        .is_some_and(|t| t.eq_ignore_ascii_case(schema_sheet))
+                })
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The names of the global elements of an XSD tab, in order: the roots its
+    /// documents may have. None for any other tab.
+    pub fn xsd_roots(&self, schema_sheet: &str) -> Vec<String> {
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Xsd) {
+            return Vec::new();
+        }
+        let Some(s) = self.sheets.get(schema_sheet) else {
+            return Vec::new();
+        };
+        let name_of = |item: &Node| {
+            item.get(&Path::root().key("@name"))
+                .and_then(|n| n.value().as_str().map(str::to_owned))
+        };
+        match s.data.get(&Path::root().key("element")).map(Node::value) {
+            Some(Value::Array(items)) => items.iter().filter_map(name_of).collect(),
+            Some(Value::Object(_)) => s
+                .data
+                .get(&Path::root().key("element"))
+                .and_then(name_of)
+                .into_iter()
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Lowers the document again and gives the result to the tabs bound to
+    /// it, and does the same for the XSD tabs that import it (and those that
+    /// import them), since their types may hold its types.
+    fn relower_schema(&mut self, schema_sheet: &str) {
+        self.relower_one(schema_sheet);
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Xsd) {
+            return;
+        }
+        let mut done = vec![schema_sheet.to_lowercase()];
+        let mut todo = self.xsd_importers(schema_sheet);
+        while let Some(tab) = todo.pop() {
+            if done.contains(&tab.to_lowercase()) {
+                continue;
+            }
+            done.push(tab.to_lowercase());
+            self.relower_one(&tab);
+            todo.extend(self.xsd_importers(&tab));
+        }
+    }
+
     /// Lowers the document again and gives the result to the tabs bound to it.
     /// A document that does not lower leaves them as they were.
-    fn relower_schema(&mut self, schema_sheet: &str) {
+    fn relower_one(&mut self, schema_sheet: &str) {
         let error = match self.lowered(schema_sheet) {
             Ok(spec) => {
                 let spec = Arc::new(spec);
@@ -595,6 +738,17 @@ impl Calc {
             )));
         };
         let source = &spec.get(ty).source;
+        if is_xsd && let Some(place) = imported_from(source) {
+            let tab = self
+                .xsd_import_tab(place)
+                .unwrap_or_else(|| place.to_owned());
+            return Err(EditError::Path(tr!(
+                "the type of {at} is written in {tab}, which {schema_sheet} imports; change it there",
+                at = at,
+                tab = tab,
+                schema_sheet = schema_sheet
+            )));
+        }
         let document_path = if is_xsd {
             self.sheets
                 .get(schema_sheet)
@@ -1301,6 +1455,19 @@ fn all_optional(schema: &mut Node) {
     }
 }
 
+/// The `schemaLocation` of the imported schema a type's lowering `source`
+/// is in (`import[dc]/schema/…`), if it is in one. The built-in schemas
+/// (`builtin:xml/…`) count as imported too.
+fn imported_from(source: &str) -> Option<&str> {
+    if let Some(rest) = source.strip_prefix("import[") {
+        return rest.split_once("]/").map(|(place, _)| place);
+    }
+    source
+        .strip_prefix("builtin:")
+        .and_then(|rest| rest.split_once('/'))
+        .map(|(name, _)| name)
+}
+
 /// Where the node at `path` is written in a schema tab's tree, if that can
 /// be told.
 fn place_in_schema(
@@ -1353,9 +1520,14 @@ fn xsd_declaration(document: &Node, record: &Path, name: &str) -> Option<Path> {
         None => ("element", name),
     };
     let named = |node: &Node| {
-        node.get(&Path::root().key("@name"))
-            .and_then(|n| n.value().as_str())
-            == Some(name)
+        let value = |key: &str| {
+            node.get(&Path::root().key(key))
+                .and_then(|n| n.value().as_str().map(str::to_owned))
+        };
+        value("@name").as_deref() == Some(name)
+            || value("@ref").is_some_and(|r| {
+                r == name || (!name.contains(':') && r.rsplit(':').next() == Some(name))
+            })
     };
     let mut level = vec![record.clone()];
     while !level.is_empty() {

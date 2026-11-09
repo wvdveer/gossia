@@ -1271,7 +1271,7 @@ impl Calc {
                 after,
             } => {
                 if forward {
-                    let record = self.sheets.get(sheet).and_then(|s| s.record.clone());
+                    let record = self.binding_record(sheet, after);
                     let spec = self.lowered_for(after, record.as_deref())?;
                     self.store_binding(sheet, Some(after.clone()), Arc::new(spec))?;
                 } else {

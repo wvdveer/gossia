@@ -110,6 +110,19 @@ fn declared_name(node: &Node) -> Option<&str> {
     Some(reference.rsplit(':').next().unwrap_or(reference))
 }
 
+/// Whether a declaration is that of the field `name` (without its `@`): by
+/// its `name`, or by its `ref`, which a field outside the schema's namespace
+/// is named after (`dc:title`), or whose local part names one inside it.
+fn names_field(node: &Node, name: &str) -> bool {
+    if attribute_value(node, "@name").as_deref() == Some(name) {
+        return true;
+    }
+    let Some(reference) = attribute_value(node, "@ref") else {
+        return false;
+    };
+    reference == name || (!name.contains(':') && declared_name(node) == Some(name))
+}
+
 fn attribute_value(node: &Node, key: &str) -> Option<String> {
     node.value()
         .as_object()?
@@ -242,7 +255,7 @@ impl Calc {
         let mut elements = items_at(&sequence, "element");
         let find = |list: &[Node], name: &str| {
             list.iter()
-                .position(|item| declared_name(item) == Some(name))
+                .position(|item| names_field(item, name))
                 .ok_or_else(|| {
                     EditError::Path(tr!(
                         "cannot find {name} in the schema's complexType",
@@ -323,6 +336,13 @@ impl Calc {
                     (Some(old), Some(new)) => {
                         check_xml_name(new)?;
                         let i = find(&attributes, old)?;
+                        if attribute_value(&attributes[i], "@ref").is_some() {
+                            return Err(EditError::Path(tr!(
+                                "{from} refers to a global attribute, so it takes that \
+                                 attribute's name",
+                                from = from
+                            )));
+                        }
                         set_name(&mut attributes[i], new);
                     }
                     (None, None) => {

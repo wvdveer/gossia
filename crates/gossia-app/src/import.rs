@@ -174,7 +174,9 @@ pub enum SchemaFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub schema: String,
-    /// For COBOL records, the 01 record of the copybook they are read as.
+    /// For COBOL records, the 01 record of the copybook they are read as; for
+    /// XML, the global element of an XSD tab that has several, when it is
+    /// not the first.
     pub record: Option<String>,
     /// How many problems validation finds in the data under it.
     pub problems: usize,
@@ -208,7 +210,8 @@ pub struct ImportPlan {
     text: String,
     /// The bytes of a `.blk` file, read again with the copybook chosen.
     bytes: Vec<u8>,
-    /// For COBOL records, the 01 record chosen with the schema tab.
+    /// For COBOL records, the 01 record chosen with the schema tab; for XML,
+    /// the global element chosen, when it is not the first.
     pub record: Option<String>,
     /// JSON or text data, without its nulls.
     data: Option<Node>,
@@ -801,7 +804,7 @@ impl GossiaApp {
                         data_document: data.document,
                     })))
                 });
-                let candidates = self.schema_tabs(SchemaFormat::Xsd, |spec| {
+                let candidates = self.xsd_tabs(|spec| {
                     let parsed = xml::parse(&text, spec).ok()?;
                     Some(validate(spec, &parsed.node).len())
                 });
@@ -813,12 +816,19 @@ impl GossiaApp {
         let schema_name = unique(&format!("{name}Schema"), |n| {
             taken(n) || n.eq_ignore_ascii_case(&name)
         });
+        let mut record = None;
         let choice = match candidates.iter().find(|c| c.problems == 0) {
             _ if schema_file.is_some() => SchemaChoice::SchemaTab,
-            Some(fits) => SchemaChoice::Existing(fits.schema.clone()),
+            Some(fits) => {
+                record = fits.record.clone();
+                SchemaChoice::Existing(fits.schema.clone())
+            }
             None if inferred.is_ok() => SchemaChoice::Inferred,
             None => match candidates.first() {
-                Some(c) => SchemaChoice::Existing(c.schema.clone()),
+                Some(c) => {
+                    record = c.record.clone();
+                    SchemaChoice::Existing(c.schema.clone())
+                }
                 None => {
                     return Err(format!(
                         "{file} cannot be imported: {}.",
@@ -832,7 +842,7 @@ impl GossiaApp {
             format,
             text,
             bytes: Vec::new(),
-            record: None,
+            record,
             data,
             notes,
             inferred,
@@ -1151,6 +1161,46 @@ impl GossiaApp {
                 })
             })
             .collect()
+    }
+
+    /// The XSD tabs that could type an XML document, as [`Self::schema_tabs`]
+    /// does, with one candidate for each global element of a tab that has
+    /// several (the root its documents may have) that `check` can read with.
+    fn xsd_tabs(&self, check: impl Fn(&gossia_core::TypeSpec) -> Option<usize>) -> Vec<Candidate> {
+        let calc = self.calc();
+        let mut out = Vec::new();
+        for s in calc.sheet_names() {
+            if calc.schema_format(s) != Some(SchemaFormat::Xsd)
+                || (calc.auto_update(s) && !calc.schema_users(s).is_empty())
+            {
+                continue;
+            }
+            let roots = calc.xsd_roots(s);
+            if roots.len() < 2 {
+                if let Ok(spec) = calc.schema_spec(s)
+                    && let Some(problems) = check(&spec)
+                {
+                    out.push(Candidate {
+                        schema: s.to_owned(),
+                        record: None,
+                        problems,
+                    });
+                }
+                continue;
+            }
+            for (i, root) in roots.iter().enumerate() {
+                if let Ok(spec) = calc.record_spec(s, root)
+                    && let Some(problems) = check(&spec)
+                {
+                    out.push(Candidate {
+                        schema: s.to_owned(),
+                        record: (i > 0).then(|| root.clone()),
+                        problems,
+                    });
+                }
+            }
+        }
+        out
     }
 
     /// Why the plan cannot be imported as it is, or None.
@@ -1722,15 +1772,24 @@ fn create_tabs(
         }
         (SchemaChoice::Existing(schema), _) => match &plan.data {
             Some(data) => calc.create_data_tab(name, schema, data.clone(), None),
-            None => calc
-                .schema_spec(schema)
-                .and_then(|spec| {
-                    xml::parse(&plan.text, &spec)
-                        .map_err(|e| gossia_calc::EditError::Path(e.to_string()))
-                })
-                .and_then(|parsed| {
-                    calc.create_data_tab(name, schema, parsed.node, Some(parsed.document))
-                }),
+            // An XSD tab with several global elements: the one chosen.
+            None => match plan.record.as_deref() {
+                Some(root) => calc.record_spec(schema, root),
+                None => calc.schema_spec(schema),
+            }
+            .and_then(|spec| {
+                xml::parse(&plan.text, &spec)
+                    .map_err(|e| gossia_calc::EditError::Path(e.to_string()))
+            })
+            .and_then(|parsed| {
+                calc.create_xml_tab(
+                    name,
+                    schema,
+                    plan.record.as_deref(),
+                    parsed.node,
+                    parsed.document,
+                )
+            }),
         },
     };
     // A tab format of its own is set in the same entry.
