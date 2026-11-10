@@ -140,7 +140,30 @@ pub struct InferredXsd {
     /// The data, read with the inferred schema.
     pub data: Node,
     pub data_document: XmlDocument,
+    /// The schema tabs of the document's other namespaces, which the main
+    /// one imports: one each, new or in the workbook already.
+    pub others: Vec<OtherXsd>,
 }
+
+/// The schema tab of one more namespace of an XML document.
+#[derive(Debug, Clone)]
+pub struct OtherXsd {
+    pub namespace: String,
+    pub prefix: String,
+    /// The tab's name, which the schemas import it by.
+    pub name: String,
+    /// The tab is in the workbook already, and the data fits it as it is:
+    /// it is used, and nothing is added for this namespace.
+    pub existing: bool,
+    /// The inferred schema, as text and as the new tab holds it.
+    pub text: String,
+    pub tree: Node,
+    pub document: XmlDocument,
+}
+
+/// The tab each other namespace of an XML document is given: its namespace,
+/// the tab's name, and whether the tab is there already.
+type OtherTabs = Vec<(String, String, bool)>;
 
 impl Inferred {
     fn warnings(&self) -> &[String] {
@@ -154,7 +177,13 @@ impl Inferred {
     pub fn text(&self) -> String {
         match self {
             Inferred::Json(j) => json::to_string(&j.schema, true).unwrap_or_default(),
-            Inferred::Xsd(x) => x.text.clone(),
+            Inferred::Xsd(x) => {
+                let mut text = x.text.clone();
+                for other in x.others.iter().filter(|o| !o.existing) {
+                    text.push_str(&format!("\n<!-- {} -->\n{}", other.name, other.text));
+                }
+                text
+            }
         }
     }
 }
@@ -316,7 +345,13 @@ pub fn format_of(file: &str) -> ImportFormat {
         .map(|e| e.to_string_lossy().to_lowercase());
     match extension.as_deref() {
         Some("json") => ImportFormat::Json,
-        Some("xml" | "xsd") => ImportFormat::Xml,
+        // XML under the names of the common documents (DESIGN.md, XML
+        // Schemas and namespaces, 0.5.0, "The corpus").
+        Some(
+            "xml" | "xsd" | "rss" | "atom" | "svg" | "xhtml" | "gpx" | "kml" | "csproj" | "vbproj"
+            | "fsproj" | "props" | "targets" | "xaml" | "plist" | "archimate" | "resx" | "wsdl"
+            | "xsl" | "xslt",
+        ) => ImportFormat::Xml,
         Some("json5") => ImportFormat::Json5,
         Some("jsonc") => ImportFormat::Jsonc,
         Some("jsonl" | "ndjson") => ImportFormat::JsonLines,
@@ -692,11 +727,23 @@ impl GossiaApp {
                 capital(file)
             )
         })?;
-        let format = format.refine(&text);
+        let mut format = format.refine(&text);
+        // A file of a name not known that is well-formed XML is read as XML.
+        if format == ImportFormat::Text
+            && text.trim_start().starts_with('<')
+            && xmltree::parse(&text).is_ok()
+        {
+            format = ImportFormat::Xml;
+        }
         if let Some(kinds) = entry_kinds(format) {
             return self.plan_entries(file, name_from, format, kinds, &text);
         }
         let calc = self.calc();
+        let taken = |n: &str| calc.tab_name_problem(n, None).is_some();
+        let name = name_from_file(name_from, taken);
+        let schema_name = unique(&format!("{name}Schema"), |n| {
+            taken(n) || n.eq_ignore_ascii_case(&name)
+        });
         let mut notes = Vec::new();
         let mut schema_file = None;
         let mut schema_problem = None;
@@ -790,20 +837,8 @@ impl GossiaApp {
                         document: tree.document,
                     });
                 }
-                let inferred = infer::infer_xsd(&doc).and_then(|inference| {
-                    let spec = xsd::lower_str(&inference.text).map_err(|e| e.to_string())?;
-                    let schema = xml::parse(&inference.text, metaschema::xsd_meta())
-                        .map_err(|e| e.to_string())?;
-                    let data = xml::parse(&text, &spec).map_err(|e| e.to_string())?;
-                    Ok(Inferred::Xsd(Box::new(InferredXsd {
-                        text: inference.text,
-                        warnings: inference.warnings,
-                        tree: schema.node,
-                        document: schema.document,
-                        data: data.node,
-                        data_document: data.document,
-                    })))
-                });
+                let inferred = plan_xsds(calc, &doc, &text, &name, &schema_name)
+                    .map(|x| Inferred::Xsd(Box::new(x)));
                 let candidates = self.xsd_tabs(|spec| {
                     let parsed = xml::parse(&text, spec).ok()?;
                     Some(validate(spec, &parsed.node).len())
@@ -811,11 +846,6 @@ impl GossiaApp {
                 (None, inferred, candidates)
             }
         };
-        let taken = |n: &str| calc.tab_name_problem(n, None).is_some();
-        let name = name_from_file(name_from, taken);
-        let schema_name = unique(&format!("{name}Schema"), |n| {
-            taken(n) || n.eq_ignore_ascii_case(&name)
-        });
         let mut record = None;
         let choice = match candidates.iter().find(|c| c.problems == 0) {
             _ if schema_file.is_some() => SchemaChoice::SchemaTab,
@@ -1231,6 +1261,20 @@ impl GossiaApp {
             if schema.eq_ignore_ascii_case(name) {
                 return Some(tr!("The two tabs need different names.").to_owned());
             }
+            if let Ok(Inferred::Xsd(x)) = &plan.inferred {
+                for other in x.others.iter().filter(|o| !o.existing) {
+                    let tab = other.name.as_str();
+                    if tab.eq_ignore_ascii_case(name) || tab.eq_ignore_ascii_case(schema) {
+                        return Some(tr!(
+                            "Two of the new tabs would be called {name}.",
+                            name = tab
+                        ));
+                    }
+                    if let Some(why) = self.calc().tab_name_problem(tab, None) {
+                        return Some(tr!("The schema tab {tab}: {why}.", tab = tab, why = why));
+                    }
+                }
+            }
         }
         None
     }
@@ -1498,6 +1542,31 @@ impl GossiaApp {
                             );
                             named(&response, tr!("Schema tab name"));
                         });
+                        if let Ok(Inferred::Xsd(x)) = &shown.inferred
+                            && !x.others.is_empty()
+                        {
+                            ui.indent("other_schemas", |ui| {
+                                ui.weak(tr!(
+                                    "With a schema tab for each of its other namespaces:"
+                                ));
+                                for other in &x.others {
+                                    let line = if other.existing {
+                                        tr!(
+                                            "{tab}, there already, for {namespace}",
+                                            tab = other.name,
+                                            namespace = other.namespace
+                                        )
+                                    } else {
+                                        tr!(
+                                            "{tab}, a new tab, for {namespace}",
+                                            tab = other.name,
+                                            namespace = other.namespace
+                                        )
+                                    };
+                                    ui.weak(line);
+                                }
+                            });
+                        }
                     }
                     Err(why) => {
                         ui.add_enabled(
@@ -1706,6 +1775,156 @@ fn schema_kind(calc: &gossia_calc::Calc, schema: &str) -> Option<EntryKind> {
 
 /// Makes the tabs of one plan: the schema tab, if a new one, and the data
 /// tab, with its format. The caller holds the entry in the history.
+/// The schemas inferred from an XML document, one per namespace (DESIGN.md,
+/// XML Schemas and namespaces, 0.5.0). The main one is the tab
+/// `schema_name`; each other namespace gets a new tab `<name>_<prefix>`, or
+/// an XSD tab of that namespace already in the workbook when the data still
+/// fits with it, tried one namespace after another.
+fn plan_xsds(
+    calc: &gossia_calc::Calc,
+    doc: &xmltree::Document,
+    text: &str,
+    name: &str,
+    schema_name: &str,
+) -> Result<InferredXsd, String> {
+    let first = infer::infer_xsds(doc, &|_, _| String::new())?;
+    let taken = |n: &str| calc.tab_name_problem(n, None).is_some();
+    let mut others: OtherTabs = Vec::new();
+    for tab in &first.tabs[1..] {
+        let prefix: String = tab
+            .prefix
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        let tab_name = unique(&format!("{name}_{prefix}"), |n| {
+            taken(n)
+                || n.eq_ignore_ascii_case(name)
+                || n.eq_ignore_ascii_case(schema_name)
+                || others.iter().any(|o| o.1.eq_ignore_ascii_case(n))
+        });
+        others.push((tab.namespace.clone().unwrap_or_default(), tab_name, false));
+    }
+    // A tab there already must fit as well as a new one would: nothing
+    // dropped in reading, nothing invalid.
+    let fit = infer_xsds_as(calc, doc, text, schema_name, &others)?.1;
+    for i in 0..others.len() {
+        let namespace = others[i].0.clone();
+        let existing: Vec<String> = calc
+            .sheet_names()
+            .filter(|t| calc.xsd_namespace(t).as_deref() == Some(namespace.as_str()))
+            .map(str::to_owned)
+            .collect();
+        for tab in existing {
+            let mut tried = others.clone();
+            tried[i] = (namespace.clone(), tab, true);
+            if infer_xsds_as(calc, doc, text, schema_name, &tried).is_ok_and(|(_, n)| n <= fit) {
+                others = tried;
+                break;
+            }
+        }
+    }
+    infer_xsds_as(calc, doc, text, schema_name, &others).map(|(x, _)| x)
+}
+
+/// The schemas of an XML document, inferred with the main one as the tab
+/// `schema_name` and the others as `others` says, and the document read with
+/// them; with how many problems reading and validation find in it.
+fn infer_xsds_as(
+    calc: &gossia_calc::Calc,
+    doc: &xmltree::Document,
+    text: &str,
+    schema_name: &str,
+    others: &[(String, String, bool)],
+) -> Result<(InferredXsd, usize), String> {
+    let other =
+        |namespace: Option<&str>| namespace.and_then(|ns| others.iter().find(|o| o.0 == ns));
+    let location = |_: Option<&str>, namespace: Option<&str>| {
+        other(namespace).map_or_else(|| schema_name.to_owned(), |o| o.1.clone())
+    };
+    let inferred = infer::infer_xsds(doc, &location)?;
+    // The new tabs as they will be; the tabs there already as they are.
+    let mut roots = Vec::new();
+    for (i, tab) in inferred.tabs.iter().enumerate() {
+        let wanted = match other(tab.namespace.as_deref()) {
+            Some(o) if i > 0 && o.2 => continue,
+            Some(o) if i > 0 => o.1.clone(),
+            _ => schema_name.to_owned(),
+        };
+        let root = xmltree::parse(&tab.text).map_err(|e| e.to_string())?.root;
+        roots.push((wanted, root));
+    }
+    let imports = |at: &str| {
+        roots
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(at))
+            .map(|(_, root)| root.clone())
+            .or_else(|| calc.xsd_element(&calc.xsd_import_tab(at)?))
+    };
+    let spec = xsd::lower_with(&roots[0].1, &imports, None).map_err(|e| e.to_string())?;
+    let data = xml::parse(text, &spec).map_err(|e| e.to_string())?;
+    let problems = data.warnings.len() + validate(&spec, &data.node).len();
+    let as_tab = |text: &str| {
+        xml::parse(text, metaschema::xsd_meta())
+            .map(|t| (t.node, t.document))
+            .map_err(|e| e.to_string())
+    };
+    let mut tabs = inferred.tabs.into_iter();
+    let main = tabs.next().expect("the main schema is inferred");
+    let (tree, document) = as_tab(&main.text)?;
+    let mut planned = Vec::new();
+    for tab in tabs {
+        let namespace = tab.namespace.clone().unwrap_or_default();
+        let (_, name, existing) = other(Some(&namespace))
+            .ok_or_else(|| format!("no tab is planned for the namespace {namespace}"))?;
+        let (tree, document) = if *existing {
+            (Node::new(Value::Null), XmlDocument::default())
+        } else {
+            as_tab(&tab.text)?
+        };
+        planned.push(OtherXsd {
+            namespace,
+            prefix: tab.prefix.unwrap_or_default(),
+            name: name.clone(),
+            existing: *existing,
+            text: tab.text,
+            tree,
+            document,
+        });
+    }
+    let x = InferredXsd {
+        text: main.text,
+        warnings: inferred.warnings,
+        tree,
+        document,
+        data: data.node,
+        data_document: data.document,
+        others: planned,
+    };
+    Ok((x, problems))
+}
+
+/// The new schema tabs of other namespaces, each after the new ones it
+/// imports (where they import each other round, in their order).
+fn in_import_order(others: &[OtherXsd]) -> Vec<&OtherXsd> {
+    let mut todo: Vec<&OtherXsd> = others.iter().filter(|o| !o.existing).collect();
+    let imports =
+        |o: &OtherXsd, of: &OtherXsd| o.text.contains(&format!("schemaLocation=\"{}\"", of.name));
+    let mut out = Vec::new();
+    while !todo.is_empty() {
+        let at = (0..todo.len())
+            .find(|&i| {
+                !todo
+                    .iter()
+                    .any(|of| of.name != todo[i].name && imports(todo[i], of))
+            })
+            .unwrap_or(0);
+        out.push(todo.remove(at));
+    }
+    out
+}
+
 fn create_tabs(
     calc: &mut gossia_calc::Calc,
     plan: &ImportPlan,
@@ -1716,16 +1935,34 @@ fn create_tabs(
         (SchemaChoice::Inferred, Ok(Inferred::Json(inference))) => calc
             .create_json_schema_tab(schema_name, inference.schema.clone())
             .and_then(|()| calc.create_data_tab(name, schema_name, inference.data.clone(), None)),
-        (SchemaChoice::Inferred, Ok(Inferred::Xsd(x))) => calc
-            .create_xsd_schema_tab(schema_name, x.tree.clone(), x.document.clone())
-            .and_then(|()| {
-                calc.create_data_tab(
-                    name,
-                    schema_name,
-                    x.data.clone(),
-                    Some(x.data_document.clone()),
-                )
-            }),
+        (SchemaChoice::Inferred, Ok(Inferred::Xsd(planned))) => {
+            // Inferred again, with the main schema's tab named as it is now.
+            let doc = xmltree::parse(&plan.text)
+                .map_err(|e| gossia_calc::EditError::Path(e.to_string()))?;
+            let others: OtherTabs = planned
+                .others
+                .iter()
+                .map(|o| (o.namespace.clone(), o.name.clone(), o.existing))
+                .collect();
+            let (x, _) = infer_xsds_as(calc, &doc, &plan.text, schema_name, &others)
+                .map_err(gossia_calc::EditError::Path)?;
+            in_import_order(&x.others)
+                .into_iter()
+                .try_for_each(|o| {
+                    calc.create_xsd_schema_tab(&o.name, o.tree.clone(), o.document.clone())
+                })
+                .and_then(|()| {
+                    calc.create_xsd_schema_tab(schema_name, x.tree.clone(), x.document.clone())
+                })
+                .and_then(|()| {
+                    calc.create_data_tab(
+                        name,
+                        schema_name,
+                        x.data.clone(),
+                        Some(x.data_document.clone()),
+                    )
+                })
+        }
         (SchemaChoice::Inferred, Err(why)) => Err(gossia_calc::EditError::Path(why.clone())),
         (SchemaChoice::AddTo(tab), _) => {
             let kind = plan

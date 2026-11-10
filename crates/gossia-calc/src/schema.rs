@@ -524,7 +524,7 @@ impl Calc {
     }
 
     /// The schema document of an XSD tab, as elements.
-    fn xsd_element(&self, schema_sheet: &str) -> Option<gossia_core::xmltree::Element> {
+    pub fn xsd_element(&self, schema_sheet: &str) -> Option<gossia_core::xmltree::Element> {
         let s = self.sheets.get(schema_sheet)?;
         let declarations = s
             .xml
@@ -599,6 +599,18 @@ impl Calc {
             })
             .map(str::to_owned)
             .collect()
+    }
+
+    /// The `targetNamespace` of an XSD tab: None for one in no namespace, or
+    /// for any other tab.
+    pub fn xsd_namespace(&self, schema_sheet: &str) -> Option<String> {
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Xsd) {
+            return None;
+        }
+        let s = self.sheets.get(schema_sheet)?;
+        s.data
+            .get(&Path::root().key("@targetNamespace"))
+            .and_then(|n| n.value().as_str().map(str::to_owned))
     }
 
     /// The names of the global elements of an XSD tab, in order: the roots its
@@ -677,6 +689,15 @@ impl Calc {
                         }
                     }
                 }
+                None
+            }
+            // An XSD of global attributes only is there to be imported
+            // (an `android:` namespace), not bound: its problems show on
+            // the tabs that import it.
+            Err(_)
+                if self.schema_format(schema_sheet) == Some(SchemaFormat::Xsd)
+                    && self.xsd_roots(schema_sheet).is_empty() =>
+            {
                 None
             }
             Err(e) => Some(e.to_string()),

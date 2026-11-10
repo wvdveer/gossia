@@ -213,3 +213,5 @@ mod options_tests;
 mod tab_commands_tests;
 #[cfg(test)]
 mod tab_rename_tests;
+#[cfg(test)]
+mod xml_import_tests;

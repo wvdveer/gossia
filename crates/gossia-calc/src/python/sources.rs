@@ -252,11 +252,14 @@ fn call_http(shared: &Shared, payload: &Json) -> Result<Json, String> {
 /// inferred from it, as JSON text. Elements are keys, attributes `@name`,
 /// and the text of an element that has attributes too is `#text`.
 fn read_xml(text: &str) -> Result<Json, String> {
-    use gossia_core::{infer, xml, xmltree, xsd};
+    use gossia_core::{infer, xml, xmltree};
     let doc =
         xmltree::parse(text).map_err(|e| tr!("the body is not well-formed XML: {e}", e = e))?;
-    let inference = infer::infer_xsd(&doc)?;
-    let spec = xsd::lower_str(&inference.text).map_err(|e| e.to_string())?;
+    // One schema per namespace, found by its prefix.
+    let file = |prefix: Option<&str>, ns: Option<&str>| {
+        format!("{}|{}", prefix.unwrap_or_default(), ns.unwrap_or_default())
+    };
+    let spec = infer::infer_xsds(&doc, &file)?.lower(&file)?;
     let parsed = xml::parse(text, &spec).map_err(|e| e.to_string())?;
     let json = gossia_core::json::to_string(&parsed.node, false).map_err(|e| e.to_string())?;
     Ok(Json::String(json))

@@ -358,6 +358,32 @@ pub struct XsdInferences {
     pub warnings: Vec<String>,
 }
 
+impl XsdInferences {
+    /// The type of the document: the main schema lowered with the others as
+    /// its imports, each at the `location` it was inferred with.
+    pub fn lower(
+        &self,
+        location: &dyn Fn(Option<&str>, Option<&str>) -> String,
+    ) -> Result<crate::TypeSpec, String> {
+        let mut roots = Vec::new();
+        for tab in &self.tabs {
+            let root = xmltree::parse(&tab.text).map_err(|e| e.to_string())?.root;
+            roots.push((
+                location(tab.prefix.as_deref(), tab.namespace.as_deref()),
+                root,
+            ));
+        }
+        let imports = |at: &str| {
+            roots
+                .iter()
+                .find(|(l, _)| l == at)
+                .map(|(_, root)| root.clone())
+        };
+        let main = &roots.first().ok_or("nothing was inferred")?.1;
+        crate::xsd::lower_with(main, &imports, None).map_err(|e| e.to_string())
+    }
+}
+
 /// Infers an XSD from an XML document that needs only one: elements in one
 /// namespace, with the built-in `xml:` and `xsi:` attributes at most (which
 /// the schema names with `ref`). A document that needs more is refused with

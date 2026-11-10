@@ -1752,8 +1752,8 @@ The desktop application does not use the interface; it keeps its own files and s
   - **15c-1.** *(done, 2026-11-10)* The engine: the `Choice` kind, lowering a repeating `xs:choice`, reading and writing `#children` in order, validation, inference (with attributes in the document's own namespace, which Word needs), the meta-schema, the corpus.
   - **15c-2.** *(done, 2026-11-10)* The window: `#children` in the tree, on forms and in tables; *Add item* asking which element; *Add field* on such an element adding a choice; the field commands on the elements of a choice.
 - **15d.** Inference of several XSD tabs, the import dialog, `.xsd` files with their imports, drag and drop of the whole corpus. Split in three:
-  - **15d-1.** *(built 2026-11-10)* The engine: one inferred XSD per namespace, global elements and attributes referred to across them, the whole corpus importing and written back.
-  - **15d-2.** The workbook and the import dialog: the XSD tabs a drop needs added together with the data tab, existing tabs for a namespace reused, the report.
+  - **15d-1.** *(done, 2026-11-10)* The engine: one inferred XSD per namespace, global elements and attributes referred to across them, the whole corpus importing and written back.
+  - **15d-2.** *(built 2026-11-10)* The workbook and the import dialog: the XSD tabs a drop needs added together with the data tab, existing tabs for a namespace reused, the report.
   - **15d-3.** An `.xsd` file whose `xs:import` points at a file beside it brings that file in as a tab too.
 
 **Decisions made for reading and writing** (step 15a, 2026-11-10; default unless marked).
@@ -1820,6 +1820,15 @@ The desktop application does not use the interface; it keeps its own files and s
 - **Writing uses the document's bindings.** An element or attribute of another namespace is written with the prefix the document binds to that namespace where it stands, or, for an element, the default namespace when that is it; only a namespace bound nowhere is declared on the root (found with the inline SVG). An element's own declarations count for its own name (found with SOAP's `m:`).
 - **The corpus** after 15d-1: all sixteen documents infer, import, validate and write back unchanged, the RSS feed through four schemas. The made-up RSS and XAML files write their declarations first and the RSS its CDATA as text, both accepted under "Not preserved".
 - **Tests.** In `infer_tests.rs`: several namespaces as several schemas with refs and imports (elements and attributes, a schema referring on to another), a default namespace given a prefix, local elements partly in a namespace refused, and `infer_xsd` refusing what needs more than one.
+
+**Decisions made for the workbook and the import dialog** (step 15d-2, 2026-11-10; default unless marked).
+- **Names.** The main schema tab is named as before (`feedSchema` for `feed.rss`, changeable in the dialog). Each other namespace's tab is `<data tab>_<prefix>` (`feed_dc`, `feed_atom`, `AndroidManifest_android`), fixed when the file is read and listed under the inferred schema, each with its namespace and whether it is new or there already. A name that clashes with the two tabs named in the dialog is refused, as two new tabs with one name are.
+- **Reuse.** For each other namespace in turn, an XSD tab of the workbook with that `targetNamespace` is used instead of a new one when the document still reads and validates with it as well as with a new one (nothing more dropped in reading, nothing more invalid); the first that does is taken. So a second document with `dc:creator` in it uses `book_dc`, and one whose `dc:creator` has an attribute that tab does not declare gets a tab of its own. A whole schema there already that fits is offered as before, and chosen first.
+- **Adding.** The schemas are inferred again on Import with the main tab's name as it is then (another namespace may import it back). The new tabs of other namespaces are added first, each after the new ones it imports, then the main schema tab, then the data tab, all as one entry in the history, *Import feed.rss*.
+- **A schema tab of attributes only** (the `android:` namespace holds global attributes and no element) has no root to lower, so it is not marked as an error; it cannot be bound, and its problems show on the tabs that import it.
+- **XML by its name or its text.** Besides `.xml` and `.xsd`, the names of the common documents are read as XML: `.rss`, `.atom`, `.svg`, `.xhtml`, `.gpx`, `.kml`, `.csproj`, `.vbproj`, `.fsproj`, `.props`, `.targets`, `.xaml`, `.plist`, `.archimate`, `.resx`, `.wsdl`, `.xsl`, `.xslt`; and a file of a name not known whose text is well-formed XML starting with `<` is read as XML rather than as lines of text.
+- **`response.xml()`** in a data source procedure infers one schema per namespace too (`XsdInferences::lower`), so a namespaced body reads.
+- **Tests.** `xml_import_tests.rs` in the window crate: every document of the corpus dropped on a blank workbook (one tab per namespace, no schema errors, valid, exported back as the same text, and dropped again onto the schema it made); the RSS feed's tabs and their undo as one; a namespace's tab reused and not reused; the names of the other tabs refused when they clash, and a main schema renamed in the dialog, which still imports the others.
 
 ## Decisions for implementation, and risks
 
