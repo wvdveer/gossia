@@ -14,7 +14,7 @@ use gossia_core::{infer, xml, xsd};
 
 /// The build step that is done. A document of a later step only has to read
 /// and write back as a tree.
-const DONE: &str = "15c";
+const DONE: &str = "15d";
 
 /// Each document, and the step after which it imports.
 const CORPUS: &[(&str, &str)] = &[
@@ -91,12 +91,36 @@ fn the_documents_of_the_steps_done_import_and_write_back_unchanged() {
     for (name, step) in CORPUS.iter().filter(|(_, step)| *step <= DONE) {
         let text = text_of(name);
         let doc = xmltree::parse(&text).unwrap();
-        let inferred = infer::infer_xsd(&doc).unwrap_or_else(|e| panic!("{name} ({step}): {e}"));
-        let spec = xsd::lower_str(&inferred.text)
-            .unwrap_or_else(|e| panic!("{name}: {e}\n{}", inferred.text));
+        // One schema per namespace, each imported by the file name of its
+        // prefix.
+        let file =
+            |prefix: Option<&str>, _: Option<&str>| format!("{}.xsd", prefix.unwrap_or("main"));
+        let inferred =
+            infer::infer_xsds(&doc, &file).unwrap_or_else(|e| panic!("{name} ({step}): {e}"));
+        let all: String = inferred.tabs.iter().map(|t| t.text.as_str()).collect();
+        let schemas: Vec<(String, xmltree::Element)> = inferred
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let root = xmltree::parse(&t.text)
+                    .unwrap_or_else(|e| panic!("{name}: {e}\n{}", t.text))
+                    .root;
+                let prefix = if i == 0 { None } else { t.prefix.as_deref() };
+                (file(prefix, None), root)
+            })
+            .collect();
+        let imports = |location: &str| {
+            schemas
+                .iter()
+                .find(|(file, _)| file == location)
+                .map(|(_, root)| root.clone())
+        };
+        let spec = xsd::lower_with(&schemas[0].1, &imports, None)
+            .unwrap_or_else(|e| panic!("{name}: {e}\n{all}"));
         let parsed = xml::parse(&text, &spec).unwrap_or_else(|e| panic!("{name}: {e}"));
         let issues = validate(&spec, &parsed.node);
-        assert!(issues.is_empty(), "{name}: {issues:?}\n{}", inferred.text);
+        assert!(issues.is_empty(), "{name}: {issues:?}\n{all}");
         let written = xml::to_string(&parsed.node, &spec, &parsed.document, true)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         same_document(name, &text, &written);

@@ -1,6 +1,6 @@
 //! Tests of schema inference (DESIGN.md, "Schema inference").
 
-use crate::infer::{infer_json, infer_xsd, text_lines};
+use crate::infer::{XsdTab, infer_json, infer_xsd, infer_xsds, text_lines};
 use crate::validate::validate;
 use crate::value::{Node, Value};
 use crate::{json, jsonschema, xml, xmltree, xsd};
@@ -267,15 +267,130 @@ fn attributes_in_the_documents_namespace_are_qualified() {
 }
 
 #[test]
-fn more_namespaces_are_refused() {
+fn one_schema_is_not_enough_for_more_namespaces() {
     let refused = |text: &str| infer_xsd(&xmltree::parse(text).unwrap()).unwrap_err();
+    for text in [
+        r#"<r xmlns="urn:a"><x xmlns="urn:b"/></r>"#,
+        r#"<r xmlns:o="urn:o" o:id="1"/>"#,
+    ] {
+        assert!(refused(text).contains("more than one namespace"), "{text}");
+    }
+}
+
+/// Infers one schema per namespace, imported by `<prefix>.xsd`, lowers the
+/// first with the others, reads the document back and writes it again.
+fn several(text: &str) -> (Vec<XsdTab>, Node) {
+    let file = |prefix: Option<&str>, _: Option<&str>| format!("{}.xsd", prefix.unwrap_or("main"));
+    let doc = xmltree::parse(text).unwrap();
+    let inferred = infer_xsds(&doc, &file).unwrap();
+    let all: String = inferred.tabs.iter().map(|t| t.text.as_str()).collect();
+    let roots: Vec<(String, xmltree::Element)> = inferred
+        .tabs
+        .iter()
+        .map(|t| {
+            // Every schema is one a schema tab can hold.
+            xml::parse(&t.text, crate::metaschema::xsd_meta()).unwrap();
+            let root = xmltree::parse(&t.text).unwrap().root;
+            (file(t.prefix.as_deref(), None), root)
+        })
+        .collect();
+    let imports = |location: &str| {
+        roots
+            .iter()
+            .find(|(f, _)| f == location)
+            .map(|(_, r)| r.clone())
+    };
+    let spec =
+        xsd::lower_with(&roots[0].1, &imports, None).unwrap_or_else(|e| panic!("{e}\n{all}"));
+    let parsed = xml::parse(text, &spec).unwrap();
+    let issues = validate(&spec, &parsed.node);
+    assert!(issues.is_empty(), "{issues:?}\n{all}");
+    let written = xml::to_string(&parsed.node, &spec, &parsed.document, false).unwrap();
+    assert!(written.ends_with(text), "{written}\n{all}");
+    (inferred.tabs, parsed.node)
+}
+
+/// XML Schemas and namespaces, 0.5.0: one schema per namespace. An element
+/// of another namespace is a global element of its schema, referred to with
+/// `ref`; so is an attribute of another namespace.
+#[test]
+fn several_namespaces_are_several_schemas() {
+    let (tabs, node) = several(
+        r#"<rss xmlns:dc="urn:dc" xmlns:a="urn:a" a:v="2"><item><dc:creator a:role="x">Ann</dc:creator><title>T</title></item></rss>"#,
+    );
+    let names: Vec<(Option<&str>, Option<&str>)> = tabs
+        .iter()
+        .map(|t| (t.namespace.as_deref(), t.prefix.as_deref()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            (None, None),
+            (Some("urn:a"), Some("a")),
+            (Some("urn:dc"), Some("dc"))
+        ]
+    );
+    let main = &tabs[0].text;
+    for part in [
+        r#"<xs:import namespace="urn:dc" schemaLocation="dc.xsd"/>"#,
+        r#"<xs:import namespace="urn:a" schemaLocation="a.xsd"/>"#,
+        r#"<xs:element ref="dc:creator"/>"#,
+        r#"<xs:attribute ref="a:v" use="required"/>"#,
+    ] {
+        assert!(main.contains(part), "{part}\n{main}");
+    }
+    assert!(!main.contains("targetNamespace"), "{main}");
+    // dc's schema refers to a's attribute in its turn.
+    let dc = &tabs[2].text;
+    assert!(dc.contains(r#"targetNamespace="urn:dc""#), "{dc}");
     assert!(
-        refused(r#"<r xmlns="urn:a"><x xmlns="urn:b"/></r>"#).contains("more than one namespace")
+        dc.contains(r#"<xs:attribute ref="a:role" use="required"/>"#),
+        "{dc}"
     );
     assert!(
-        refused(r#"<r xmlns:o="urn:o" o:id="1"/>"#).contains("is in a namespace"),
-        "an attribute with a prefix"
+        dc.contains(r#"<xs:import namespace="urn:a" schemaLocation="a.xsd"/>"#),
+        "{dc}"
     );
+    let a = &tabs[1].text;
+    assert!(
+        a.contains(r#"<xs:attribute name="v" type="xs:integer"/>"#),
+        "{a}"
+    );
+    assert!(
+        a.contains(r#"<xs:attribute name="role" type="xs:string"/>"#),
+        "{a}"
+    );
+    let at = |path: &str| node.get(&path.parse().unwrap()).map(|n| n.value().clone());
+    assert_eq!(
+        at("item[\"dc:creator\"][\"#text\"]"),
+        Some(Value::Str("Ann".into()))
+    );
+    assert_eq!(at("[\"@a:v\"]"), Some(Value::Int(2)));
+}
+
+/// A namespace that was only ever the default one gets a prefix of its own,
+/// and its local elements are in it.
+#[test]
+fn a_default_namespace_inside_gets_a_prefix() {
+    let (tabs, _) = several(r#"<page><svg xmlns="urn:svg"><g><rect/></g></svg></page>"#);
+    assert_eq!(tabs[1].prefix.as_deref(), Some("ns1"));
+    assert!(
+        tabs[0].text.contains(r#"<xs:element ref="ns1:svg"/>"#),
+        "{}",
+        tabs[0].text
+    );
+    assert!(
+        tabs[1].text.contains(r#"elementFormDefault="qualified""#),
+        "{}",
+        tabs[1].text
+    );
+}
+
+#[test]
+fn local_elements_partly_in_a_namespace_are_refused() {
+    let doc = xmltree::parse(r#"<p:r xmlns:p="urn:p"><p:a/><b/></p:r>"#).unwrap();
+    let e = infer_xsds(&doc, &|_, _| String::new()).unwrap_err();
+    assert!(e.contains("partly in its namespace"), "{e}");
 }
 
 #[test]

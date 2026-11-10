@@ -834,9 +834,28 @@ impl Writer<'_> {
                 }
             }
             Some(uri) => {
-                let prefix = written.unwrap_or_else(|| "ns".to_string());
-                self.declare(&prefix, uri, scope);
-                (Some(prefix), local)
+                // What the document binds to the namespace where it is
+                // written: a prefix, or for an element the default namespace.
+                let bound = scope
+                    .iter()
+                    .rev()
+                    .find(|(p, u)| u == uri && (p.is_some() || !attribute))
+                    .map(|(p, _)| p.clone());
+                let shadowed = |p: &Option<String>| {
+                    scope
+                        .iter()
+                        .rev()
+                        .find(|(q, _)| q == p)
+                        .is_some_and(|(_, u)| u != uri)
+                };
+                match bound {
+                    Some(p) if !shadowed(&p) => (p, local),
+                    _ => {
+                        let prefix = written.unwrap_or_else(|| "ns".to_string());
+                        self.declare(&prefix, uri, scope);
+                        (Some(prefix), local)
+                    }
+                }
             }
         }
     }
@@ -953,7 +972,10 @@ impl Writer<'_> {
                     Kind::Array { items, .. } => *items,
                     _ => f.ty,
                 });
-                let (prefix, local) = self.qualify(key, field, false, scope);
+                // The element's own declarations are in scope for its name.
+                let mut own: Vec<(Option<String>, String)> = scope.to_vec();
+                own.extend(node.xml_declarations().iter().cloned());
+                let (prefix, local) = self.qualify(key, field, false, &own);
                 let mut element = self.emit(key, node, ty, scope);
                 element.name = local;
                 element.prefix = prefix;

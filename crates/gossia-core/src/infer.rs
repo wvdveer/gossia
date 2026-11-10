@@ -338,67 +338,73 @@ fn object(fields: Vec<(&str, Node)>) -> Node {
 
 // ------------------------------------------------------------------- XML
 
-/// Infers an XSD from an XML document. More than one namespace is outside the
-/// subset, and refused with a message, except for the built-in `xml:` and
-/// `xsi:` attributes, which the schema names with `ref`. Mixed content is
-/// inferred as a mixed type, whose inside is kept as markup, and children
-/// in a varying order as a repeating choice, the ordered list `#children`.
+/// The XSD of one namespace of a document, inferred: what one XSD tab holds.
+#[derive(Debug, Clone)]
+pub struct XsdTab {
+    /// The namespace, or none for the elements in no namespace.
+    pub namespace: Option<String>,
+    /// The prefix the document first used for it (none for the main tab, or
+    /// for a namespace only ever the default one).
+    pub prefix: Option<String>,
+    pub text: String,
+}
+
+/// The XSDs inferred from a document, one per namespace: the first is the
+/// main one, whose global element is the root, and it imports the others,
+/// which may import each other.
+#[derive(Debug, Clone)]
+pub struct XsdInferences {
+    pub tabs: Vec<XsdTab>,
+    pub warnings: Vec<String>,
+}
+
+/// Infers an XSD from an XML document that needs only one: elements in one
+/// namespace, with the built-in `xml:` and `xsi:` attributes at most (which
+/// the schema names with `ref`). A document that needs more is refused with
+/// a message; [`infer_xsds`] infers it.
 pub fn infer_xsd(doc: &Document) -> Result<XsdInference, String> {
-    let namespace = doc.root.namespace.clone();
-    let mut qualified = None;
-    check_namespaces(&doc.root, namespace.as_deref(), true, &mut qualified)?;
-    let mut shape = ElementShape::default();
-    shape.observe(&doc.root, &doc.root.name)?;
-    let mut warnings = doc.warnings.clone();
-    // The prefixes of the built-in attributes, as the document writes them.
-    let mut builtin: Vec<(String, String)> = Vec::new();
-    builtin_prefixes(&doc.root, &mut builtin);
-    // Attributes in the document's namespace (`w:id` in Word) are qualified:
-    // by default when they all are, one by one otherwise.
-    let (qualified_attributes, plain_attributes) = shape.attribute_forms();
-    let attributes_qualified = qualified_attributes > 0 && plain_attributes == 0;
-    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"");
-    for (prefix, uri) in builtin.iter().filter(|(p, _)| p != "xml") {
-        out.push_str(&format!(
-            " xmlns:{prefix}=\"{}\"",
-            xmltree::escape_attribute(uri)
-        ));
+    let inferred = infer_xsds(doc, &|_, _| String::new())?;
+    let mut tabs = inferred.tabs;
+    if tabs.len() > 1 {
+        return Err(tr!(
+            "the document uses more than one namespace, which version 1 does not support"
+        )
+        .to_owned());
     }
-    if let Some(ns) = &namespace {
-        out.push_str(&format!(
-            " targetNamespace=\"{}\" elementFormDefault=\"{}\"",
-            xmltree::escape_attribute(ns),
-            if qualified.unwrap_or(true) {
-                "qualified"
-            } else {
-                "unqualified"
-            }
-        ));
-        if attributes_qualified {
-            out.push_str(" attributeFormDefault=\"qualified\"");
-        }
-    }
-    out.push_str(">\n");
-    if builtin.iter().any(|(_, uri)| uri == XML_NS) {
-        out.push_str(&format!(
-            "  <xs:import namespace=\"{XML_NS}\" schemaLocation=\"http://www.w3.org/2001/xml.xsd\"/>\n"
-        ));
-    }
-    shape.write(
-        &doc.root.name,
-        &doc.root.name,
-        "",
-        1,
-        attributes_qualified,
-        &mut out,
-        &mut warnings,
-    );
-    out.push_str("</xs:schema>\n");
     Ok(XsdInference {
-        text: out,
-        warnings,
+        text: tabs.remove(0).text,
+        warnings: inferred.warnings,
     })
+}
+
+/// Infers the XSDs of an XML document, one for each namespace it uses (the
+/// elements in no namespace count as one). An element of another namespace
+/// than its parent's is a global element of its own namespace's schema,
+/// which the parent's refers to with `ref`; so is an attribute of another
+/// namespace. `location` gives the `schemaLocation` by which one schema
+/// imports another, from that one's prefix and namespace. Mixed content is
+/// inferred as a mixed type, whose inside is kept as markup, and children in
+/// a varying order as a repeating choice, the ordered list `#children`.
+pub fn infer_xsds(
+    doc: &Document,
+    location: &dyn Fn(Option<&str>, Option<&str>) -> String,
+) -> Result<XsdInferences, String> {
+    let mut registry = Registry::default();
+    let root = &doc.root;
+    registry.space(root.namespace.as_deref(), root.prefix.as_deref());
+    registry.observe_global(root, &root.name)?;
+    registry.unique_prefixes();
+    let mut warnings = doc.warnings.clone();
+    let mut tabs = Vec::new();
+    for (namespace, space) in &registry.spaces {
+        let text = registry.write(namespace.as_deref(), space, location, &mut warnings);
+        tabs.push(XsdTab {
+            namespace: namespace.clone(),
+            prefix: space.prefix.clone(),
+            text,
+        });
+    }
+    Ok(XsdInferences { tabs, warnings })
 }
 
 /// Whether an attribute is one of the built-in `xml:` and `xsi:` ones.
@@ -406,80 +412,189 @@ fn is_builtin(attribute: &xmltree::Attribute) -> bool {
     matches!(attribute.namespace.as_deref(), Some(XML_NS | XSI_NS))
 }
 
-/// The prefixes the built-in attributes are written with, each namespace
-/// once, in the order first seen.
-fn builtin_prefixes(element: &Element, out: &mut Vec<(String, String)>) {
-    for a in element.attributes.iter().filter(|a| is_builtin(a)) {
-        let (Some(prefix), Some(uri)) = (&a.prefix, &a.namespace) else {
-            continue;
-        };
-        if !out.iter().any(|(_, u)| u == uri) {
-            out.push((prefix.clone(), uri.clone()));
-        }
-    }
-    for child in element.elements() {
-        builtin_prefixes(child, out);
-    }
+/// Everything seen of one namespace: what its schema declares globally.
+#[derive(Debug, Default)]
+struct Space {
+    /// The prefix its schema and the others name it by.
+    prefix: Option<String>,
+    /// Whether the local elements of its elements are in it (qualified) or
+    /// in none, once seen.
+    qualified: Option<bool>,
+    /// The global elements, by local name, in the order first seen.
+    elements: IndexMap<String, ElementShape>,
+    /// The global attributes, by local name.
+    attributes: IndexMap<String, TextShape>,
+    /// The other namespaces its declarations refer to, in the order first
+    /// seen.
+    refers: Vec<String>,
+    /// The built-in attributes its elements have, by prefix and namespace.
+    builtin: Vec<(String, String)>,
+    /// How many attributes of its elements are in it, and how many in none.
+    attribute_forms: (usize, usize),
 }
 
-/// The key of an attribute in a shape: its name, with the prefix for a
-/// built-in one.
-fn attribute_key(attribute: &xmltree::Attribute) -> String {
-    match &attribute.prefix {
-        Some(p) if is_builtin(attribute) => format!("{p}:{}", attribute.name),
-        _ => attribute.name.clone(),
-    }
+#[derive(Debug, Default)]
+struct Registry {
+    /// The namespaces, the root's first.
+    spaces: IndexMap<Option<String>, Space>,
 }
 
-/// One namespace at most: the root's. The other elements are all in it
-/// (`qualified`) or all in none (`unqualified`), and an attribute with a
-/// prefix is in the root's namespace or is a built-in one.
-fn check_namespaces(
-    element: &Element,
-    namespace: Option<&str>,
-    root: bool,
-    qualified: &mut Option<bool>,
-) -> Result<(), String> {
-    let more = || {
-        tr!("the document uses more than one namespace, which version 1 does not support")
-            .to_owned()
-    };
-    if !root {
-        match (element.namespace.as_deref(), namespace) {
-            (None, None) => {}
-            (Some(ns), Some(root_ns)) if ns == root_ns => {
-                if !*qualified.get_or_insert(true) {
-                    return Err(more());
+impl Registry {
+    /// The space of a namespace, made when first seen with `prefix`.
+    fn space(&mut self, namespace: Option<&str>, prefix: Option<&str>) -> &mut Space {
+        let space = self.spaces.entry(namespace.map(str::to_owned)).or_default();
+        if space.prefix.is_none() {
+            space.prefix = prefix.map(str::to_owned);
+        }
+        space
+    }
+
+    /// Observes an element that is a global element of its namespace.
+    fn observe_global(&mut self, element: &Element, path: &str) -> Result<(), String> {
+        let namespace = element.namespace.clone();
+        let space = self.space(namespace.as_deref(), element.prefix.as_deref());
+        // Taken out while it is observed, since what is inside it may add to
+        // the registry.
+        let mut shape = space
+            .elements
+            .shift_remove(&element.name)
+            .unwrap_or_default();
+        let result = shape.observe(element, path, namespace.as_deref(), self);
+        let space = self.space(namespace.as_deref(), None);
+        match space.elements.get_mut(&element.name) {
+            // The same element met again inside itself: kept as first seen.
+            Some(_) => {}
+            None => {
+                space.elements.insert(element.name.clone(), shape);
+            }
+        }
+        result
+    }
+
+    /// The prefix by which the schemas name a namespace.
+    fn prefix_of(&self, namespace: &str) -> String {
+        self.spaces
+            .get(&Some(namespace.to_owned()))
+            .and_then(|s| s.prefix.clone())
+            .unwrap_or_else(|| "ns".to_owned())
+    }
+
+    /// Gives every namespace but the main one a prefix of its own: the one
+    /// the document used, unless another namespace has it already, or
+    /// `ns1`, `ns2`, ... for one that only ever was the default namespace.
+    fn unique_prefixes(&mut self) {
+        let mut taken: Vec<String> = vec!["xs".to_owned(), "xml".to_owned()];
+        let mut n = 0;
+        for (i, space) in self.spaces.values_mut().enumerate() {
+            for (prefix, _) in &space.builtin {
+                if !taken.contains(prefix) {
+                    taken.push(prefix.clone());
                 }
             }
-            (None, Some(_)) => {
-                if *qualified.get_or_insert(false) {
-                    return Err(more());
-                }
+            if i == 0 && space.prefix.is_none() {
+                continue;
             }
-            _ => return Err(more()),
+            let wanted = space.prefix.clone().filter(|p| !taken.contains(p));
+            let prefix = wanted.unwrap_or_else(|| {
+                loop {
+                    n += 1;
+                    let candidate = format!("ns{n}");
+                    if !taken.contains(&candidate) {
+                        break candidate;
+                    }
+                }
+            });
+            taken.push(prefix.clone());
+            space.prefix = Some(prefix);
         }
     }
-    if let Some(attribute) = element
-        .attributes
-        .iter()
-        .find(|a| a.prefix.is_some() && !is_builtin(a) && a.namespace.as_deref() != namespace)
-    {
-        return Err(tr!(
-            "the attribute {prefix}:{name} of <{name2}> is in a namespace, which version 1 does not support",
-            prefix = attribute.prefix.as_deref().unwrap_or_default(),
-            name = attribute.name,
-            name2 = element.name
-        ));
+
+    /// The schema of one namespace, as XSD text.
+    fn write(
+        &self,
+        namespace: Option<&str>,
+        space: &Space,
+        location: &dyn Fn(Option<&str>, Option<&str>) -> String,
+        warnings: &mut Vec<String>,
+    ) -> String {
+        let (qualified_attributes, plain_attributes) = space.attribute_forms;
+        let attributes_qualified = qualified_attributes > 0 && plain_attributes == 0;
+        let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        out.push_str("<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"");
+        let mut declared: Vec<(String, String)> = Vec::new();
+        for (prefix, uri) in space.builtin.iter().filter(|(p, _)| p != "xml") {
+            declared.push((prefix.clone(), uri.clone()));
+        }
+        for uri in &space.refers {
+            declared.push((self.prefix_of(uri), uri.clone()));
+        }
+        for (prefix, uri) in &declared {
+            out.push_str(&format!(
+                " xmlns:{prefix}=\"{}\"",
+                xmltree::escape_attribute(uri)
+            ));
+        }
+        if let Some(ns) = namespace {
+            out.push_str(&format!(
+                " targetNamespace=\"{}\" elementFormDefault=\"{}\"",
+                xmltree::escape_attribute(ns),
+                if space.qualified.unwrap_or(true) {
+                    "qualified"
+                } else {
+                    "unqualified"
+                }
+            ));
+            if attributes_qualified {
+                out.push_str(" attributeFormDefault=\"qualified\"");
+            }
+        }
+        out.push_str(">\n");
+        if space.builtin.iter().any(|(_, uri)| uri == XML_NS) {
+            out.push_str(&format!(
+                "  <xs:import namespace=\"{XML_NS}\" schemaLocation=\"http://www.w3.org/2001/xml.xsd\"/>\n"
+            ));
+        }
+        for uri in &space.refers {
+            let prefix = self
+                .spaces
+                .get(&Some(uri.clone()))
+                .and_then(|s| s.prefix.as_deref());
+            out.push_str(&format!(
+                "  <xs:import namespace=\"{}\" schemaLocation=\"{}\"/>\n",
+                xmltree::escape_attribute(uri),
+                xmltree::escape_attribute(&location(prefix, Some(uri)))
+            ));
+        }
+        let main = self
+            .spaces
+            .first()
+            .is_some_and(|(ns, _)| ns.as_deref() == namespace);
+        for (name, shape) in &space.elements {
+            let path = match &space.prefix {
+                Some(p) if !main => format!("{p}:{name}"),
+                _ => name.clone(),
+            };
+            shape.write(
+                name,
+                &path,
+                "",
+                1,
+                attributes_qualified,
+                self,
+                &mut out,
+                warnings,
+            );
+        }
+        for (name, text) in &space.attributes {
+            out.push_str(&format!(
+                "  <xs:attribute name=\"{}\" type=\"xs:{}\"/>\n",
+                xmltree::escape_attribute(name),
+                text.xsd_type()
+            ));
+        }
+        out.push_str("</xs:schema>\n");
+        out
     }
-    // What is inside mixed content is kept as markup, whatever it holds.
-    if element.has_text() {
-        return Ok(());
-    }
-    for child in element.elements() {
-        check_namespaces(child, namespace, false, qualified)?;
-    }
-    Ok(())
 }
 
 /// What the text of an element or an attribute could be typed as, from all
@@ -578,9 +693,11 @@ fn plain_digits(digits: &str) -> bool {
 struct ElementShape {
     instances: usize,
     /// The attributes, in the order merged from every instance (as the
-    /// children are).
+    /// children are). The key of one of another namespace is `{uri}name`, of
+    /// a built-in one `prefix:name`.
     attributes: IndexMap<String, AttributeShape>,
-    /// The child elements, in the order merged from every instance.
+    /// The child elements, in the order merged from every instance; the key
+    /// of one of another namespace, a global element there, is `{uri}name`.
     children: IndexMap<String, ChildShape>,
     /// The instances that held child elements.
     with_elements: usize,
@@ -598,7 +715,7 @@ struct AttributeShape {
     /// How many instances of the element had it.
     present: usize,
     text: TextShape,
-    /// It is in the document's namespace (it has its prefix).
+    /// It is in the namespace of its element's schema (it has a prefix).
     qualified: bool,
 }
 
@@ -611,15 +728,61 @@ struct ChildShape {
     shape: ElementShape,
 }
 
+/// For the key of something in another namespace, `{uri}name`, the name a
+/// schema refers to it by: `prefix:name`.
+fn reference(registry: &Registry, key: &str) -> Option<String> {
+    let (uri, local) = key.strip_prefix('{')?.split_once('}')?;
+    Some(format!("{}:{local}", registry.prefix_of(uri)))
+}
+
 impl ElementShape {
-    fn observe(&mut self, element: &Element, path: &str) -> Result<(), String> {
+    /// Observes an instance whose declaration is in the schema of `tab`.
+    fn observe(
+        &mut self,
+        element: &Element,
+        path: &str,
+        tab: Option<&str>,
+        registry: &mut Registry,
+    ) -> Result<(), String> {
         self.instances += 1;
         // A new attribute goes after the one before it in this instance, so
         // that writing keeps the order of documents whose instances leave out
         // different attributes.
         let mut after: Option<usize> = None;
         for attribute in &element.attributes {
-            let key = attribute_key(attribute);
+            let mine = attribute.namespace.is_some() && attribute.namespace.as_deref() == tab;
+            let key = match (&attribute.prefix, attribute.namespace.as_deref()) {
+                (Some(prefix), Some(uri)) if is_builtin(attribute) => {
+                    let space = registry.space(tab, None);
+                    if !space.builtin.iter().any(|(_, u)| u == uri) {
+                        space.builtin.push((prefix.clone(), uri.to_owned()));
+                    }
+                    format!("{prefix}:{}", attribute.name)
+                }
+                (_, Some(uri)) if !mine => {
+                    // A global attribute of its own namespace.
+                    registry
+                        .space(Some(uri), attribute.prefix.as_deref())
+                        .attributes
+                        .entry(attribute.name.clone())
+                        .or_default()
+                        .observe(&attribute.value);
+                    let space = registry.space(tab, None);
+                    if !space.refers.iter().any(|u| u == uri) {
+                        space.refers.push(uri.to_owned());
+                    }
+                    format!("{{{uri}}}{}", attribute.name)
+                }
+                _ => {
+                    let forms = &mut registry.space(tab, None).attribute_forms;
+                    if mine {
+                        forms.0 += 1;
+                    } else {
+                        forms.1 += 1;
+                    }
+                    attribute.name.clone()
+                }
+            };
             let at = match self.attributes.get_index_of(&key) {
                 Some(i) => i,
                 None => {
@@ -630,9 +793,8 @@ impl ElementShape {
                 }
             };
             after = Some(after.map_or(at, |a| a.max(at)));
-            let qualified = attribute.namespace.is_some() && !is_builtin(attribute);
             let entry = &mut self.attributes[at];
-            if entry.present > 0 && entry.qualified != qualified {
+            if entry.present > 0 && entry.qualified != mine {
                 return Err(tr!(
                     "<{path}> has the attribute {name} both with and without a prefix, \
                      which version 1 does not support",
@@ -641,20 +803,10 @@ impl ElementShape {
                 ));
             }
             entry.present += 1;
-            entry.qualified = qualified;
+            entry.qualified = mine;
             entry.text.observe(&attribute.value);
         }
-        let mut here: IndexMap<&str, usize> = IndexMap::new();
-        let mut last_name: Option<&str> = None;
-        for child in element.elements() {
-            if last_name != Some(child.name.as_str()) && here.contains_key(child.name.as_str()) {
-                // The elements of one name are apart: they are written together.
-                self.order_differs = true;
-            }
-            *here.entry(&child.name).or_default() += 1;
-            last_name = Some(&child.name);
-        }
-        if here.is_empty() {
+        if element.elements().next().is_none() {
             self.text.observe(&element.text());
         } else {
             self.mixed |= element.has_text();
@@ -662,6 +814,20 @@ impl ElementShape {
         }
         if self.mixed {
             return Ok(());
+        }
+        let keys = element
+            .elements()
+            .map(|child| child_key(child, tab, path, registry))
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut here: IndexMap<&str, usize> = IndexMap::new();
+        let mut last: Option<&str> = None;
+        for (key, _) in &keys {
+            if last != Some(key.as_str()) && here.contains_key(key.as_str()) {
+                // The elements of one name are apart: they are written together.
+                self.order_differs = true;
+            }
+            *here.entry(key).or_default() += 1;
+            last = Some(key);
         }
         // Merges the order of this instance into the order so far: a new name
         // goes after the name before it.
@@ -686,36 +852,19 @@ impl ElementShape {
             child.present += 1;
             child.most = child.most.max(count);
         }
-        for child in element.elements() {
+        for (child, (key, global)) in element.elements().zip(&keys) {
             let child_path = format!("{path}/{}", child.name);
-            self.children
-                .get_mut(child.name.as_str())
-                .expect("every child was counted")
-                .shape
-                .observe(child, &child_path)?;
+            if *global {
+                registry.observe_global(child, &child_path)?;
+            } else {
+                self.children
+                    .get_mut(key.as_str())
+                    .expect("every child was counted")
+                    .shape
+                    .observe(child, &child_path, tab, registry)?;
+            }
         }
         Ok(())
-    }
-
-    /// How many attributes, here and below, are in the document's namespace
-    /// and how many in none (the built-in ones are neither).
-    fn attribute_forms(&self) -> (usize, usize) {
-        let mut counts = (0, 0);
-        for (name, a) in &self.attributes {
-            if a.qualified {
-                counts.0 += 1;
-            } else if !name.contains(':') {
-                counts.1 += 1;
-            }
-        }
-        if !self.mixed {
-            for child in self.children.values() {
-                let (q, p) = child.shape.attribute_forms();
-                counts.0 += q;
-                counts.1 += p;
-            }
-        }
-        counts
     }
 
     /// Writes the declaration of the element, with `occurs` already made.
@@ -728,6 +877,7 @@ impl ElementShape {
         occurs: &str,
         depth: usize,
         qualified: bool,
+        registry: &Registry,
         out: &mut String,
         warnings: &mut Vec<String>,
     ) {
@@ -746,7 +896,7 @@ impl ElementShape {
                  {pad}      <xs:any processContents=\"skip\" minOccurs=\"0\" maxOccurs=\"unbounded\"/>\n\
                  {pad}    </xs:sequence>\n"
             ));
-            self.write_attributes(&format!("{pad}    "), qualified, out);
+            self.write_attributes(&format!("{pad}    "), qualified, registry, out);
             out.push_str(&format!("{pad}  </xs:complexType>\n{pad}</xs:element>\n"));
             return;
         }
@@ -793,45 +943,57 @@ impl ElementShape {
                 if child.most > 1 && !self.order_differs {
                     occurs.push_str(" maxOccurs=\"unbounded\"");
                 }
+                if let Some(name) = reference(registry, child_name) {
+                    // A global element of another namespace.
+                    out.push_str(&format!(
+                        "{inner}  <xs:element ref=\"{}\"{occurs}/>\n",
+                        xmltree::escape_attribute(&name)
+                    ));
+                    continue;
+                }
                 child.shape.write(
                     child_name,
                     &format!("{path}/{child_name}"),
                     &occurs,
                     depth + 3,
                     qualified,
+                    registry,
                     out,
                     warnings,
                 );
             }
             out.push_str(&format!("{inner}</xs:{group}>\n"));
-            self.write_attributes(&inner, qualified, out);
+            self.write_attributes(&inner, qualified, registry, out);
         } else if self.text.filled > 0 {
             out.push_str(&format!(
                 "{inner}<xs:simpleContent>\n{inner}  <xs:extension base=\"xs:{}\">\n",
                 self.text.xsd_type()
             ));
-            self.write_attributes(&format!("{inner}    "), qualified, out);
+            self.write_attributes(&format!("{inner}    "), qualified, registry, out);
             out.push_str(&format!(
                 "{inner}  </xs:extension>\n{inner}</xs:simpleContent>\n"
             ));
         } else {
-            self.write_attributes(&inner, qualified, out);
+            self.write_attributes(&inner, qualified, registry, out);
         }
         out.push_str(&format!("{pad}  </xs:complexType>\n{pad}</xs:element>\n"));
     }
 
-    fn write_attributes(&self, pad: &str, qualified: bool, out: &mut String) {
+    fn write_attributes(&self, pad: &str, qualified: bool, registry: &Registry, out: &mut String) {
         for (name, a) in &self.attributes {
             let required = if a.present == self.instances {
                 " use=\"required\""
             } else {
                 ""
             };
-            if name.contains(':') {
-                // A built-in attribute: the schema refers to it.
+            // A built-in attribute, or a global one of another namespace:
+            // the schema refers to it.
+            let referred =
+                reference(registry, name).or_else(|| name.contains(':').then(|| name.clone()));
+            if let Some(name) = referred {
                 out.push_str(&format!(
                     "{pad}<xs:attribute ref=\"{}\"{required}/>\n",
-                    xmltree::escape_attribute(name)
+                    xmltree::escape_attribute(&name)
                 ));
                 continue;
             }
@@ -847,4 +1009,38 @@ impl ElementShape {
             ));
         }
     }
+}
+
+/// The key of a child element below an element of `tab`'s schema, and
+/// whether it is a global element of another namespace. A child in the same
+/// namespace, or in none below a namespace, is local; the schema's local
+/// elements are all in its namespace (qualified) or all in none.
+fn child_key(
+    child: &Element,
+    tab: Option<&str>,
+    path: &str,
+    registry: &mut Registry,
+) -> Result<(String, bool), String> {
+    let namespace = child.namespace.as_deref();
+    if namespace.is_some() && namespace != tab {
+        let uri = namespace.unwrap_or_default();
+        registry.space(namespace, child.prefix.as_deref());
+        let space = registry.space(tab, None);
+        if !space.refers.iter().any(|u| u == uri) {
+            space.refers.push(uri.to_owned());
+        }
+        return Ok((format!("{{{uri}}}{}", child.name), true));
+    }
+    if tab.is_some() {
+        let qualified = namespace.is_some();
+        let space = registry.space(tab, None);
+        if *space.qualified.get_or_insert(qualified) != qualified {
+            return Err(tr!(
+                "the elements inside <{path}> are partly in its namespace and partly in none, \
+                 which version 1 does not support",
+                path = path
+            ));
+        }
+    }
+    Ok((child.name.clone(), false))
 }
