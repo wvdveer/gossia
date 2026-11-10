@@ -77,6 +77,7 @@ pub(crate) const MODULES: &[&str] = &[
     "functools",
     "string",
     "textwrap",
+    "statistics",
 ];
 
 /// Modules the interpreter's own Rust code imports by name when a formula

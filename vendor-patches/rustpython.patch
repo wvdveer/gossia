@@ -17,11 +17,48 @@ index 5b4efbd..529470b 100644
  
  der = { version = "0.8", features = ["alloc", "oid", "pem", "zeroize"] }
  phf = { version = "0.14.0", default-features = false, features = ["macros"]}
+diff --git a/Lib/random.py b/Lib/random.py
+index 7db7610..85efe14 100644
+--- a/Lib/random.py
++++ b/Lib/random.py
+@@ -54,12 +54,21 @@
+ from math import sqrt as _sqrt, acos as _acos, cos as _cos, sin as _sin
+ from math import tau as TWOPI, floor as _floor, isfinite as _isfinite
+ from math import lgamma as _lgamma, fabs as _fabs, log2 as _log2
+-from os import urandom as _urandom
++try:
++    from os import urandom as _urandom
++except ImportError:
++    # Gossia's engine has no os (a patch of Gossia's, for statistics):
++    # the generator still works; only SystemRandom needs os.urandom.
++    def _urandom(n):
++        raise NotImplementedError("os.urandom is not available")
+ from _collections_abc import Sequence as _Sequence
+ from operator import index as _index
+ from itertools import accumulate as _accumulate, repeat as _repeat
+ from bisect import bisect as _bisect
+-import os as _os
++try:
++    import os as _os
++except ImportError:
++    _os = None
+ import _random
+ 
+ __all__ = [
+@@ -1009,7 +1018,7 @@ def _test(N=10_000):
+ ## ------------------------------------------------------
+ ## ------------------ fork support  ---------------------
+ 
+-if hasattr(_os, "fork"):
++if _os is not None and hasattr(_os, "fork"):
+     _os.register_at_fork(after_in_child=_inst.seed)
+ 
+ 
 diff --git a/crates/stdlib/src/lib.rs b/crates/stdlib/src/lib.rs
-index 5eb8062..fea8f4e 100644
+index 5eb8062..1d48313 100644
 --- a/crates/stdlib/src/lib.rs
 +++ b/crates/stdlib/src/lib.rs
-@@ -327,3 +327,30 @@ pub fn stdlib_module_defs(ctx: &Context) -> Vec<&'static builtins::PyModuleDef>
+@@ -327,3 +327,32 @@ pub fn stdlib_module_defs(ctx: &Context) -> Vec<&'static builtins::PyModuleDef>
          zlib::module_def(ctx),
      ]
  }
@@ -48,6 +85,8 @@ index 5eb8062..fea8f4e 100644
 +        _datetime::module_def(ctx),
 +        _heapq::module_def(ctx),
 +        pystruct::module_def(ctx),
++        // The generator under `random`, which `statistics` imports.
++        random::module_def(ctx),
 +        suggestions::module_def(ctx),
 +        unicodedata::module_def(ctx),
 +    ]

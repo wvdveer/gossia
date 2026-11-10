@@ -37,6 +37,7 @@
 "Rows from" = "Filas de"
 "Sheet {sheet}: {why}" = "Hoja {sheet}: {why}"
 "Sheets to import" = "Hojas para importar"
+"Statistics: mean, median, mode, stdev, variance, quantiles, correlation, linear_regression, NormalDist." = "Estadística: mean, median, mode, stdev, variance, quantiles, correlation, linear_regression, NormalDist."
 "TSV, a row for each item" = "TSV, una fila por elemento"
 "Tasks" = "Tareas"
 "The first row holds a number, a date or a yes or no, so it is data, not names; the columns are named column_1, column_2, ..." = "La primera fila contiene un número, una fecha o un sí o no, así que son datos, no nombres; las columnas se llaman column_1, column_2, ..."

@@ -327,6 +327,15 @@ fn others() -> &'static [Function] {
             tr_noop!("Wrapping and shortening text: wrap, shorten, dedent."),
             Modules,
         ),
+        f(
+            "statistics",
+            "statistics.",
+            "statistics",
+            tr_noop!(
+                "Statistics: mean, median, mode, stdev, variance, quantiles, correlation, linear_regression, NormalDist."
+            ),
+            Modules,
+        ),
     ];
     ALL
 }

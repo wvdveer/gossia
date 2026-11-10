@@ -34,6 +34,7 @@ const ROOTS: &[&str] = &[
     "functools",
     "string",
     "textwrap",
+    "statistics",
     "encodings",
     // What the interpreter's Rust code imports by name, which a formula can
     // reach through the modules above (python::INTERNAL_MODULES).
@@ -64,7 +65,6 @@ const UNAVAILABLE: &[&str] = &[
     "_bz2",
     "_lzma",
     "_hashlib",
-    "_random",
     "_pickle",
     "pyexpat",
     "_csv",

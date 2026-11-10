@@ -60,6 +60,37 @@ fn the_other_exposed_modules_work() {
     );
 }
 
+/// `statistics` (owner, 2026-11-10): the vendored `random` is patched to
+/// import without `os`, since `statistics` imports it.
+#[test]
+fn the_statistics_module_works() {
+    let mut b = Book::new();
+    b.formula(
+        "text",
+        "str(statistics.median([5, 1, 3])) + ',' \
+         + str(statistics.mean([1, 2, 3, 4])) + ',' \
+         + str(round(statistics.stdev([2, 4, 4, 4, 5, 5, 7, 9]), 4)) + ',' \
+         + str(statistics.quantiles(range(1, 9), n=4)) + ',' \
+         + str(statistics.linear_regression([1, 2, 3], [3, 5, 7]).slope) + ',' \
+         + str(round(statistics.NormalDist(100, 15).cdf(115), 4))",
+    );
+    b.formula("name", "statistics.mean([])");
+    b.run();
+    assert_eq!(
+        b.get("text"),
+        Some(Value::Str(
+            "3,2.5,2.1381,[2.25, 4.5, 6.75],2.0,0.8413".into()
+        )),
+        "{}",
+        b.message("text")
+    );
+    assert!(
+        b.message("name").contains("StatisticsError"),
+        "{}",
+        b.message("name")
+    );
+}
+
 // ------------------------------------------------------------- navigation
 
 /// Formulas, "Name resolution": `Orders.items[2].price`.
@@ -608,8 +639,6 @@ fn the_interpreter_has_no_way_to_the_machine_even_through_getattr() {
         "select",
         "tempfile",
         "glob",
-        "statistics",
-        "random",
         "signal",
     ] {
         assert!(!engine.can_import(name), "{name} must not import");
