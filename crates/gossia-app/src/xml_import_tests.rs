@@ -1,6 +1,7 @@
 //! Dropping XML documents that use several namespaces (DESIGN.md, XML Schemas
 //! and namespaces, 0.5.0, step 15d-2): one schema tab per namespace, added
-//! with the data tab, and a namespace's tab reused when the data fits it.
+//! with the data tab, and a namespace's tab reused when the data fits it;
+//! and an `.xsd` file bringing the XSDs beside it that it imports (15d-3).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use gossia_core::validate::validate;
 
 use crate::GossiaApp;
 use crate::import::{ImportPlan, Inferred, SchemaChoice};
+use crate::workbook_file::new_workbook_id;
 
 const CORPUS: &[&str] = &[
     "sitemap.xml",
@@ -193,4 +195,96 @@ fn the_tabs_of_other_namespaces_need_names_of_their_own() {
     settle(&mut app);
     assert_eq!(app.calc().schema_error("BookTypes"), None);
     assert_eq!(app.calc().xsd_importers("book_dc"), ["BookTypes"]);
+}
+
+/// A folder of its own for the files of one test.
+fn folder(test: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "gossia-{test}-{}-{}",
+        std::process::id(),
+        new_workbook_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+const MAIN_XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:dc="urn:dc">
+  <xs:import namespace="urn:dc" schemaLocation="schemas/dc-terms.xsd"/>
+  <xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="http://www.w3.org/2001/xml.xsd"/>
+  <xs:element name="book"><xs:complexType><xs:sequence>
+    <xs:element ref="dc:creator"/>
+  </xs:sequence></xs:complexType></xs:element>
+</xs:schema>"#;
+
+const DC_XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:a="urn:a" targetNamespace="urn:dc">
+  <xs:import namespace="urn:a" schemaLocation="a.xsd"/>
+  <xs:element name="creator"><xs:complexType><xs:simpleContent>
+    <xs:extension base="xs:string"><xs:attribute ref="a:role"/></xs:extension>
+  </xs:simpleContent></xs:complexType></xs:element>
+</xs:schema>"#;
+
+const A_XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:a">
+  <xs:attribute name="role" type="xs:string"/>
+</xs:schema>"#;
+
+fn schema_folder(test: &str) -> PathBuf {
+    let dir = folder(test);
+    std::fs::create_dir_all(dir.join("schemas")).unwrap();
+    std::fs::write(dir.join("book.xsd"), MAIN_XSD).unwrap();
+    std::fs::write(dir.join("schemas").join("dc-terms.xsd"), DC_XSD).unwrap();
+    std::fs::write(dir.join("schemas").join("a.xsd"), A_XSD).unwrap();
+    dir
+}
+
+#[test]
+fn an_xsd_brings_the_xsds_beside_it_that_it_imports() {
+    let dir = schema_folder("xsd-beside");
+    let mut app = blank();
+    let plan = dropped(&mut app, dir.join("book.xsd"));
+    assert_eq!(plan.choice, SchemaChoice::SchemaTab);
+    let found: Vec<(&str, &str)> = plan
+        .imported
+        .iter()
+        .map(|x| (x.file.as_str(), x.name.as_str()))
+        .collect();
+    // `dc-terms` is no tab name: the import names the tab instead.
+    assert_eq!(found, [("dc-terms.xsd", "dc_terms"), ("a.xsd", "a")]);
+    assert_eq!(plan.schema_problem, None);
+    let before = app.calc().tab_names();
+    app.import(&plan).unwrap();
+    settle(&mut app);
+    let calc = app.calc();
+    for tab in ["book", "dc_terms", "a"] {
+        assert_eq!(calc.schema_error(tab), None, "{tab}");
+    }
+    assert_eq!(calc.xsd_importers("dc_terms"), ["book"]);
+    assert_eq!(calc.xsd_importers("a"), ["dc_terms"]);
+    // The data of such a schema reads.
+    let text =
+        r#"<book xmlns:dc="urn:dc" xmlns:a="urn:a"><dc:creator a:role="x">Ann</dc:creator></book>"#;
+    let data = app.plan_import("one.xml", text.as_bytes()).unwrap();
+    assert_eq!(data.choice, SchemaChoice::Existing("book".into()));
+    // All three tabs go with one undo.
+    app.undo();
+    settle(&mut app);
+    assert_eq!(app.calc().tab_names(), before);
+}
+
+#[test]
+fn an_import_the_workbook_has_a_tab_for_is_left_to_it() {
+    let dir = schema_folder("xsd-beside-there");
+    let mut app = blank();
+    let plan = dropped(&mut app, dir.join("schemas").join("a.xsd"));
+    app.import(&plan).unwrap();
+    let plan = dropped(&mut app, dir.join("book.xsd"));
+    let found: Vec<&str> = plan.imported.iter().map(|x| x.name.as_str()).collect();
+    assert_eq!(found, ["dc_terms"], "a.xsd is the tab a already");
+    // A file that is not there stays an import error, and is still imported.
+    std::fs::remove_file(dir.join("schemas").join("dc-terms.xsd")).unwrap();
+    let plan = dropped(&mut app, dir.join("book.xsd"));
+    assert!(plan.imported.is_empty());
+    assert!(plan.schema_problem.is_some());
+    // Pasted or from the host, there is no folder to look in.
+    let plan = app.plan_import("book.xsd", MAIN_XSD.as_bytes()).unwrap();
+    assert!(plan.imported.is_empty());
 }

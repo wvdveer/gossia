@@ -275,6 +275,21 @@ pub struct ImportPlan {
     /// kind they can be added to.
     pub entries: Option<EntryKind>,
     pub add_to: Vec<String>,
+    /// For an XSD read from a folder, the XSDs beside it that it imports
+    /// (and they import), each becoming a schema tab too.
+    pub imported: Vec<ImportedXsd>,
+}
+
+/// An XSD found beside an imported one, which imports it (DESIGN.md, XML
+/// Schemas and namespaces, 0.5.0, step 15d-3).
+#[derive(Debug, Clone)]
+pub struct ImportedXsd {
+    /// Its file name, as the import's `schemaLocation` reached it.
+    pub file: String,
+    /// The schema tab it becomes, which the imports name.
+    pub name: String,
+    pub tree: Node,
+    pub document: XmlDocument,
 }
 
 /// One worksheet of a workbook being imported.
@@ -531,9 +546,145 @@ impl GossiaApp {
             Some(expanded) => expanded.into_bytes(),
             None => bytes,
         };
-        let plan = self.plan_import(&file, &bytes)?;
+        let mut plan = self.plan_import(&file, &bytes)?;
+        self.find_imported_xsds(path, &mut plan);
         self.imports.push_back(plan);
         Ok(())
+    }
+
+    /// For an XSD read from a folder: the XSDs its `xs:import`s point at
+    /// there, and theirs in turn, each planned as a schema tab named after
+    /// its file; an import the workbook already has a tab for is left to
+    /// it. Where the tab's name is not the file's, the importing schema's
+    /// `schemaLocation` is changed to the name. A file that is not there,
+    /// is too large, or is not an XSD is left out, and stays an import
+    /// error on its importer.
+    fn find_imported_xsds(&self, path: &FsPath, plan: &mut ImportPlan) {
+        if !matches!(plan.schema_file, Some(SchemaFile::Xsd { .. })) {
+            return;
+        }
+        let Ok(main) = xmltree::parse(&plan.text) else {
+            return;
+        };
+        let calc = self.calc();
+        let limit = self.user.prefs.max_import_bytes;
+        // Each schema: its file, its folder, its tree, and the tab name.
+        let mut schemas = vec![(
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
+            main,
+            plan.name.clone(),
+        )];
+        let mut at = 0;
+        while at < schemas.len() {
+            let folder = schemas[at].0.parent().map(FsPath::to_path_buf);
+            let mut renames = Vec::new();
+            let wanted: Vec<String> = schemas[at]
+                .1
+                .root
+                .elements()
+                .filter(|e| e.name == "import" && e.namespace.as_deref() == Some(xsd::XSD_NS))
+                .filter(|e| {
+                    !matches!(
+                        e.attribute("namespace"),
+                        Some(xmltree::XML_NS | xmltree::XSI_NS)
+                    )
+                })
+                .filter_map(|e| e.attribute("schemaLocation").map(str::to_owned))
+                .collect();
+            for location in &wanted {
+                let location = location.as_str();
+                if location.contains("://") || calc.xsd_import_tab(location).is_some() {
+                    continue;
+                }
+                let Some(file) = folder.as_ref().map(|f| f.join(location)) else {
+                    continue;
+                };
+                let file = file.canonicalize().unwrap_or(file);
+                let tab = match schemas.iter().find(|(f, _, _)| *f == file) {
+                    Some((_, _, tab)) => tab.clone(),
+                    None => {
+                        let read = std::fs::metadata(&file)
+                            .ok()
+                            .filter(|m| m.is_file() && m.len() <= limit)
+                            .and_then(|_| std::fs::read_to_string(&file).ok());
+                        let Some(doc) = read.and_then(|t| xmltree::parse(&t).ok()) else {
+                            continue;
+                        };
+                        if doc.root.name != "schema"
+                            || doc.root.namespace.as_deref() != Some(xsd::XSD_NS)
+                        {
+                            continue;
+                        }
+                        let taken = |n: &str| {
+                            calc.tab_name_problem(n, None).is_some()
+                                || schemas.iter().any(|(_, _, t)| t.eq_ignore_ascii_case(n))
+                        };
+                        let name = name_from_file(&file.to_string_lossy(), taken);
+                        schemas.push((file, doc, name.clone()));
+                        name
+                    }
+                };
+                if import_stem(location) != tab.to_lowercase() {
+                    renames.push((location.to_owned(), tab));
+                }
+            }
+            for import in schemas[at].1.root.children.iter_mut() {
+                if let xmltree::Child::Element(e) = import
+                    && e.name == "import"
+                {
+                    for a in e
+                        .attributes
+                        .iter_mut()
+                        .filter(|a| a.name == "schemaLocation")
+                    {
+                        if let Some((_, tab)) = renames.iter().find(|(l, _)| *l == a.value) {
+                            a.value = tab.clone();
+                        }
+                    }
+                }
+            }
+            at += 1;
+        }
+        if schemas.len() < 2 {
+            return;
+        }
+        let as_tab = |doc: &xmltree::Document| {
+            xml::parse(&xmltree::write(doc, false), metaschema::xsd_meta()).ok()
+        };
+        let mut imported = Vec::new();
+        for (file, doc, name) in &schemas[1..] {
+            let Some(tree) = as_tab(doc) else {
+                return;
+            };
+            imported.push(ImportedXsd {
+                file: file
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+                name: name.clone(),
+                tree: tree.node,
+                document: tree.document,
+            });
+        }
+        let Some(main) = as_tab(&schemas[0].1) else {
+            return;
+        };
+        // The schema lowers with the files beside it.
+        let imports = |location: &str| {
+            let stem = import_stem(location);
+            schemas[1..]
+                .iter()
+                .find(|(_, _, tab)| tab.to_lowercase() == stem)
+                .map(|(_, doc, _)| doc.root.clone())
+                .or_else(|| calc.xsd_element(&calc.xsd_import_tab(location)?))
+        };
+        plan.schema_problem = xsd::lower_with(&schemas[0].1.root, &imports, None)
+            .err()
+            .map(|e| e.to_string());
+        plan.schema_file = Some(SchemaFile::Xsd {
+            tree: main.node,
+            document: main.document,
+        });
+        plan.imported = imported;
     }
 
     /// Opens the import dialog for a file read through the host. A copybook's
@@ -673,6 +824,7 @@ impl GossiaApp {
                 sheet: 0,
                 entries: None,
                 add_to: Vec::new(),
+                imported: Vec::new(),
             },
         };
         plan.notes.insert(
@@ -888,6 +1040,7 @@ impl GossiaApp {
             sheet: 0,
             entries: None,
             add_to: Vec::new(),
+            imported: Vec::new(),
         })
     }
 
@@ -967,6 +1120,7 @@ impl GossiaApp {
             sheet: 0,
             entries: None,
             add_to: Vec::new(),
+            imported: Vec::new(),
         })
     }
 
@@ -1033,6 +1187,7 @@ impl GossiaApp {
                 sheet: 0,
                 entries: None,
                 add_to: Vec::new(),
+                imported: Vec::new(),
             };
             sheets.push(SheetPlan {
                 title: sheet.name,
@@ -1150,6 +1305,7 @@ impl GossiaApp {
                 sheet: 0,
                 entries: Some(kind),
                 add_to,
+                imported: Vec::new(),
             };
             sheets.push(SheetPlan {
                 title: part.to_owned(),
@@ -1249,6 +1405,19 @@ impl GossiaApp {
         let name = plan.name.trim();
         if let Some(why) = self.calc().tab_name_problem(name, None) {
             return Some(tr!("The tab name: {why}.", why = why));
+        }
+        if plan.choice == SchemaChoice::SchemaTab {
+            for x in &plan.imported {
+                if x.name.eq_ignore_ascii_case(name) {
+                    return Some(tr!(
+                        "Two of the new tabs would be called {name}.",
+                        name = name
+                    ));
+                }
+                if let Some(why) = self.calc().tab_name_problem(&x.name, None) {
+                    return Some(tr!("The schema tab {tab}: {why}.", tab = x.name, why = why));
+                }
+            }
         }
         if plan.choice == SchemaChoice::Inferred {
             if let Err(why) = &plan.inferred {
@@ -1369,8 +1538,17 @@ impl GossiaApp {
         }
         if plan.choice == SchemaChoice::SchemaTab {
             let name = plan.name.trim();
+            let before = self.calc().history_len().0;
             let calc = self.session.calc_mut();
-            let done = match &plan.schema_file {
+            let several = !plan.imported.is_empty();
+            if several {
+                calc.begin_entry(&tr!("Import {file}", file = plan.file));
+            }
+            // The schemas it imports first, the deepest first.
+            let mut done = plan.imported.iter().rev().try_for_each(|x| {
+                calc.create_xsd_schema_tab(&x.name, x.tree.clone(), x.document.clone())
+            });
+            done = done.and_then(|()| match &plan.schema_file {
                 Some(SchemaFile::Json(node)) => calc.create_json_schema_tab(name, node.clone()),
                 Some(SchemaFile::Xsd { tree, document }) => {
                     calc.create_xsd_schema_tab(name, tree.clone(), document.clone())
@@ -1378,9 +1556,20 @@ impl GossiaApp {
                 Some(SchemaFile::Copybook(tree)) => {
                     calc.create_copybook_schema_tab(name, tree.clone())
                 }
-                None => return Err(tr!("the file is not a schema").to_owned()),
-            };
-            done.map_err(|e| e.to_string())?;
+                None => Err(gossia_calc::EditError::Path(
+                    tr!("the file is not a schema").to_owned(),
+                )),
+            });
+            if several {
+                calc.end_entry();
+            }
+            if let Err(e) = done {
+                if self.calc().history_len().0 > before {
+                    let _ = self.session.calc_mut().undo();
+                    let _ = self.session.calc_mut().take_removed();
+                }
+                return Err(e.to_string());
+            }
             self.follow_tabs();
             self.show_tab(name);
             self.notice = None;
@@ -1478,6 +1667,18 @@ impl GossiaApp {
                         .clicked()
                     {
                         shown.choice = SchemaChoice::SchemaTab;
+                    }
+                    if !shown.imported.is_empty() {
+                        ui.indent("imported_schemas", |ui| {
+                            ui.weak(tr!("With the schemas it imports, found beside it:"));
+                            for x in &shown.imported {
+                                ui.weak(tr!(
+                                    "{file}, as the tab {tab}",
+                                    file = x.file,
+                                    tab = x.name
+                                ));
+                            }
+                        });
                     }
                     ui.label(tr!("Or as data, with the schema"));
                 } else if let (Some(kind), false) = (shown.entries, shown.add_to.is_empty()) {
@@ -2113,6 +2314,14 @@ fn copied_in(path: &FsPath, file: &str, bytes: &[u8]) -> Option<String> {
     };
     let book = copybook::parse_with(text, &mut load).ok()?;
     Some(copybook::to_text(&book))
+}
+
+/// What an `xs:import`'s `schemaLocation` names, as `Calc::xsd_import_tab`
+/// reads it: the file name without its folder and `.xsd`, in lower case.
+fn import_stem(location: &str) -> String {
+    let file = location.rsplit(['/', '\\']).next().unwrap_or(location);
+    let lower = file.to_lowercase();
+    lower.strip_suffix(".xsd").unwrap_or(&lower).to_owned()
 }
 
 /// A dropped file the browser could not read: nothing in the window waits
