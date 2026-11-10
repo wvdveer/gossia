@@ -8,7 +8,8 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # Builds are made from main only (owner, 2026-11-10).
+    branches: [main]
   pull_request:
 
 permissions:
