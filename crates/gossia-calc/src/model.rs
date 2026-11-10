@@ -69,7 +69,7 @@ pub(crate) struct Formula {
     /// The text did not parse. Such a formula is kept but never run.
     pub syntax_error: bool,
     /// What it returned the last time, when its node's type refused it
-    /// (`#TYPE!`): kept for *Force object definition*.
+    /// (`#TYPE!`): kept for *Force type definition*.
     pub rejected: Option<std::sync::Arc<gossia_core::Value>>,
     /// The nodes of its result that did not fit their type, when the rest
     /// did (`Computed::Partial`): the tree shows `#TYPE!` on the way to them.

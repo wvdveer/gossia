@@ -18,6 +18,8 @@ pub enum SchemaCommand {
     Add {
         name: String,
         kind: FieldKind,
+        /// For an array on a JSON tab, the type of its items.
+        items: FieldKind,
         required: bool,
         /// On an XML tab: an attribute rather than an element. Its name is
         /// typed without the `@`.
@@ -230,6 +232,12 @@ impl GossiaApp {
         let new_name = command.new_name().unwrap_or_default();
         let calc = self.session.calc_mut();
         match command {
+            SchemaCommand::Add {
+                kind: FieldKind::Array,
+                items,
+                required,
+                ..
+            } => calc.add_array_field(&sheet, object, &new_name, *items, *required),
             SchemaCommand::Add { kind, required, .. } => {
                 calc.add_field(&sheet, object, &new_name, *kind, *required)
             }

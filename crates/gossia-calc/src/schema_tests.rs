@@ -823,3 +823,202 @@ fn a_field_is_defined_by_its_entry_in_the_schema_tab() {
     assert_eq!(at("billing.nothing"), place("properties.billing"));
     assert_eq!(b.calc.definition_of("Order schema", &p("")), None);
 }
+
+/// Reported by the owner (2026-11-10): an array field was always an array of
+/// objects. Its items can be of a simple type.
+#[test]
+fn an_array_field_can_hold_items_of_a_simple_type() {
+    let mut b = Book::new();
+    b.calc
+        .add_array_field("Order", &p(""), "tags", FieldKind::Text, false)
+        .unwrap();
+    assert!(
+        b.schema()
+            .contains(r#""tags":{"type":"array","items":{"type":"string"}}"#),
+        "{}",
+        b.schema()
+    );
+    let spec = b.calc.spec("Order").unwrap();
+    assert_eq!(
+        spec.describe(spec.resolve(&p("tags")).unwrap().ty),
+        "array of string"
+    );
+    b.calc
+        .set_value("Order", &p("tags"), Value::Array(Vec::new()))
+        .unwrap();
+    b.calc
+        .insert_item("Order", &p("tags"), 0, Value::Str("red".into()))
+        .unwrap();
+    assert!(b.data().contains(r#""tags":["red"]"#), "{}", b.data());
+    assert!(
+        error_text(
+            b.calc
+                .add_array_field("Order", &p(""), "grid", FieldKind::Array, false)
+        )
+        .contains("cannot be arrays")
+    );
+}
+
+/// Reported by the owner (2026-11-10): changing the items' `type` on the
+/// schema tab left `properties` behind, so the schema did not lower and the
+/// tab still showed an array of objects. The keywords the new type cannot
+/// have go with the change, in one entry.
+#[test]
+fn changing_a_type_on_the_schema_tab_drops_the_keywords_it_cannot_have() {
+    let mut b = Book::new();
+    b.calc
+        .add_field("Order", &p(""), "tags", FieldKind::Array, false)
+        .unwrap();
+    b.calc
+        .set_value(
+            "Order schema",
+            &p("properties.tags.items.type"),
+            Value::Str("string".into()),
+        )
+        .unwrap();
+    assert_eq!(b.calc.schema_error("Order schema"), None);
+    assert!(
+        b.schema()
+            .contains(r#""tags":{"type":"array","items":{"type":"string"}}"#),
+        "{}",
+        b.schema()
+    );
+    let spec = b.calc.spec("Order").unwrap();
+    assert_eq!(
+        spec.describe(spec.resolve(&p("tags")).unwrap().ty),
+        "array of string"
+    );
+    // One undo brings back both the type and its fields.
+    b.calc.undo().unwrap();
+    assert!(
+        b.schema()
+            .contains(r#""tags":{"type":"array","items":{"type":"object","properties":{}}}"#),
+        "{}",
+        b.schema()
+    );
+    // A keyword the new type has stays: `required` on an object kept as one.
+    b.calc
+        .set_value(
+            "Order schema",
+            &p("properties.items.items.type"),
+            Value::Str("object".into()),
+        )
+        .unwrap();
+    assert!(b.schema().contains(r#""required":["sku","qty","price"]"#));
+}
+
+/// Reported by the owner (2026-11-10): an array formula giving text was not
+/// offered *Force type definition*, so its items stayed empty records.
+#[test]
+fn force_type_definition_types_an_array_of_simple_values() {
+    let mut b = Book::new();
+    b.calc
+        .add_array_field("Order", &p(""), "names", FieldKind::Text, false)
+        .unwrap();
+    b.calc
+        .set_value(
+            "Order",
+            &p("names"),
+            Value::Array(vec![
+                gossia_core::Node::new(Value::Str("a".into())),
+                gossia_core::Node::new(Value::Str("b".into())),
+            ]),
+        )
+        .unwrap();
+    b.calc
+        .add_field("Order", &p(""), "copy", FieldKind::Array, false)
+        .unwrap();
+    b.calc
+        .set_formula("Order", &p("copy"), "Order.names")
+        .unwrap();
+    b.run();
+    assert!(b.calc.force_type_offered("Order", &p("copy")));
+    b.calc.force_type("Order", &p("copy")).unwrap();
+    b.run();
+    assert!(
+        b.schema()
+            .contains(r#""copy":{"type":"array","items":{"type":"string"}}"#),
+        "{}",
+        b.schema()
+    );
+    let copy = b.calc.cell("Order", &p("copy")).unwrap();
+    assert!(
+        copy.error.is_none() && copy.misfit.is_none(),
+        "{:?}",
+        copy.node
+    );
+    assert!(!b.calc.force_type_offered("Order", &p("copy")));
+}
+
+/// Owner, 2026-11-10: a node of a simple type whose formula returned the
+/// wrong kind keeps that result, for the formula bar to show in red.
+#[test]
+fn a_simple_node_keeps_the_result_it_refused() {
+    let mut b = Book::new();
+    b.calc
+        .add_field("Order", &p(""), "count", FieldKind::Integer, false)
+        .unwrap();
+    b.calc
+        .set_formula("Order", &p("count"), "'twelve'")
+        .unwrap();
+    b.calc
+        .add_field("Order", &p(""), "info", FieldKind::Object, false)
+        .unwrap();
+    b.calc.set_formula("Order", &p("info"), "12").unwrap();
+    b.run();
+    assert_eq!(
+        b.calc.refused_simple_value("Order", &p("count")),
+        Some(&Value::Str("twelve".into()))
+    );
+    // A record is not a simple type, and a result that fits is not kept.
+    assert_eq!(b.calc.refused_simple_value("Order", &p("info")), None);
+    b.calc.set_formula("Order", &p("count"), "12").unwrap();
+    b.run();
+    assert_eq!(b.calc.refused_simple_value("Order", &p("count")), None);
+}
+
+/// Owner, 2026-11-10: inside a formula's result, a part of a simple type
+/// that did not fit is kept too, for the Formula column to show in red.
+#[test]
+fn a_misfit_inside_a_result_keeps_what_it_was() {
+    let mut b = Book::new();
+    b.calc
+        .add_field("Order", &p(""), "info", FieldKind::Object, false)
+        .unwrap();
+    b.calc
+        .add_field("Order", &p("info"), "n", FieldKind::Integer, false)
+        .unwrap();
+    b.calc
+        .add_field("Order", &p("info"), "label", FieldKind::Text, false)
+        .unwrap();
+    // The same fields, both text, copied by a formula.
+    b.calc
+        .add_field("Order", &p(""), "src", FieldKind::Object, false)
+        .unwrap();
+    for name in ["n", "label"] {
+        b.calc
+            .add_field("Order", &p("src"), name, FieldKind::Text, false)
+            .unwrap();
+    }
+    let mut fields = indexmap::IndexMap::new();
+    for (name, text) in [("n", "1234 AB"), ("label", "ok")] {
+        fields.insert(
+            name.to_owned(),
+            gossia_core::Node::new(Value::Str(text.into())),
+        );
+    }
+    b.calc
+        .set_value("Order", &p("src"), Value::Object(fields))
+        .unwrap();
+    b.calc
+        .set_formula("Order", &p("info"), "Order.src")
+        .unwrap();
+    b.run();
+    assert_eq!(
+        b.calc.refused_simple_value("Order", &p("info.n")),
+        Some(&Value::Str("1234 AB".into()))
+    );
+    // The part that fitted, and the record on the way, show nothing.
+    assert_eq!(b.calc.refused_simple_value("Order", &p("info.label")), None);
+    assert_eq!(b.calc.refused_simple_value("Order", &p("info")), None);
+}

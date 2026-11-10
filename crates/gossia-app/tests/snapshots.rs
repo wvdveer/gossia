@@ -712,3 +712,28 @@ fn a_report_with_a_sankey_diagram() {
     }
     check(&mut harness, "report_sankey", &mut results);
 }
+
+/// Owner, 2026-11-10: a node of a simple type whose formula returned the
+/// wrong kind shows that result in red at the end of the formula bar, cut
+/// short when it is long.
+#[test]
+fn a_refused_result_is_shown_in_the_formula_bar() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_formula(
+            "Orders",
+            &"tax_rate".parse().unwrap(),
+            "'twenty-one percent, ' * 8",
+        )
+        .unwrap();
+    settle(&mut harness);
+    click(&mut harness, "tax_rate");
+    check(&mut harness, "refused_result", &mut results);
+}

@@ -55,9 +55,9 @@ impl FieldKind {
             FieldKind::Object => Some(tr!(
                 "An object with no fields yet: add them to it in the same way."
             )),
-            FieldKind::Array => {
-                Some("A list of objects with no fields yet: add an item, then add fields to it.")
-            }
+            FieldKind::Array => Some(tr!(
+                "A list of objects with no fields yet: add an item, then add fields to it."
+            )),
             _ => None,
         }
     }
@@ -75,6 +75,25 @@ impl FieldKind {
         }
     }
 
+    /// The types an array's items can have: any but an array.
+    pub const ITEMS: [FieldKind; 7] = [
+        FieldKind::Text,
+        FieldKind::Integer,
+        FieldKind::Number,
+        FieldKind::Boolean,
+        FieldKind::Date,
+        FieldKind::DateTime,
+        FieldKind::Object,
+    ];
+
+    /// The schema of an array whose items are of type `items`.
+    fn array_schema(items: FieldKind) -> Node {
+        let mut fields = IndexMap::new();
+        fields.insert("type".to_owned(), text("array"));
+        fields.insert("items".to_owned(), items.schema());
+        Node::new(Value::Object(fields))
+    }
+
     /// The schema of a field of this type, as it is written in the document.
     fn schema(self) -> Node {
         let record = || {
@@ -88,12 +107,7 @@ impl FieldKind {
         };
         match self {
             FieldKind::Object => return record(),
-            FieldKind::Array => {
-                let mut fields = IndexMap::new();
-                fields.insert("type".to_owned(), text("array"));
-                fields.insert("items".to_owned(), record());
-                return Node::new(Value::Object(fields));
-            }
+            FieldKind::Array => return FieldKind::array_schema(FieldKind::Object),
             _ => {}
         }
         let (ty, format) = match self {
@@ -937,15 +951,56 @@ impl Calc {
         })
     }
 
-    /// Whether *Force object definition* is offered on the node at `path`:
-    /// it is a field (or the root) whose type is a record with no fields, or
-    /// a field that is an array of such records, and its formula returned a
-    /// record (or an array of records) with fields, which the type refused.
+    /// Whether *Force type definition* is offered on the node at `path`: it
+    /// is a field (or the root) whose type is a record with no fields, or a
+    /// field that is an array of such records, and its formula returned a
+    /// record with fields, or an array of records with fields or of simple
+    /// values (text, numbers), which the type refused.
     pub fn force_type_offered(&self, sheet: &str, path: &Path) -> bool {
         self.force_type_source(sheet, path).is_some()
     }
 
-    /// The result *Force object definition* defines the type from.
+    /// What a formula returned for the node at `path`, when the node is of a
+    /// simple type (text, a number, a date, a choice of values) and refused
+    /// it (`#TYPE!`): the whole result of the node's own formula, or, inside
+    /// another formula's result, the part of it at this node that did not
+    /// fit (randomuser's text `postcode` in an integer field). None otherwise.
+    pub fn refused_simple_value(&self, sheet: &str, path: &Path) -> Option<&Value> {
+        let s = self.sheets.get(sheet)?;
+        let rejected = match s.formulas.by_path.get(path) {
+            Some(formula) => formula.rejected.as_deref()?,
+            None => {
+                let owner = s.formulas.computed_by(path)?;
+                let formula = s.formulas.by_path.get(&owner)?;
+                if !formula.misfits.contains(path) {
+                    return None;
+                }
+                let mut part = formula.rejected.as_deref()?;
+                for segment in &path.segments()[owner.len()..] {
+                    part = match (segment, part) {
+                        (Segment::Key(k), Value::Object(fields)) => fields.get(k)?.value(),
+                        (Segment::Index(i), Value::Array(items)) => items.get(*i)?.value(),
+                        _ => return None,
+                    };
+                }
+                part
+            }
+        };
+        let ty = s.spec.resolve(path)?.ty;
+        matches!(
+            s.spec.get(ty).kind,
+            Kind::String(_)
+                | Kind::Integer(_)
+                | Kind::Number(_)
+                | Kind::Bool
+                | Kind::Date
+                | Kind::DateTime
+                | Kind::Enum { .. }
+        )
+        .then_some(rejected)
+    }
+
+    /// The result *Force type definition* defines the type from.
     fn force_type_source(&self, sheet: &str, path: &Path) -> Option<&Value> {
         let root = path.is_root();
         if !root && !matches!(path.segments().last(), Some(Segment::Key(_))) {
@@ -958,10 +1013,16 @@ impl Calc {
         let has_fields = |v: &Value| matches!(v, Value::Object(map) if !map.is_empty());
         let fits = match &s.spec.get(ty).kind {
             Kind::Object { fields } if fields.is_empty() => has_fields(rejected),
+            // Records with fields, or values that are not records at all
+            // (text, numbers): either way the items' type can be defined.
             Kind::Array { items, .. } if !root && empty(*items) => match rejected {
                 Value::Array(items) => {
-                    items.iter().all(|i| matches!(i.value(), Value::Object(_)))
-                        && items.iter().any(|i| has_fields(i.value()))
+                    let records = items.iter().all(|i| matches!(i.value(), Value::Object(_)));
+                    let scalars = items.iter().all(|i| {
+                        !matches!(i.value(), Value::Object(_) | Value::Array(_) | Value::Null)
+                    });
+                    !items.is_empty()
+                        && ((records && items.iter().any(|i| has_fields(i.value()))) || scalars)
                 }
                 _ => false,
             },
@@ -970,7 +1031,7 @@ impl Calc {
         fits.then_some(rejected)
     }
 
-    /// *Force object definition*: gives the field at `path` the type
+    /// *Force type definition*: gives the field at `path` the type
     /// inferred from what its formula returned, as an import infers one, in
     /// place of its record with no fields. Whether it is required stays as
     /// it was. On the root, the root's record takes the inferred fields. One
@@ -981,7 +1042,7 @@ impl Calc {
             .cloned()
             .ok_or_else(|| {
                 EditError::Path(tr!(
-                    "{place} is not a record with no fields whose formula returned records",
+                    "{place} is not a record with no fields, or a list of them, whose formula returned what could define it",
                     place = Loc::new(sheet, path.clone())
                 ))
             })?;
@@ -1015,7 +1076,7 @@ impl Calc {
         // may answer differently each time), so every field found is optional.
         all_optional(&mut schema);
         let what = tr!(
-            "Force object definition of {place}",
+            "Force type definition of {place}",
             place = Loc::new(sheet, path.clone())
         );
         self.entry(&what, |calc| {
@@ -1048,6 +1109,37 @@ impl Calc {
         object: &Path,
         name: &str,
         kind: FieldKind,
+        required: bool,
+    ) -> Result<(), EditError> {
+        self.add_field_of(sheet, object, name, kind, FieldKind::Object, required)
+    }
+
+    /// Adds an array field whose items are of type `items` (an object with no
+    /// fields yet, or a simple type), as [`Calc::add_field`] adds a field.
+    /// On an XSD tab an array is a repeated element of any type, as before.
+    pub fn add_array_field(
+        &mut self,
+        sheet: &str,
+        object: &Path,
+        name: &str,
+        items: FieldKind,
+        required: bool,
+    ) -> Result<(), EditError> {
+        if items == FieldKind::Array {
+            return Err(EditError::Path(
+                tr!("the items of an array cannot be arrays themselves").to_owned(),
+            ));
+        }
+        self.add_field_of(sheet, object, name, FieldKind::Array, items, required)
+    }
+
+    fn add_field_of(
+        &mut self,
+        sheet: &str,
+        object: &Path,
+        name: &str,
+        kind: FieldKind,
+        items: FieldKind,
         required: bool,
     ) -> Result<(), EditError> {
         // An element added to one whose children are an ordered list goes
@@ -1084,7 +1176,11 @@ impl Calc {
             let document = match xsd_document {
                 Some(document) => document,
                 None => calc.edited_type(&places, |props, required_list| {
-                    props.insert(name.to_owned(), kind.schema());
+                    let schema = match kind {
+                        FieldKind::Array => FieldKind::array_schema(items),
+                        _ => kind.schema(),
+                    };
+                    props.insert(name.to_owned(), schema);
                     if required {
                         required_list.push(text(name));
                     }
@@ -1484,7 +1580,7 @@ fn collect_locations(
 }
 
 /// A JSON Schema with no `required` list left in any of its records, at any
-/// depth (for *Force object definition*). Only schema keywords are followed,
+/// depth (for *Force type definition*). Only schema keywords are followed,
 /// so a field that happens to be called `required` stays.
 fn all_optional(schema: &mut Node) {
     let Value::Object(map) = schema.value_mut() else {

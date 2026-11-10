@@ -94,7 +94,7 @@ pub(crate) enum Action {
     DismissRefusal,
     // Changing the schema from this tab.
     AddField(Path),
-    /// *Force object definition*: the field's type from its formula's result.
+    /// *Force type definition*: the field's type from its formula's result.
     ForceType(Path),
     /// *Go to schema definition*: the schema tab, at where the node is defined.
     GoToDefinition(Path),
@@ -757,6 +757,42 @@ impl GossiaApp {
         }
     }
 
+    /// What the formula of the node at `path` returned, when the node is of
+    /// a simple type and refused it (`#TYPE!`), laid out in one line for the
+    /// formula bar: at most a third of the bar wide, cut short with `…`.
+    fn refused_galley(&self, ui: &egui::Ui, path: &Path) -> Option<std::sync::Arc<egui::Galley>> {
+        let text = self.refused_text(path)?;
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            text,
+            egui::TextStyle::Body.resolve(ui.style()),
+            error_color(ui),
+        );
+        job.wrap =
+            egui::text::TextWrapping::truncate_at_width((ui.available_width() / 3.0).max(40.0));
+        Some(ui.fonts_mut(|f| f.layout_job(job)))
+    }
+
+    /// What a formula returned for the node at `path` that the node, of a
+    /// simple type, refused, as the formula bar and the Formula column show
+    /// it: text in quotes, so that "12" and 12 are told apart, on one line,
+    /// very long text cut before it is laid out (and then to the width).
+    fn refused_text(&self, path: &Path) -> Option<String> {
+        let value = self
+            .session
+            .calc()
+            .refused_simple_value(&self.sheet, path)?;
+        let text = match value {
+            Value::Str(s) => format!("\"{s}\""),
+            other => display(other),
+        };
+        Some(
+            text.chars()
+                .take(200)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect(),
+        )
+    }
+
     /// The text box of the formula bar: one line, or with `height` as tall
     /// as that, scrolling inside. `add` is given the rows to show.
     fn bar_box<R>(
@@ -946,14 +982,43 @@ impl GossiaApp {
                 Some(c) => (self.column_text(c), self.column_refusal(c).is_none()),
                 None => (self.cell_text(&path), self.can_edit(&path)),
             };
+            // A node of a simple type whose formula's result it refused: that
+            // result in red at the right end of the box, cut short if long.
+            let refused = match &column {
+                Some(_) => None,
+                None => self.refused_galley(ui, &path),
+            };
             let height = self.formula_bar_height;
             let response = Self::bar_box(ui, height, |ui, rows| {
-                ui.add(
-                    Self::bar_edit(&mut shown, rows)
-                        .id(id)
-                        .interactive(interactive),
-                )
+                let mut edit = Self::bar_edit(&mut shown, rows)
+                    .id(id)
+                    .interactive(interactive);
+                if let Some(galley) = &refused {
+                    // A margin is at most 127 points; a wider value covers
+                    // the end of a long formula instead.
+                    let right = (galley.size().x + 12.0).ceil().min(127.0) as i8;
+                    edit = edit.margin(egui::Margin {
+                        left: 4,
+                        right,
+                        top: 2,
+                        bottom: 2,
+                    });
+                }
+                ui.add(edit)
             });
+            if let Some(galley) = refused {
+                let rect = response.rect;
+                let at = egui::pos2(
+                    rect.right() - 6.0 - galley.size().x,
+                    rect.top()
+                        + ((Self::bar_line_height(ui) + 4.0 - galley.size().y) / 2.0).max(0.0),
+                );
+                let behind =
+                    egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(3.0, 0.0));
+                ui.painter()
+                    .rect_filled(behind, 0.0, ui.visuals().text_edit_bg_color());
+                ui.painter().galley(at, galley, error_color(ui));
+            }
             named(&response, tr!("Formula bar"));
             if response.gained_focus() || response.clicked() {
                 if column.is_some() {
@@ -1358,6 +1423,16 @@ impl GossiaApp {
                         None => response,
                     };
                     menu_on.push(response);
+                } else if let Some(refused) = computed_by
+                    .as_ref()
+                    .and_then(|_| self.refused_text(&row.path))
+                {
+                    // A part of another formula's result that did not fit:
+                    // what it was, in red, in place of "computed by".
+                    let color = error_color(ui);
+                    let by = computed_by.as_ref().map(|by| self.name_of(by));
+                    ui.add(egui::Label::new(RichText::new(refused).color(color)).truncate())
+                        .on_hover_text(tr!("computed by {name}", name = by.unwrap_or_default()));
                 } else if let Some(by) = &computed_by {
                     ui.label(
                         RichText::new(tr!("computed by {name}", name = self.name_of(by)))

@@ -525,6 +525,60 @@ impl Calc {
         value: Value,
         merge: bool,
     ) -> Result<(), EditError> {
+        // A `type` changed on a JSON Schema tab: the keywords of the old type
+        // that the new one cannot have go in the same entry, so that the
+        // schema still lowers (`properties` once the items are text).
+        let stale = self.keywords_left_by(sheet, path, &value);
+        if stale.is_empty() {
+            return self.set_value_only(sheet, path, value, merge);
+        }
+        self.begin_entry(&format!("Set {}", Loc::new(sheet, path.clone())));
+        let done = (|| {
+            self.set_value_only(sheet, path, value, false)?;
+            let parent = path.parent().unwrap_or_default();
+            for keyword in stale {
+                self.remove(sheet, &parent.key(keyword))?;
+            }
+            Ok(())
+        })();
+        self.end_entry();
+        done
+    }
+
+    /// The keywords beside a `type` set to `value` at `path` on a JSON
+    /// Schema tab that the new type cannot have.
+    fn keywords_left_by(&self, sheet: &str, path: &Path, value: &Value) -> Vec<&'static str> {
+        let is_type =
+            matches!(path.segments().last(), Some(gossia_core::Segment::Key(k)) if k == "type");
+        let (true, Some(Value::Str(ty))) = (is_type, Some(value)) else {
+            return Vec::new();
+        };
+        if self.schema_format(sheet) != Some(crate::SchemaFormat::Json) {
+            return Vec::new();
+        }
+        let parent = path.parent().unwrap_or_default();
+        let Some(Value::Object(siblings)) = self
+            .sheets
+            .get(sheet)
+            .and_then(|s| s.data.get(&parent))
+            .map(Node::value)
+        else {
+            return Vec::new();
+        };
+        gossia_core::jsonschema::keywords_not_for(ty)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|k| siblings.contains_key(*k))
+            .collect()
+    }
+
+    fn set_value_only(
+        &mut self,
+        sheet: &str,
+        path: &Path,
+        value: Value,
+        merge: bool,
+    ) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, path)?;
         let formula = self.formula_text(sheet, path);
         let s = self.sheet_mut(sheet)?;

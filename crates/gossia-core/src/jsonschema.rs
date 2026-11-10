@@ -264,6 +264,28 @@ impl Ty {
 /// Keywords that are valid on any schema.
 const COMMON: &[&str] = &["type", "title", "description", "$ref", "$defs", "$schema"];
 
+/// The keywords of a type other than `ty` (a `type` name) that a schema of
+/// type `ty` cannot have: `properties` once a schema is a `string`, say.
+/// None for a name that is not a type.
+pub fn keywords_not_for(ty: &str) -> Option<Vec<&'static str>> {
+    let all = [
+        Ty::String,
+        Ty::Integer,
+        Ty::Number,
+        Ty::Boolean,
+        Ty::Array,
+        Ty::Object,
+    ];
+    let own = all.iter().find(|t| t.name() == ty)?.keywords();
+    let mut others: Vec<&'static str> = Vec::new();
+    for keyword in all.iter().flat_map(|t| t.keywords()) {
+        if !own.contains(keyword) && !others.contains(keyword) {
+            others.push(keyword);
+        }
+    }
+    Some(others)
+}
+
 struct Lowerer<'a> {
     root: &'a Value,
     types: Vec<TypeDef>,

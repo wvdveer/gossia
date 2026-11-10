@@ -1513,7 +1513,7 @@ fn go_to_schema_definition_shows_the_field_on_its_schema_tab() {
 }
 
 /// A field whose records have no fields yet, with a formula that returns
-/// records, is `#TYPE!`; *Force object definition* on its menu defines the
+/// records, is `#TYPE!`; *Force type definition* on its menu defines the
 /// fields from the result, which the node then holds.
 #[test]
 fn force_object_definition_defines_the_fields_from_the_formula_result() {
@@ -1547,7 +1547,7 @@ fn force_object_definition_defines_the_fields_from_the_formula_result() {
 
     harness.get_by_label("inventory").click_secondary();
     harness.run();
-    click(&mut harness, "Force object definition");
+    click(&mut harness, "Force type definition");
     settle(&mut harness);
     assert_eq!(harness.state().notice, None);
     assert!(!has(&harness, "#TYPE!"));
@@ -1565,7 +1565,7 @@ fn force_object_definition_defines_the_fields_from_the_formula_result() {
     // Once the type fits, the item is not offered again.
     harness.get_by_label("inventory").click_secondary();
     harness.run();
-    assert!(harness.query_by_label("Force object definition").is_none());
+    assert!(harness.query_by_label("Force type definition").is_none());
 }
 
 /// The button at the end of the formula bar expands it, to show a formula of
@@ -1608,7 +1608,7 @@ fn the_formula_bar_expands_to_show_several_lines_and_collapses_again() {
 }
 
 /// On the root, with no fields yet, a formula that returns a record is
-/// `#TYPE!`; *Force object definition* on the root's menu gives the root
+/// `#TYPE!`; *Force type definition* on the root's menu gives the root
 /// those fields. The menu opens from anywhere on the row: here its type.
 #[test]
 fn force_object_definition_on_the_root_from_a_right_click_on_its_type() {
@@ -1633,7 +1633,7 @@ fn force_object_definition_on_the_root_from_a_right_click_on_its_type() {
     let ty = harness.state().rows[0].type_label.clone();
     harness.get_by_label(&ty).click_secondary();
     harness.run();
-    click(&mut harness, "Force object definition");
+    click(&mut harness, "Force type definition");
     settle(&mut harness);
     assert_eq!(harness.state().notice, None);
     assert_eq!(data_text(&harness), r#"{"sku":"A1","qty":2}"#);

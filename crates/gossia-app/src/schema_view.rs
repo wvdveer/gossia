@@ -105,9 +105,9 @@ impl GossiaApp {
         }
     }
 
-    /// *Force object definition*, on a field whose type is a record with no
+    /// *Force type definition*, on a field whose type is a record with no
     /// fields (or an array of them) and whose formula returned records with
-    /// fields. Unavailable, with the reason, when the schema cannot be
+    /// fields, or a list of simple values. Unavailable, with the reason, when the schema cannot be
     /// changed from here.
     pub(crate) fn force_type_item(
         &self,
@@ -134,12 +134,12 @@ impl GossiaApp {
         ui.separator();
         let response = ui.add_enabled(
             reason.is_none(),
-            egui::Button::new(tr!("Force object definition")),
+            egui::Button::new(tr!("Force type definition")),
         );
         let response = match &reason {
             Some(why) => response.on_disabled_hover_text(why),
             None => response.on_hover_text(tr!(
-                "Defines the fields of this node from what its formula returned"
+                "Defines the type of this node from what its formula returned"
             )),
         };
         if response.clicked() {
@@ -175,7 +175,7 @@ impl GossiaApp {
         self.reveal(&place);
     }
 
-    /// Does *Force object definition* on the node at `path`.
+    /// Does *Force type definition* on the node at `path`.
     pub(crate) fn force_type(&mut self, path: &Path) {
         let sheet = self.sheet.clone();
         match self.session.calc_mut().force_type(&sheet, path) {
@@ -215,6 +215,7 @@ impl GossiaApp {
                     SchemaCommand::Add {
                         name,
                         kind,
+                        items,
                         required,
                         attribute,
                     } => {
@@ -244,7 +245,29 @@ impl GossiaApp {
                                 .response
                                 .labelled_by(label.id);
                         });
-                        if let Some(hint) = kind.hint() {
+                        // An array of a JSON tab: what its items are.
+                        let array = *kind == FieldKind::Array && !dialog.xml;
+                        if array {
+                            ui.horizontal(|ui| {
+                                let label = ui.label(tr!("Items"));
+                                egui::ComboBox::from_id_salt("item type")
+                                    .selected_text(items.label())
+                                    .height(f32::INFINITY)
+                                    .show_ui(ui, |ui| {
+                                        for k in FieldKind::ITEMS {
+                                            ui.selectable_value(items, k, k.label());
+                                        }
+                                    })
+                                    .response
+                                    .labelled_by(label.id);
+                            });
+                        }
+                        let hint = if array && *items != FieldKind::Object {
+                            None
+                        } else {
+                            kind.hint()
+                        };
+                        if let Some(hint) = hint {
                             ui.weak(hint);
                         }
                         ui.checkbox(required, tr!("Required"));
@@ -322,6 +345,7 @@ impl GossiaApp {
                 SchemaCommand::Add {
                     name: String::new(),
                     kind: FieldKind::Text,
+                    items: FieldKind::Object,
                     required: false,
                     attribute: false,
                 },
