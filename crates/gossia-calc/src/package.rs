@@ -30,7 +30,8 @@ pub const FORMAT_MINOR: u32 = 1;
 /// The version of the rules of Names and reserved words that wrote the file,
 /// so that a later version can tell whether the names in it were checked
 /// against the same list.
-pub const RESERVED_NAMES_VERSION: u32 = 1;
+/// 2 (0.6.0): `true`, `false` and `null`.
+pub const RESERVED_NAMES_VERSION: u32 = 2;
 
 /// The Python engine, as the manifest records it. The revision is the one
 /// pinned in `vendor.lock`; a file written against another revision is flagged

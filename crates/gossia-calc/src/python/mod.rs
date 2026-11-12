@@ -783,6 +783,11 @@ fn set_up(
         globals.set_item(*name, prelude.get_item(*name, vm)?, vm)?;
     }
     globals.set_item("plt", pyplot.into(), vm)?;
+    // JSON's `true`, `false` and `null` (owner, 2026-11-12), so that JSON pasted
+    // into a formula works.
+    globals.set_item("true", vm.ctx.new_bool(true).into(), vm)?;
+    globals.set_item("false", vm.ctx.new_bool(false).into(), vm)?;
+    globals.set_item("null", vm.ctx.none(), vm)?;
     globals.set_item("_chart_size", pyplot_dict.get_item("_chart_size", vm)?, vm)?;
     for name in MODULES {
         let module = vm.import(*name, 0)?;

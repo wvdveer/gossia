@@ -39,6 +39,29 @@ fn formulas_use_python_expressions_and_the_exposed_modules() {
     assert_eq!(b.get("note"), Some(Value::Str("dctn".into())));
 }
 
+/// `true`, `false` and `null` are `True`, `False` and `None` (owner, 2026-11-12), so JSON
+/// pasted into a formula works.
+#[test]
+fn json_true_false_and_null_are_python_values() {
+    let mut b = Book::new();
+    b.formula(
+        "text",
+        "json.dumps({\"on\": true, \"off\": false, \"n\": [1, null]})",
+    );
+    b.formula(
+        "c",
+        "(1 if true is True else 0) + (2 if false is False else 0) + (4 if null is None else 0)",
+    );
+    b.run();
+    assert_eq!(
+        b.get("text"),
+        Some(Value::Str(
+            "{\"on\": true, \"off\": false, \"n\": [1, null]}".into()
+        ))
+    );
+    assert_eq!(b.get("c"), Some(Value::Int(7)));
+}
+
 #[test]
 fn the_other_exposed_modules_work() {
     let mut b = Book::new();
