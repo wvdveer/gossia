@@ -309,18 +309,66 @@ fn web(root: &Path, test_control: bool) -> Result<PathBuf, String> {
     // test host, the worker, and the worker protocol's probe.
     let web = root.join("crates").join("gossia-web");
     copy_files(&web.join("web"), &out)?;
+    // The icons of the installed web app and the page (DESIGN.md, 17c),
+    // drawn as the window's.
+    let icons = out.join("icons");
+    std::fs::create_dir_all(&icons).map_err(|e| format!("{}: {e}", icons.display()))?;
+    for size in WEB_ICON_SIZES {
+        icons::write_one(*size, &icons.join(format!("{size}.png")))?;
+    }
+    // The files the service worker keeps (the page's, not the harness's),
+    // and the build they make, named by their contents, so that a new build
+    // replaces the cached one (17c).
+    let mut files: Vec<String> = std::fs::read_dir(web.join("web"))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "sw.js")
+        .collect();
+    files.extend([
+        "pkg/gossia_web.js".to_owned(),
+        "pkg/gossia_web_bg.wasm".to_owned(),
+    ]);
+    files.extend(
+        WEB_ICON_SIZES
+            .iter()
+            .map(|size| format!("icons/{size}.png")),
+    );
+    files.sort();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for file in &files {
+        let bytes = std::fs::read(out.join(file)).map_err(|e| format!("{file}: {e}"))?;
+        for byte in file.bytes().chain(bytes) {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let build = format!("{hash:016x}");
     // The module's size, for the loading screen's progress (the length a
     // server gives is the compressed one where it compresses; DESIGN.md,
-    // 17b), and the version.
+    // 17b), the version and the build.
     let wasm_bytes = std::fs::metadata(out.join("pkg").join("gossia_web_bg.wasm"))
         .map_err(|e| format!("gossia_web_bg.wasm: {e}"))?
         .len();
     let version = locked_version(root, "gossia-web")?;
     std::fs::write(
         out.join("build.json"),
-        format!("{{\"version\": \"{version}\", \"wasmBytes\": {wasm_bytes}}}\n"),
+        format!(
+            "{{\"version\": \"{version}\", \"build\": \"{build}\", \"wasmBytes\": {wasm_bytes}}}\n"
+        ),
     )
     .map_err(|e| format!("cannot write build.json: {e}"))?;
+    files.extend(["./".to_owned(), "build.json".to_owned()]);
+    let list = files
+        .iter()
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let worker = std::fs::read_to_string(web.join("web").join("sw.js"))
+        .map_err(|e| format!("sw.js: {e}"))?
+        .replace("'__GOSSIA_BUILD__'", &format!("'{build}'"))
+        .replace("__GOSSIA_FILES__", &format!("[{list}]"));
+    std::fs::write(out.join("sw.js"), worker).map_err(|e| format!("cannot write sw.js: {e}"))?;
     if test_control {
         // The harness page and its scripts; the Playwright script stays.
         copy_files(&web.join("harness"), &out)?;
@@ -329,6 +377,10 @@ fn web(root: &Path, test_control: bool) -> Result<PathBuf, String> {
     println!("built {}", out.display());
     Ok(out)
 }
+
+/// The sizes of the web version's icons: the page's, Apple's home screen's,
+/// and the web app manifest's.
+const WEB_ICON_SIZES: &[u32] = &[32, 180, 192, 512];
 
 /// Copies the files (not the folders) of `from` into `to`.
 fn copy_files(from: &Path, to: &Path) -> Result<(), String> {

@@ -54,6 +54,34 @@ async function runBrowserTests() {
     h.assertTrue(/^\d+\.\d+\.\d+$/.test(build.version), `and the version (${build.version})`);
     h.assertEqual(app.win.document.getElementById('loading'), null, 'the loading screen is gone');
   });
+
+  await h.step('the service worker keeps the build for offline use (17c)', async () => {
+    const build = await (await fetch('build.json', { cache: 'no-store' })).json();
+    h.assertTrue(/^[0-9a-f]{16}$/.test(build.build), `build.json names the build (${build.build})`);
+    await until(() => app.win.testHost.serviceWorker, 'the service worker to be registered');
+    await app.win.navigator.serviceWorker.ready;
+    h.pass('it is active');
+    const name = `gossia-${build.build}`;
+    await until(async () => (await app.win.caches.keys()).includes(name), 'the cache of this build');
+    const cache = await app.win.caches.open(name);
+    for (const file of ['./', 'index.html', 'pkg/gossia_web_bg.wasm', 'pkg/gossia_web.js',
+                        'worker.js', 'host.js', 'manifest.webmanifest', 'icons/192.png']) {
+      h.assertTrue(Boolean(await cache.match(file)), `${file} is in the cache`);
+    }
+    const manifest = await (await fetch('manifest.webmanifest')).json();
+    h.assertEqual([manifest.name, manifest.display, manifest.start_url],
+                  ['Gossia', 'standalone', './'], 'the manifest makes it installable');
+  });
+
+  await h.step('a new build is said to be ready, and Later puts the notice away', async () => {
+    app.win.testHost.showUpdate(app.win.testHost.serviceWorker);
+    const box = app.win.document.getElementById('update');
+    h.assertContains(box && box.textContent, 'new version of Gossia is ready', 'the notice');
+    const buttons = [...box.querySelectorAll('button')].map((b) => b.textContent);
+    h.assertEqual(buttons, ['Later', 'Restart now'], 'with its buttons');
+    box.querySelector('button').click();
+    h.assertEqual(app.win.document.getElementById('update'), null, 'Later puts it away');
+  });
   const host = app.win.testHost;
   const browser = host.host;
   const idle = () => app.send('wait_idle', { timeout_ms: 60000 });

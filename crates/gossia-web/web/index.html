@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gossia</title>
+<!-- Installable and offline (DESIGN.md, 17c): the manifest, the icons, and
+     the service worker sw.js registered once the application has started. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/180.png">
+<meta name="theme-color" content="#1e1e1e">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1e1e; }
   @media (prefers-color-scheme: light) { html, body { background: #f5f5f5; } }
@@ -20,7 +26,19 @@
   #loading .status.error { color: #e06c6c; }
   #loading p { margin: 0 0 10px; }
   #loading a { color: #6aa8e8; }
+  /* The notice that a new version is ready (17c). */
+  #update { position: fixed; right: 16px; bottom: 16px; max-width: min(26rem, calc(100% - 32px));
+            box-sizing: border-box; padding: 12px 14px; border-radius: 6px;
+            background: #2d2d30; color: #e8e8e8; border: 1px solid #454545;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); font: 14px/1.4 system-ui, sans-serif; }
+  #update .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  #update button { font: inherit; padding: 4px 12px; border-radius: 4px; cursor: pointer;
+                   border: 1px solid #5a5a5a; background: transparent; color: inherit; }
+  #update button.main { background: #0e639c; border-color: #0e639c; color: #fff; }
   @media (prefers-color-scheme: light) {
+    #update { background: #fff; color: #222; border-color: #ccc;
+              box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15); }
+    #update button { border-color: #bbb; }
     #loading { color: #333; }
     #loading h1 { color: #111; }
     #loading .status { color: #666; }
@@ -84,30 +102,40 @@ const TEXTS = {
     runs: 'Gossia se ejecuta por completo en este navegador. GitHub solo sirve sus archivos: tus libros se quedan en este equipo, y solo salen de él las solicitudes a los orígenes de datos que configures.',
     lacks: 'La versión web no puede imprimir, no tiene orígenes de datos de bases de datos ni la línea de comandos bidwillii, y solo puede leer un sitio web si el sitio lo permite (CORS). La aplicación de escritorio y la extensión de Visual Studio Code no tienen ninguno de estos límites.',
     store: 'Gossia en Microsoft Store', source: 'Gossia en GitHub',
+    update: 'Hay una nueva versión de Gossia lista. Se usará la próxima vez que se abra Gossia.',
+    restart: 'Reiniciar ahora', later: 'Más tarde',
   },
   fr: {
     loading: 'Chargement de Gossia...',
     runs: "Gossia s'exécute entièrement dans ce navigateur. GitHub ne fait que servir ses fichiers : vos classeurs restent sur cet ordinateur, et seules les requêtes vers les sources de données que vous configurez en sortent.",
     lacks: "La version web ne peut pas imprimer, n'a ni sources de données de bases de données ni ligne de commande bidwillii, et ne peut lire un site web que si le site l'autorise (CORS). L'application de bureau et l'extension Visual Studio Code n'ont aucune de ces limites.",
     store: 'Gossia sur le Microsoft Store', source: 'Gossia sur GitHub',
+    update: "Une nouvelle version de Gossia est prête. Elle sera utilisée à la prochaine ouverture de Gossia.",
+    restart: 'Redémarrer maintenant', later: 'Plus tard',
   },
   pt: {
     loading: 'Carregando o Gossia...',
     runs: 'O Gossia é executado inteiramente neste navegador. O GitHub apenas serve os seus arquivos: as suas pastas de trabalho ficam neste computador, e só saem dele os pedidos às fontes de dados que você configurar.',
     lacks: 'A versão web não pode imprimir, não tem fontes de dados de bancos de dados nem a linha de comando bidwillii, e só pode ler um site se o site permitir (CORS). O aplicativo de desktop e a extensão do Visual Studio Code não têm nenhum destes limites.',
     store: 'Gossia na Microsoft Store', source: 'Gossia no GitHub',
+    update: 'Uma nova versão do Gossia está pronta. Ela será usada na próxima vez que o Gossia for aberto.',
+    restart: 'Reiniciar agora', later: 'Mais tarde',
   },
   ja: {
     loading: 'Gossia を読み込んでいます...',
     runs: 'Gossia はすべてこのブラウザー内で動作します。GitHub はファイルを配信するだけで、ワークブックはこのコンピューターに残り、外部に出るのは設定したデータ ソースへのリクエストだけです。',
     lacks: 'ウェブ版では印刷できず、データベースのデータ ソースと bidwillii コマンド ラインがなく、ウェブ サイトはそのサイトが許可している場合 (CORS) にしか読み取れません。デスクトップ アプリケーションと Visual Studio Code 拡張機能にはこれらの制限はありません。',
     store: 'Microsoft Store の Gossia', source: 'GitHub の Gossia',
+    update: 'Gossia の新しいバージョンの準備ができました。次に Gossia を開いたときに使われます。',
+    restart: '今すぐ再起動', later: '後で',
   },
   'zh-Hans': {
     loading: '正在加载 Gossia...',
     runs: 'Gossia 完全在此浏览器中运行。GitHub 只提供它的文件：你的工作簿留在这台计算机上，只有发往你所设置的数据源的请求才会离开它。',
     lacks: '网页版不能打印，没有数据库数据源，也没有 bidwillii 命令行，并且只能读取允许这样做的网站 (CORS)。桌面应用程序和 Visual Studio Code 扩展没有这些限制。',
     store: 'Microsoft Store 上的 Gossia', source: 'GitHub 上的 Gossia',
+    update: 'Gossia 的新版本已准备就绪，将在下次打开 Gossia 时使用。',
+    restart: '立即重启', later: '稍后',
   },
 };
 function loadingLanguage() {
@@ -128,6 +156,90 @@ if (lang) {
     document.getElementById(id).textContent = texts[id];
   }
   document.getElementById('status').textContent = texts.loading;
+}
+
+const ENGLISH = {
+  update: 'A new version of Gossia is ready. It is used the next time Gossia is opened.',
+  restart: 'Restart now', later: 'Later',
+};
+const say = (key) => (lang && TEXTS[lang][key]) || ENGLISH[key];
+
+// Installable and offline (DESIGN.md, 17c). The service worker keeps each
+// build in a cache; a new one is fetched in the background and waits. It is
+// used when Gossia starts and no other window of it is open (here, before
+// the module is read), or at once with Restart now in the notice.
+const workers = 'serviceWorker' in navigator && window.isSecureContext
+  ? navigator.serviceWorker : null;
+
+function untilNewWorker() {
+  return new Promise((resolve) => {
+    workers.addEventListener('controllerchange', () => resolve(true), { once: true });
+  });
+}
+
+async function startWaitingBuild() {
+  if (!workers || !workers.controller) return;
+  const registration = await workers.getRegistration();
+  if (!registration || !registration.waiting) return;
+  const notAlone = new Promise((resolve) => {
+    workers.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'not-alone') resolve(false);
+    });
+  });
+  workers.startMessages();
+  registration.waiting.postMessage({ type: 'activate-if-alone' });
+  const late = new Promise((resolve) => setTimeout(() => resolve(false), 3000));
+  if (await Promise.race([untilNewWorker(), notAlone, late])) {
+    location.reload();
+    await new Promise(() => {});
+  }
+}
+
+function showUpdate(registration) {
+  if (document.getElementById('update')) return;
+  const box = document.createElement('div');
+  box.id = 'update';
+  box.setAttribute('role', 'status');
+  const text = document.createElement('div');
+  text.textContent = say('update');
+  const buttons = document.createElement('div');
+  buttons.className = 'buttons';
+  const later = document.createElement('button');
+  later.textContent = say('later');
+  later.onclick = () => box.remove();
+  const restart = document.createElement('button');
+  restart.className = 'main';
+  restart.textContent = say('restart');
+  restart.onclick = async () => {
+    if (!registration.waiting) return;
+    const changed = untilNewWorker();
+    registration.waiting.postMessage({ type: 'activate' });
+    await changed;
+    location.reload();
+  };
+  buttons.append(later, restart);
+  box.append(text, buttons);
+  document.body.append(box);
+}
+record.showUpdate = showUpdate;
+
+function watchForBuilds() {
+  if (!workers) return;
+  workers.register('./sw.js').then((registration) => {
+    record.serviceWorker = registration;
+    const ready = () => {
+      // A first install has nothing to replace.
+      if (registration.waiting && workers.controller) showUpdate(registration);
+    };
+    ready();
+    registration.addEventListener('updatefound', () => {
+      const installing = registration.installing;
+      installing?.addEventListener('statechange', () => {
+        if (installing.state === 'installed') ready();
+      });
+    });
+    setInterval(() => registration.update().catch(() => {}), 60 * 60 * 1000);
+  }).catch((err) => console.error(`Gossia cannot be kept for offline use: ${err}`));
 }
 
 // The module, read with its progress shown. Its size comes from build.json
@@ -158,6 +270,7 @@ async function loadModule() {
 
 (async () => {
   try {
+    await startWaitingBuild();
     await init({ module_or_path: await loadModule() });
     const host = await browserHost(gossia, record);
     record.host = host;
@@ -180,6 +293,7 @@ async function loadModule() {
         JSON.parse(await gossia.control(cmd, JSON.stringify(args)));
     }
     window.appStarted = true;
+    watchForBuilds();
   } catch (err) {
     let panic = null;
     try { panic = last_panic(); } catch (_) { /* unusable */ }
