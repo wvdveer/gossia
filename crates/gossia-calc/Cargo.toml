@@ -70,6 +70,11 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "js"] 
 [target.'cfg(windows)'.dependencies]
 odbc-api = "29.2.0"
 
+# Inter's character widths, read when building, for Gossia pyplot's
+# measuring of labels (build.rs, text_widths). The version gossia-layout uses.
+[build-dependencies]
+skrifa = { version = "0.44.0", default-features = false, features = ["std"] }
+
 [dev-dependencies]
 proptest = "1.12.0"
 

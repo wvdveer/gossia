@@ -54,7 +54,7 @@ impl Syntax for PythonSyntax {
     }
 
     fn standard_modules(&self) -> Option<&'static [&'static str]> {
-        Some(super::MODULES)
+        Some(super::importable())
     }
 
     fn source_reads(&self, text: &str) -> SourceScan {

@@ -182,6 +182,55 @@ fn main() {
     }
     names.push(']');
     std::fs::write(out.join("frozen_names.rs"), names).unwrap();
+    text_widths(&manifest, &out);
+}
+
+/// The ranges of characters whose widths `text_widths` records: Latin,
+/// Greek, punctuation, super- and subscripts, currency signs, arrows and
+/// the mathematical operators (the minus sign among them).
+const WIDTH_RANGES: &[(u32, u32)] = &[
+    (0x20, 0x24f),
+    (0x370, 0x3ff),
+    (0x2000, 0x20cf),
+    (0x2190, 0x21ff),
+    (0x2200, 0x22ff),
+];
+
+/// `text_widths.rs`: the advance width of each character of
+/// `WIDTH_RANGES` in Inter, the charts' font, in thousandths of an em, for
+/// Gossia pyplot's measuring of labels (DESIGN.md, Gossia pyplot). 0 is a
+/// character the font lacks.
+fn text_widths(manifest: &Path, out: &Path) {
+    use skrifa::instance::{LocationRef, Size};
+    use skrifa::raw::TableProvider;
+    use skrifa::{FontRef, MetadataProvider};
+    let path = manifest.join("../gossia-layout/assets/fonts/Inter.ttf");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let data = std::fs::read(&path).unwrap();
+    let font = FontRef::new(&data).unwrap();
+    let em = f32::from(font.head().unwrap().units_per_em());
+    let charmap = font.charmap();
+    let metrics = font.glyph_metrics(Size::unscaled(), LocationRef::default());
+    let mut text = String::from(
+        "&[
+",
+    );
+    for &(first, last) in WIDTH_RANGES {
+        let _ = write!(text, "    ({first:#x}, &[");
+        for code in first..=last {
+            let width = char::from_u32(code)
+                .and_then(|c| charmap.map(c))
+                .and_then(|glyph| metrics.advance_width(glyph))
+                .map_or(0, |w| (w / em * 1000.0).round() as u32);
+            let _ = write!(text, "{width},");
+        }
+        text.push_str(
+            "]),
+",
+        );
+    }
+    text.push(']');
+    std::fs::write(out.join("text_widths.rs"), text).unwrap();
 }
 
 /// The file of a module in `lib`, and whether it is a package.

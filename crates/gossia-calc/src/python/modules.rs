@@ -413,6 +413,15 @@ pub(super) fn import(shared: &Rc<Shared>, args: &FuncArgs, vm: &VirtualMachine) 
         };
     }
     if let Some(module) = shared.stdlib.borrow().get(&name) {
+        // `import gossia.pyplot` binds the package `gossia`; only `from
+        // gossia.pyplot import ...` is given the module itself, as Python's
+        // own import does.
+        if let Some((top, _)) = name.split_once('.')
+            && !has_fromlist(args, vm)
+            && let Some(package) = shared.stdlib.borrow().get(top)
+        {
+            return Ok(package.clone());
+        }
         return Ok(module.clone());
     }
     if super::INTERNAL_MODULES.contains(&name.as_str()) {
@@ -421,6 +430,21 @@ pub(super) fn import(shared: &Rc<Shared>, args: &FuncArgs, vm: &VirtualMachine) 
     }
     Err(vm.new_import_error(no_module(&name), vm.ctx.new_str(name.as_str())))
 }
+/// Whether `__import__` was asked for names from the module (`from m
+/// import a`), in its fourth argument or as `fromlist`.
+fn has_fromlist(args: &FuncArgs, vm: &VirtualMachine) -> bool {
+    let list = args
+        .args
+        .get(3)
+        .cloned()
+        .or_else(|| args.kwargs.get("fromlist").cloned());
+    match list {
+        None => false,
+        Some(list) if vm.is_none(&list) => false,
+        Some(list) => list.to_owned().try_to_bool(vm).unwrap_or(false),
+    }
+}
+
 /// Why an import of a module that is not available fails.
 pub(crate) fn no_module(name: &str) -> String {
     tr!(

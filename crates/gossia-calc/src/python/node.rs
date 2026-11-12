@@ -115,6 +115,13 @@ pub(super) mod _gossia {
         }
     }
 
+    /// `text_width(text)`: how wide `text` is in Inter, in ems, for Gossia
+    /// pyplot's labels.
+    #[pyfunction]
+    fn text_width(text: PyStrRef) -> f64 {
+        super::super::text_width::em(&text.to_string_lossy())
+    }
+
     /// `BASE64ENCODE(data)`.
     #[pyfunction]
     fn base64encode(data: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {

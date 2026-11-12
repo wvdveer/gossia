@@ -15,6 +15,7 @@ mod node;
 mod shared;
 mod sources;
 pub(crate) mod syntax;
+mod text_width;
 mod watchdog;
 mod xmlpath;
 
@@ -54,6 +55,10 @@ const PRELUDE: &str = include_str!("prelude.py");
 /// the code editor shows read-only.
 pub const CHARTS: &str = include_str!("charts.py");
 
+/// Gossia pyplot (DESIGN.md, "Gossia pyplot, 0.6.0"): the module
+/// `gossia.pyplot`, which formulas and modules have as `plt`.
+pub const PYPLOT: &str = include_str!("pyplot.py");
+
 /// The names of the built-in chart types and the functions that draw them.
 pub const CHART_FUNCTIONS: &[(&str, &str)] = &[
     ("Bar", "bar_chart"),
@@ -79,6 +84,14 @@ pub(crate) const MODULES: &[&str] = &[
     "textwrap",
     "statistics",
 ];
+
+/// What a workbook module may import besides its fellow modules: the
+/// standard library modules of [`MODULES`], and the package `gossia`, which
+/// holds `gossia.pyplot`.
+pub(crate) fn importable() -> &'static [&'static str] {
+    static LIST: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| MODULES.iter().copied().chain(["gossia"]).collect())
+}
 
 /// Modules the interpreter's own Rust code imports by name when a formula
 /// calls it: `date.strftime` imports `time`, the `n` format of a number
@@ -671,6 +684,28 @@ fn set_up(
     // And the built-in chart types, which use the prelude's `chart`.
     let scope = Scope::with_builtins(None, prelude.clone(), vm);
     vm.run_string(scope, CHARTS, "<gossia charts>")?;
+    // Gossia pyplot, in a namespace of its own that becomes the module
+    // `gossia.pyplot`, inside the package `gossia`. Like the prelude it is
+    // run before the builtins are trimmed, so it can define classes.
+    let pyplot_dict = vm.ctx.new_dict();
+    pyplot_dict.set_item("__name__", vm.ctx.new_str("gossia.pyplot").into(), vm)?;
+    for name in ["PLAIN", "ErrorValue"] {
+        pyplot_dict.set_item(name, prelude.get_item(name, vm)?, vm)?;
+    }
+    let scope = Scope::with_builtins(None, pyplot_dict.clone(), vm);
+    vm.run_string(scope, PYPLOT, "<gossia pyplot>")?;
+    let pyplot = vm.new_module("gossia.pyplot", pyplot_dict.clone(), None);
+    let package = vm.new_module("gossia", vm.ctx.new_dict(), None);
+    package.as_object().set_attr("pyplot", pyplot.clone(), vm)?;
+    prelude.set_item("_pyplot", pyplot.clone().into(), vm)?;
+    shared
+        .stdlib
+        .borrow_mut()
+        .insert("gossia".to_owned(), package.into());
+    shared
+        .stdlib
+        .borrow_mut()
+        .insert("gossia.pyplot".to_owned(), pyplot.clone().into());
     // After the prelude, which imports `_gossia` and so makes its types.
     // The prelude only reads `_source_access` when a source is used.
     let access = node::_gossia::SourceAccess {
@@ -747,6 +782,8 @@ fn set_up(
     {
         globals.set_item(*name, prelude.get_item(*name, vm)?, vm)?;
     }
+    globals.set_item("plt", pyplot.into(), vm)?;
+    globals.set_item("_chart_size", pyplot_dict.get_item("_chart_size", vm)?, vm)?;
     for name in MODULES {
         let module = vm.import(*name, 0)?;
         shared
@@ -797,3 +834,7 @@ mod tests_sources;
 #[cfg(test)]
 #[path = "tests_disconnect.rs"]
 mod tests_disconnect;
+
+#[cfg(test)]
+#[path = "tests_pyplot.rs"]
+mod tests_pyplot;

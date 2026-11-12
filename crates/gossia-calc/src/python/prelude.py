@@ -742,5 +742,9 @@ def _chart_svg(result):
             return ErrorValue('#VALUE!', 'the SVG is not UTF-8: %s' % e, '')
     if isinstance(result, str):
         return result
+    if type(result).__module__ == 'gossia.pyplot' or (
+            result is None and _pyplot._state['current'] is not None):
+        return ErrorValue('#TYPE!', 'a chart function using plt must finish with'
+                          ' return plt.svg()', '')
     return ErrorValue('#TYPE!', 'a chart function returns SVG as text or bytes, not %s'
                       % type(result).__name__, '')

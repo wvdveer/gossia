@@ -216,8 +216,10 @@ impl Calc {
         let width = control.width.unwrap_or(CHART_SIZE.0);
         let height = control.height.unwrap_or(CHART_SIZE.1);
         args.push(format!("width={width}, height={height}"));
+        // `_chart_size` tells Gossia pyplot the size first, for a figure
+        // made without one.
         Some(Ok(format!(
-            "_chart_svg({}({}))",
+            "_chart_svg(_chart_size({width}, {height}) or {}({}))",
             chart.callee(),
             args.join(", ")
         )))
