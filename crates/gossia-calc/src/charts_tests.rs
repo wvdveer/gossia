@@ -247,6 +247,35 @@ fn a_missing_required_parameter_is_said_and_nothing_runs() {
     );
 }
 
+/// A chart whose parameters are all optional, or that has none but the
+/// size, draws without anything filled in.
+#[test]
+fn a_chart_that_needs_no_values_draws_at_once() {
+    let source = r#"
+@chart("Fixed")
+def fixed(width=400, height=300):
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"/>' % (width, height)
+
+@chart("Titled")
+def titled(title='Sales', *, width, height):
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><title>%s</title></svg>' % (width, height, title)
+"#;
+    let mut c = chart("Fixed", &[]);
+    c.width = Some(200);
+    c.height = Some(100);
+    let b = book(
+        &[("Own", source)],
+        vec![
+            c,
+            chart("Titled", &[]),
+            chart("Titled", &[("title", "'Q3'")]),
+        ],
+    );
+    assert!(b.text(0).contains(r#"width="200" height="100""#));
+    assert!(b.text(1).contains("<title>Sales</title>"));
+    assert!(b.text(2).contains("<title>Q3</title>"));
+}
+
 #[test]
 fn what_is_not_svg_is_a_type_error_and_an_exception_its_error() {
     let source = "@chart('Odd')\ndef odd(v, *, width, height):\n    return v\n";

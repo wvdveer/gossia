@@ -1829,6 +1829,13 @@ impl GossiaApp {
             actions.push(Action::HideNode(item.clone()));
             ui.close();
         }
+        // A formula's result, everything under it included, kept as data.
+        if self.calc().formula_text(&self.sheet, path).is_some()
+            && ui.button(tr!("Convert formula to values")).clicked()
+        {
+            actions.push(Action::ConvertToValues(path.clone()));
+            ui.close();
+        }
         if row.hidden > 0 {
             ui.menu_button(tr!("Hidden ({hidden})", hidden = row.hidden), |ui| {
                 self.hidden_list(ui, path, actions);
@@ -2301,12 +2308,15 @@ impl GossiaApp {
                     "",
                     Action::RecalculateFormula(path.clone()),
                 );
-                item(
-                    ui,
-                    tr!("Convert formula to values"),
-                    "",
-                    Action::ConvertToValues(path.clone()),
-                );
+                // A row's commands below have it already.
+                if row.is_none() {
+                    item(
+                        ui,
+                        tr!("Convert formula to values"),
+                        "",
+                        Action::ConvertToValues(path.clone()),
+                    );
+                }
             }
             match row {
                 // The row's commands, which take in its comments.

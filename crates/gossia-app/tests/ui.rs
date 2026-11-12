@@ -1568,6 +1568,64 @@ fn force_object_definition_defines_the_fields_from_the_formula_result() {
     assert!(harness.query_by_label("Force type definition").is_none());
 }
 
+/// *Convert formula to values* on a row's menu, the row's name right-clicked:
+/// the formula goes, and every node under it keeps what the formula gave it.
+#[test]
+fn a_formula_row_is_converted_to_its_values_from_the_row_menu() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut GossiaApp| app.show(ui),
+            GossiaApp::new(gossia_app::workbook_file::blank_workbook()),
+        );
+    settle(&mut harness);
+    let root = gossia_core::Path::default();
+    let inventory: gossia_core::Path = "inventory".parse().unwrap();
+    let calc = harness.state_mut().session.calc_mut();
+    calc.add_field(
+        "Data",
+        &root,
+        "inventory",
+        gossia_calc::FieldKind::Array,
+        false,
+    )
+    .unwrap();
+    calc.set_formula(
+        "Data",
+        &inventory,
+        r#"[{"sku": "A1", "qty": 2}, {"sku": "B2", "qty": 5}]"#,
+    )
+    .unwrap();
+    harness.state_mut().refresh_rows();
+    settle(&mut harness);
+    harness.get_by_label("inventory").click_secondary();
+    harness.run();
+    click(&mut harness, "Force type definition");
+    settle(&mut harness);
+
+    harness.get_by_label("inventory").click_secondary();
+    harness.run();
+    click(&mut harness, "Convert formula to values");
+    settle(&mut harness);
+    assert_eq!(harness.state().notice, None);
+    assert_eq!(
+        harness.state().calc().formula_text("Data", &inventory),
+        None
+    );
+    assert_eq!(
+        data_text(&harness),
+        r#"{"inventory":[{"sku":"A1","qty":2},{"sku":"B2","qty":5}]}"#
+    );
+    // The values are data now: the menu no longer offers the item.
+    harness.get_by_label("inventory").click_secondary();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Convert formula to values")
+            .is_none()
+    );
+}
+
 /// The button at the end of the formula bar expands it, to show a formula of
 /// several lines whole, while it is shown and while it is edited; pressed
 /// again, it collapses the bar to one line.

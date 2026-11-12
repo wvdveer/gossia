@@ -207,7 +207,9 @@ impl Calc {
                 None => {}
             }
         }
-        if args.is_empty() {
+        // Nothing filled in yet, where something has to be: no expression.
+        // A chart that needs nothing draws at once.
+        if args.is_empty() && !missing.is_empty() {
             return None;
         }
         if !missing.is_empty() {
