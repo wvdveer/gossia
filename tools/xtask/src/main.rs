@@ -309,6 +309,18 @@ fn web(root: &Path, test_control: bool) -> Result<PathBuf, String> {
     // test host, the worker, and the worker protocol's probe.
     let web = root.join("crates").join("gossia-web");
     copy_files(&web.join("web"), &out)?;
+    // The module's size, for the loading screen's progress (the length a
+    // server gives is the compressed one where it compresses; DESIGN.md,
+    // 17b), and the version.
+    let wasm_bytes = std::fs::metadata(out.join("pkg").join("gossia_web_bg.wasm"))
+        .map_err(|e| format!("gossia_web_bg.wasm: {e}"))?
+        .len();
+    let version = locked_version(root, "gossia-web")?;
+    std::fs::write(
+        out.join("build.json"),
+        format!("{{\"version\": \"{version}\", \"wasmBytes\": {wasm_bytes}}}\n"),
+    )
+    .map_err(|e| format!("cannot write build.json: {e}"))?;
     if test_control {
         // The harness page and its scripts; the Playwright script stays.
         copy_files(&web.join("harness"), &out)?;

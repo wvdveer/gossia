@@ -8,8 +8,25 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1e1e; }
   @media (prefers-color-scheme: light) { html, body { background: #f5f5f5; } }
   canvas { display: block; width: 100%; height: 100%; outline: none; }
-  #loading { position: absolute; inset: 0; display: grid; place-items: center;
-             font: 14px system-ui, sans-serif; color: #888; }
+  /* The loading screen: what runs where and what the web version lacks,
+     beside the download's progress (DESIGN.md, 17b). */
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto;
+             padding: 16px; box-sizing: border-box;
+             font: 14px/1.5 system-ui, sans-serif; color: #c8c8c8; }
+  #loading .card { max-width: 34rem; }
+  #loading h1 { font-size: 22px; font-weight: 600; margin: 0 0 12px; color: #e8e8e8; }
+  #loading progress { width: 100%; height: 6px; accent-color: #4a90d9; }
+  #loading .status { color: #8a8a8a; margin: 4px 0 16px; white-space: pre-wrap; }
+  #loading .status.error { color: #e06c6c; }
+  #loading p { margin: 0 0 10px; }
+  #loading a { color: #6aa8e8; }
+  @media (prefers-color-scheme: light) {
+    #loading { color: #333; }
+    #loading h1 { color: #111; }
+    #loading .status { color: #666; }
+    #loading .status.error { color: #b02a2a; }
+    #loading a { color: #1a62b8; }
+  }
 </style>
 </head>
 <body>
@@ -19,7 +36,19 @@
      for the sample workbook. The test build is driven by harness.html beside
      it. -->
 <canvas id="app"></canvas>
-<div id="loading">Loading Gossia...</div>
+<div id="loading"><div class="card">
+  <h1>Gossia</h1>
+  <progress id="progress"></progress>
+  <div id="status" class="status">Loading Gossia...</div>
+  <p id="runs">Gossia runs entirely in this browser. GitHub only serves its files: your workbooks
+    stay on this computer, and only the requests to the data sources you set up leave it.</p>
+  <p id="lacks">The web version cannot print, has no database data sources and no bidwillii
+    command line, and can read a web site only if the site allows it (CORS). The desktop
+    application and the Visual Studio Code extension have none of these limits.</p>
+  <p><a id="store" href="https://apps.microsoft.com/detail/9p505ws779kw">Gossia on the Microsoft Store</a>
+    &middot; <a id="source" href="https://github.com/wvdveer/gossia">Gossia on GitHub</a></p>
+  <noscript><p>Gossia needs JavaScript and WebAssembly.</p></noscript>
+</div></div>
 <script type="module">
 import init, * as gossia from './pkg/gossia_web.js';
 import { browserHost } from './host.js';
@@ -47,9 +76,89 @@ record.answerFetch = (i, status, text, headers = []) => {
 };
 record.failFetch = (i, message) => fetch_failed(record.fetches[i].id, message);
 
+// The loading screen in the browser's language, where Gossia has it (the
+// interface follows the same language until the preferences choose another).
+const TEXTS = {
+  es: {
+    loading: 'Cargando Gossia...',
+    runs: 'Gossia se ejecuta por completo en este navegador. GitHub solo sirve sus archivos: tus libros se quedan en este equipo, y solo salen de él las solicitudes a los orígenes de datos que configures.',
+    lacks: 'La versión web no puede imprimir, no tiene orígenes de datos de bases de datos ni la línea de comandos bidwillii, y solo puede leer un sitio web si el sitio lo permite (CORS). La aplicación de escritorio y la extensión de Visual Studio Code no tienen ninguno de estos límites.',
+    store: 'Gossia en Microsoft Store', source: 'Gossia en GitHub',
+  },
+  fr: {
+    loading: 'Chargement de Gossia...',
+    runs: "Gossia s'exécute entièrement dans ce navigateur. GitHub ne fait que servir ses fichiers : vos classeurs restent sur cet ordinateur, et seules les requêtes vers les sources de données que vous configurez en sortent.",
+    lacks: "La version web ne peut pas imprimer, n'a ni sources de données de bases de données ni ligne de commande bidwillii, et ne peut lire un site web que si le site l'autorise (CORS). L'application de bureau et l'extension Visual Studio Code n'ont aucune de ces limites.",
+    store: 'Gossia sur le Microsoft Store', source: 'Gossia sur GitHub',
+  },
+  pt: {
+    loading: 'Carregando o Gossia...',
+    runs: 'O Gossia é executado inteiramente neste navegador. O GitHub apenas serve os seus arquivos: as suas pastas de trabalho ficam neste computador, e só saem dele os pedidos às fontes de dados que você configurar.',
+    lacks: 'A versão web não pode imprimir, não tem fontes de dados de bancos de dados nem a linha de comando bidwillii, e só pode ler um site se o site permitir (CORS). O aplicativo de desktop e a extensão do Visual Studio Code não têm nenhum destes limites.',
+    store: 'Gossia na Microsoft Store', source: 'Gossia no GitHub',
+  },
+  ja: {
+    loading: 'Gossia を読み込んでいます...',
+    runs: 'Gossia はすべてこのブラウザー内で動作します。GitHub はファイルを配信するだけで、ワークブックはこのコンピューターに残り、外部に出るのは設定したデータ ソースへのリクエストだけです。',
+    lacks: 'ウェブ版では印刷できず、データベースのデータ ソースと bidwillii コマンド ラインがなく、ウェブ サイトはそのサイトが許可している場合 (CORS) にしか読み取れません。デスクトップ アプリケーションと Visual Studio Code 拡張機能にはこれらの制限はありません。',
+    store: 'Microsoft Store の Gossia', source: 'GitHub の Gossia',
+  },
+  'zh-Hans': {
+    loading: '正在加载 Gossia...',
+    runs: 'Gossia 完全在此浏览器中运行。GitHub 只提供它的文件：你的工作簿留在这台计算机上，只有发往你所设置的数据源的请求才会离开它。',
+    lacks: '网页版不能打印，没有数据库数据源，也没有 bidwillii 命令行，并且只能读取允许这样做的网站 (CORS)。桌面应用程序和 Visual Studio Code 扩展没有这些限制。',
+    store: 'Microsoft Store 上的 Gossia', source: 'GitHub 上的 Gossia',
+  },
+};
+function loadingLanguage() {
+  for (const tag of navigator.languages || [navigator.language]) {
+    const lower = String(tag).toLowerCase();
+    if (lower.startsWith('zh')) return 'zh-Hans';
+    const base = lower.split('-')[0];
+    if (TEXTS[base]) return base;
+    if (base === 'en') return null;
+  }
+  return null;
+}
+const lang = loadingLanguage();
+if (lang) {
+  const texts = TEXTS[lang];
+  document.documentElement.lang = lang;
+  for (const id of ['runs', 'lacks', 'store', 'source']) {
+    document.getElementById(id).textContent = texts[id];
+  }
+  document.getElementById('status').textContent = texts.loading;
+}
+
+// The module, read with its progress shown. Its size comes from build.json
+// (written by cargo xtask web), since the length a server gives is that of
+// the compressed file when it compresses; without it, the bar just moves.
+async function loadModule() {
+  const progress = document.getElementById('progress');
+  let size = 0;
+  try {
+    size = (await (await fetch('./build.json', { cache: 'no-store' })).json()).wasmBytes || 0;
+  } catch (_) { /* no size: the bar moves without one */ }
+  const reply = await fetch('./pkg/gossia_web_bg.wasm');
+  if (!reply.ok) throw new Error(`gossia_web_bg.wasm: ${reply.status} ${reply.statusText}`);
+  if (!reply.body || !size) return reply.arrayBuffer();
+  const reader = reply.body.getReader();
+  const chunks = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    progress.max = size;
+    progress.value = Math.min(received, size);
+  }
+  return new Blob(chunks).arrayBuffer();
+}
+
 (async () => {
   try {
-    await init();
+    await init({ module_or_path: await loadModule() });
     const host = await browserHost(gossia, record);
     record.host = host;
     let name = null, bytes = null;
@@ -75,7 +184,10 @@ record.failFetch = (i, message) => fetch_failed(record.fetches[i].id, message);
     let panic = null;
     try { panic = last_panic(); } catch (_) { /* unusable */ }
     const text = `Gossia did not start: ${err}${panic ? '\n' + panic : ''}`;
-    document.getElementById('loading').textContent = text;
+    const status = document.getElementById('status');
+    status.textContent = text;
+    status.classList.add('error');
+    document.getElementById('progress')?.remove();
     window.appError = text;
     console.error(text);
   }

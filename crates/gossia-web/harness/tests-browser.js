@@ -47,6 +47,13 @@ async function runBrowserTests() {
     await app.send('wait_idle', { timeout_ms: 60000 });
     h.assertEqual(app.win.testHost.host.keepsFiles(), true, 'the host keeps files');
   });
+
+  await h.step('the loading screen knows the size of the module, and goes once started', async () => {
+    const build = await (await fetch('build.json', { cache: 'no-store' })).json();
+    h.assertTrue(build.wasmBytes > 1000000, `build.json gives the module's size (${build.wasmBytes})`);
+    h.assertTrue(/^\d+\.\d+\.\d+$/.test(build.version), `and the version (${build.version})`);
+    h.assertEqual(app.win.document.getElementById('loading'), null, 'the loading screen is gone');
+  });
   const host = app.win.testHost;
   const browser = host.host;
   const idle = () => app.send('wait_idle', { timeout_ms: 60000 });

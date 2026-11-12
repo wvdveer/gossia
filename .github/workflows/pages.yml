@@ -1,0 +1,91 @@
+name: Pages
+
+# The web version on the repository's GitHub Pages site (DESIGN.md, The web
+# version on GitHub Pages, 0.6.0): the release wasm and the page, built and
+# published with actions/deploy-pages on pushes to main. It uploads the site
+# and commits nothing. It is the one build job on GitHub, since the site is
+# GitHub's; everything else beyond lint and the tests runs on the Gitea mirror.
+
+on:
+  push:
+    # Builds are made from main only (owner, 2026-11-10).
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and a running one is finished, not cancelled.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The toolchain of rust-toolchain.toml, with its wasm target. The build
+      # stays in the checkout's target/, where cargo xtask web looks for it.
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      # wasm-bindgen's command line, at the version in Cargo.lock: installed
+      # by cargo xtask web into target/wasm-tools when it is not there.
+      - name: Keep wasm-bindgen
+        uses: actions/cache@v4
+        with:
+          path: target/wasm-tools
+          key: wasm-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo xtask web
+      - name: Size
+        run: |
+          {
+            echo "### The site"
+            echo
+            echo '```'
+            cat target/web/build.json
+            du -ah target/web | sort -h | tail -n 8
+            echo
+            echo "gzipped wasm: $(gzip -9c target/web/pkg/gossia_web_bg.wasm | wc -c) bytes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/web
+
+  deploy:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      # Whether GitHub Pages compresses the module (DESIGN.md, 17b): the
+      # loading screen shows progress either way, but the download is a
+      # third of the size when it does.
+      - name: Compression
+        env:
+          SITE: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          headers=$(curl -sS -o /dev/null -D - -H 'Accept-Encoding: br, gzip' \
+            "${SITE%/}/pkg/gossia_web_bg.wasm")
+          encoding=$(printf '%s' "$headers" | tr -d '\r' \
+            | awk -F': ' 'tolower($1) == "content-encoding" { print $2 }')
+          length=$(printf '%s' "$headers" | tr -d '\r' \
+            | awk -F': ' 'tolower($1) == "content-length" { print $2 }')
+          {
+            echo "### Compression"
+            echo
+            echo "gossia_web_bg.wasm: Content-Encoding ${encoding:-none}, Content-Length ${length:-not given}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Content-Encoding: ${encoding:-none}"

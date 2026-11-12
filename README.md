@@ -6,6 +6,8 @@ A spreadsheet like application which handles JSON Schema and XML Schema document
 
 The full design is in [DESIGN.md](DESIGN.md).
 
+**Try it in the browser:** https://wvdveer.github.io/gossia/ runs the web version, built from `main`, with nothing to install. Everything runs in the browser; it cannot print, has no database sources, and reads only web sites that allow it (CORS).
+
 ## Requirements
 
 - **Rust 1.97 or newer.** This is a project requirement (RustPython and its `ruff` fork need it). `rust-toolchain.toml` pins the exact toolchain (currently 1.99.1) and `rustup` installs it on first use. If you do not use `rustup`, update with `rustup update stable` or install a compiler that is at least 1.97.
@@ -41,7 +43,7 @@ cargo xtask clean            # remove the build output AND vendor/
 
 ## CI
 
-- **On GitHub** (`.github/workflows/ci.yml`): lint and the tests, on GitHub's own Ubuntu runners, for pushes and pull requests.
+- **On GitHub** (`.github/workflows/ci.yml`): lint and the tests, on GitHub's own Ubuntu runners, for pushes and pull requests. `.github/workflows/pages.yml` builds the web version and publishes it on the GitHub Pages site, for pushes to main.
 - **On the owner's Gitea mirror** (`.gitea/workflows/`): everything else, for pushes to main only: the end-to-end and snapshot tests, the web and VS Code tests, the live database tests, and the packages. No self-hosted runner is registered with GitHub, so pull requests never run on the project's machines.
 
 None of it needs Node.js: the VS Code extension's tests are started by `vscode/test/run.py` and the `.vsix` is packed by `packaging/vscode/pack-vsix.py`.
