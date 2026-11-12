@@ -2218,3 +2218,8 @@
 "{x} cannot be read: Gossia holds only finite numbers" = "no se puede leer {x}: Gossia solo contiene números finitos"
 "{x} cannot be stored: NaN and infinity are not allowed" = "{x} no se puede guardar: NaN e infinito no están permitidos"
 "{y}-{m}-{d} is not a date" = "{y}-{m}-{d} no es una fecha"
+"matplotlib is not available in Gossia (it needs compiled code). Gossia's own module gossia.pyplot covers common charts in a similar style." = "matplotlib no está disponible en Gossia (necesita código compilado). El módulo propio de Gossia, gossia.pyplot, cubre los gráficos habituales con un estilo parecido."
+"Change to {import}" = "Cambiar a {import}"
+"Tab {name}: Formulas have a name {name} of their own. Rename the tab; until then, its formulas see the tab." = "Pestaña {name}: Las fórmulas tienen un nombre {name} propio. Cambie el nombre de la pestaña; hasta entonces, sus fórmulas ven la pestaña."
+"Map data: Natural Earth (naturalearthdata.com), in the public domain." = "Datos de mapas: Natural Earth (naturalearthdata.com), de dominio público."
+"Gossia pyplot, Gossia's own charts in the style of matplotlib's pyplot (not matplotlib itself), for chart functions: start with plt.clear(), draw with plot, bar, barh, scatter, hist, pie, boxplot, errorbar, fill_between, text, annotate, legend and world (a map), and end with return plt.svg()." = "Gossia pyplot, los gráficos propios de Gossia al estilo de pyplot de matplotlib (no es matplotlib), para funciones de gráfico: empiece con plt.clear(), dibuje con plot, bar, barh, scatter, hist, pie, boxplot, errorbar, fill_between, text, annotate, legend y world (un mapa), y termine con return plt.svg()."

@@ -1650,6 +1650,113 @@ def _draw_legend(out, ax, box):
         x += widths[c] + columns
 
 
+# ------------------------------------------------------------- the world
+
+# The world outline (DESIGN.md, "The world outline"): Natural Earth's land and
+# country borders at 1:110m, given by Gossia as the text `_WORLD_TEXT` and
+# read the first time a map is drawn.
+_world_cache = []
+
+
+def _world_shapes():
+    """The land rings and the border lines, each as (xs, ys, (xmin, xmax,
+    ymin, ymax)) in degrees of longitude and latitude."""
+    if not _world_cache:
+        land, borders = [], []
+        for row in _WORLD_TEXT.split('\n'):
+            if not row or row[0] == '#':
+                continue
+            parts = row.split(' ')
+            numbers = [int(n) for n in parts[1:]]
+            xs, ys = [], []
+            x = y = 0
+            for i in _range(0, len(numbers) - 1, 2):
+                x += numbers[i]
+                y += numbers[i + 1]
+                xs.append(x / 100.0)
+                ys.append(y / 100.0)
+            shape = (xs, ys, (min(xs), max(xs), min(ys), max(ys)))
+            (land if parts[0] == 'L' else borders).append(shape)
+        _world_cache.append((land, borders))
+    return _world_cache[0]
+
+
+_MERCATOR_LIMIT = 85.0
+
+
+def _mercator(latitude):
+    """Where a latitude goes on Mercator's map, in degrees at the equator, so
+    that an equal aspect keeps the shapes; cut at 85 degrees."""
+    v = max(-_MERCATOR_LIMIT, min(_MERCATOR_LIMIT, float(latitude)))
+    return _math.degrees(_math.log(_math.tan(_math.pi / 4.0 + _math.radians(v) / 2.0)))
+
+
+class _World(_Artist):
+    """The land and the borders, behind what else the Axes has."""
+
+    def __init__(self, style):
+        self.style = style
+
+    def bounds(self, axes):
+        # The whole world, unless something else on the Axes says where to
+        # look: then that, with room around it (a fifth of its spread, and
+        # at least ten degrees, each way), within the world.
+        xs, ys = [], []
+        for artist in axes.artists:
+            if artist is self or isinstance(artist, _World):
+                continue
+            b = artist.bounds(axes)
+            if b is None:
+                continue
+            if b[0] is not None:
+                xs.extend(b[0])
+            if b[1] is not None:
+                ys.extend(b[1])
+
+        def around(values, lo, hi):
+            if not values:
+                return lo, hi
+            a, b = min(values), max(values)
+            pad = max((b - a) * 0.2, 10.0)
+            return max(a - pad, lo), min(b + pad, hi)
+
+        return around(xs, -180.0, 180.0), around(ys, -90.0, 90.0)
+
+    def sticky(self):
+        return [-180.0, 180.0], [-90.0, 90.0]
+
+    def draw(self, out, axes, box):
+        s = self.style
+        (xlo, xhi), (ylo, yhi) = [(min(v), max(v)) for v in axes._view]
+        land, borders = _world_shapes()
+
+        def seen(bbox):
+            return bbox[1] >= xlo and bbox[0] <= xhi and bbox[3] >= ylo and bbox[2] <= yhi
+
+        def paths(shapes, closed):
+            d = []
+            for xs, ys, bbox in shapes:
+                if not seen(bbox):
+                    continue
+                for run in _runs(xs, ys, axes, box):
+                    if len(run) >= 2:
+                        d.append(_path(run) + (' Z' if closed else ''))
+            return ' '.join(d)
+
+        d = paths(land, True)
+        if d:
+            out.append('<path d="%s" fill="%s"%s stroke="%s" stroke-width="%s"%s'
+                       ' stroke-linejoin="round"/>'
+                       % (d, s['land'], s['land_opacity'], s['edge'], _fmt(s['linewidth']),
+                          s['edge_opacity']))
+        if s['borders']:
+            d = paths(borders, False)
+            if d:
+                out.append('<path d="%s" fill="none" stroke="%s" stroke-width="%s"%s'
+                           ' stroke-linejoin="round"/>'
+                           % (d, s['edge'], _fmt(s['linewidth'] * 0.8), s['border_opacity']))
+
+
 class Axes:
     """A plot area of a figure, with its x and y axes."""
 
@@ -2233,6 +2340,36 @@ class Axes:
     def axvspan(self, xmin, xmax, ymin=0, ymax=1, **kwargs):
         return self._axspan(xmin, xmax, ymin, ymax, kwargs, False)
 
+    def world(self, borders=True, land=None, edgecolor=None, linewidth=0.6, alpha=None):
+        """Gossia's own: the world's land and country borders (Natural Earth,
+        1:110m) behind what the Axes has, in degrees of longitude (x) and
+        latitude (y), with an equal aspect."""
+        if land is None:
+            face, face_opacity = 'currentColor', 0.08
+        elif str(land).strip().lower() == 'none':
+            face, face_opacity = 'none', None
+        else:
+            face, face_opacity = _colour(land, 'land colour'), None
+        if alpha is not None:
+            face_opacity = float(alpha)
+        edge = _colour(edgecolor, 'edge colour') if edgecolor is not None else 'currentColor'
+        default = edgecolor is None
+        style = {
+            'borders': bool(borders),
+            'land': face,
+            'land_opacity': '' if face_opacity is None else ' fill-opacity="%s"' % _fmt(face_opacity),
+            'edge': edge,
+            'linewidth': float(linewidth),
+            'edge_opacity': ' stroke-opacity="0.45"' if default else '',
+            'border_opacity': ' stroke-opacity="0.3"' if default else ' stroke-opacity="0.6"',
+        }
+        artist = _World(style)
+        # Behind everything else.
+        self.artists.insert(0, artist)
+        if self.aspect is None:
+            self.aspect = 1.0
+        return artist
+
     def _axspan(self, lo, hi, start, end, kwargs, horizontal):
         name = 'axhspan' if horizontal else 'axvspan'
         _check(kwargs, {'color', 'facecolor', 'fc', 'edgecolor', 'ec', 'alpha', 'label',
@@ -2545,11 +2682,13 @@ class Axes:
         return self._get_limits(self.yaxis)
 
     def _set_scale(self, axis, value, where):
-        if value not in ('linear', 'log'):
-            raise ValueError("gossia.pyplot does not support the scale %r (only 'linear' and 'log')"
-                             % (value,))
+        if value not in ('linear', 'log', 'mercator'):
+            raise ValueError("gossia.pyplot does not support the scale %r (only 'linear', 'log'"
+                             " and 'mercator')" % (value,))
         if value == 'log' and axis.kind in ('date', 'category'):
             raise ValueError('an axis of dates or text cannot be logarithmic')
+        if value == 'mercator' and (axis.kind in ('date', 'category') or axis.name != 'y'):
+            raise ValueError("the scale 'mercator' is for latitudes, on the y axis")
         axis.scale = value
 
     def set_xscale(self, value, **kwargs):
@@ -2749,6 +2888,8 @@ def _scale(axis, value, limits, start, end):
         lo, hi = hi, lo
     if axis.scale == 'log':
         value, lo, hi = _math.log10(value), _math.log10(lo), _math.log10(hi)
+    elif axis.scale == 'mercator':
+        value, lo, hi = _mercator(value), _mercator(lo), _mercator(hi)
     if hi == lo:
         return (start + end) / 2.0
     return start + (value - lo) / (hi - lo) * (end - start)
@@ -2878,6 +3019,9 @@ def _auto_ticks(axis, lo, hi, length):
         return _date_ticks(lo, hi, count), ''
     if axis.scale == 'log':
         return _log_ticks(lo, hi, count), ''
+    if axis.scale == 'mercator':
+        # Latitudes, past the cut only at the edge.
+        lo, hi = max(lo, -_MERCATOR_LIMIT), min(hi, _MERCATOR_LIMIT)
     ticks, step = _linear(lo, hi, count)
     labels, offset = _number_labels(ticks, step)
     return list(zip(ticks, labels)), offset
@@ -3138,6 +3282,8 @@ def _span(axis, limits):
     lo, hi = limits
     if axis.scale == 'log' and lo > 0 and hi > 0:
         return abs(_math.log10(hi) - _math.log10(lo)) or 1.0
+    if axis.scale == 'mercator':
+        return abs(_mercator(hi) - _mercator(lo)) or 1.0
     return abs(hi - lo) or 1.0
 
 
@@ -3510,6 +3656,10 @@ def twinx(ax=None):
 
 def axis(*args, **kwargs):
     return gca().axis(*args, **kwargs)
+
+
+def world(*args, **kwargs):
+    return gca().world(*args, **kwargs)
 
 
 def title(label, loc='center', fontsize=None, **kwargs):

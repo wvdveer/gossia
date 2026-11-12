@@ -122,6 +122,57 @@ fn export_as_pdf_writes_the_report_as_it_is_shown() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A chart drawn with Gossia pyplot goes into the PDF with its text, as a
+/// built-in chart does (DESIGN.md, "Gossia pyplot", 16c).
+#[test]
+fn a_gossia_pyplot_chart_is_exported_to_pdf_with_its_text() {
+    let mut harness = window();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .add_module(
+            "Plots",
+            "@chart('Quarters')\n\
+             def quarters(*, width, height):\n\
+             \x20   plt.clear()\n\
+             \x20   plt.bar(['Q1', 'Q2', 'Q3', 'Q4'], [3, 5, 4, 6])\n\
+             \x20   plt.title('Quarterly')\n\
+             \x20   plt.xlabel('Quarter')\n\
+             \x20   return plt.svg()\n",
+        )
+        .unwrap();
+    control::run(
+        harness.state_mut(),
+        "new_tab",
+        &json!({"name": "Summary", "report": true}),
+    )
+    .unwrap();
+    settle(&mut harness);
+    let mut design = ReportDesign::new(Default::default());
+    let mut chart = Control::new(ControlKind::Chart);
+    chart.chart = Some("Quarters".to_owned());
+    chart.width = Some(400);
+    chart.height = Some(250);
+    design.layout.controls.push(chart);
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Summary", design)
+        .unwrap();
+    settle(&mut harness);
+    let dir = folder("pyplot");
+    export(&mut harness, "Summary", &dir.join("chart.pdf"));
+    // A chart's text is placed glyph by glyph, so its letters come out one
+    // by one.
+    let text = pdf_words(&dir.join("chart.pdf")).concat().concat();
+    for word in ["Quarterly", "Quarter", "Q1", "Q4"] {
+        assert!(text.contains(word), "{word}: {text}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_pdf_of_a_multipage_report_has_the_lines_of_each_page() {
     let mut harness = window();

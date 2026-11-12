@@ -868,6 +868,75 @@ def off():
 /// Writes example charts as SVG files into the folder named by
 /// `GOSSIA_PYPLOT_GALLERY`, to look at by eye:
 /// `GOSSIA_PYPLOT_GALLERY=dir cargo test -p gossia-calc -- --ignored write_gallery`.
+/// `world()` draws the land and the borders behind the rest, keeps an
+/// equal aspect, follows the theme or the colours given, and with the
+/// Mercator scale places latitudes by Mercator's formula with ticks in
+/// degrees.
+#[test]
+fn the_world_outline_and_the_mercator_scale() {
+    let source = "\
+def whole():
+    plt.clear()
+    plt.world()
+    return plt.svg()
+
+def europe(scale):
+    plt.clear()
+    ax = plt.gca()
+    ax.world(land='#cfe3c8', edgecolor='#4a6b3a', borders=False)
+    ax.plot([4.9], [52.4], 'o')
+    ax.set_yscale(scale)
+    ax.set_xlim(-10, 30)
+    ax.set_ylim(35, 60)
+    return plt.svg()
+
+def on_x():
+    plt.clear()
+    plt.xscale('mercator')
+";
+    let whole = svg_of(source, "_chart_svg(_chart_size(400, 300) or Ch.whole())");
+    assert!(
+        whole.contains(r#"fill="currentColor" fill-opacity="0.08""#),
+        "{whole}"
+    );
+    // The land comes first, behind what else the Axes has.
+    let linear = svg_of(
+        source,
+        "_chart_svg(_chart_size(400, 300) or Ch.europe('linear'))",
+    );
+    let land = linear.find("#cfe3c8").unwrap();
+    let dot = linear
+        .find("<circle")
+        .or_else(|| linear.find("<path d=\"M"))
+        .unwrap();
+    assert!(
+        land < linear.rfind("#1f77b4").unwrap() && dot > 0,
+        "{linear}"
+    );
+    // No borders asked for: only the land.
+    assert!(!linear.contains(r#"stroke-opacity="0.6""#), "{linear}");
+    // Only the shapes in view are written.
+    assert!(
+        linear.len() * 2 < whole.len(),
+        "{} {}",
+        linear.len(),
+        whole.len()
+    );
+    let mercator = svg_of(
+        source,
+        "_chart_svg(_chart_size(400, 300) or Ch.europe('mercator'))",
+    );
+    assert_ne!(mercator, linear);
+    // The ticks stay in degrees.
+    let labels = texts(&mercator);
+    assert!(labels.iter().any(|l| l == "50"), "{labels:?}");
+    assert!(
+        error_of(source, "Ch.on_x()").contains("the scale 'mercator' is for latitudes"),
+        "{}",
+        error_of(source, "Ch.on_x()")
+    );
+}
+
 #[test]
 #[ignore = "writes files for looking at by eye"]
 fn write_gallery() {
@@ -1045,10 +1114,33 @@ def shared():
         ax.set_title('Plot %d' % (i + 1))
     fig.suptitle('Shared axes')
     return plt.svg()
+
+def world():
+    plt.clear()
+    plt.world()
+    plt.scatter([4.9, -74.0, 151.2, 28.0], [52.4, 40.7, -33.9, -26.2], color='tab:red')
+    plt.title('Offices')
+    return plt.svg()
+
+def mercator():
+    plt.clear()
+    ax = plt.gca()
+    ax.world(land='#cfe3c8', edgecolor='#4a6b3a')
+    ax.set_yscale('mercator')
+    ax.set_xlim(-12, 32)
+    ax.set_ylim(34, 62)
+    names = ['Amsterdam', 'Paris', 'Rome', 'Berlin', 'Madrid']
+    lons = [4.9, 2.35, 12.5, 13.4, -3.7]
+    lats = [52.4, 48.9, 41.9, 52.5, 40.4]
+    ax.plot(lons, lats, 'o', color='tab:blue')
+    for n, x, y in zip(names, lons, lats):
+        ax.annotate(n, (x, y), xytext=(4, 4), textcoords='offset points', fontsize=8)
+    ax.set_title('Europe, Mercator')
+    return plt.svg()
 ";
     for name in [
         "lines", "dates", "log", "grid", "bars", "stacked", "barh", "scatter", "hist", "pie",
-        "fill", "errors", "boxes", "twin", "notes", "shared",
+        "fill", "errors", "boxes", "twin", "notes", "shared", "world", "mercator",
     ] {
         let svg = svg_of(
             source,

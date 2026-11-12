@@ -238,7 +238,15 @@ const SPECIAL: &[&str] = &[
     "pie_chart",
     "scatter_chart",
     "sankey_chart",
+    "map_chart",
+    // Gossia pyplot (0.6.0), there without an import.
+    "plt",
 ];
+
+/// The names reserved in 0.6.0 (reserved-names version 2), which a workbook
+/// made before may use for a tab: it opens with a warning to rename the tab,
+/// and until then its formulas see the tab in place of the engine's value.
+pub(crate) const YIELD_TO_TABS: &[&str] = &["true", "false", "null", "plt", "map_chart"];
 
 fn reserved_set() -> &'static HashSet<&'static str> {
     static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
@@ -356,6 +364,7 @@ mod tests {
             ("true", "special name"),
             ("false", "special name"),
             ("null", "special name"),
+            ("plt", "special name"),
             ("math", "standard library module"),
             ("_hidden", "internal use"),
             ("gossia_x", "internal use"),

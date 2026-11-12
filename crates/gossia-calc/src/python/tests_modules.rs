@@ -575,3 +575,84 @@ fn compile_lists_the_problems_of_a_module_with_their_line_and_column() {
     assert_eq!(broken[0].0, Some(1));
     assert!(broken[0].2.starts_with("syntax error"), "{}", broken[0].2);
 }
+
+/// An import of matplotlib says that Gossia has its own pyplot instead, at
+/// load and in *Compile*; the two imports that can be changed safely offer
+/// the change, which is one entry in the history.
+#[test]
+fn an_import_of_matplotlib_offers_gossia_pyplot() {
+    let mut b = book_with(&[
+        ("A", "import matplotlib.pyplot as plt\n"),
+        (
+            "B",
+            "x = 1\n    \nif x:\n    from matplotlib import pyplot as mp  # charts\n",
+        ),
+        ("C", "import matplotlib as mpl\n"),
+        ("E", "from matplotlib.pyplot import bar\n"),
+    ]);
+    b.run();
+    for name in ["A", "B", "C", "E"] {
+        let why = failed(&b, name);
+        assert!(
+            why.contains("matplotlib is not available in Gossia"),
+            "{why}"
+        );
+        assert!(why.contains("gossia.pyplot"), "{why}");
+        let found = b.calc.module_problems(name).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains("gossia.pyplot"));
+    }
+    let fix = b.calc.module_fix("A").unwrap();
+    assert_eq!(fix.line, 1);
+    assert_eq!(fix.text, "import gossia.pyplot as plt");
+    assert_eq!(fix.label, "Change to import gossia.pyplot as plt");
+    let fix = b.calc.module_fix("B").unwrap();
+    assert_eq!(fix.line, 4);
+    assert_eq!(fix.text, "    import gossia.pyplot as mp  # charts");
+    assert!(b.calc.module_fix("C").is_none());
+    assert!(b.calc.module_fix("E").is_none());
+
+    let fix = b.calc.module_fix("A").unwrap();
+    b.calc.apply_module_fix("A", &fix).unwrap();
+    assert_eq!(
+        b.calc.module_source("A"),
+        Some("import gossia.pyplot as plt\n")
+    );
+    b.run();
+    assert_eq!(b.calc.module_status("A"), Some(&ModuleStatus::Loaded));
+    assert!(b.calc.module_problems("A").unwrap().is_empty());
+    b.calc.undo().unwrap();
+    assert_eq!(
+        b.calc.module_source("A"),
+        Some("import matplotlib.pyplot as plt\n")
+    );
+}
+
+#[test]
+fn only_the_safe_imports_of_matplotlib_are_changed() {
+    use crate::matplotlib_fix as fix;
+    let text = |t: &str| fix(1, t).map(|f| f.text);
+    assert_eq!(
+        text("import matplotlib.pyplot as plt").as_deref(),
+        Some("import gossia.pyplot as plt")
+    );
+    assert_eq!(
+        text("from  matplotlib  import pyplot as P2").as_deref(),
+        Some("import gossia.pyplot as P2")
+    );
+    assert_eq!(
+        text("\timport matplotlib.pyplot as plt#x").as_deref(),
+        Some("\timport gossia.pyplot as plt  #x")
+    );
+    for no in [
+        "import matplotlib.pyplot",
+        "import matplotlib as mpl",
+        "import os, matplotlib.pyplot as plt",
+        "import matplotlib.pyplot as plt; plt.plot([1])",
+        "from matplotlib import pyplot",
+        "from matplotlib import pyplot as plt, cm",
+        "import matplotlib.pyplot as 2x",
+    ] {
+        assert_eq!(text(no), None, "{no}");
+    }
+}

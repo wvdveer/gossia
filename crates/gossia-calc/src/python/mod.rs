@@ -59,6 +59,10 @@ pub const CHARTS: &str = include_str!("charts.py");
 /// `gossia.pyplot`, which formulas and modules have as `plt`.
 pub const PYPLOT: &str = include_str!("pyplot.py");
 
+/// The world outline of Gossia pyplot: Natural Earth's land and country
+/// borders at 1:110m, public domain (DESIGN.md, "The world outline").
+const WORLD: &str = include_str!("world.txt");
+
 /// The names of the built-in chart types and the functions that draw them.
 pub const CHART_FUNCTIONS: &[(&str, &str)] = &[
     ("Bar", "bar_chart"),
@@ -66,6 +70,7 @@ pub const CHART_FUNCTIONS: &[(&str, &str)] = &[
     ("Pie", "pie_chart"),
     ("Scatter", "scatter_chart"),
     ("Sankey", "sankey_chart"),
+    ("Map", "map_chart"),
 ];
 
 /// Standard library modules formulas can use by name, without importing them
@@ -180,6 +185,8 @@ pub struct PythonEngine {
     prelude: PyDictRef,
     code: RefCell<HashMap<String, PyRef<PyCode>>>,
     sheets: RefCell<Vec<String>>,
+    /// The tab names bound in `globals`: those that hide nothing.
+    bound: RefCell<Vec<String>>,
     /// The workbook modules that are loaded, or have failed to.
     modules: RefCell<HashMap<String, modules::Loaded>>,
     /// Which module defines each name a module provides: its own name and its
@@ -245,6 +252,7 @@ impl PythonEngine {
             prelude,
             code: RefCell::new(HashMap::new()),
             sheets: RefCell::new(Vec::new()),
+            bound: RefCell::new(Vec::new()),
             modules: RefCell::new(HashMap::new()),
             provided: RefCell::new(HashMap::new()),
             tabs: RefCell::new(Vec::new()),
@@ -315,6 +323,19 @@ impl PythonEngine {
         });
     }
 
+    /// The engine's own value of a name that gives way to a tab of an older
+    /// workbook (`names::YIELD_TO_TABS`).
+    fn yielded(&self, vm: &VirtualMachine, name: &str) -> Option<PyObjectRef> {
+        match name {
+            "true" => Some(vm.ctx.new_bool(true).into()),
+            "false" => Some(vm.ctx.new_bool(false).into()),
+            "null" => Some(vm.ctx.none()),
+            "plt" => self.shared.stdlib.borrow().get("gossia.pyplot").cloned(),
+            "map_chart" => self.prelude.get_item("map_chart", vm).ok(),
+            _ => None,
+        }
+    }
+
     /// Makes the tabs available by name.
     fn sync_sheets(&self, vm: &VirtualMachine, ctx: &dyn Context) {
         let mut names = ctx.sheets();
@@ -322,18 +343,29 @@ impl PythonEngine {
         if *self.sheets.borrow() == names {
             return;
         }
-        for old in self.sheets.borrow().iter() {
+        // Only the names bound go: a tab that was not bound hid nothing.
+        for old in self.bound.borrow_mut().drain(..) {
             let _ = self.globals.del_item(old.as_str(), vm);
+            // What a tab of an older workbook hid comes back once it goes.
+            if let Some(value) = self.yielded(vm, &old) {
+                let _ = self.globals.set_item(old.as_str(), value, vm);
+            }
         }
         for name in &names {
             // A tab never takes the place of a name the engine holds or a
-            // module provides: nothing is shadowed.
-            if crate::names::is_reserved(name) || self.provided.borrow().contains_key(name) {
+            // module provides: nothing is shadowed. Except the names reserved
+            // since 0.6.0, which a workbook made before may use for a tab:
+            // until the tab is renamed, its formulas see the tab.
+            let yields = crate::names::YIELD_TO_TABS.contains(&name.as_str());
+            if (crate::names::is_reserved(name) && !yields)
+                || self.provided.borrow().contains_key(name)
+            {
                 continue;
             }
             let sheet: Rc<str> = Rc::from(name.as_str());
             let proxy = node::lazy_proxy(&self.shared, vm, &sheet, Path::root());
             let _ = self.globals.set_item(name.as_str(), proxy, vm);
+            self.bound.borrow_mut().push(name.clone());
         }
         *self.sheets.borrow_mut() = names;
     }
@@ -692,6 +724,7 @@ fn set_up(
     for name in ["PLAIN", "ErrorValue"] {
         pyplot_dict.set_item(name, prelude.get_item(name, vm)?, vm)?;
     }
+    pyplot_dict.set_item("_WORLD_TEXT", vm.ctx.new_str(WORLD).into(), vm)?;
     let scope = Scope::with_builtins(None, pyplot_dict.clone(), vm);
     vm.run_string(scope, PYPLOT, "<gossia pyplot>")?;
     let pyplot = vm.new_module("gossia.pyplot", pyplot_dict.clone(), None);

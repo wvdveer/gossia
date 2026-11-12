@@ -602,6 +602,65 @@ fn a_tab_name_that_breaks_the_naming_rules_opens_with_a_warning() {
     assert_eq!(opened.calc.sheet_names().count(), 2);
 }
 
+/// A tab named `plt`, made before Gossia pyplot reserved the name, opens with
+/// a warning to rename it, and until then formulas see the tab, not pyplot.
+#[test]
+fn a_tab_named_plt_from_before_0_6_opens_and_formulas_see_it() {
+    let mut calc = Calc::new(syntax());
+    calc.add_sheet(
+        "plt",
+        jsonschema::lower_str(SCHEMA).unwrap(),
+        json::parse(DATA).unwrap().node,
+    )
+    .unwrap();
+    calc.add_sheet(
+        "Orders",
+        jsonschema::lower_str(SCHEMA).unwrap(),
+        json::parse(DATA).unwrap().node,
+    )
+    .unwrap();
+    calc.add_schema_sheet("OrdersSchema", json::parse(SCHEMA).unwrap().node)
+        .unwrap();
+    calc.bind_schema("plt", "OrdersSchema").unwrap();
+    calc.bind_schema("Orders", "OrdersSchema").unwrap();
+    calc.set_formula("Orders", &p("customer"), "plt.customer + '!'")
+        .unwrap();
+    run(&mut calc);
+    let mut opened = open(&saved(&calc));
+    assert!(
+        opened
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("Tab plt:") && w.contains("Rename the tab")),
+        "{:?}",
+        opened.warnings
+    );
+    // As opening a trusted workbook does.
+    opened.calc.recalc_all();
+    run(&mut opened.calc);
+    let value = |calc: &Calc| {
+        calc.cell("Orders", &p("customer"))
+            .and_then(|c| c.node)
+            .map(|n| n.value().clone())
+    };
+    assert_eq!(value(&opened.calc), Some(Value::Str("Acme!".into())));
+    // A change of the tab runs the formula again, which reads the tab.
+    opened
+        .calc
+        .set_value("plt", &p("customer"), Value::Str("Beta".into()))
+        .unwrap();
+    run(&mut opened.calc);
+    assert_eq!(value(&opened.calc), Some(Value::Str("Beta!".into())));
+    // Renamed, the tab hides nothing: `plt` is Gossia pyplot again.
+    opened.calc.rename_sheet("plt", "Old").unwrap();
+    opened
+        .calc
+        .set_formula("Orders", &p("customer"), "str(callable(plt.svg))")
+        .unwrap();
+    run(&mut opened.calc);
+    assert_eq!(value(&opened.calc), Some(Value::Str("True".into())));
+}
+
 // ------------------------------------------------------------------ export
 
 #[test]

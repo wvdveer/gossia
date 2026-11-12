@@ -190,6 +190,26 @@ async function suite(dir) {
   await idle();
   equal(await value('tax_rate'), 21, 'Gossia: Undo takes the module back, and the open file shows it');
 
+  // An import of matplotlib is marked with Gossia's message, and its quick
+  // fix changes it to Gossia pyplot.
+  const plotsUri = vscode.Uri.parse(await command('gossia.test.moduleUri', 'Plots'));
+  await vscode.workspace.fs.writeFile(plotsUri, encode('import matplotlib.pyplot as plt  # charts\n'));
+  const plots = await vscode.workspace.openTextDocument(plotsUri);
+  await vscode.window.showTextDocument(plots);
+  await waitFor(() => vscode.languages.getDiagnostics(plotsUri).length === 1, 'the matplotlib mark');
+  const [mark] = vscode.languages.getDiagnostics(plotsUri);
+  check(mark.message.includes('gossia.pyplot'), 'an import of matplotlib is marked, naming gossia.pyplot', mark.message);
+  const actions = await command('vscode.executeCodeActionProvider', plotsUri, mark.range,
+    vscode.CodeActionKind.QuickFix.value);
+  const fix = (actions || []).find((a) => a.title.includes('import gossia.pyplot as plt'));
+  check(fix, 'its quick fix is offered', (actions || []).map((a) => a.title).join(', '));
+  if (fix) {
+    await vscode.workspace.applyEdit(fix.edit);
+    equal(plots.getText(), 'import gossia.pyplot as plt  # charts\n', 'the quick fix changes the import');
+    await waitFor(() => vscode.languages.getDiagnostics(plotsUri).length === 0, 'the mark to go');
+  }
+  await command('workbench.action.revertAndCloseActiveEditor');
+
   // A file that is not a module name is refused, with the workbook's reason.
   let refused = null;
   try {

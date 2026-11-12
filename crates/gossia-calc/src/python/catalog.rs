@@ -336,6 +336,15 @@ fn others() -> &'static [Function] {
             ),
             Modules,
         ),
+        f(
+            "plt",
+            "plt.",
+            "plt",
+            tr_noop!(
+                "Gossia pyplot, Gossia's own charts in the style of matplotlib's pyplot (not matplotlib itself), for chart functions: start with plt.clear(), draw with plot, bar, barh, scatter, hist, pie, boxplot, errorbar, fill_between, text, annotate, legend and world (a map), and end with return plt.svg()."
+            ),
+            Modules,
+        ),
     ];
     ALL
 }
@@ -368,6 +377,9 @@ mod tests {
             .filter(|f| f.group == Group::Modules)
             .map(|f| f.name)
             .collect();
-        assert_eq!(listed, super::super::MODULES);
+        let mut exposed = super::super::MODULES.to_vec();
+        // Gossia pyplot, there without an import too.
+        exposed.push("plt");
+        assert_eq!(listed, exposed);
     }
 }

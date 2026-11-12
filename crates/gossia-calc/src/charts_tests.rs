@@ -121,7 +121,10 @@ fn a_chart_type_is_read_from_its_decorator_without_running_the_module() {
 fn the_built_in_chart_types_come_first_then_those_of_the_modules() {
     let b = book(&[("Shapes", FUNNEL)], Vec::new());
     let names: Vec<String> = b.calc.chart_types().into_iter().map(|t| t.name).collect();
-    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Sankey", "Funnel"]);
+    assert_eq!(
+        names,
+        ["Bar", "Line", "Pie", "Scatter", "Sankey", "Map", "Funnel"]
+    );
     let funnel = b.calc.chart_type("funnel").unwrap();
     assert_eq!(funnel.module.as_deref(), Some("Shapes"));
     let bar = b.calc.chart_type("Bar").unwrap();
@@ -203,6 +206,16 @@ fn each_built_in_chart_draws_svg_that_parses() {
         ),
         chart("Bar", &[("labels", "[]"), ("values", "[]")]),
         chart("Line", &[("labels", "['a']"), ("values", "[-5]")]),
+        chart(
+            "Map",
+            &[
+                ("longitudes", "[4.9, -74.0, 151.2]"),
+                ("latitudes", "[52.4, 40.7, -33.9]"),
+                ("labels", "['Amsterdam', 'New York', 'Sydney']"),
+                ("title", "'Offices'"),
+            ],
+        ),
+        chart("Map", &[("longitudes", "[]"), ("latitudes", "[]")]),
     ];
     let count = controls.len();
     let b = book(&[], controls);
@@ -211,6 +224,46 @@ fn each_built_in_chart_draws_svg_that_parses() {
         gossia_layout_check(&svg);
     }
     assert!(b.text(1).contains("Sales &amp; more"));
+}
+
+/// The built-in map draws the land and the borders behind the places, shows
+/// the places with room around them or the whole world, and refuses a
+/// latitude that is not one.
+#[test]
+fn a_map_draws_the_world_behind_its_places() {
+    let b = book(
+        &[],
+        vec![
+            chart(
+                "Map",
+                &[
+                    ("longitudes", "[4.9, 2.35]"),
+                    ("latitudes", "[52.4, 48.9]"),
+                    ("labels", "['Amsterdam', 'Paris']"),
+                ],
+            ),
+            chart("Map", &[("longitudes", "[]"), ("latitudes", "[]")]),
+            chart("Map", &[("longitudes", "[0]"), ("latitudes", "[95]")]),
+        ],
+    );
+    let europe = b.text(0);
+    assert!(europe.contains("Amsterdam") && europe.contains("Paris"));
+    // The land is filled faintly in the text colour, and the borders drawn.
+    assert!(
+        europe.contains(r#"fill="currentColor" fill-opacity="0.08""#),
+        "{europe}"
+    );
+    assert!(europe.contains(r#"stroke-opacity="0.3""#), "{europe}");
+    let world = b.text(1);
+    // Only what is in view is written: Europe alone is far smaller.
+    assert!(
+        europe.len() * 2 < world.len(),
+        "{} {}",
+        europe.len(),
+        world.len()
+    );
+    let Some(Err(e)) = b.svg(2) else { panic!() };
+    assert!(e.contains("a latitude is from -90 to 90 degrees"), "{e}");
 }
 
 /// The SVG is well formed XML with an svg root. (The layout crate parses it
@@ -310,7 +363,10 @@ fn a_module_whose_chart_type_name_is_taken_is_not_loaded() {
         Vec::new(),
     );
     let names: Vec<String> = b.calc.chart_types().into_iter().map(|t| t.name).collect();
-    assert_eq!(names, ["Bar", "Line", "Pie", "Scatter", "Sankey", "Funnel"]);
+    assert_eq!(
+        names,
+        ["Bar", "Line", "Pie", "Scatter", "Sankey", "Map", "Funnel"]
+    );
     assert!(matches!(
         b.calc.module_status("Other"),
         Some(ModuleStatus::Failed(_))

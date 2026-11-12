@@ -43,9 +43,10 @@ pub use calc::{
     Applied, Calc, Ceilings, Cell, Change, ChangeKind, ChartType, ColumnFormula, Decision, Detail,
     Disconnect, DisconnectError, DisconnectPlan, DisconnectRunner, EditError, Effective,
     ExportFormat, ExprKey, ExprKind, ExprState, FieldKind, FieldPlaces, Fingerprint,
-    KEEP_REPORT_RESULTS, Mentions, ModuleProblem, ModuleStatus, ParamState, REPORT_FORM,
+    KEEP_REPORT_RESULTS, Mentions, ModuleFix, ModuleProblem, ModuleStatus, ParamState, REPORT_FORM,
     RedefineGroup, ReportCache, SchemaFormat, Setting, TabKind, TrustStore, Unit, WorkbookSettings,
-    apply_and_rerun, cell_of, comment_text_problem, design_digest, find_disconnect, today,
+    apply_and_rerun, cell_of, comment_text_problem, design_digest, find_disconnect, matplotlib_fix,
+    today,
 };
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,

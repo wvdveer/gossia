@@ -1169,6 +1169,10 @@ fn about_page(ui: &mut egui::Ui) {
          the SIL Open Font License; the Phosphor icons, under the MIT License."
         ),
     );
+    note(
+        ui,
+        tr!("Map data: Natural Earth (naturalearthdata.com), in the public domain."),
+    );
 }
 
 /// A titled group.

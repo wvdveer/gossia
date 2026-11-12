@@ -713,6 +713,102 @@ fn a_report_with_a_sankey_diagram() {
     check(&mut harness, "report_sankey", &mut results);
 }
 
+/// Gossia pyplot (16c): charts of a module written as with matplotlib, on a
+/// report: bars and a line with a legend, a pie and box plots side by side,
+/// a scatter, and a map of Europe on the Mercator scale.
+const PYPLOT_GALLERY: &str = "\
+@chart('Sales')
+def sales(*, width, height):
+    plt.clear()
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
+    plt.bar(months, [12, 18, 15, 22, 25, 21], label='Sales')
+    plt.plot(months, [14, 16, 18, 20, 22, 24], 'r--o', label='Target')
+    plt.title('Sales')
+    plt.ylabel('Euro (thousands)')
+    plt.legend()
+    return plt.svg()
+
+@chart('Shares')
+def shares(*, width, height):
+    plt.clear()
+    fig, axs = plt.subplots(1, 2)
+    axs[0].pie([15, 30, 45, 10], labels=['A', 'B', 'C', 'D'], autopct='%1.0f%%')
+    axs[1].boxplot([[1, 2, 3, 4, 9], [2, 4, 5, 6, 7]], tick_labels=['x', 'y'])
+    return plt.svg()
+
+@chart('Spread')
+def spread(*, width, height):
+    plt.clear()
+    xs = [i * 0.37 % 10 for i in range(40)]
+    ys = [x * 1.8 + (i * 7 % 5) for i, x in enumerate(xs)]
+    plt.scatter(xs, ys, s=[10 + i for i in range(40)], alpha=0.7)
+    plt.grid(True)
+    plt.title('Spread')
+    return plt.svg()
+
+@chart('Cities')
+def cities(*, width, height):
+    plt.clear()
+    ax = plt.gca()
+    ax.world()
+    ax.set_yscale('mercator')
+    names = ['Amsterdam', 'Paris', 'Rome', 'Madrid']
+    lons, lats = [4.9, 2.35, 12.5, -3.7], [52.4, 48.9, 41.9, 40.4]
+    ax.scatter(lons, lats, color='tab:red')
+    for n, x, y in zip(names, lons, lats):
+        ax.annotate(n, (x, y), xytext=(4, 4), textcoords='offset points', fontsize=8)
+    ax.set_title('Cities')
+    return plt.svg()
+";
+
+#[test]
+fn a_report_with_gossia_pyplot_charts() {
+    use gossia_core::form::{Control, ControlKind};
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = window();
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .add_module("Gallery", PYPLOT_GALLERY)
+        .unwrap();
+    harness
+        .state_mut()
+        .create_report_tab("Charts", gossia_core::report::ReportKind::SinglePage, None)
+        .unwrap();
+    let mut design = harness.state().calc().report("Charts").unwrap().clone();
+    let mut controls = Vec::new();
+    for (i, name) in ["Sales", "Shares", "Spread", "Cities"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut c = Control::new(ControlKind::Chart);
+        c.chart = Some(name.into());
+        c.x = Some((i as u32 % 2) * 260);
+        c.y = Some((i as u32 / 2) * 200);
+        c.width = Some(250);
+        c.height = Some(190);
+        controls.push(c);
+    }
+    design.canvas = true;
+    design.layout.controls = controls;
+    harness
+        .state_mut()
+        .session
+        .calc_mut()
+        .set_report("Charts", design)
+        .unwrap();
+    // The whole page in view.
+    harness.state_mut().report.zoom = Some(1.25);
+    for _ in 0..3 {
+        settle(&mut harness);
+    }
+    check(&mut harness, "report_pyplot", &mut results);
+}
+
 /// Owner, 2026-11-10: a node of a simple type whose formula returned the
 /// wrong kind shows that result in red at the end of the formula bar, cut
 /// short when it is long.

@@ -1166,6 +1166,8 @@ impl GossiaApp {
     /// The status line: what loading the module shown came to, or whether
     /// the text of the form shown is its design.
     fn code_status(&mut self, ui: &mut egui::Ui) {
+        // A fix the status line offers, put in after it is drawn.
+        let mut fixing = None;
         ui.horizontal(|ui| {
             if let Some(notice) = &self.code.notice {
                 ui.colored_label(error_color(ui), notice);
@@ -1221,6 +1223,12 @@ impl GossiaApp {
                     ui.label(format!("{module}: loading..."));
                 }
                 Some(ModuleStatus::Failed(why)) => {
+                    // The fix first, where a long message cannot push it out.
+                    if let Some(fix) = self.calc().module_fix(module)
+                        && ui.button(&fix.label).clicked()
+                    {
+                        fixing = Some((module.clone(), fix));
+                    }
                     ui.colored_label(error_color(ui), format!("{module} failed to load: {why}"));
                 }
                 Some(ModuleStatus::Untrusted) => {
@@ -1230,6 +1238,9 @@ impl GossiaApp {
                 }
             }
         });
+        if let Some((module, fix)) = fixing {
+            self.fix_module(&module, &fix);
+        }
     }
 
     // ----------------------------------------------------------- dialogs

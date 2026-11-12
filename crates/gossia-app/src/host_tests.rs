@@ -574,11 +574,19 @@ fn the_extension_s_texts_are_in_every_language() {
         "package.json names the keys of package.nls.json"
     );
     let script = include_str!("../../../vscode/extension.js");
-    let texts: std::collections::BTreeSet<&str> = script
-        .split("vscode.l10n.t('")
-        .skip(1)
-        .map(|rest| &rest[..rest.find('\'').unwrap()])
-        .collect();
+    // In single quotes, or in double quotes when the text has an apostrophe.
+    let quoted = |quote: char| {
+        let call = if quote == '"' {
+            "vscode.l10n.t(\""
+        } else {
+            "vscode.l10n.t('"
+        };
+        script
+            .split(call)
+            .skip(1)
+            .map(move |rest| &rest[..rest.find(quote).unwrap()])
+    };
+    let texts: std::collections::BTreeSet<&str> = quoted('\'').chain(quoted('"')).collect();
     assert!(texts.contains("Open a Gossia workbook first."), "{texts:?}");
     let languages = [
         (

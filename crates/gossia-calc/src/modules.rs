@@ -42,6 +42,8 @@ pub struct ModuleProblem {
     pub line: Option<usize>,
     pub column: Option<usize>,
     pub message: String,
+    /// A change of the module that puts it right, where there is a safe one.
+    pub fix: Option<ModuleFix>,
 }
 
 impl ModuleProblem {
@@ -50,8 +52,52 @@ impl ModuleProblem {
             line: Some(line),
             column: Some(column),
             message,
+            fix: None,
         }
     }
+}
+
+/// A change that puts a module's problem right: its line `line` (1-based)
+/// becomes `text`. Shown as a button labelled `label`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleFix {
+    pub line: usize,
+    pub text: String,
+    pub label: String,
+}
+
+/// The fix of an import of matplotlib (DESIGN.md, "Gossia pyplot"): the
+/// line `import matplotlib.pyplot as X` or `from matplotlib import pyplot as
+/// X`, indented or followed by a comment, becomes `import gossia.pyplot as X`.
+/// Other imports of matplotlib cannot be changed safely and get none.
+pub fn matplotlib_fix(line: usize, text: &str) -> Option<ModuleFix> {
+    let indent = &text[..text.len() - text.trim_start().len()];
+    let (code, comment) = match text.find('#') {
+        Some(at) => (&text[..at], &text[at..]),
+        None => (text, ""),
+    };
+    let words: Vec<&str> = code.split_whitespace().collect();
+    let name = match words.as_slice() {
+        ["import", "matplotlib.pyplot", "as", name] => *name,
+        ["from", "matplotlib", "import", "pyplot", "as", name] => *name,
+        _ => return None,
+    };
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    if !(first.is_alphabetic() || first == '_') || !chars.all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    let new = format!("import gossia.pyplot as {name}");
+    let text = if comment.is_empty() {
+        format!("{indent}{new}")
+    } else {
+        format!("{indent}{new}  {comment}")
+    };
+    Some(ModuleFix {
+        line,
+        text,
+        label: tr!("Change to {import}", import = new),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -192,7 +238,11 @@ impl Calc {
             } else if standard.is_some_and(|known| !known.contains(&import.as_str())) {
                 let message = crate::python::no_module(import);
                 unknown.push(message.clone());
-                problems.push(ModuleProblem::at(line, column, message));
+                let mut problem = ModuleProblem::at(line, column, message);
+                if import == "matplotlib" {
+                    problem.fix = fix_at(&module.source, Some(line));
+                }
+                problems.push(problem);
             }
         }
         let charts = self.chart_problems(name);
@@ -205,10 +255,18 @@ impl Calc {
             && !clash
             && !unknown.iter().any(|m| why.contains(m.as_str()))
         {
+            // An import inside a block is not read before loading, but the
+            // failure names its line.
+            let line = line_in(why);
+            let fix = why
+                .contains("matplotlib is not available")
+                .then(|| fix_at(&module.source, line))
+                .flatten();
             problems.push(ModuleProblem {
-                line: line_in(why),
+                line,
                 column: None,
                 message: why.clone(),
+                fix,
             });
         }
         Some(problems)
@@ -285,6 +343,31 @@ impl Calc {
             None,
         );
         Ok(())
+    }
+
+    /// The first fix *Compile* offers for the module `name`, for the
+    /// editor's status line when the module failed to load.
+    pub fn module_fix(&self, name: &str) -> Option<ModuleFix> {
+        self.module_problems(name)?.into_iter().find_map(|p| p.fix)
+    }
+
+    /// Puts a fix in the module `name`: its line becomes the fix's text, if
+    /// the module still has that line. One entry in the history.
+    pub fn apply_module_fix(&mut self, name: &str, fix: &ModuleFix) -> Result<(), EditError> {
+        let source = self
+            .module_source(name)
+            .ok_or_else(|| EditError::NoModule(name.to_owned()))?
+            .to_owned();
+        let mut lines: Vec<&str> = source.split('\n').collect();
+        let Some(slot) = fix.line.checked_sub(1).and_then(|i| lines.get_mut(i)) else {
+            return Ok(());
+        };
+        // A line ending in \r keeps it.
+        let ending = if slot.ends_with('\r') { "\r" } else { "" };
+        let text = format!("{}{ending}", fix.text);
+        *slot = &text;
+        let changed = lines.join("\n");
+        self.set_module_source(name, &changed)
     }
 
     /// Takes a module away. Formulas that used it show `#NAME!`. One entry in
@@ -584,6 +667,12 @@ impl Calc {
 }
 
 /// The line a load error names at its end, as `... (line 3)`.
+/// The matplotlib fix of the line `line` of `source`, if it has one.
+fn fix_at(source: &str, line: Option<usize>) -> Option<ModuleFix> {
+    let line = line?;
+    matplotlib_fix(line, source.lines().nth(line.checked_sub(1)?)?)
+}
+
 fn line_in(message: &str) -> Option<usize> {
     let rest = message.rsplit_once("(line ")?.1;
     rest.strip_suffix(')')?.trim().parse().ok()

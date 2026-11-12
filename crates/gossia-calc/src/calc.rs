@@ -111,7 +111,7 @@ mod modules;
 mod charts;
 pub use charts::ChartType;
 use modules::Module;
-pub use modules::{ModuleProblem, ModuleStatus};
+pub use modules::{ModuleFix, ModuleProblem, ModuleStatus, matplotlib_fix};
 
 #[path = "settings.rs"]
 mod settings;

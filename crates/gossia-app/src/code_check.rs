@@ -13,7 +13,7 @@ use egui_file_dialog::{DialogState, FileDialog as Browser};
 use crate::GossiaApp;
 use crate::view::{error_color, named};
 use crate::workbook_file::new_browser;
-use gossia_calc::ModuleStatus;
+use gossia_calc::{ModuleFix, ModuleStatus};
 
 /// The extension of an exported module.
 pub const PY: &str = "py";
@@ -86,6 +86,7 @@ impl GossiaApp {
             });
         });
         let mut go = None;
+        let mut fix = None;
         egui::ScrollArea::vertical()
             .id_salt("compile_list")
             .auto_shrink([false, false])
@@ -100,15 +101,26 @@ impl GossiaApp {
                     };
                     let text = egui::RichText::new(format!("{place}: {}", problem.message))
                         .color(error_color(ui));
-                    let response = ui.add(egui::Button::new(text).frame(false));
-                    if response.clicked() {
-                        go = Some((
-                            problem.line.unwrap_or(1).saturating_sub(1),
-                            problem.column.unwrap_or(1).saturating_sub(1),
-                        ));
-                    }
+                    // The fix first, where a long message cannot push it out.
+                    ui.horizontal(|ui| {
+                        if let Some(change) = &problem.fix
+                            && ui.button(&change.label).clicked()
+                        {
+                            fix = Some(change.clone());
+                        }
+                        let response = ui.add(egui::Button::new(text).frame(false));
+                        if response.clicked() {
+                            go = Some((
+                                problem.line.unwrap_or(1).saturating_sub(1),
+                                problem.column.unwrap_or(1).saturating_sub(1),
+                            ));
+                        }
+                    });
                 }
             });
+        if let Some(change) = fix {
+            self.fix_module(&module, &change);
+        }
         if close {
             self.code.compiled = None;
         } else if let Some((line, column)) = go
@@ -116,6 +128,16 @@ impl GossiaApp {
         {
             self.open_module(&module);
             self.code.jump = Some((line, column));
+        }
+    }
+
+    /// A fix offered for a problem of the module (the import of matplotlib
+    /// changed to Gossia pyplot): what was typed goes in first, then the fix,
+    /// as one entry in the workbook's history.
+    pub fn fix_module(&mut self, module: &str, fix: &ModuleFix) {
+        self.commit_code();
+        if let Err(e) = self.session.calc_mut().apply_module_fix(module, fix) {
+            self.code.notice = Some(e.to_string());
         }
     }
 

@@ -447,6 +447,14 @@ fn has_fromlist(args: &FuncArgs, vm: &VirtualMachine) -> bool {
 
 /// Why an import of a module that is not available fails.
 pub(crate) fn no_module(name: &str) -> String {
+    // Said by name, and Gossia's own module offered (DESIGN.md, "Gossia
+    // pyplot"): matplotlib is never pretended to be there.
+    if name == "matplotlib" || name.starts_with("matplotlib.") {
+        return tr!(
+            "matplotlib is not available in Gossia (it needs compiled code). Gossia's own module gossia.pyplot covers common charts in a similar style."
+        )
+        .to_owned();
+    }
     tr!(
         "no module named {name} is available: only the workbook's modules and the standard library modules formulas can use can be imported",
         name = name

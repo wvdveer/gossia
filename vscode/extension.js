@@ -613,7 +613,75 @@ class WorkbookEditorProvider {
   }
 }
 
+// An import of matplotlib in a module (DESIGN.md, "Gossia pyplot"): marked
+// with Gossia's message, and the two imports that can be changed safely get
+// a quick fix to `import gossia.pyplot as X`, as in Gossia's own editor
+// (gossia_calc::matplotlib_fix).
+const MATPLOTLIB = /^\s*(?:import\s+matplotlib\b|from\s+matplotlib\b)/;
+const FIXABLE =
+  /^(\s*)(?:import\s+matplotlib\.pyplot\s+as\s+([A-Za-z_]\w*)|from\s+matplotlib\s+import\s+pyplot\s+as\s+([A-Za-z_]\w*))\s*(#.*)?$/;
+
+// The line an import of matplotlib becomes, or null if it cannot be changed safely.
+function matplotlibFix(text) {
+  const m = FIXABLE.exec(text);
+  if (!m) return null;
+  const line = `import gossia.pyplot as ${m[2] || m[3]}`;
+  return { line, text: m[1] + line + (m[4] ? `  ${m[4]}` : '') };
+}
+
+function matplotlibDiagnostics(document) {
+  const found = [];
+  for (let i = 0; i < document.lineCount; i++) {
+    const line = document.lineAt(i);
+    if (!MATPLOTLIB.test(line.text)) continue;
+    const start = line.firstNonWhitespaceCharacterIndex;
+    const diagnostic = new vscode.Diagnostic(
+      new vscode.Range(i, start, i, line.text.length),
+      // Gossia's own message (gossia_calc's no_module), one line for the test of the texts.
+      vscode.l10n.t("matplotlib is not available in Gossia (it needs compiled code). Gossia's own module gossia.pyplot covers common charts in a similar style."),
+      vscode.DiagnosticSeverity.Error);
+    diagnostic.source = 'Gossia';
+    diagnostic.code = 'matplotlib';
+    found.push(diagnostic);
+  }
+  return found;
+}
+
+function registerMatplotlibFix(context) {
+  const diagnostics = vscode.languages.createDiagnosticCollection('gossia');
+  const check = (document) => {
+    if (document.uri.scheme === SCHEME) diagnostics.set(document.uri, matplotlibDiagnostics(document));
+  };
+  vscode.workspace.textDocuments.forEach(check);
+  context.subscriptions.push(
+    diagnostics,
+    vscode.workspace.onDidOpenTextDocument(check),
+    vscode.workspace.onDidChangeTextDocument((e) => check(e.document)),
+    vscode.workspace.onDidCloseTextDocument((document) => diagnostics.delete(document.uri)),
+    vscode.languages.registerCodeActionsProvider({ scheme: SCHEME }, {
+      provideCodeActions(document, range, context) {
+        const actions = [];
+        for (const diagnostic of context.diagnostics) {
+          if (diagnostic.source !== 'Gossia' || diagnostic.code !== 'matplotlib') continue;
+          const line = document.lineAt(diagnostic.range.start.line);
+          const fix = matplotlibFix(line.text);
+          if (!fix) continue;
+          const action = new vscode.CodeAction(vscode.l10n.t('Change to {0}', fix.line),
+            vscode.CodeActionKind.QuickFix);
+          action.edit = new vscode.WorkspaceEdit();
+          action.edit.replace(document.uri, line.range, fix.text);
+          action.diagnostics = [diagnostic];
+          action.isPreferred = true;
+          actions.push(action);
+        }
+        return actions;
+      },
+    }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }),
+  );
+}
+
 function activate(context) {
+  registerMatplotlibFix(context);
   const provider = new WorkbookEditorProvider(context);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {

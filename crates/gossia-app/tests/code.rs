@@ -325,6 +325,47 @@ fn compile_lists_the_problems_and_a_click_goes_to_the_line() {
     assert!(harness.state().code.compiled.is_none());
 }
 
+/// An import of matplotlib fails with the advice to use Gossia pyplot, and
+/// the status line and the list of *Compile* offer to change the import; the
+/// change is one entry to undo.
+#[test]
+fn an_import_of_matplotlib_is_changed_to_gossia_pyplot_with_a_button() {
+    let fix = "Change to import gossia.pyplot as plt";
+    let (before, after) = (
+        "import matplotlib.pyplot as plt\n",
+        "import gossia.pyplot as plt\n",
+    );
+    let mut harness = window_with(&[("Plots", before)]);
+    open_editor(&mut harness);
+    settle(&mut harness);
+    // On the status line, under the load error.
+    click(&mut harness, fix);
+    settle(&mut harness);
+    assert_eq!(source(&harness, "Plots"), after);
+    assert_eq!(
+        harness.state().calc().module_status("Plots"),
+        Some(&ModuleStatus::Loaded)
+    );
+    harness.run();
+    assert_eq!(code(&harness), after);
+    assert!(harness.query_by_label(fix).is_none());
+    harness.state_mut().undo();
+    settle(&mut harness);
+    assert_eq!(source(&harness, "Plots"), before);
+
+    // In the list of Compile, beside the problem.
+    menu(&mut harness, "Debug");
+    click(&mut harness, "Compile Plots");
+    settle(&mut harness);
+    harness.get_by_label("Compile Plots: 1 problem");
+    assert_eq!(harness.get_all_by_label(fix).count(), 2);
+    harness.get_all_by_label(fix).next().unwrap().click();
+    harness.run();
+    settle(&mut harness);
+    assert_eq!(source(&harness, "Plots"), after);
+    harness.get_by_label("Compile Plots: no problems");
+}
+
 /// A module goes out as a `.py` file and comes back in as a new module, named
 /// after the file, with a number while the name is taken.
 #[test]

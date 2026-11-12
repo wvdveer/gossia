@@ -13,5 +13,7 @@
   "{0} did not answer within {1} s": "{0} 未在 {1} 秒内响应",
   "{0} cannot be reached ({1})": "无法访问 {0}（{1}）",
   "Loading Gossia...": "正在加载 Gossia...",
-  "Gossia did not start: {0}": "Gossia 未能启动：{0}"
+  "Gossia did not start: {0}": "Gossia 未能启动：{0}",
+  "matplotlib is not available in Gossia (it needs compiled code). Gossia's own module gossia.pyplot covers common charts in a similar style.": "Gossia 中无法使用 matplotlib（它需要编译后的代码）。Gossia 自己的模块 gossia.pyplot 以相似的风格提供常用图表。",
+  "Change to {0}": "改为 {0}"
 }

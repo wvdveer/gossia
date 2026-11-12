@@ -396,6 +396,40 @@ def scatter_chart(x, y, title=None, labels=None, *, width, height):
     return svg.done()
 
 
+@chart("Map")
+def map_chart(longitudes, latitudes, labels=None, title=None, *, width, height):
+    """A dot at each place, given by its longitude and latitude in degrees,
+    on an outline of the world's land and countries (Natural Earth, 1:110m),
+    with its label beside it when labels are given. The map shows the places
+    with room around them, or the whole world when there are none."""
+    xs = [_number(v, 'longitudes') for v in _list(longitudes, 'longitudes')]
+    ys = [_number(v, 'latitudes') for v in _list(latitudes, 'latitudes')]
+    if len(xs) != len(ys):
+        raise ValueError('there are %d longitudes for %d latitudes' % (len(xs), len(ys)))
+    for x in xs:
+        if not -180.0 <= x <= 180.0:
+            raise ValueError('a longitude is from -180 to 180 degrees, not %s' % _tick_text(x))
+    for y in ys:
+        if not -90.0 <= y <= 90.0:
+            raise ValueError('a latitude is from -90 to 90 degrees, not %s' % _tick_text(y))
+    names = [_label(l) for l in _list(labels, 'labels')] if labels is not None else []
+    plt = _pyplot
+    plt.clear()
+    plt.figure(width=width, height=height)
+    ax = plt.gca()
+    ax.world()
+    if xs:
+        # The world outline shows the places with room around them.
+        ax.scatter(xs, ys, s=30, color=_SERIES[0], edgecolors=_SURFACE, linewidths=1.5)
+        for x, y, name in zip(xs, ys, names):
+            if name:
+                ax.annotate(name, (x, y), xytext=(5, 4), textcoords='offset points', fontsize=8)
+    ax.set_axis_off()
+    if title is not None:
+        ax.set_title(_label(title))
+    return plt.svg()
+
+
 @chart("Sankey")
 def sankey_chart(sources, targets, values, title=None, *, width, height):
     """Flows from each source to its target, as bands as thick as their

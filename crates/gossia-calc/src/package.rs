@@ -30,7 +30,8 @@ pub const FORMAT_MINOR: u32 = 1;
 /// The version of the rules of Names and reserved words that wrote the file,
 /// so that a later version can tell whether the names in it were checked
 /// against the same list.
-/// 2 (0.6.0): `true`, `false` and `null`.
+/// 2 (0.6.0): `true`, `false` and `null`; `plt` (Gossia pyplot) and
+/// `map_chart`.
 pub const RESERVED_NAMES_VERSION: u32 = 2;
 
 /// The Python engine, as the manifest records it. The revision is the one
@@ -691,7 +692,14 @@ impl Calc {
             if tab.kind != "data" && tab.kind != "report" {
                 warnings.push(tr!("Tab {name} is a {kind} tab, which this version cannot show; it is kept as it is.", name = tab.name, kind = tab.kind));
             }
-            if let Some(problem) = crate::names::problem(&tab.name, crate::names::Subject::Tab) {
+            if crate::names::YIELD_TO_TABS.contains(&tab.name.as_str()) {
+                warnings.push(tr!(
+                    "Tab {name}: Formulas have a name {name} of their own. Rename the tab; until then, its formulas see the tab.",
+                    name = tab.name
+                ));
+            } else if let Some(problem) =
+                crate::names::problem(&tab.name, crate::names::Subject::Tab)
+            {
                 warnings.push(tr!(
                     "Tab {name}: {problem}",
                     name = tab.name,
