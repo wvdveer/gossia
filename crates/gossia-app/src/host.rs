@@ -102,6 +102,58 @@ pub trait Host {
     /// The answer to a module written, renamed or removed in the host's
     /// editor ([`ModuleEdit`]): `None` when it was done, or why not.
     fn module_answer(&self, _id: u32, _error: Option<&str>) {}
+
+    /// Whether the application's own File menu opens and saves workbooks
+    /// through the host (the browser page: *New*, *Open*, *Open Recent* and
+    /// *Save As* are Gossia's), rather than the host having its own (VS
+    /// Code's). Such a host answers a save later, with [`saved`] or
+    /// [`not_saved`], and gives a workbook to open through [`picked`] with
+    /// [`purpose::OPEN`].
+    fn keeps_files(&self) -> bool {
+        false
+    }
+
+    /// Asks the user where to save the workbook, always, offering `name`.
+    fn save_workbook_as(&self, name: &str, bytes: Vec<u8>) {
+        self.save_workbook(name, bytes);
+    }
+
+    /// A workbook was opened: the one last given with [`purpose::OPEN`]
+    /// (`picked`), whose file it is now, or one dropped, which has no file
+    /// to save into. `bytes` are its file, for the copy kept with the recent
+    /// workbooks.
+    fn workbook_opened(&self, _name: &str, _bytes: &[u8], _picked: bool) {}
+
+    /// The workbook shown is a new one, without a file.
+    fn new_workbook(&self) {}
+
+    /// The recent workbooks, the latest first: each a key and its name.
+    fn recent_workbooks(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// Opens a recent workbook, by its key: it comes through [`picked`] with
+    /// [`purpose::OPEN`].
+    fn open_recent(&self, _key: &str) {}
+
+    /// Takes a recent workbook off the list, with its copy; `None` takes
+    /// them all.
+    fn forget_recent(&self, _key: Option<&str>) {}
+
+    /// Whether secrets are kept for the session only unless the user asks
+    /// to remember one (the browser page).
+    fn secrets_per_session(&self) -> bool {
+        false
+    }
+
+    /// Whether this secret is remembered beyond the session.
+    fn secret_remembered(&self, _name: &str) -> bool {
+        true
+    }
+
+    /// Remembers a secret beyond the session, or keeps it for the session
+    /// only.
+    fn remember_secret(&self, _name: &str, _remember: bool) {}
 }
 
 /// A change to a module made in the host's editor, to be made in the
@@ -137,6 +189,18 @@ pub mod purpose {
     pub const DROP: &str = "drop";
     /// The code editor's File > Import module.
     pub const IMPORT_MODULE: &str = "import-module";
+    /// File > Open and File > Open Recent, in a host that keeps files: a
+    /// workbook to open.
+    pub const OPEN: &str = "open";
+}
+
+/// What became of a save given to a host that keeps files: the file's name
+/// when it was written (the user may have chosen another), or why not
+/// (`None`: the user cancelled).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveAnswer {
+    Saved(String),
+    NotSaved(Option<String>),
 }
 
 /// A file read through the host: picked in its dialog, or dropped.
@@ -154,6 +218,7 @@ type Then = Box<dyn FnOnce(FetchAnswer)>;
 thread_local! {
     static HOST: RefCell<Option<Rc<dyn Host>>> = const { RefCell::new(None) };
     static PICKED: RefCell<Vec<Picked>> = const { RefCell::new(Vec::new()) };
+    static SAVE_ANSWERS: RefCell<Vec<SaveAnswer>> = const { RefCell::new(Vec::new()) };
     /// What to do with the answers to the requests the host is making, by
     /// id, and the last id given.
     static FETCHES: RefCell<(u64, HashMap<u64, Then>)> = RefCell::new((0, HashMap::new()));
@@ -204,7 +269,7 @@ pub fn font_loaded(tag: &str, font: Result<Vec<u8>, String>) {
 }
 
 /// The secret of a data source is kept under this name.
-fn secret_name(source: &str) -> String {
+pub(crate) fn secret_name(source: &str) -> String {
     format!("source:{source}")
 }
 
@@ -309,6 +374,22 @@ pub fn picked(file: Picked) {
 /// The files that have come since the last call.
 pub fn take_picked() -> Vec<Picked> {
     PICKED.with(|p| std::mem::take(&mut *p.borrow_mut()))
+}
+
+/// A host that keeps files wrote the workbook, under this name.
+pub fn saved(name: String) {
+    SAVE_ANSWERS.with(|a| a.borrow_mut().push(SaveAnswer::Saved(name)));
+}
+
+/// A host that keeps files did not write the workbook: why, or `None` when
+/// the user cancelled.
+pub fn not_saved(why: Option<String>) {
+    SAVE_ANSWERS.with(|a| a.borrow_mut().push(SaveAnswer::NotSaved(why)));
+}
+
+/// The answers to saves that have come since the last call.
+pub fn take_save_answers() -> Vec<SaveAnswer> {
+    SAVE_ANSWERS.with(|a| std::mem::take(&mut *a.borrow_mut()))
 }
 
 /// Asks the host to make `request`; `then` is given the answer when it

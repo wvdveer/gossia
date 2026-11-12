@@ -620,9 +620,25 @@ pub fn run(app: &mut GossiaApp, cmd: &str, args: &Json) -> Result<Json, String> 
             }
             Ok(Json::Null)
         }
+        // In a host that keeps files (the browser page), Save As asks it
+        // where, without a path.
+        "save_as" if args.get("path").is_none() => {
+            app.begin_save_as();
+            Ok(Json::Null)
+        }
         "save_as" => {
             let path = text_arg(args, "path")?;
             app.save_as(std::path::Path::new(path))?;
+            Ok(Json::Null)
+        }
+        // File > Open and File > Open Recent in a host that keeps files: the
+        // host is asked for the workbook, which comes later.
+        "open" => {
+            app.begin_open();
+            Ok(Json::Null)
+        }
+        "open_recent" => {
+            app.begin_open_host_recent(text_arg(args, "key")?);
             Ok(Json::Null)
         }
         "wait_idle" => {

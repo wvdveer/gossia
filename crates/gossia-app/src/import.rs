@@ -715,6 +715,11 @@ impl GossiaApp {
                         self.code.notice = Some(e);
                     }
                 }
+                purpose::OPEN => self.open_from_host(&file.name, &file.bytes, true),
+                // A host that keeps files opens a workbook dropped on it.
+                purpose::DROP if workbook && Self::host_keeps_files().is_some() => {
+                    self.begin_open_dropped(&file.name, &file.bytes);
+                }
                 purpose::DROP if workbook => {
                     self.notice = Some(tr!(
                         "{name} is a workbook: open it from outside Gossia, as other files are \

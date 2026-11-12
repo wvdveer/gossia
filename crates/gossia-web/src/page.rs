@@ -28,6 +28,23 @@
 //! Such a host also hands the page a workbook while it runs
 //! ([`open_workbook`], for Revert).
 //!
+//! A host that keeps files for Gossia's own File menu (the browser page,
+//! DESIGN.md, The web version on GitHub Pages) has `keepsFiles()` giving
+//! `true`, and these:
+//! - `saveWorkbook(name, bytes)` writes the workbook's file (asking where
+//!   for one that has none) and answers with [`workbook_saved`] or
+//!   [`workbook_not_saved`]; `saveWorkbookAs(name, bytes)` always asks.
+//! - `pickFile('open', ['gossia'])` gives the workbook to open through
+//!   [`file_picked`]; `workbookOpened(name, bytes, picked)` says it was
+//!   opened, and `newWorkbook()` that the workbook shown has no file.
+//! - `recentWorkbooks()` (a flat list of keys and names, the latest first),
+//!   `openRecent(key)` (answered through [`file_picked`] as `open`) and
+//!   `forgetRecent(key)` (`null`: all).
+//! - `secretsPerSession()` giving `true`, `secretRemembered(name)` and
+//!   `rememberSecret(name, remember)`.
+//! - A request it could not make is answered with [`fetch_problem`], whose
+//!   messages are Gossia's.
+//!
 //! These the host may leave out:
 //! - `language()`: its language as a BCP 47 tag (VS Code's display
 //!   language), the interface's language when the preferences follow the
@@ -186,6 +203,68 @@ pub fn fetch_failed(id: f64, message: String) {
     repaint();
 }
 
+/// A request the browser page could not make, by the kind of problem, for
+/// Gossia to say in the user's language: `cors` (the site answers but does
+/// not allow this page's origin), `private` (a private network address the
+/// browser does not let a public page reach), `unreachable` (`detail` is the
+/// browser's error), `timeout` (`detail` the seconds), `redirect` and
+/// `too-large` (`detail` the most bytes). `url` is the address without its
+/// query.
+#[wasm_bindgen]
+pub fn fetch_problem(id: f64, kind: String, url: String, detail: String) {
+    let message = match kind.as_str() {
+        "cors" => tr!(
+            "{url} does not allow requests from this web page (its answer has no \
+             Access-Control-Allow-Origin for this site, so the browser keeps it from Gossia). \
+             A site can only be read from the web version if it allows that; the desktop \
+             application and the VS Code extension do not have this limit.",
+            url = url
+        ),
+        "private" => tr!(
+            "{url} is on this computer or the local network, which the browser does not let a \
+             public web page reach, or the site there does not allow this page's origin. The \
+             desktop application and the VS Code extension do not have this limit.",
+            url = url
+        ),
+        "timeout" => tr!(
+            "{url} did not answer within {seconds} s",
+            url = url,
+            seconds = detail
+        ),
+        "redirect" => tr!(
+            "{url} answered with a redirect, which is not followed",
+            url = url
+        ),
+        "too-large" => tr!(
+            "the response from {url} is larger than the maximum response size of {bytes} bytes",
+            url = url,
+            bytes = detail
+        ),
+        _ => tr!(
+            "{url} cannot be reached ({detail})",
+            url = url,
+            detail = detail
+        ),
+    };
+    gossia_app::host::fetched(id as u64, Err(message));
+    repaint();
+}
+
+/// The browser page wrote the workbook's file, under this name.
+#[wasm_bindgen]
+pub fn workbook_saved(name: String) {
+    gossia_app::host::saved(name);
+    repaint();
+}
+
+/// The browser page did not write the workbook's file: why, or `null` when
+/// the user cancelled.
+#[wasm_bindgen]
+pub fn workbook_not_saved(why: Option<String>) {
+    gossia_app::host::not_saved(why);
+    repaint();
+}
+
 pub(crate) fn repaint() {
     CONTEXT.with(|ctx| {
         if let Some(ctx) = &*ctx.borrow() {
@@ -199,6 +278,8 @@ struct JsHost {
     object: JsValue,
     /// The host has an editor of its own for modules (`openModule`).
     edits_modules: bool,
+    /// The host keeps files for Gossia's own File menu (`keepsFiles()`).
+    keeps_files: bool,
 }
 
 impl JsHost {
@@ -238,6 +319,7 @@ impl Host for JsHost {
             host: JsHost {
                 object: self.object.clone(),
                 edits_modules: false,
+                keeps_files: false,
             },
         })
     }
@@ -362,6 +444,75 @@ impl Host for JsHost {
     fn module_answer(&self, id: u32, error: Option<&str>) {
         let error = error.map_or(JsValue::NULL, JsValue::from_str);
         self.call_logged("moduleAnswer", &[JsValue::from_f64(f64::from(id)), error]);
+    }
+
+    fn keeps_files(&self) -> bool {
+        self.keeps_files
+    }
+
+    fn save_workbook_as(&self, name: &str, bytes: Vec<u8>) {
+        let bytes = Uint8Array::from(bytes.as_slice());
+        self.call_logged("saveWorkbookAs", &[JsValue::from_str(name), bytes.into()]);
+    }
+
+    fn workbook_opened(&self, name: &str, bytes: &[u8], picked: bool) {
+        let bytes = Uint8Array::from(bytes);
+        self.call_logged(
+            "workbookOpened",
+            &[
+                JsValue::from_str(name),
+                bytes.into(),
+                JsValue::from_bool(picked),
+            ],
+        );
+    }
+
+    fn new_workbook(&self) {
+        if self.keeps_files {
+            self.call_logged("newWorkbook", &[]);
+        }
+    }
+
+    fn recent_workbooks(&self) -> Vec<(String, String)> {
+        let list = self.call_logged("recentWorkbooks", &[]);
+        let list: Vec<String> = js_sys::Array::from(&list)
+            .iter()
+            .filter_map(|v| v.as_string())
+            .collect();
+        list.chunks(2)
+            .filter_map(|pair| Some((pair.first()?.clone(), pair.get(1)?.clone())))
+            .collect()
+    }
+
+    fn open_recent(&self, key: &str) {
+        self.call_logged("openRecent", &[JsValue::from_str(key)]);
+    }
+
+    fn forget_recent(&self, key: Option<&str>) {
+        let key = key.map_or(JsValue::NULL, JsValue::from_str);
+        self.call_logged("forgetRecent", &[key]);
+    }
+
+    fn secrets_per_session(&self) -> bool {
+        self.has("secretsPerSession")
+            && self.call_logged("secretsPerSession", &[]).as_bool() == Some(true)
+    }
+
+    fn secret_remembered(&self, name: &str) -> bool {
+        !self.has("secretRemembered")
+            || self
+                .call_logged("secretRemembered", &[JsValue::from_str(name)])
+                .as_bool()
+                == Some(true)
+    }
+
+    fn remember_secret(&self, name: &str, remember: bool) {
+        if self.has("rememberSecret") {
+            self.call_logged(
+                "rememberSecret",
+                &[JsValue::from_str(name), JsValue::from_bool(remember)],
+            );
+        }
     }
 }
 
@@ -490,10 +641,14 @@ pub async fn start_app(
     // `openModule`.
     let edits_modules =
         Reflect::get(&host, &JsValue::from_str("openModule")).is_ok_and(|f| f.is_function());
-    let host = Rc::new(JsHost {
+    let mut host = JsHost {
         object: host,
         edits_modules,
-    });
+        keeps_files: false,
+    };
+    host.keeps_files =
+        host.has("keepsFiles") && host.call_logged("keepsFiles", &[]).as_bool() == Some(true);
+    let host = Rc::new(host);
     gossia_app::host::set(host.clone());
     let page_host = host.clone();
     let (user, mut warnings) = User::load(Config::in_storage(Rc::new(HostStorage(host.clone()))));

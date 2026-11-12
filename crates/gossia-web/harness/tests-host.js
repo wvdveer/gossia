@@ -1,5 +1,6 @@
-// What only the page has: the test host behind the host interface (DESIGN.md,
-// Web port, 0.3.0). The workbook is saved through the host and opened again in
+// What only the page has: the host behind the host interface (DESIGN.md,
+// Web port, 0.3.0; since 17a the browser host, whose files are in
+// tests-browser.js). The workbook is saved through the host and opened again in
 // a new tab from the bytes the host was given; the preferences are kept in the
 // host's storage; and a data source is read over HTTP through the host, once
 // answered by the test and once by the page's own server.

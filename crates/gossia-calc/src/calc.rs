@@ -1528,6 +1528,17 @@ impl Calc {
         self.history.mark_saved();
     }
 
+    /// Where the history is now: a save written later counts the workbook
+    /// as saved as it was here ([`Calc::mark_saved_at`]).
+    pub fn save_point(&self) -> u64 {
+        self.history.save_point()
+    }
+
+    /// Counts the workbook as saved as it was at `point`.
+    pub fn mark_saved_at(&mut self, point: u64) {
+        self.history.mark_saved_at(point);
+    }
+
     /// Whether the workbook differs from the last saved state. Undoing back to
     /// that state clears it.
     pub fn is_modified(&self) -> bool {

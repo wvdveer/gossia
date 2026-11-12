@@ -25,6 +25,17 @@ struct Calls {
     /// of those asked for.
     ships_fonts: bool,
     fonts_asked: Vec<String>,
+    /// Whether the host keeps files for Gossia's File menu (the browser
+    /// page), and what it was told and asked of them.
+    keeps_files: bool,
+    saved_as: Vec<String>,
+    workbooks_opened: Vec<(String, bool)>,
+    new_workbooks: usize,
+    recent: Vec<(String, String)>,
+    recent_opened: Vec<String>,
+    recent_forgotten: Vec<Option<String>>,
+    /// Secrets remembered beyond the session (the browser page).
+    remembered: std::collections::BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -109,6 +120,59 @@ impl Host for FakeHost {
             .borrow_mut()
             .module_answers
             .push((id, error.map(str::to_owned)));
+    }
+
+    fn keeps_files(&self) -> bool {
+        self.0.borrow().keeps_files
+    }
+
+    fn save_workbook_as(&self, name: &str, bytes: Vec<u8>) {
+        let mut calls = self.0.borrow_mut();
+        calls.saved_as.push(name.to_owned());
+        calls.workbooks.push((name.to_owned(), bytes));
+    }
+
+    fn workbook_opened(&self, name: &str, _bytes: &[u8], picked: bool) {
+        self.0
+            .borrow_mut()
+            .workbooks_opened
+            .push((name.to_owned(), picked));
+    }
+
+    fn new_workbook(&self) {
+        self.0.borrow_mut().new_workbooks += 1;
+    }
+
+    fn recent_workbooks(&self) -> Vec<(String, String)> {
+        self.0.borrow().recent.clone()
+    }
+
+    fn open_recent(&self, key: &str) {
+        self.0.borrow_mut().recent_opened.push(key.to_owned());
+    }
+
+    fn forget_recent(&self, key: Option<&str>) {
+        self.0
+            .borrow_mut()
+            .recent_forgotten
+            .push(key.map(str::to_owned));
+    }
+
+    fn secrets_per_session(&self) -> bool {
+        self.0.borrow().keeps_files
+    }
+
+    fn secret_remembered(&self, name: &str) -> bool {
+        self.0.borrow().remembered.contains(name)
+    }
+
+    fn remember_secret(&self, name: &str, remember: bool) {
+        let mut calls = self.0.borrow_mut();
+        if remember {
+            calls.remembered.insert(name.to_owned());
+        } else {
+            calls.remembered.remove(name);
+        }
     }
 }
 
@@ -629,4 +693,205 @@ fn the_extension_s_texts_are_in_every_language() {
             assert_eq!(vscode_places(key), vscode_places(text), "{locale}: {key}");
         }
     }
+}
+
+// ------------------------------------------------- the browser page's files
+
+/// The browser page: a host that keeps files for Gossia's own File menu
+/// (DESIGN.md, The web version on GitHub Pages, 17a).
+fn browser_hosted() -> (Rc<FakeHost>, GossiaApp) {
+    let (fake, app) = hosted();
+    fake.0.borrow_mut().keeps_files = true;
+    (fake, app)
+}
+
+/// Changes the sample workbook, so that it has unsaved changes.
+fn edit(app: &mut GossiaApp) {
+    let run = |app: &mut GossiaApp, cmd: &str, args: serde_json::Value| {
+        crate::control::run(app, cmd, &args).unwrap();
+    };
+    run(app, "tab", serde_json::json!({ "name": "Orders" }));
+    run(app, "select", serde_json::json!({ "path": "tax_rate" }));
+    run(app, "enter", serde_json::json!({ "text": "0.5" }));
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn a_save_in_the_browser_counts_once_the_page_has_written_the_file() {
+    let (fake, mut app) = browser_hosted();
+    let ctx = egui::Context::default();
+    edit(&mut app);
+    app.begin_save();
+    assert_eq!(fake.0.borrow().workbooks.len(), 1);
+    assert!(app.is_dirty(), "not saved until the page says so");
+    // The user chose another name in the browser's dialog.
+    host::saved("Sales.gossia".to_owned());
+    app.receive_save_answers(&ctx);
+    assert!(!app.is_dirty());
+    assert_eq!(app.file_name(), "Sales.gossia");
+}
+
+#[test]
+fn a_save_cancelled_or_refused_in_the_browser_leaves_the_changes_unsaved() {
+    let (_fake, mut app) = browser_hosted();
+    let ctx = egui::Context::default();
+    edit(&mut app);
+    app.begin_save();
+    host::not_saved(None);
+    app.receive_save_answers(&ctx);
+    assert!(app.is_dirty());
+    assert_eq!(app.notice, None, "cancelling says nothing");
+    app.begin_save();
+    host::not_saved(Some("the disk is full".to_owned()));
+    app.receive_save_answers(&ctx);
+    assert!(app.is_dirty());
+    let notice = app.notice.clone().unwrap_or_default();
+    assert!(notice.contains("the disk is full"), "{notice}");
+}
+
+/// Edits made while the browser's dialog was open are not counted as saved.
+#[test]
+fn edits_made_while_the_page_saves_stay_unsaved() {
+    let (_fake, mut app) = browser_hosted();
+    let ctx = egui::Context::default();
+    app.begin_save();
+    edit(&mut app);
+    host::saved("Untitled.gossia".to_owned());
+    app.receive_save_answers(&ctx);
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn save_as_in_the_browser_always_asks_where() {
+    let (fake, mut app) = browser_hosted();
+    app.begin_save_as();
+    assert_eq!(fake.0.borrow().saved_as, ["Untitled.gossia"]);
+    assert!(app.files.browsing.is_none() && app.files.dialog.is_none());
+}
+
+#[test]
+fn open_in_the_browser_asks_the_page_for_a_workbook_and_tells_it_it_was_opened() {
+    let (fake, mut app) = browser_hosted();
+    let bytes = app.backup_bytes().unwrap();
+    app.begin_open();
+    assert_eq!(
+        fake.0.borrow().picks,
+        [("open".to_owned(), vec!["gossia".to_owned()])]
+    );
+    host::picked(Picked {
+        purpose: purpose::OPEN.to_owned(),
+        name: "Book.gossia".to_owned(),
+        bytes,
+    });
+    app.receive_picked();
+    assert_eq!(app.notice, None);
+    assert_eq!(app.file_name(), "Book.gossia");
+    assert_eq!(
+        fake.0.borrow().workbooks_opened,
+        [("Book.gossia".to_owned(), true)]
+    );
+    // A file that is no workbook is not opened, and the page is not told.
+    pick(purpose::OPEN, "Broken.gossia", "not a zip");
+    app.receive_picked();
+    assert!(
+        app.notice
+            .clone()
+            .unwrap_or_default()
+            .contains("Broken.gossia")
+    );
+    assert_eq!(fake.0.borrow().workbooks_opened.len(), 1);
+}
+
+#[test]
+fn a_workbook_dropped_on_the_page_opens_after_the_question_about_changes() {
+    let (fake, mut app) = browser_hosted();
+    let ctx = egui::Context::default();
+    let bytes = app.backup_bytes().unwrap();
+    edit(&mut app);
+    host::picked(Picked {
+        purpose: purpose::DROP.to_owned(),
+        name: "Dropped.gossia".to_owned(),
+        bytes,
+    });
+    app.receive_picked();
+    assert!(matches!(
+        app.files.confirm,
+        Some(crate::workbook_file::Pending::OpenDropped(..))
+    ));
+    app.answer_unsaved(&ctx, false);
+    assert_eq!(app.file_name(), "Dropped.gossia");
+    assert!(!app.is_dirty());
+    assert_eq!(
+        fake.0.borrow().workbooks_opened,
+        [("Dropped.gossia".to_owned(), false)],
+        "dropped: no file of its own to save into"
+    );
+}
+
+#[test]
+fn saving_before_opening_another_waits_for_the_page_to_have_written_it() {
+    let (fake, mut app) = browser_hosted();
+    let ctx = egui::Context::default();
+    fake.0
+        .borrow_mut()
+        .recent
+        .push(("k1".to_owned(), "Old.gossia".to_owned()));
+    edit(&mut app);
+    app.begin_open_host_recent("k1");
+    assert!(fake.0.borrow().recent_opened.is_empty(), "asked first");
+    app.answer_unsaved(&ctx, true);
+    assert_eq!(fake.0.borrow().workbooks.len(), 1, "saved first");
+    assert!(app.files.confirm.is_none());
+    assert!(
+        fake.0.borrow().recent_opened.is_empty(),
+        "waiting for the save"
+    );
+    host::saved("Untitled.gossia".to_owned());
+    app.receive_save_answers(&ctx);
+    assert_eq!(fake.0.borrow().recent_opened, ["k1"]);
+
+    // A save that is cancelled opens nothing.
+    edit(&mut app);
+    app.begin_new();
+    app.answer_unsaved(&ctx, true);
+    host::not_saved(None);
+    app.receive_save_answers(&ctx);
+    assert!(app.is_dirty());
+    assert_eq!(fake.0.borrow().new_workbooks, 0);
+}
+
+#[test]
+fn a_new_workbook_tells_the_page_it_has_no_file() {
+    let (fake, mut app) = browser_hosted();
+    app.begin_new();
+    assert_eq!(fake.0.borrow().new_workbooks, 1);
+    assert_eq!(app.doc.path, None);
+}
+
+#[test]
+fn a_secret_is_remembered_on_the_browser_only_when_asked() {
+    let (fake, mut app) = browser_hosted();
+    let mut form = crate::sources_ui::SourceForm::new();
+    assert_eq!(form.remember, Some(false), "for the session by default");
+    form.draft.name = "Api".to_owned();
+    form.draft.url = Some("https://example.com".to_owned());
+    form.draft.auth = gossia_calc::sources::HttpAuth::Bearer;
+    form.token = crate::sources_ui::Secret::Change("s3cret".to_owned());
+    app.save_source_form(&form).unwrap();
+    assert!(fake.0.borrow().remembered.is_empty());
+
+    let def = app.user.sources.get("Api").unwrap().unwrap();
+    let mut form = crate::sources_ui::SourceForm::edit(def);
+    form.remember = Some(true);
+    app.save_source_form(&form).unwrap();
+    assert!(fake.0.borrow().remembered.contains("source:Api"));
+    let def = app.user.sources.get("Api").unwrap().unwrap();
+    assert_eq!(
+        crate::sources_ui::SourceForm::edit(def).remember,
+        Some(true)
+    );
+
+    // Elsewhere there is no such choice.
+    fake.0.borrow_mut().keeps_files = false;
+    assert_eq!(crate::sources_ui::SourceForm::new().remember, None);
 }

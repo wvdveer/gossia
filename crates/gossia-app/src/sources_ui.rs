@@ -128,6 +128,10 @@ pub struct SourceForm {
     stored_token: Option<String>,
     pub password: Secret,
     pub token: Secret,
+    /// Whether the password and token are remembered on this browser, in a
+    /// host that keeps secrets for the session only (the browser page);
+    /// `None` elsewhere.
+    pub remember: Option<bool>,
     /// What is typed for the numbers and the headers.
     pub port: String,
     pub pooling: bool,
@@ -150,8 +154,15 @@ impl SourceForm {
             Some(s) if !s.is_empty() => Secret::Keep,
             _ => Secret::Change(String::new()),
         };
+        let remember = crate::host::current()
+            .filter(|h| h.secrets_per_session())
+            .map(|h| {
+                old.as_deref()
+                    .is_some_and(|name| h.secret_remembered(&crate::host::secret_name(name)))
+            });
         SourceForm {
             old,
+            remember,
             password: secret(&def.password),
             token: secret(&def.token),
             stored_password: def.password.clone(),
@@ -510,6 +521,27 @@ fn form_fields(ui: &mut egui::Ui, form: &mut SourceForm) {
                 }
             }
 
+            // In the browser a secret is kept for the session unless the
+            // user asks for more.
+            let secret = match kind {
+                SourceKind::Http => form.draft.auth != HttpAuth::None,
+                _ => !kind.is_file(),
+            };
+            if let Some(remember) = form.remember.as_mut()
+                && secret
+            {
+                ui.label("");
+                ui.checkbox(remember, tr!("Remember on this browser"))
+                    .on_hover_text(tr!(
+                        "Off: the password or token is kept until this page is closed, and \
+                         asked for again in a new session. On: it is kept in this browser's \
+                         storage for the site, unencrypted, where anything running on the \
+                         site could read it, until it is removed here or the site's data is \
+                         cleared."
+                    ));
+                ui.end_row();
+            }
+
             if !kind.is_file() {
                 ui.label(tr!("Pooling"));
                 ui.horizontal(|ui| {
@@ -581,6 +613,9 @@ impl GossiaApp {
         let def = form.definition()?;
         let name = def.name.clone();
         self.user.sources.save(def, form.old.as_deref(), false)?;
+        if let (Some(remember), Some(host)) = (form.remember, crate::host::current()) {
+            host.remember_secret(&crate::host::secret_name(&name), remember);
+        }
         Ok(name)
     }
 

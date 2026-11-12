@@ -431,6 +431,20 @@ impl History {
         self.saved != Some(self.position())
     }
 
+    /// Where the history is now, for [`History::mark_saved_at`].
+    pub fn save_point(&self) -> u64 {
+        self.position()
+    }
+
+    /// Counts the workbook as saved as it was at `point`: for a save that
+    /// is written later, after more edits may have come.
+    pub fn mark_saved_at(&mut self, point: u64) {
+        self.saved = Some(point);
+        if point == self.position() {
+            self.open_for_merge = false;
+        }
+    }
+
     pub fn len(&self) -> (usize, usize) {
         (self.undo.len(), self.redo.len())
     }

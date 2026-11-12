@@ -122,6 +122,23 @@ pub enum Pending {
     OpenRecent(PathBuf),
     /// Starting a new workbook.
     New,
+    /// Opening a recent workbook of a host that keeps files, by its key.
+    OpenHostRecent(String),
+    /// Opening a workbook dropped on the page of a host that keeps files:
+    /// its name and file.
+    OpenDropped(String, std::rc::Rc<[u8]>),
+}
+
+/// A save given to a host that keeps files, until it answers: what the
+/// workbook was when it was saved.
+#[derive(Debug)]
+pub struct HostSave {
+    meta: Meta,
+    /// The history's place and the version of the designs then.
+    point: u64,
+    forms: (u64, u64),
+    /// The workbook saved: the answer is for it only.
+    workbook_id: String,
 }
 
 /// The dialog for a file name.
@@ -166,6 +183,10 @@ pub struct FileUi {
     pub quit_confirmed: bool,
     /// The title last given to the window.
     pub title: String,
+    /// A save given to a host that keeps files, until it answers.
+    pub host_save: Option<HostSave>,
+    /// What waits for that answer: what "Save the changes?" was asked for.
+    pub after_save: Option<Pending>,
 }
 
 impl Default for FileUi {
@@ -178,6 +199,8 @@ impl Default for FileUi {
             confirm: None,
             quit_confirmed: false,
             title: String::new(),
+            host_save: None,
+            after_save: None,
         }
     }
 }
@@ -236,6 +259,25 @@ impl GossiaApp {
         Ok(())
     }
 
+    /// Opens a workbook a host that keeps files gave (`picked`: the one it
+    /// was asked for, whose file it now is; otherwise dropped), and tells
+    /// the host. The caller has dealt with unsaved changes.
+    pub fn open_from_host(&mut self, name: &str, bytes: &[u8], picked: bool) {
+        match self.open_bytes(name, bytes) {
+            Ok(()) => {
+                if let Some(host) = crate::host::current() {
+                    host.workbook_opened(name, bytes, picked);
+                }
+            }
+            Err(e) => self.notice = Some(format!("{name}: {e}")),
+        }
+    }
+
+    /// Whether the host, if there is one, keeps files for the File menu.
+    pub(crate) fn host_keeps_files() -> Option<std::rc::Rc<dyn crate::host::Host>> {
+        crate::host::current().filter(|h| h.keeps_files())
+    }
+
     /// Opens a file from the recent files. One that is no longer there is
     /// taken off the list.
     pub fn open_recent(&mut self, path: &Path) {
@@ -262,6 +304,9 @@ impl GossiaApp {
             format_version: (FORMAT_MAJOR, FORMAT_MINOR),
         };
         self.install(opened, None);
+        if let Some(host) = crate::host::current() {
+            host.new_workbook();
+        }
     }
 
     /// Shows a workbook that was read. Whether it runs Python is decided here:
@@ -387,15 +432,69 @@ impl GossiaApp {
     /// Saves through the host, which writes the file the workbook came from
     /// (or asks where, for a new one).
     pub fn save_to_host(&mut self, host: &dyn crate::host::Host) -> Result<(), String> {
+        self.save_through_host(host, false)
+    }
+
+    /// Saves through the host; `as_new` asks where, always (Save As, in a
+    /// host that keeps files). Such a host answers later
+    /// ([`GossiaApp::receive_save_answers`]), and the workbook counts as
+    /// saved as it was now when it says it wrote it.
+    fn save_through_host(
+        &mut self,
+        host: &dyn crate::host::Host,
+        as_new: bool,
+    ) -> Result<(), String> {
         let (bytes, meta) = self.workbook_bytes()?;
         // A new workbook is offered under the name Save As would suggest.
         let name = match self.doc.path {
             Some(_) => self.file_name(),
             None => format!("Untitled.{EXTENSION}"),
         };
+        if host.keeps_files() {
+            self.files.host_save = Some(HostSave {
+                meta,
+                point: self.calc().save_point(),
+                forms: designs_version(self.calc()),
+                workbook_id: self.doc.workbook_id.clone(),
+            });
+            if as_new {
+                host.save_workbook_as(&name, bytes);
+            } else {
+                host.save_workbook(&name, bytes);
+            }
+            return Ok(());
+        }
         host.save_workbook(&name, bytes);
         self.saved(meta, Path::new(&name));
         Ok(())
+    }
+
+    /// Takes the answers of a host that keeps files to the saves given it:
+    /// a workbook written counts as saved, under the name it was written
+    /// as, and what waited for it goes on; one not written says why.
+    pub(crate) fn receive_save_answers(&mut self, ctx: &egui::Context) {
+        use crate::host::SaveAnswer;
+        for answer in crate::host::take_save_answers() {
+            let saving = self.files.host_save.take();
+            match answer {
+                SaveAnswer::Saved(name) => {
+                    if let Some(save) = saving
+                        && save.workbook_id == self.doc.workbook_id
+                    {
+                        self.saved_at(save.meta, Path::new(&name), save.point, save.forms);
+                    }
+                    if let Some(pending) = self.files.after_save.take() {
+                        self.carry_out(ctx, pending);
+                    }
+                }
+                SaveAnswer::NotSaved(why) => {
+                    self.files.after_save = None;
+                    if let Some(why) = why {
+                        self.notice = Some(tr!("The workbook was not saved: {why}", why = why));
+                    }
+                }
+            }
+        }
     }
 
     /// The workbook as a save would write it, without counting it as saved:
@@ -429,8 +528,16 @@ impl GossiaApp {
     /// What follows a save: the workbook is as saved, and trusted as it is
     /// if it is trusted.
     fn saved(&mut self, meta: Meta, path: &Path) {
-        self.session.calc_mut().mark_saved();
-        self.doc.saved_forms = designs_version(self.calc());
+        let point = self.calc().save_point();
+        let forms = designs_version(self.calc());
+        self.saved_at(meta, path, point, forms);
+    }
+
+    /// What follows a save written after it was asked for: the workbook is
+    /// as it was then, at `point` in the history with the designs at `forms`.
+    fn saved_at(&mut self, meta: Meta, path: &Path, point: u64, forms: (u64, u64)) {
+        self.session.calc_mut().mark_saved_at(point);
+        self.doc.saved_forms = forms;
         self.doc.views = meta.views;
         self.doc.workbook_view = meta.workbook_view;
         self.doc.path = Some(path.to_path_buf());
@@ -491,6 +598,28 @@ impl GossiaApp {
         }
     }
 
+    /// File > Open Recent in a host that keeps files: asks first about
+    /// unsaved changes.
+    pub fn begin_open_host_recent(&mut self, key: &str) {
+        self.commit_code();
+        if self.is_dirty() {
+            self.files.confirm = Some(Pending::OpenHostRecent(key.to_owned()));
+        } else if let Some(host) = crate::host::current() {
+            host.open_recent(key);
+        }
+    }
+
+    /// A workbook dropped on the page of a host that keeps files: asks
+    /// first about unsaved changes.
+    pub fn begin_open_dropped(&mut self, name: &str, bytes: &[u8]) {
+        self.commit_code();
+        if self.is_dirty() {
+            self.files.confirm = Some(Pending::OpenDropped(name.to_owned(), bytes.into()));
+        } else {
+            self.open_from_host(name, bytes, false);
+        }
+    }
+
     /// File > New: asks first about unsaved changes.
     pub fn begin_new(&mut self) {
         self.commit_code();
@@ -514,6 +643,10 @@ impl GossiaApp {
     }
 
     fn show_open_dialog(&mut self) {
+        if let Some(host) = Self::host_keeps_files() {
+            host.pick_file(crate::host::purpose::OPEN, &[EXTENSION]);
+            return;
+        }
         if self.files.browse {
             self.files.browser = new_browser()
                 .title(tr!("Open a workbook"))
@@ -589,6 +722,12 @@ impl GossiaApp {
     }
 
     pub fn begin_save_as(&mut self) {
+        if let Some(host) = Self::host_keeps_files() {
+            if let Err(e) = self.save_through_host(&*host, true) {
+                self.notice = Some(e);
+            }
+            return;
+        }
         if self.files.browse {
             let name = if self.doc.path.is_some() {
                 self.file_name()
@@ -659,6 +798,14 @@ impl GossiaApp {
         let Some(pending) = self.files.confirm.take() else {
             return;
         };
+        if save && let Some(host) = Self::host_keeps_files() {
+            // The host answers later; what was asked for waits for it.
+            match self.save_to_host(&*host) {
+                Ok(()) => self.files.after_save = Some(pending),
+                Err(e) => self.notice = Some(e),
+            }
+            return;
+        }
         if save {
             if self.doc.path.is_none() {
                 // A name is needed first; the question is asked again after.
@@ -671,6 +818,12 @@ impl GossiaApp {
                 return;
             }
         }
+        self.carry_out(ctx, pending);
+    }
+
+    /// Does what "Save the changes?" was asked for, once they are saved or
+    /// left.
+    fn carry_out(&mut self, ctx: &egui::Context, pending: Pending) {
         match pending {
             Pending::Quit => {
                 self.files.quit_confirmed = true;
@@ -679,6 +832,12 @@ impl GossiaApp {
             Pending::Open => self.show_open_dialog(),
             Pending::OpenRecent(path) => self.open_recent(&path),
             Pending::New => self.new_workbook(),
+            Pending::OpenHostRecent(key) => {
+                if let Some(host) = crate::host::current() {
+                    host.open_recent(&key);
+                }
+            }
+            Pending::OpenDropped(name, bytes) => self.open_from_host(&name, &bytes, false),
         }
     }
 
@@ -753,7 +912,10 @@ impl GossiaApp {
                         Pending::Quit => {
                             tr!("Save the changes to {file} before quitting?", file = file)
                         }
-                        Pending::Open | Pending::OpenRecent(_) => tr!(
+                        Pending::Open
+                        | Pending::OpenRecent(_)
+                        | Pending::OpenHostRecent(_)
+                        | Pending::OpenDropped(..) => tr!(
                             "Save the changes to {file} before opening another workbook?",
                             file = file
                         ),

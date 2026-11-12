@@ -27,6 +27,7 @@
 <div>
   <button id="runEdit">Edit and recalculate</button>
   <button id="runHost">The test host</button>
+  <button id="runBrowser">The browser host</button>
   <button id="runAll">Run all</button>
 </div>
 
@@ -35,6 +36,7 @@
 <script src="harness.js"></script>
 <script src="tests-edit.js"></script>
 <script src="tests-host.js"></script>
+<script src="tests-browser.js"></script>
 <script>
   const h = window.harness;
   h.attachLog(document.getElementById('log'));
@@ -57,9 +59,10 @@
     window.harnessDone = { ...h.results, log: h.logText() };
   }
 
-  const all = [runEditTests, runHostTests];
+  const all = [runEditTests, runHostTests, runBrowserTests];
   document.getElementById('runEdit').addEventListener('click', () => run([runEditTests]));
   document.getElementById('runHost').addEventListener('click', () => run([runHostTests]));
+  document.getElementById('runBrowser').addEventListener('click', () => run([runBrowserTests]));
   document.getElementById('runAll').addEventListener('click', () => run(all));
   if (new URLSearchParams(location.search).has('auto')) run(all);
 </script>

@@ -237,6 +237,7 @@ impl GossiaApp {
         self.disconnect_window(ui.ctx());
         self.drop_hint(ui.ctx());
         self.receive_picked();
+        self.receive_save_answers(ui.ctx());
         self.sync_sources();
         self.sync_host_modules();
         self.forward_fetches();
@@ -419,17 +420,23 @@ impl GossiaApp {
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button(tr!("File"), |ui| {
-                // In a host the host opens, saves and closes the file.
+                // In a host the host opens, saves and closes the file,
+                // unless it keeps files for Gossia's own menu (the browser
+                // page), which has no Quit.
                 let hosted = crate::host::current().is_some();
-                if !hosted && ui.button(tr!("New")).clicked() {
+                let keeps_files = Self::host_keeps_files();
+                let own_files = !hosted || keeps_files.is_some();
+                if own_files && ui.button(tr!("New")).clicked() {
                     self.begin_new();
                     ui.close();
                 }
-                if !hosted && ui.button(tr!("Open...")).clicked() {
+                if own_files && ui.button(tr!("Open...")).clicked() {
                     self.begin_open();
                     ui.close();
                 }
-                if !hosted {
+                if let Some(host) = &keeps_files {
+                    self.host_recent_menu(ui, &**host);
+                } else if !hosted {
                     self.recent_menu(ui);
                 }
                 if ui
@@ -498,7 +505,7 @@ impl GossiaApp {
                     self.begin_save();
                     ui.close();
                 }
-                if !hosted && ui.button(tr!("Save As...")).clicked() {
+                if own_files && ui.button(tr!("Save As...")).clicked() {
                     self.begin_save_as();
                     ui.close();
                 }
@@ -640,6 +647,27 @@ impl GossiaApp {
                 ui.separator();
                 if ui.button(tr!("Options...")).clicked() {
                     self.begin_options(None);
+                    ui.close();
+                }
+            });
+        });
+    }
+
+    /// File > Open Recent in a host that keeps files: the workbooks it
+    /// lists, the latest first.
+    fn host_recent_menu(&mut self, ui: &mut egui::Ui, host: &dyn crate::host::Host) {
+        let recent = host.recent_workbooks();
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            ui.menu_button(tr!("Open Recent"), |ui| {
+                for (key, name) in &recent {
+                    if ui.button(name).clicked() {
+                        self.begin_open_host_recent(key);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button(tr!("Clear the list")).clicked() {
+                    host.forget_recent(None);
                     ui.close();
                 }
             });

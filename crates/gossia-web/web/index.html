@@ -13,25 +13,29 @@
 </style>
 </head>
 <body>
-<!-- The application in the plain browser page, with the test host behind the
-     host interface (DESIGN.md, Web port, 0.3.0). Add ?open=<file> to open a
-     workbook served beside this page, or ?sample for the sample workbook. The
-     test build is driven by harness.html beside it. -->
+<!-- The application in the browser page, with the browser host behind the
+     host interface (host.js; DESIGN.md, The web version on GitHub Pages).
+     Add ?open=<file> to open a workbook served beside this page, or ?sample
+     for the sample workbook. The test build is driven by harness.html beside
+     it. -->
 <canvas id="app"></canvas>
 <div id="loading">Loading Gossia...</div>
 <script type="module">
 import init, * as gossia from './pkg/gossia_web.js';
-const { start_app, worker_message, file_picked, fetch_answered, fetch_failed, last_panic } = gossia;
+import { browserHost } from './host.js';
+const { start_app, file_picked, fetch_answered, fetch_failed, last_panic } = gossia;
 
-// What the test host did, for the tests to look at.
+// What the host did, for the tests to look at and answer.
 const record = { workers: 0, saves: [], files: [], picks: [], dirty: false, opened: [],
-                 workerErrors: [], fetches: [] };
+                 workbooks: [], workerErrors: [], fetches: [] };
 window.testHost = record;
 window.lastPanic = () => last_panic();
-// The tests answer the last pickFile with a file of their own.
+// The tests answer the last pickFile with a file of their own: text, or
+// bytes (a workbook).
 record.answerPick = (name, text) => {
   const last = record.picks[record.picks.length - 1];
-  file_picked(last.purpose, name, new TextEncoder().encode(text));
+  const bytes = typeof text === 'string' ? new TextEncoder().encode(text) : new Uint8Array(text);
+  file_picked(last.purpose, name, bytes);
 };
 
 // The tests answer a request (with answerFetches set) themselves:
@@ -43,113 +47,11 @@ record.answerFetch = (i, status, text, headers = []) => {
 };
 record.failFetch = (i, message) => fetch_failed(record.fetches[i].id, message);
 
-// An HTTP request for a data source, with the browser's fetch: a redirect
-// is not followed, and the site has to allow the page's origin (CORS) unless
-// it is the page's own. VS Code's extension host makes it without CORS.
-async function makeRequest(id, method, url, headers, body, timeoutMs, maxBytes) {
-  const shown = url.split('?')[0];
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), timeoutMs);
-  try {
-    const pairs = [];
-    for (let i = 0; i + 1 < headers.length; i += 2) pairs.push([headers[i], headers[i + 1]]);
-    const reply = await fetch(url, {
-      method, headers: pairs, body: body ?? undefined, redirect: 'manual',
-      signal: abort.signal, credentials: 'omit', cache: 'no-store',
-    });
-    if (reply.type === 'opaqueredirect') {
-      fetch_failed(id, `${shown} answered with a redirect, which is not followed`);
-      return;
-    }
-    const bytes = new Uint8Array(await reply.arrayBuffer());
-    if (bytes.length > maxBytes) {
-      fetch_failed(id, `the response from ${shown} is larger than the maximum response size of ${maxBytes} bytes`);
-      return;
-    }
-    const flat = [];
-    reply.headers.forEach((value, name) => flat.push(name, value));
-    fetch_answered(id, reply.status, reply.statusText, flat, bytes);
-  } catch (err) {
-    fetch_failed(id, abort.signal.aborted
-      ? `${shown} did not answer within ${timeoutMs / 1000} s`
-      : `${shown} cannot be reached (${err.message}); a site that does not allow this page's origin cannot be read from a browser page`);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const STORAGE = 'gossia:';
-let worker = null;
-
-// The test host: the browser's storage and a Web Worker. VS Code's panel
-// gives the same functions, backed by the extension host.
-const host = {
-  startWorker() {
-    if (worker) worker.terminate();
-    worker = new Worker('./worker.js', { type: 'module' });
-    worker.onmessage = (e) => {
-      if (e.data instanceof Uint8Array) worker_message(e.data);
-      else record.workerErrors.push(e.data);
-    };
-    record.workers++;
-  },
-  postWorker(bytes) { worker.postMessage(bytes, [bytes.buffer]); },
-  saveWorkbook(name, bytes) {
-    record.saves.push({ name, bytes });
-    document.title = name + ' - Gossia';
-  },
-  setDirty(dirty) {
-    record.dirty = dirty;
-  },
-  // The browser's own file chooser; the tests answer through
-  // window.testHost.answerPick(name, bytes) instead.
-  pickFile(purpose, extensions) {
-    record.picks.push({ purpose, extensions });
-    if (record.answerPicks) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    if (extensions.length) input.accept = extensions.map((e) => '.' + e).join(',');
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (file) file_picked(purpose, file.name, new Uint8Array(await file.arrayBuffer()));
-    };
-    input.click();
-  },
-  // Kept for the tests, and downloaded as the browser saves files.
-  saveFile(name, bytes) {
-    record.files.push({ name, bytes });
-    if (record.answerPicks) return;
-    const url = URL.createObjectURL(new Blob([bytes]));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  },
-  // Secrets apart from the rest of the storage. The browser's storage is
-  // not a keychain: VS Code's SecretStorage is, and the test page needs none.
-  readSecret(name) { return localStorage.getItem('gossia-secret:' + name); },
-  writeSecret(name, text) {
-    if (text === null) localStorage.removeItem('gossia-secret:' + name);
-    else localStorage.setItem('gossia-secret:' + name, text);
-  },
-  readStorage(name) { return localStorage.getItem(STORAGE + name); },
-  writeStorage(name, text) { localStorage.setItem(STORAGE + name, text); },
-  openOutside(target) {
-    record.opened.push(target);
-    window.open(target, '_blank', 'noopener');
-  },
-  dark() { return window.matchMedia('(prefers-color-scheme: dark)').matches; },
-  fetch(id, method, url, headers, body, timeoutMs, maxBytes) {
-    record.fetches.push({ id, method, url, headers, body });
-    if (record.answerFetches) return;
-    makeRequest(id, method, url, headers, body, timeoutMs, maxBytes);
-  },
-};
-
 (async () => {
   try {
     await init();
+    const host = await browserHost(gossia, record);
+    record.host = host;
     let name = null, bytes = null;
     const query = new URLSearchParams(location.search);
     const open = query.get('open');

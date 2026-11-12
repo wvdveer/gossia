@@ -63,7 +63,13 @@ def main():
     server = http.server.ThreadingHTTPServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(folder)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    url = f"http://127.0.0.1:{server.server_address[1]}/harness.html?auto"
+    # Another origin (another port) serving the same files without allowing
+    # this one, for the browser host's CORS error.
+    other = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(Handler, directory=str(folder)))
+    threading.Thread(target=other.serve_forever, daemon=True).start()
+    url = (f"http://127.0.0.1:{server.server_address[1]}/harness.html?auto"
+           f"&other={other.server_address[1]}")
 
     with sync_playwright() as p:
         # WebGL without a graphics adapter, as on the runner.
@@ -93,6 +99,7 @@ def main():
             shoot(context, folder)
         browser.close()
     server.shutdown()
+    other.shutdown()
     sys.exit(0 if ok else 1)
 
 
