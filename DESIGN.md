@@ -1561,7 +1561,7 @@ Deferred features, with what v1 does to keep them possible. Version 1 is release
 - **Excel and ODS files, 0.4.0**: importing `.xlsx`, `.xls` and `.ods` (each sheet a tab with an array of rows, as CSV) and exporting `.xlsx`, `.ods`, CSV and TSV (see Excel and ODS files, 0.4.0, below).
 - **XML Schemas, 0.5.0** (owner, 2026-11-09): wider XSD support, chiefly namespaces (more than one namespace, `xs:import`, attributes in a namespace). See XML Schemas and namespaces, 0.5.0, below.
 - **The web version on GitHub Pages, 0.6.0** (owner, 2026-11-12): the wasm version as a public web page, through a browser host behind the host interface of 0.3.0, installable and usable offline. It replaces the browser extensions, phones and tablets planned before, which are dropped. See The web version on GitHub Pages, 0.6.0, below.
-- **Gossia pyplot, 0.6.0** (owner, 2026-11-10): a built-in module in the manner of matplotlib's `pyplot`, as a second way of writing a custom chart. See Gossia pyplot, 0.6.0, below.
+- **Gossia pyplot, 0.6.0** (owner, 2026-11-10): a built-in module, `gossia.pyplot` (available as `plt`), whose names follow matplotlib's `pyplot` without claiming to be it, as a second way of writing a custom chart. See Gossia pyplot, 0.6.0, below.
 
 ### Web port, 0.3.0
 
@@ -1875,24 +1875,25 @@ The desktop application does not use the interface; it keeps its own files and s
 - **Not done:** a link with the workbook in its address (too long for most chat programs beyond small workbooks), and a share file that works without the site or offline.
 
 **Build order.**
-- **16a.** The browser host: workbooks (File System Access API, or choose and download), recent workbooks, storage, secrets for the session, HTTP with the CORS error.
-- **16b.** The Pages site: the workflow, a short landing text on what runs where and what the web version lacks, compression and loading progress.
-- **16c.** Installable and offline: manifest, service worker, update notice.
-- **16d.** Touch and small screens.
-- **16e.** Share files: the choice in *Save the workbook as* (desktop and web) and the VS Code command, the share file's page, the hand-over to the site, and reading share files on open and drop.
+- **17a.** The browser host: workbooks (File System Access API, or choose and download), recent workbooks, storage, secrets for the session, HTTP with the CORS error.
+- **17b.** The Pages site: the workflow, a short landing text on what runs where and what the web version lacks, compression and loading progress.
+- **17c.** Installable and offline: manifest, service worker, update notice.
+- **17d.** Touch and small screens.
+- **17e.** Share files: the choice in *Save the workbook as* (desktop and web) and the VS Code command, the share file's page, the hand-over to the site, and reading share files on open and drop.
 - **Tests:** the Playwright harness of 13b-4 drives the browser host too (files through the fallback path, storage, the CORS error against a local server that refuses, the service worker's cache, and a share file opened from disk handing its workbook to the site served locally).
 
 ### Gossia pyplot, 0.6.0
 
-*(Added to 0.6.0 by the owner on 2026-11-10. The points below are Claude's proposals, kept unless the owner changes them.)*
+*(Added to 0.6.0 by the owner on 2026-11-10. The naming, the import fix, the functions, the start and end of a chart function and the ignored arguments were settled with the owner on 2026-11-12; the other points are Claude's proposals, kept unless the owner changes them.)*
 
 **Why not matplotlib itself.** matplotlib needs numpy, and its own core (font rendering, path clipping, images, the `kiwisolver` layout solver) is compiled C and C++. RustPython cannot load compiled extensions, on the desktop or in the wasm version, so neither can run in Gossia.
 
-**What instead.** A built-in, read-only module `plt`, written in Python as the built-in charts are, whose functions are named and behave like the most used parts of matplotlib's `pyplot`, drawing to SVG. It is another way of writing the body of a chart function (see Reports, Chart functions); nothing about `@chart`, the parameters, the size, trust or export changes. The figure is the size of the control: `plt.figure()` takes `width` and `height` from the chart call, and `figsize` is read as a ratio only.
+**What instead.** A built-in, read-only module, **`gossia.pyplot`**, written in Python as the built-in charts are, whose function names and arguments follow the most used parts of matplotlib's `pyplot` where they overlap, drawing to SVG. It is available without `import` as **`plt`**, as the standard library modules are, and `import gossia.pyplot as plt` (or `from gossia import pyplot`) works in modules too. It is another way of writing the body of a chart function (see Reports, Chart functions); nothing about `@chart`, the parameters, the size, trust or export changes. The figure is the size of the control: `plt.figure()` takes `width` and `height` from the chart call, and `figsize` is read as a ratio only.
 
 ```python
 @chart("Sales and target")
 def sales(months, totals, targets, width=400, height=300):
+    plt.clear()
     plt.figure(width=width, height=height)
     plt.bar(months, totals, color="tab:blue", label="Sales")
     plt.plot(months, targets, "r--", label="Target")
@@ -1902,21 +1903,31 @@ def sales(months, totals, targets, width=400, height=300):
     return plt.svg()
 ```
 
+**Gossia's own, and said so** *(owner, 2026-11-12)*. It is never presented as matplotlib, since claiming to be what it is not would mislead users:
+- **No `matplotlib` import.** `import matplotlib` and every part of it (`matplotlib.pyplot`, `from matplotlib import pyplot`) is an `ImportError`: *matplotlib is not available in Gossia (it needs compiled code). Gossia's own module `gossia.pyplot` covers common charts in a similar style.* `matplotlib` is not a reserved name.
+- **The fix offered.** Where that error is shown (the code editor's problem list after *Compile*, and the module's load error), it has a button **Change to `import gossia.pyplot as plt`**, which rewrites the import line in the module: `import matplotlib.pyplot as X` and `from matplotlib import pyplot as X` become `import gossia.pyplot as X`, keeping the user's own name (`plt` in almost all code). It is one step in the editor's undo. Imports it cannot rewrite safely (`import matplotlib as mpl`, `import matplotlib.pyplot` without `as`, `from matplotlib.pyplot import bar`) get the error without the button. In VS Code the same fix is a quick fix (code action) on the line.
+- **The words used.** The help and the release notes say that names and arguments follow matplotlib's `pyplot` where they overlap, list what is covered, and say it is not matplotlib; they never say *compatible*. Refusals name Gossia: *`gossia.pyplot` does not support `imshow`*.
+- **Reserved names.** `plt` becomes reserved (with the exposed standard library module names); names starting with `gossia` already are. A workbook made before 0.6.0 with a tab, report, data source or module function named `plt` still opens, with a notice asking to rename it; until then its formulas see the tab, and the module is reached with `import gossia.pyplot`.
+
 **First version.**
-- **Plots:** `plot` (with format strings such as `"r--"` and `"o-"`, and several series in one call), `bar` and `barh` (with `bottom` for stacking), `scatter` (sizes and colours per point), `hist`, `pie`, `fill_between`, `axhline` and `axvline`, `text` and `annotate`.
+- **Plots:** `plot` (with format strings such as `"r--"` and `"o-"`, and several series in one call), `bar` and `barh` (with `bottom` for stacking), `scatter` (sizes and colours per point), `hist`, `pie`, `fill_between`, `errorbar`, `step`, `boxplot` (owner, 2026-11-12), `axhline` and `axvline`, `text` and `annotate`.
 - **Axes:** `title`, `xlabel`, `ylabel`, `xlim`, `ylim`, `xticks` and `yticks` (with labels and rotation), `grid`, `legend` (location by name), `xscale` and `yscale` (`linear`, `log`), dates on an axis.
 - **Colours and styles:** matplotlib's default cycle (`tab:blue`, `tab:orange`, ...), the named and `C0`-style colours, hex, line styles, markers, `alpha`, `linewidth`.
 - **Figures and axes objects:** `figure`, `subplots(nrows, ncols)` giving `fig, ax` or an array of axes, with the same methods on `ax` (`ax.plot`, `ax.set_title`, `ax.set_xlabel`, ...), `twinx`, and `tight_layout` as a no-op since layout is always tight.
-- **Out:** `plt.svg()` gives the SVG text of the current figure and closes it; `savefig` is refused with a message pointing at `plt.svg()`, since a chart function cannot write files.
+- **A chart function starts with `plt.clear()` and ends with `return plt.svg()`** *(owner, 2026-11-12)*. `plt.clear()` discards every figure left over (from an earlier chart that failed before its `svg()`, say), so a chart never draws into another's figure. `plt.svg()` gives the SVG text of the current figure and closes it. A chart function that returns anything else (a figure, or nothing) is an error: *a chart function using `plt` must finish with `return plt.svg()`*. There is **no `plt.show()`**: calling it is refused by name with the same advice, and `savefig` is refused too, since a chart function cannot write files.
 - The built-in text and colours of the window's theme apply as in the built-in charts (`currentColor`, the `.background` and `.surface` classes), so a pyplot chart follows light and dark.
 
-**Not covered** (default): 3D, images and colour maps of arrays (`imshow`, `contour`, `pcolormesh`), LaTeX maths in text, style sheets and `rcParams` beyond a few keys, animation, interactive backends, `plt.show()` (refused with a message), and the long tail of rarely used options, which are refused by name rather than ignored, so a user sees what does not work. Code copied from elsewhere often runs as it is, and otherwise needs small changes.
+**Not covered** (default): 3D, images and colour maps of arrays (`imshow`, `contour`, `pcolormesh`), LaTeX maths in text, style sheets and `rcParams` beyond a few keys, animation, interactive backends, `plt.show()` (refused, see above), and the long tail of rarely used options, which are refused by name rather than ignored, so a user sees what does not work. **The exception** *(owner, 2026-11-12)*: keyword arguments that make no difference to an SVG at the control's size are accepted and ignored, so that code copied from elsewhere does not fail on them: `dpi`, `zorder`, `antialiased`, `rasterized`, `picker`, `clip_on` and `snap`. Code copied from elsewhere often runs as it is, and otherwise needs small changes.
+
+**Build order** *(owner, 2026-11-12: before the web version)*.
+- **16a.** Figures and axes, `plt.clear()` and `plt.svg()`, tick placement, text measurement, dates on an axis, the theme classes.
+- **16b.** The plots, colours, styles and markers, the legend, `subplots` and `twinx`, the refusals and the ignored arguments.
+- **16c.** The `matplotlib` import error and its fix button (and the VS Code quick fix), `plt` as a reserved name, the gallery-style examples as snapshots, a chart exported to PDF, and the help.
 
 **Questions for the build.**
 - Workbook modules may not define classes (`__build_class__` is removed; see Python engine), but figures and axes are objects. The module is Gossia's own, compiled before the builtins are trimmed, as the prelude is, so it can define them; users only call them.
-- Whether `plt` is available without `import`, as the standard library modules are (default: yes, as `plt`, with `import matplotlib.pyplot as plt` accepted too so pasted code runs), and what that does to the reserved names (`plt` and `matplotlib` become reserved, checked against existing workbooks on opening).
 - Tick placement (matplotlib's "nice numbers"), text measurement for labels and legends (the fonts the charts already use, through the layout crate's measurer or a table of widths), and dates on an axis are most of the work.
-- **Tests:** each function's SVG checked for its parts, a set of matplotlib gallery-style examples rendered and compared as snapshots, the refusals by name, and a chart in a report exported to PDF.
+- **Tests:** each function's SVG checked for its parts, a set of matplotlib gallery-style examples rendered and compared as snapshots, the refusals by name, the `matplotlib` import error and its fix, and a chart in a report exported to PDF.
 
 ## Decisions for implementation, and risks
 
