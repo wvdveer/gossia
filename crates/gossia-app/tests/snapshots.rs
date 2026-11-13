@@ -833,3 +833,37 @@ fn a_refused_result_is_shown_in_the_formula_bar() {
     click(&mut harness, "tax_rate");
     check(&mut harness, "refused_result", &mut results);
 }
+
+/// A phone's width used with a finger (DESIGN.md, 17d): the larger targets,
+/// the menus in one button, and the side panel folded, then unfolded.
+#[test]
+fn a_narrow_window_used_with_a_finger() {
+    if !enabled() {
+        return;
+    }
+    let mut results = SnapshotResults::new();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(400.0, 720.0))
+        .wgpu()
+        .build_ui_state(|ui, app: &mut GossiaApp| app.show(ui), GossiaApp::sample());
+    settle(&mut harness);
+    harness.event(egui::Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Start,
+        pos: egui::pos2(390.0, 700.0),
+        force: None,
+    });
+    harness.state_mut().show_issues = true;
+    harness.run();
+    check(&mut harness, "narrow_touch", &mut results);
+
+    click(&mut harness, "Unfold the side panel");
+    // The click was a mouse's; the finger again, and the panel opened.
+    harness.state_mut().touch = true;
+    for _ in 0..30 {
+        harness.step();
+    }
+    harness.run();
+    check(&mut harness, "narrow_touch_unfolded", &mut results);
+}

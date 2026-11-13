@@ -113,6 +113,13 @@ pub trait Host {
         false
     }
 
+    /// Whether the host's pointer is a finger (a phone's or a tablet's
+    /// browser), so that the window starts with the larger targets for
+    /// touch (DESIGN.md, 17d). A touch turns them on anyway.
+    fn coarse_pointer(&self) -> bool {
+        false
+    }
+
     /// Asks the user where to save the workbook, always, offering `name`.
     fn save_workbook_as(&self, name: &str, bytes: Vec<u8>) {
         self.save_workbook(name, bytes);

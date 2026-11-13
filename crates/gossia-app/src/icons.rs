@@ -53,6 +53,16 @@ pub fn ready(ctx: &egui::Context) -> bool {
     crate::style::ready(ctx)
 }
 
+/// A toolbar's button: small, except with a finger (DESIGN.md, 17d), where
+/// the style's larger targets apply to it too.
+pub fn sized<'a>(button: egui::Button<'a>, ui: &egui::Ui) -> egui::Button<'a> {
+    if crate::style::is_touch(ui.style()) {
+        button
+    } else {
+        button.small()
+    }
+}
+
 /// A small button with an icon. `letter` is what is drawn until the font is
 /// there; `name` is what a screen reader (and a test) calls it, and its tip.
 pub fn button(
@@ -67,9 +77,8 @@ pub fn button(
     } else {
         RichText::new(letter)
     };
-    let response = ui
-        .add_enabled(enabled, egui::Button::new(text).small())
-        .on_hover_text(name);
+    let button = sized(egui::Button::new(text), ui);
+    let response = ui.add_enabled(enabled, button).on_hover_text(name);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
     response
 }

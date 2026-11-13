@@ -46,7 +46,8 @@ impl GossiaApp {
 
     /// The bar of icon buttons.
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        // On a narrow window the buttons go on to a second row.
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let idle = self.editing.is_none();
             // In a host the host opens and makes files.
@@ -93,7 +94,10 @@ impl GossiaApp {
             }
             let fx = crate::style::medium("fx").italics();
             let response = ui
-                .add_enabled(self.in_tree(), egui::Button::new(fx).small())
+                .add_enabled(
+                    self.in_tree(),
+                    crate::icons::sized(egui::Button::new(fx), ui),
+                )
                 .on_hover_text(tr!("Insert a function"));
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(
@@ -175,7 +179,7 @@ fn toggle(ui: &mut egui::Ui, on: bool, icon: &str, letter: &str, name: &str) -> 
         egui::RichText::new(letter)
     };
     let response = ui
-        .add(egui::Button::new(text).small().selected(on))
+        .add(crate::icons::sized(egui::Button::new(text), ui).selected(on))
         .on_hover_text(name);
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, name));
     response

@@ -111,6 +111,7 @@ impl GossiaApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         crate::style::prepare(ui.ctx());
         self.apply_appearance(ui.ctx());
+        self.follow_touch(ui.ctx());
         self.apply_settings();
         // The report shown runs its expressions; no other does.
         let report = self.in_report().then(|| self.sheet.clone());
@@ -133,7 +134,7 @@ impl GossiaApp {
         let bar = crate::style::bar_frame(ui);
         egui::Panel::top("menu")
             .frame(bar)
-            .show(ui, |ui| self.menu(ui));
+            .show(ui, |ui| self.menu_bar(ui));
         if self.show_toolbar {
             egui::Panel::top("toolbar")
                 .frame(bar.inner_margin(egui::Margin::symmetric(8, 6)))
@@ -166,28 +167,30 @@ impl GossiaApp {
         // The issues and the inspector share the right side, the issues on
         // top.
         let inspector = self.show_inspector && !form;
+        // On a narrow window they fold away (17d).
         if self.show_issues || inspector {
-            egui::Panel::right("issues")
-                .default_size(300.0)
-                .show(ui, |ui| {
-                    if self.show_issues && inspector {
-                        egui::Panel::top("issues_part")
-                            .resizable(true)
-                            .default_size(260.0)
-                            .show(ui, |ui| self.issues_panel(ui));
-                        self.inspector_panel(ui);
-                    } else if inspector {
-                        self.inspector_panel(ui);
-                    } else {
-                        self.issues_panel(ui);
-                    }
-                });
+            let panel = egui::Panel::right("issues").default_size(300.0);
+            self.side_panel(ui, panel, "issues_folded", |app, ui| {
+                if app.show_issues && inspector {
+                    egui::Panel::top("issues_part")
+                        .resizable(true)
+                        .default_size(260.0)
+                        .show(ui, |ui| app.issues_panel(ui));
+                    app.inspector_panel(ui);
+                } else if inspector {
+                    app.inspector_panel(ui);
+                } else {
+                    app.issues_panel(ui);
+                }
+            });
         }
         if form && self.layout_active() {
-            egui::Panel::right("form_properties")
+            let panel = egui::Panel::right("form_properties")
                 .resizable(true)
-                .default_size(320.0)
-                .show(ui, |ui| self.property_page(ui));
+                .default_size(320.0);
+            self.side_panel(ui, panel, "form_properties_folded", |app, ui| {
+                app.property_page(ui);
+            });
         }
         if form {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -417,239 +420,238 @@ impl GossiaApp {
 
     // ------------------------------------------------------------- menu
 
-    fn menu(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(tr!("File"), |ui| {
-                // In a host the host opens, saves and closes the file,
-                // unless it keeps files for Gossia's own menu (the browser
-                // page), which has no Quit.
-                let hosted = crate::host::current().is_some();
-                let keeps_files = Self::host_keeps_files();
-                let own_files = !hosted || keeps_files.is_some();
-                if own_files && ui.button(tr!("New")).clicked() {
-                    self.begin_new();
-                    ui.close();
-                }
-                if own_files && ui.button(tr!("Open...")).clicked() {
-                    self.begin_open();
-                    ui.close();
-                }
-                if let Some(host) = &keeps_files {
-                    self.host_recent_menu(ui, &**host);
-                } else if !hosted {
-                    self.recent_menu(ui);
-                }
-                if ui
-                    .add_enabled(self.editing.is_none(), egui::Button::new(tr!("Import...")))
-                    .clicked()
-                {
-                    self.begin_import();
-                    ui.close();
-                }
-                // A report is exported as a PDF, by the item after this one.
-                if ui
-                    .add_enabled(
-                        self.editing.is_none() && !self.in_report(),
-                        egui::Button::new(tr!("Export...")),
-                    )
-                    .clicked()
-                {
-                    let tab = self.sheet.clone();
-                    self.begin_export(&tab);
-                    ui.close();
-                }
-                if ui
+    /// The menus of the menu bar (in one button on a narrow window: see
+    /// `touch.rs`).
+    pub(crate) fn menus(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(tr!("File"), |ui| {
+            // In a host the host opens, saves and closes the file,
+            // unless it keeps files for Gossia's own menu (the browser
+            // page), which has no Quit.
+            let hosted = crate::host::current().is_some();
+            let keeps_files = Self::host_keeps_files();
+            let own_files = !hosted || keeps_files.is_some();
+            if own_files && ui.button(tr!("New")).clicked() {
+                self.begin_new();
+                ui.close();
+            }
+            if own_files && ui.button(tr!("Open...")).clicked() {
+                self.begin_open();
+                ui.close();
+            }
+            if let Some(host) = &keeps_files {
+                self.host_recent_menu(ui, &**host);
+            } else if !hosted {
+                self.recent_menu(ui);
+            }
+            if ui
+                .add_enabled(self.editing.is_none(), egui::Button::new(tr!("Import...")))
+                .clicked()
+            {
+                self.begin_import();
+                ui.close();
+            }
+            // A report is exported as a PDF, by the item after this one.
+            if ui
+                .add_enabled(
+                    self.editing.is_none() && !self.in_report(),
+                    egui::Button::new(tr!("Export...")),
+                )
+                .clicked()
+            {
+                let tab = self.sheet.clone();
+                self.begin_export(&tab);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.editing.is_none() && self.in_report(),
+                    egui::Button::new(tr!("Export as PDF...")),
+                )
+                .on_disabled_hover_text(tr!("Show a report to export it as PDF"))
+                .clicked()
+            {
+                let tab = self.sheet.clone();
+                self.begin_export_pdf(&tab);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.editing.is_none() && self.in_report(),
+                    egui::Button::new(tr!("Export as HTML...")),
+                )
+                .on_disabled_hover_text(tr!("Show a report to export it as HTML"))
+                .clicked()
+            {
+                let tab = self.sheet.clone();
+                self.begin_export_html(&tab);
+                ui.close();
+            }
+            // A host has no printing: its PDF or HTML is saved, and
+            // printed from the program that opens it.
+            if crate::host::current().is_none()
+                && ui
                     .add_enabled(
                         self.editing.is_none() && self.in_report(),
-                        egui::Button::new(tr!("Export as PDF...")),
+                        egui::Button::new(tr!("Print...")),
                     )
-                    .on_disabled_hover_text(tr!("Show a report to export it as PDF"))
+                    .on_disabled_hover_text(tr!("Show a report to print it"))
                     .clicked()
-                {
-                    let tab = self.sheet.clone();
-                    self.begin_export_pdf(&tab);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.editing.is_none() && self.in_report(),
-                        egui::Button::new(tr!("Export as HTML...")),
-                    )
-                    .on_disabled_hover_text(tr!("Show a report to export it as HTML"))
-                    .clicked()
-                {
-                    let tab = self.sheet.clone();
-                    self.begin_export_html(&tab);
-                    ui.close();
-                }
-                // A host has no printing: its PDF or HTML is saved, and
-                // printed from the program that opens it.
-                if crate::host::current().is_none()
-                    && ui
-                        .add_enabled(
-                            self.editing.is_none() && self.in_report(),
-                            egui::Button::new(tr!("Print...")),
-                        )
-                        .on_disabled_hover_text(tr!("Show a report to print it"))
-                        .clicked()
-                {
-                    let tab = self.sheet.clone();
-                    self.begin_print(&tab);
-                    ui.close();
-                }
+            {
+                let tab = self.sheet.clone();
+                self.begin_print(&tab);
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(self.editing.is_none(), egui::Button::new(tr!("Save")))
+                .clicked()
+            {
+                self.begin_save();
+                ui.close();
+            }
+            if own_files && ui.button(tr!("Save As...")).clicked() {
+                self.begin_save_as();
+                ui.close();
+            }
+            if !hosted {
                 ui.separator();
-                if ui
-                    .add_enabled(self.editing.is_none(), egui::Button::new(tr!("Save")))
-                    .clicked()
-                {
-                    self.begin_save();
+                if ui.button(tr!("Quit")).clicked() {
+                    let ctx = ui.ctx().clone();
+                    self.request_quit(&ctx);
                     ui.close();
                 }
-                if own_files && ui.button(tr!("Save As...")).clicked() {
-                    self.begin_save_as();
-                    ui.close();
-                }
-                if !hosted {
-                    ui.separator();
-                    if ui.button(tr!("Quit")).clicked() {
-                        let ctx = ui.ctx().clone();
-                        self.request_quit(&ctx);
-                        ui.close();
-                    }
-                }
-            });
-            ui.menu_button(tr!("Edit"), |ui| {
-                let undo_label = self.calc().undo_label().map(str::to_owned);
-                let redo_label = self.calc().redo_label().map(str::to_owned);
-                // Undo and redo wait while a button procedure runs.
-                let can_change =
-                    self.editing.is_none() && self.session.running_procedure().is_none();
-                let undo_text = match &undo_label {
-                    Some(label) => tr!("Undo {label}", label = label),
-                    None => tr!("Undo").to_owned(),
-                };
-                if ui
-                    .add_enabled(
-                        undo_label.is_some() && can_change,
-                        egui::Button::new(undo_text),
-                    )
-                    .clicked()
-                {
-                    self.undo();
-                    ui.close();
-                }
-                let redo_text = match &redo_label {
-                    Some(label) => tr!("Redo {label}", label = label),
-                    None => tr!("Redo").to_owned(),
-                };
-                if ui
-                    .add_enabled(
-                        redo_label.is_some() && can_change,
-                        egui::Button::new(redo_text),
-                    )
-                    .clicked()
-                {
-                    self.redo();
-                    ui.close();
-                }
-                ui.separator();
-                let sheet = self.sheet.clone();
-                self.tab_menu_items(ui, &sheet);
-            });
-            ui.menu_button(tr!("View"), |ui| {
-                // How the current tab is shown. A report has one view.
-                let report = self.in_report();
-                ui.add_enabled_ui(!report, |ui| {
-                    ui.menu_button(tr!("Show as"), |ui| {
-                        // The views every tab has, a line, then its forms.
-                        let mut forms_begun = false;
-                        for view in self.view_names() {
-                            if matches!(view, crate::form::View::Form(_)) && !forms_begun {
-                                forms_begun = true;
-                                ui.separator();
-                            }
-                            let chosen = self.current_view() == &view;
-                            if ui.radio(chosen, view.label()).clicked() {
-                                self.set_view(view);
-                                ui.close();
-                            }
+            }
+        });
+        ui.menu_button(tr!("Edit"), |ui| {
+            let undo_label = self.calc().undo_label().map(str::to_owned);
+            let redo_label = self.calc().redo_label().map(str::to_owned);
+            // Undo and redo wait while a button procedure runs.
+            let can_change = self.editing.is_none() && self.session.running_procedure().is_none();
+            let undo_text = match &undo_label {
+                Some(label) => tr!("Undo {label}", label = label),
+                None => tr!("Undo").to_owned(),
+            };
+            if ui
+                .add_enabled(
+                    undo_label.is_some() && can_change,
+                    egui::Button::new(undo_text),
+                )
+                .clicked()
+            {
+                self.undo();
+                ui.close();
+            }
+            let redo_text = match &redo_label {
+                Some(label) => tr!("Redo {label}", label = label),
+                None => tr!("Redo").to_owned(),
+            };
+            if ui
+                .add_enabled(
+                    redo_label.is_some() && can_change,
+                    egui::Button::new(redo_text),
+                )
+                .clicked()
+            {
+                self.redo();
+                ui.close();
+            }
+            ui.separator();
+            let sheet = self.sheet.clone();
+            self.tab_menu_items(ui, &sheet);
+        });
+        ui.menu_button(tr!("View"), |ui| {
+            // How the current tab is shown. A report has one view.
+            let report = self.in_report();
+            ui.add_enabled_ui(!report, |ui| {
+                ui.menu_button(tr!("Show as"), |ui| {
+                    // The views every tab has, a line, then its forms.
+                    let mut forms_begun = false;
+                    for view in self.view_names() {
+                        if matches!(view, crate::form::View::Form(_)) && !forms_begun {
+                            forms_begun = true;
+                            ui.separator();
                         }
-                    });
-                    self.forms_menu(ui);
-                });
-                ui.menu_button(tr!("Font"), |ui| self.font_menu(ui));
-                ui.separator();
-                if ui
-                    .checkbox(&mut self.show_toolbar, tr!("Toolbar"))
-                    .clicked()
-                {
-                    ui.close();
-                }
-                if ui
-                    .checkbox(&mut self.show_issues, tr!("Issues panel"))
-                    .clicked()
-                {
-                    ui.close();
-                }
-                if ui
-                    .checkbox(&mut self.show_inspector, tr!("Node inspector"))
-                    .clicked()
-                {
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!report, egui::Button::new(tr!("Collapse all")))
-                    .clicked()
-                {
-                    let root = Path::root();
-                    if let Some(set) = self.expanded.get_mut(&self.sheet) {
-                        set.clear();
-                        set.insert(root);
+                        let chosen = self.current_view() == &view;
+                        if ui.radio(chosen, view.label()).clicked() {
+                            self.set_view(view);
+                            ui.close();
+                        }
                     }
-                    self.expansion_rev += 1;
-                    ui.close();
-                }
+                });
+                self.forms_menu(ui);
             });
-            ui.menu_button(tr!("Tools"), |ui| {
-                if ui
-                    .add(egui::Button::new(tr!("Recalculate")).shortcut_text("F9"))
-                    .on_hover_text(tr!(
-                        "Run every formula again, reading the data sources afresh"
-                    ))
-                    .clicked()
-                {
-                    self.recalculate();
-                    ui.close();
+            ui.menu_button(tr!("Font"), |ui| self.font_menu(ui));
+            ui.separator();
+            if ui
+                .checkbox(&mut self.show_toolbar, tr!("Toolbar"))
+                .clicked()
+            {
+                ui.close();
+            }
+            if ui
+                .checkbox(&mut self.show_issues, tr!("Issues panel"))
+                .clicked()
+            {
+                ui.close();
+            }
+            if ui
+                .checkbox(&mut self.show_inspector, tr!("Node inspector"))
+                .clicked()
+            {
+                ui.close();
+            }
+            if ui
+                .add_enabled(!report, egui::Button::new(tr!("Collapse all")))
+                .clicked()
+            {
+                let root = Path::root();
+                if let Some(set) = self.expanded.get_mut(&self.sheet) {
+                    set.clear();
+                    set.insert(root);
                 }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new(tr!("Code editor")).shortcut_text("Alt+F11"))
-                    .clicked()
-                {
-                    self.open_code_editor();
-                    ui.close();
-                }
-                if ui.button(tr!("Data sources...")).clicked() {
-                    self.open_sources();
-                    ui.close();
-                }
-                if ui
-                    .button(tr!("Disconnect from Data Sources..."))
-                    .on_hover_text(tr!(
-                        "Replace every read of a data source in the formulas and forms by what \
+                self.expansion_rev += 1;
+                ui.close();
+            }
+        });
+        ui.menu_button(tr!("Tools"), |ui| {
+            if ui
+                .add(egui::Button::new(tr!("Recalculate")).shortcut_text("F9"))
+                .on_hover_text(tr!(
+                    "Run every formula again, reading the data sources afresh"
+                ))
+                .clicked()
+            {
+                self.recalculate();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add(egui::Button::new(tr!("Code editor")).shortcut_text("Alt+F11"))
+                .clicked()
+            {
+                self.open_code_editor();
+                ui.close();
+            }
+            if ui.button(tr!("Data sources...")).clicked() {
+                self.open_sources();
+                ui.close();
+            }
+            if ui
+                .button(tr!("Disconnect from Data Sources..."))
+                .on_hover_text(tr!(
+                    "Replace every read of a data source in the formulas and forms by what \
                          it gives now, so the workbook can go to someone without the sources"
-                    ))
-                    .clicked()
-                {
-                    ui.close();
-                    self.begin_disconnect();
-                }
-                ui.separator();
-                if ui.button(tr!("Options...")).clicked() {
-                    self.begin_options(None);
-                    ui.close();
-                }
-            });
+                ))
+                .clicked()
+            {
+                ui.close();
+                self.begin_disconnect();
+            }
+            ui.separator();
+            if ui.button(tr!("Options...")).clicked() {
+                self.begin_options(None);
+                ui.close();
+            }
         });
     }
 

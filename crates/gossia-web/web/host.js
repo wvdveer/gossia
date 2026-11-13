@@ -258,6 +258,9 @@ export async function browserHost(gossia, record) {
 
   const host = {
     keepsFiles() { return true; },
+    // A phone's or a tablet's browser: the larger targets for touch from the
+    // start (DESIGN.md, 17d).
+    coarsePointer() { return window.matchMedia('(pointer: coarse)').matches; },
     startWorker() {
       if (worker) worker.terminate();
       worker = new Worker('./worker.js', { type: 'module' });

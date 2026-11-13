@@ -280,6 +280,8 @@ struct JsHost {
     edits_modules: bool,
     /// The host keeps files for Gossia's own File menu (`keepsFiles()`).
     keeps_files: bool,
+    /// Whether the page's pointer is a finger (`coarsePointer()`).
+    coarse_pointer: bool,
 }
 
 impl JsHost {
@@ -320,6 +322,7 @@ impl Host for JsHost {
                 object: self.object.clone(),
                 edits_modules: false,
                 keeps_files: false,
+                coarse_pointer: false,
             },
         })
     }
@@ -448,6 +451,10 @@ impl Host for JsHost {
 
     fn keeps_files(&self) -> bool {
         self.keeps_files
+    }
+
+    fn coarse_pointer(&self) -> bool {
+        self.coarse_pointer
     }
 
     fn save_workbook_as(&self, name: &str, bytes: Vec<u8>) {
@@ -645,9 +652,12 @@ pub async fn start_app(
         object: host,
         edits_modules,
         keeps_files: false,
+        coarse_pointer: false,
     };
     host.keeps_files =
         host.has("keepsFiles") && host.call_logged("keepsFiles", &[]).as_bool() == Some(true);
+    host.coarse_pointer =
+        host.has("coarsePointer") && host.call_logged("coarsePointer", &[]).as_bool() == Some(true);
     let host = Rc::new(host);
     gossia_app::host::set(host.clone());
     let page_host = host.clone();

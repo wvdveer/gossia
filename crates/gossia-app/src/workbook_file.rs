@@ -375,6 +375,9 @@ impl GossiaApp {
         fresh.show_issues = self.show_issues;
         fresh.show_toolbar = self.show_toolbar;
         fresh.show_inspector = self.show_inspector;
+        fresh.touch = self.touch;
+        fresh.touch_applied = self.touch_applied;
+        fresh.side_unfolded = self.side_unfolded;
         fresh.code = self.code.for_next_workbook();
         fresh.files.browse = self.files.browse;
         fresh.files.quit_confirmed = false;

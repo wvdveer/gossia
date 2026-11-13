@@ -2232,3 +2232,6 @@
 "{url} answered with a redirect, which is not followed" = "{url} はリダイレクトで応答しましたが、リダイレクトはたどりません"
 "the response from {url} is larger than the maximum response size of {bytes} bytes" = "{url} からの応答は最大応答サイズの {bytes} バイトを超えています"
 "{url} cannot be reached ({detail})" = "{url} に接続できません（{detail}）"
+"Menu" = "メニュー"
+"Fold the side panel" = "サイド パネルを折りたたむ"
+"Unfold the side panel" = "サイド パネルを展開する"

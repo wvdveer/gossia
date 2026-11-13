@@ -2232,3 +2232,6 @@
 "{url} answered with a redirect, which is not followed" = "{url} a répondu par une redirection, qui n'est pas suivie"
 "the response from {url} is larger than the maximum response size of {bytes} bytes" = "la réponse de {url} dépasse la taille maximale de réponse de {bytes} octets"
 "{url} cannot be reached ({detail})" = "{url} est injoignable ({detail})"
+"Menu" = "Menu"
+"Fold the side panel" = "Replier le panneau latéral"
+"Unfold the side panel" = "Déplier le panneau latéral"

@@ -102,6 +102,12 @@ pub struct GossiaApp {
     pub show_toolbar: bool,
     /// The node inspector on the right of the data tree.
     pub show_inspector: bool,
+    /// Whether the window is used with a finger, and the style last
+    /// installed for it (DESIGN.md, 17d).
+    pub touch: bool,
+    pub touch_applied: Option<bool>,
+    /// Whether the side panels are unfolded on a narrow window.
+    pub side_unfolded: bool,
     /// A formula waiting for the answer to whether it may erase what is
     /// inside its node.
     pub replace_inside: Option<crate::replace_inside::ReplaceInside>,
@@ -231,6 +237,9 @@ impl GossiaApp {
             show_issues: false,
             show_toolbar: true,
             show_inspector: false,
+            touch: false,
+            touch_applied: None,
+            side_unfolded: false,
             replace_inside: None,
             disconnect: None,
             tables: Tables::default(),

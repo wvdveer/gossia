@@ -2232,3 +2232,6 @@
 "{url} answered with a redirect, which is not followed" = "{url} 以重定向响应，重定向不会被跟随"
 "the response from {url} is larger than the maximum response size of {bytes} bytes" = "来自 {url} 的响应超过了最大响应大小 {bytes} 字节"
 "{url} cannot be reached ({detail})" = "无法访问 {url}（{detail}）"
+"Menu" = "菜单"
+"Fold the side panel" = "折叠侧面板"
+"Unfold the side panel" = "展开侧面板"

@@ -697,6 +697,36 @@ pub fn style(theme: Theme) -> Style {
     style
 }
 
+/// The style used with a finger (DESIGN.md, 17d): taller and wider targets,
+/// more room between them, and wider scroll bars.
+pub fn touch_style(style: &mut Style) {
+    let s = &mut style.spacing;
+    s.item_spacing = egui::vec2(10.0, 8.0);
+    s.button_padding = egui::vec2(12.0, 8.0);
+    s.interact_size = egui::vec2(48.0, 36.0);
+    s.icon_width = 20.0;
+    s.icon_width_inner = 12.0;
+    s.indent = 22.0;
+    s.menu_margin = Margin::same(8);
+    s.scroll.bar_width = 14.0;
+}
+
+/// Whether `style` is the one for a finger.
+pub fn is_touch(style: &Style) -> bool {
+    style.spacing.interact_size.y >= 36.0
+}
+
+/// Installs the styles of both themes, for a finger or not.
+pub fn set_touch(ctx: &egui::Context, touch: bool) {
+    for theme in [Theme::Dark, Theme::Light] {
+        let mut style = style(theme);
+        if touch {
+            touch_style(&mut style);
+        }
+        ctx.set_style_of(theme, style);
+    }
+}
+
 fn installed_id() -> egui::Id {
     egui::Id::unique("gossia style installed")
 }

@@ -67,6 +67,7 @@ pub mod tables;
 #[cfg(test)]
 mod tables_tests;
 pub mod toolbar;
+pub mod touch;
 pub mod tree_hidden;
 pub mod trust_ui;
 pub mod view;
