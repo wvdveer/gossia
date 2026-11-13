@@ -269,7 +269,9 @@ impl GossiaApp {
                 .desired_width(f32::INFINITY),
         );
         named(&response, tr!("Immediate expression"));
-        if std::mem::take(&mut self.code.immediate.focus) {
+        // Not while it runs: a disabled box does not take the focus, and the
+        // focus would be lost once the result came.
+        if !running && std::mem::take(&mut self.code.immediate.focus) {
             response.request_focus();
         }
         if response.has_focus() {

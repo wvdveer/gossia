@@ -505,6 +505,34 @@ fn the_immediate_window_shows_a_result_and_recalls_what_was_typed() {
     );
 }
 
+/// The box is disabled while an expression runs; it takes the focus back
+/// when the result comes, also when that is after a while (it kept losing
+/// it on a slower machine).
+#[test]
+fn the_immediate_window_keeps_the_focus_through_a_slow_expression() {
+    let mut harness = window_with(&[("Tax", TAX)]);
+    open_editor(&mut harness);
+    harness.get_by_label("Immediate expression").click();
+    harness.run();
+    harness
+        .get_by_label("Immediate expression")
+        .type_text("sum(sum(range(1000000)) for _ in range(5))");
+    harness.key_press(Key::Enter);
+    harness.run();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while harness.query_by_label("2499997500000").is_none() {
+        assert!(std::time::Instant::now() < deadline, "no result");
+        std::thread::sleep(Duration::from_millis(20));
+        harness.run();
+    }
+    harness.key_press(Key::ArrowUp);
+    harness.run();
+    assert_eq!(
+        harness.state().code.immediate.input,
+        "sum(sum(range(1000000)) for _ in range(5))"
+    );
+}
+
 /// Moving the pointer over the Immediate window redraws it, and it kept
 /// shrinking a little at each redraw: its height is the user's to set.
 #[test]
