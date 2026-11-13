@@ -20,6 +20,7 @@ gossia-core.workspace = true
 gossia-calc.workspace = true
 gossia-report.workspace = true
 gossia-user.workspace = true
+gossia-i18n.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 
 [dev-dependencies]

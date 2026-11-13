@@ -87,6 +87,18 @@ enum Request {
     Bytes(String),
     /// One of Gossia's commands, by name, from the host's command list.
     Command(String),
+    /// A share file's workbook, sent from its page (DESIGN.md, 17e).
+    Shared { name: String, bytes: Vec<u8> },
+}
+
+/// Opens the workbook a share file's page sent to the site (DESIGN.md, The
+/// web version on GitHub Pages, 17e): `name` is the original's file name
+/// and `bytes` the `.gossia` file. It opens as a new workbook, not saved
+/// yet, asking first about unsaved changes.
+#[wasm_bindgen]
+pub fn open_shared(name: String, bytes: Vec<u8>) {
+    REQUESTS.with(|r| r.borrow_mut().push(Request::Shared { name, bytes }));
+    repaint();
 }
 
 /// Runs one of Gossia's commands by its name (`gossia_app::commands`), as
@@ -586,6 +598,7 @@ impl PageApp {
                 Request::Bytes(kind) if !self.app.session.wait_idle(Duration::ZERO) => {
                     later.push(Request::Bytes(kind));
                 }
+                Request::Shared { name, bytes } => self.app.begin_open_shared(&name, &bytes),
                 Request::Command(name) => {
                     if let Err(e) = self.app.run_command(&name) {
                         self.app.notice = Some(format!("{e}."));

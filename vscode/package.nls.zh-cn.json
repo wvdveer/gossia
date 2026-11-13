@@ -2,6 +2,7 @@
   "description": "工作表是由架构定义的树、可使用 Python 公式的工作簿。",
   "customEditor.workbook": "Gossia 工作簿",
   "command.newTab": "新建标签页...",
+  "command.saveShare": "另存为共享文件...",
   "command.import": "导入...",
   "command.export": "导出...",
   "command.exportPdf": "导出为 PDF...",

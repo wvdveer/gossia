@@ -513,6 +513,18 @@ impl GossiaApp {
                 self.begin_save_as();
                 ui.close();
             }
+            let share = ui
+                .add_enabled(
+                    self.editing.is_none(),
+                    egui::Button::new(tr!("Save as share file...")),
+                )
+                .on_hover_text(tr!(
+                    "A copy as one .html file that opens the workbook in Gossia's web version, for someone who does not have Gossia"
+                ));
+            if share.clicked() {
+                self.begin_save_share();
+                ui.close();
+            }
             if !hosted {
                 ui.separator();
                 if ui.button(tr!("Quit")).clicked() {

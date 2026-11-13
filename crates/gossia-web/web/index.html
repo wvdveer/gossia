@@ -270,6 +270,23 @@ async function loadModule() {
   return new Blob(chunks).arrayBuffer();
 }
 
+// A share file's page opened the site (DESIGN.md, 17e): it says it is
+// ready, and the page sends the workbook back. Only a message from the
+// window that opened it counts; the workbook opens untrusted in any case.
+// What it says it is ready to goes to any origin, since a page opened from
+// a file has none; it holds nothing.
+function acceptShare() {
+  if (location.hash !== '#share' || !window.opener) return;
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (event.source !== window.opener || !data || data.gossia !== 'share') return;
+    gossia.open_shared(String(data.name), new Uint8Array(data.bytes));
+    history.replaceState(null, '', location.pathname + location.search);
+    record.shared = (record.shared || 0) + 1;
+  });
+  window.opener.postMessage({ gossia: 'ready' }, '*');
+}
+
 (async () => {
   try {
     await startWaitingBuild();
@@ -295,6 +312,7 @@ async function loadModule() {
         JSON.parse(await gossia.control(cmd, JSON.stringify(args)));
     }
     window.appStarted = true;
+    acceptShare();
     watchForBuilds();
   } catch (err) {
     let panic = null;

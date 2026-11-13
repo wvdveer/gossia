@@ -42,6 +42,11 @@
         "category": "Gossia"
       },
       {
+        "command": "gossia.saveShare",
+        "title": "%command.saveShare%",
+        "category": "Gossia"
+      },
+      {
         "command": "gossia.import",
         "title": "%command.import%",
         "category": "Gossia"
@@ -121,6 +126,10 @@
       "commandPalette": [
         {
           "command": "gossia.newTab",
+          "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
+        },
+        {
+          "command": "gossia.saveShare",
           "when": "activeCustomEditorId == gossia.workbook || resourceScheme == gossia"
         },
         {

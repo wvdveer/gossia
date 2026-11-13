@@ -2,6 +2,7 @@
   "description": "Pastas de trabalho cujas planilhas são árvores definidas por um esquema, com fórmulas em Python.",
   "customEditor.workbook": "Pasta de trabalho do Gossia",
   "command.newTab": "Nova guia...",
+  "command.saveShare": "Salvar como arquivo de compartilhamento...",
   "command.import": "Importar...",
   "command.export": "Exportar...",
   "command.exportPdf": "Exportar como PDF...",

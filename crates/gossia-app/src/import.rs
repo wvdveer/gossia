@@ -708,7 +708,8 @@ impl GossiaApp {
             let workbook = file
                 .name
                 .rsplit_once('.')
-                .is_some_and(|(_, e)| e.eq_ignore_ascii_case(crate::workbook_file::EXTENSION));
+                .is_some_and(|(_, e)| e.eq_ignore_ascii_case(crate::workbook_file::EXTENSION))
+                || crate::share::is_share(&file.bytes);
             match file.purpose.as_str() {
                 purpose::IMPORT_MODULE => {
                     if let Err(e) = self.import_module_bytes(&file.name, &file.bytes) {
@@ -744,7 +745,8 @@ impl GossiaApp {
         for path in paths {
             let workbook = path
                 .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case(crate::workbook_file::EXTENSION));
+                .is_some_and(|e| e.eq_ignore_ascii_case(crate::workbook_file::EXTENSION))
+                || is_share_path(&path);
             if workbook {
                 self.begin_open_recent(&path);
             } else if let Err(e) = self.begin_import_path(&path) {
@@ -2334,4 +2336,18 @@ fn import_stem(location: &str) -> String {
 #[cfg(target_family = "wasm")]
 fn web_sys_log(text: &str) {
     web_sys::console::warn_1(&text.into());
+}
+
+/// Whether the file at `path` is a share file (DESIGN.md, 17e): an `.html`
+/// file with the share file's mark near its start.
+fn is_share_path(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let html = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
+    let mut start = Vec::new();
+    html && std::fs::File::open(path)
+        .and_then(|f| f.take(4096).read_to_end(&mut start))
+        .is_ok()
+        && crate::share::is_share(&start)
 }

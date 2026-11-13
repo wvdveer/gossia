@@ -17,7 +17,9 @@ Needs Playwright for Python and its Chromium:
 import argparse
 import functools
 import http.server
+import json
 import pathlib
+import re
 import shutil
 import sys
 import threading
@@ -96,12 +98,53 @@ def main():
         done = page.evaluate("window.harnessDone")
         print(done["log"])
         ok = done["fail"] == 0 and done["pass"] > 0
+        share = page.evaluate("window.harnessShare || null")
+        if share:
+            ok = share_from_disk(context, folder, share, server.server_address[1]) and ok
+        else:
+            print("\n  (skipped: the share file from disk, which the browser tests make)")
         if not ok:
             shoot(context, folder)
         browser.close()
     server.shutdown()
     other.shutdown()
     sys.exit(0 if ok else 1)
+
+
+def share_from_disk(context, folder, html, port):
+    """A share file opened from disk (file://), whose button hands its
+    workbook to the site served here (DESIGN.md, 17e). Says what it checked,
+    as the harness does, and whether it all held."""
+    print("\n== a share file opened from disk ==")
+    site = f"http://127.0.0.1:{port}/index.html"
+    local = re.sub(r'const SITE = ".*?";', lambda _: f"const SITE = {json.dumps(site)};", html, count=1)
+    path = folder / "share-test.html"
+    path.write_text(local, encoding="utf-8")
+    checks = []
+
+    def check(ok, desc):
+        checks.append(ok)
+        print(f"  {'ok' if ok else 'FAIL'} - {desc}")
+
+    page = context.new_page()
+    try:
+        page.goto(path.as_uri())
+        with context.expect_page(timeout=20000) as info:
+            page.click("#open")
+        opened = info.value
+        check(True, "the button opens the site")
+        opened.wait_for_function("window.testHost && window.testHost.shared === 1",
+                                 timeout=120000, polling=200)
+        check(True, "the site takes the workbook from the file's page")
+        notice = opened.evaluate("gossiaControl('status').then((s) => s.notice)") or ""
+        check("came from a share file" in notice, "and opens it as from a share file")
+        opened.close()
+    except Exception as e:
+        check(False, f"the hand-over ({e})")
+    finally:
+        page.close()
+        path.unlink(missing_ok=True)
+    return all(checks)
 
 
 def shoot(context, folder):

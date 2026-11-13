@@ -2497,6 +2497,7 @@ dependencies = [
  "chrono",
  "gossia-calc",
  "gossia-core",
+ "gossia-i18n",
  "gossia-report",
  "gossia-user",
  "pdf-extract",
@@ -2571,6 +2572,7 @@ dependencies = [
 name = "gossia-user"
 version = "0.6.0"
 dependencies = [
+ "base64 0.22.1",
  "gossia-calc",
  "gossia-core",
  "gossia-i18n",

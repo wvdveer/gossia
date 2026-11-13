@@ -115,7 +115,8 @@ async function runBrowserTests() {
   await h.step('Open asks for a workbook, and the one chosen opens', async () => {
     await app.send('open');
     const pick = host.picks[host.picks.length - 1];
-    h.assertEqual([pick.purpose, pick.extensions], ['open', ['gossia']], 'a workbook is asked for');
+    h.assertEqual([pick.purpose, pick.extensions], ['open', ['gossia', 'html']],
+                  'a workbook or a share file is asked for');
     host.answerPick('Chosen.gossia', saved.bytes);
     await until(async () => (await status()).file === 'Chosen.gossia', 'the chosen workbook to open');
     await h.waitFor(() => browser.recentWorkbooks()[1] === 'Chosen.gossia',
@@ -135,6 +136,46 @@ async function runBrowserTests() {
     h.assertEqual(host.saves[before]?.asNew, true, 'the page was asked where, as a new file');
     await until(async () => (await status()).modified === false, 'the save');
     h.pass('saved');
+  });
+
+  await h.step('a share file is saved, and its page hands the workbook to the site (17e)', async () => {
+    const before = host.files.length;
+    await app.send('command', { name: 'saveShare' });
+    const file = host.files[before];
+    h.assertEqual(file && file.name, 'Chosen.html', "saved as a file, under the workbook's name");
+    const html = new TextDecoder().decode(file.bytes);
+    h.assertContains(html, '<meta name="gossia-share-file" content="1">', 'a share file');
+    h.assertEqual((await status()).modified, false, 'a copy: the workbook is as it was');
+    // For run.py, which opens it from disk.
+    window.harnessShare = html;
+    // The page, from this origin, with the site served here in place of the
+    // official one.
+    const site = new URL('index.html', location.href).href;
+    const local = html.replace(/const SITE = ".*?";/, `const SITE = ${JSON.stringify(site)};`);
+    const page = window.open(URL.createObjectURL(new Blob([local], { type: 'text/html' })),
+                             'gossia-share');
+    await h.waitFor(() => page.document.readyState === 'complete'
+                          && !page.document.getElementById('open').hidden,
+                    { label: 'the share page', timeout: 20000 });
+    let opened = null;
+    const open = page.open.bind(page);
+    page.open = (...args) => (opened = open(...args));
+    page.document.getElementById('open').click();
+    h.assertTrue(opened, 'the button opens the site');
+    await h.waitFor(() => opened.appStarted && opened.testHost.shared === 1,
+                    { label: 'the site to take the workbook', timeout: 120000 });
+    await h.waitFor(() => page.document.getElementById('status').textContent.includes('open in Gossia'),
+                    { label: 'the page to say so' });
+    h.pass('the page says the workbook is open in the other window');
+    const shown = await opened.gossiaControl('status');
+    h.assertContains(shown.notice, 'came from a share file', 'the site opened it from the share file');
+    h.assertEqual([shown.file, shown.modified], [null, true], 'as a new workbook, not saved yet');
+    await opened.gossiaControl('wait_idle', { timeout_ms: 60000 });
+    await opened.gossiaControl('tab', { name: 'Numbers' });
+    h.assertEqual((await opened.gossiaControl('cell', { path: 'a' })).value, 10, 'with its data');
+    h.assertEqual(opened.location.hash, '', 'the address no longer asks for a share');
+    opened.close();
+    page.close();
   });
 
   await h.step('secrets are kept for the session unless remembered', async () => {

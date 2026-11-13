@@ -56,6 +56,7 @@ pub mod schema;
 #[cfg(test)]
 mod schema_tests;
 pub mod schema_view;
+pub use gossia_user::share;
 pub mod sources_ui;
 pub mod status;
 pub mod style;
@@ -196,6 +197,8 @@ fn log_window(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod host_tests;
+#[cfg(test)]
+mod share_tests;
 #[cfg(test)]
 mod workbook_file_tests;
 #[cfg(test)]

@@ -2,6 +2,7 @@
   "description": "Des classeurs dont les feuilles sont des arbres définis par un schéma, avec des formules Python.",
   "customEditor.workbook": "Classeur Gossia",
   "command.newTab": "Nouvel onglet...",
+  "command.saveShare": "Enregistrer comme fichier de partage...",
   "command.import": "Importer...",
   "command.export": "Exporter...",
   "command.exportPdf": "Exporter en PDF...",

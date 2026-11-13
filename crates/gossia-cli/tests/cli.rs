@@ -728,3 +728,97 @@ fn disconnect_refuses_the_workbook_itself_an_existing_copy_and_an_untrusted_work
     assert_eq!(code(&param), 4, "{}", stderr(&param));
     assert!(!b.copy().exists());
 }
+
+// ------------------------------------------------------------------- share
+
+/// `bidwillii share`: the workbook unchanged in a share file, its path
+/// printed, nothing run, so an untrusted workbook is shared too.
+#[test]
+fn share_writes_the_workbook_as_a_share_file_without_running_it() {
+    let b = summary("share");
+    let before = std::fs::read(&b.file).unwrap();
+    let out = b.dir.join("book.html");
+    // No --trust-digest: nothing is run.
+    let output = b.run(&["share", "{book}", "--out", out.to_str().unwrap()]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(stdout(&output).trim(), out.display().to_string());
+    let html = std::fs::read(&out).unwrap();
+    assert!(gossia_user::share::is_share(&html));
+    let (name, workbook) = gossia_user::share::read(&html).unwrap();
+    assert_eq!(name, "book.gossia");
+    assert_eq!(workbook, before, "the workbook goes in unchanged");
+    assert_eq!(
+        std::fs::read(&b.file).unwrap(),
+        before,
+        "and is not changed"
+    );
+
+    // `.html` is added; a file there already needs --overwrite.
+    let bare = b.dir.join("again");
+    assert_eq!(
+        code(&b.run(&["share", "{book}", "--out", bare.to_str().unwrap()])),
+        0
+    );
+    assert!(b.dir.join("again.html").is_file());
+    let output = b.run(&["share", "{book}", "--out", out.to_str().unwrap()]);
+    assert_eq!(code(&output), 1);
+    assert!(
+        stderr(&output).contains("--overwrite"),
+        "{}",
+        stderr(&output)
+    );
+    let output = b.run(&[
+        "share",
+        "{book}",
+        "--out",
+        out.to_str().unwrap(),
+        "--overwrite",
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+
+    // A share file can be shared again, under the original's name.
+    let copy = b.dir.join("copy.html");
+    let output = b.run(&[
+        "share",
+        out.to_str().unwrap(),
+        "--out",
+        copy.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let (name, workbook) = gossia_user::share::read(&std::fs::read(&copy).unwrap()).unwrap();
+    assert_eq!((name.as_str(), workbook), ("book.gossia", before));
+}
+
+#[test]
+fn share_refuses_what_is_no_workbook_and_options_it_does_not_take() {
+    let b = summary("share-refuses");
+    let out = b.dir.join("out.html");
+    let out = out.to_str().unwrap();
+    let not_a_workbook = b.dir.join("notes.txt");
+    std::fs::write(&not_a_workbook, "hello").unwrap();
+    let output = b.run(&["share", not_a_workbook.to_str().unwrap(), "--out", out]);
+    assert_eq!(code(&output), 2);
+    assert!(!b.dir.join("out.html").exists(), "nothing written");
+    assert_eq!(code(&b.run(&["share", "{book}"])), 1, "--out is needed");
+    let output = b.run(&[
+        "share",
+        "{book}",
+        "--out",
+        out,
+        "--trust-digest",
+        "{digest}",
+    ]);
+    assert_eq!(code(&output), 1);
+    assert!(
+        stderr(&output).contains("runs nothing"),
+        "{}",
+        stderr(&output)
+    );
+    let output = b.run(&["share", "{book}", "--out", "{book}", "--overwrite"]);
+    assert_eq!(code(&output), 1);
+    assert!(
+        stderr(&output).contains("the workbook itself"),
+        "{}",
+        stderr(&output)
+    );
+}

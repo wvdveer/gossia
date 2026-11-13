@@ -14,6 +14,7 @@ Usage:
   bidwillii disconnect <workbook.gossia> --out <copy.gossia>
                [--report <Report> [--param <name>=<value>]...]
                [--trust-digest <sha256>] [--overwrite] [--timeout <seconds>]
+  bidwillii share <workbook.gossia> --out <file.html> [--overwrite]
   bidwillii --help | --version
 
 Exit codes: 0 written, 1 wrong command line, 2 the workbook or report cannot
@@ -30,6 +31,16 @@ pub enum Command {
     Version,
     Report(ReportArgs),
     Disconnect(DisconnectArgs),
+    Share(ShareArgs),
+}
+
+/// `bidwillii share`: the workbook as a share file, an `.html` page that
+/// opens it in Gossia's web version. Nothing in it is run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareArgs {
+    pub workbook: PathBuf,
+    pub out: PathBuf,
+    pub overwrite: bool,
 }
 
 /// `bidwillii report`.
@@ -82,6 +93,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "--version" | "-V" => Ok(Command::Version),
         "report" => parse_report(&args[1..]).map(Command::Report),
         "disconnect" => parse_disconnect(&args[1..]).map(Command::Disconnect),
+        "share" => parse_share(&args[1..]).map(Command::Share),
         other => Err(format!("there is no command {other}")),
     }
 }
@@ -171,6 +183,30 @@ fn parse_report(args: &[String]) -> Result<ReportArgs, String> {
         overwrite,
         timeout: timeout.unwrap_or(DEFAULT_TIMEOUT),
         list_params,
+    })
+}
+
+fn parse_share(args: &[String]) -> Result<ShareArgs, String> {
+    let o = options(args, false, false)?;
+    let [workbook] = o.positional.as_slice() else {
+        return Err(match o.positional.get(1) {
+            None => "share needs a workbook".to_owned(),
+            Some(extra) => format!("{extra} is one argument too many"),
+        });
+    };
+    let Some(out) = o.out else {
+        return Err("share needs --out, the share file to write".to_owned());
+    };
+    // Nothing is run, so there is nothing to trust, choose or wait for.
+    if !o.params.is_empty() || o.digest.is_some() || o.timeout.is_some() {
+        return Err(
+            "share runs nothing, so it takes no --param, --trust-digest or --timeout".to_owned(),
+        );
+    }
+    Ok(ShareArgs {
+        workbook: PathBuf::from(workbook),
+        out,
+        overwrite: o.overwrite,
     })
 }
 
@@ -342,6 +378,32 @@ mod tests {
         );
         assert_eq!(
             error("report b.gossia R --out r.pdf --report R"),
+            "there is no option --report"
+        );
+    }
+
+    #[test]
+    fn a_share_command_reads_its_options_and_refuses_what_it_does_not_take() {
+        assert_eq!(
+            parsed("share b.gossia --overwrite --out b.html"),
+            Ok(Command::Share(ShareArgs {
+                workbook: PathBuf::from("b.gossia"),
+                out: PathBuf::from("b.html"),
+                overwrite: true,
+            }))
+        );
+        let error = |line| parsed(line).unwrap_err();
+        assert_eq!(error("share"), "share needs a workbook");
+        assert_eq!(
+            error("share b.gossia"),
+            "share needs --out, the share file to write"
+        );
+        assert_eq!(
+            error("share b.gossia --out b.html --timeout 5"),
+            "share runs nothing, so it takes no --param, --trust-digest or --timeout"
+        );
+        assert_eq!(
+            error("share b.gossia --out b.html --report R"),
             "there is no option --report"
         );
     }

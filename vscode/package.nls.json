@@ -2,6 +2,7 @@
   "description": "Workbooks whose sheets are trees defined by a schema, with Python formulas.",
   "customEditor.workbook": "Gossia workbook",
   "command.newTab": "New Tab...",
+  "command.saveShare": "Save as Share File...",
   "command.import": "Import...",
   "command.export": "Export...",
   "command.exportPdf": "Export as PDF...",

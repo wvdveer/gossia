@@ -3,7 +3,9 @@
 //! reports with the parameters given and writes it as a PDF, without a
 //! window, so that a script or a scheduled job can wait for it and read its
 //! exit code. `bidwillii disconnect` runs Disconnect from Data Sources and
-//! writes the result to a copy.
+//! writes the result to a copy. `bidwillii share` writes the workbook as a
+//! share file (DESIGN.md, The web version on GitHub Pages, 17e), running
+//! nothing.
 //!
 //! The workbook is opened as the application opens it, with this user's
 //! preferences, trust record and data sources, and is never saved. The
@@ -25,7 +27,7 @@ use gossia_user::prefs::{Config, User};
 pub mod args;
 pub mod params;
 
-use args::{Command, DisconnectArgs, ReportArgs};
+use args::{Command, DisconnectArgs, ReportArgs, ShareArgs};
 
 /// The exit codes (DESIGN.md, "Batch export from the command line").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +86,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         }
         Command::Report(report) => run_report(&report, out, err),
         Command::Disconnect(args) => run_disconnect(&args, out, err),
+        Command::Share(args) => run_share(&args, out, err),
     };
     match result {
         Ok(exit) => exit as i32,
@@ -391,6 +394,63 @@ fn run_disconnect(
         }
     }
     Ok(Exit::Errors)
+}
+
+/// `bidwillii share`: the workbook as a share file, as *File > Save as share
+/// file...* writes it, with the page in this user's interface language. The
+/// workbook is read to see that it is one, and goes into the page unchanged;
+/// nothing in it is run, so it need not be trusted. A share file can be
+/// given in place of the workbook. The path written is printed.
+fn run_share(args: &ShareArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exit, Failure> {
+    use gossia_user::share;
+    let target = output_path(&args.out, "html", args.overwrite)?;
+    if is_same_file(&target, &args.workbook) {
+        return Err(Failure::new(
+            Exit::Usage,
+            format!(
+                "{} is the workbook itself; --out must be another file",
+                target.display()
+            ),
+        ));
+    }
+    let (user, warnings) = User::load(Config::standard());
+    for warning in warnings {
+        let _ = writeln!(err, "bidwillii: {warning}");
+    }
+    let unreadable =
+        |e: String| Failure::new(Exit::Workbook, format!("{}: {e}", args.workbook.display()));
+    let bytes = std::fs::read(&args.workbook).map_err(|e| unreadable(e.to_string()))?;
+    let (name, workbook) = if share::is_share(&bytes) {
+        share::read(&bytes).map_err(unreadable)?
+    } else {
+        let name = args
+            .workbook
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (name, bytes)
+    };
+    let package = read_zip(&workbook, &user.prefs.limits).map_err(unreadable)?;
+    Calc::from_package(Arc::new(PythonSyntax), &package).map_err(|e| unreadable(e.to_string()))?;
+    gossia_i18n::set_language(
+        user.prefs
+            .appearance
+            .language
+            .unwrap_or_else(gossia_i18n::system_language),
+    );
+    let html = share::to_html(&name, &workbook);
+    save_atomic(&target, html.as_bytes())
+        .map_err(|e| Failure::new(Exit::Workbook, format!("{}: {e}", target.display())))?;
+    let _ = writeln!(out, "{}", target.display());
+    if html.len() > share::MAIL_LIMIT {
+        let _ = writeln!(
+            err,
+            "bidwillii: {} is {} MB: many mail systems do not take attachments above 20 MB",
+            target.display(),
+            html.len().div_ceil(1024 * 1024)
+        );
+    }
+    Ok(Exit::Written)
 }
 
 /// Whether `a` and `b` are the same file, both being there.

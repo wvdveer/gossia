@@ -2,6 +2,7 @@
   "description": "Libros cuyas hojas son árboles definidos por un esquema, con fórmulas de Python.",
   "customEditor.workbook": "Libro de Gossia",
   "command.newTab": "Pestaña nueva...",
+  "command.saveShare": "Guardar como archivo para compartir...",
   "command.import": "Importar...",
   "command.export": "Exportar...",
   "command.exportPdf": "Exportar como PDF...",

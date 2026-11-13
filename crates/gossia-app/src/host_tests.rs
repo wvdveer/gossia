@@ -776,7 +776,10 @@ fn open_in_the_browser_asks_the_page_for_a_workbook_and_tells_it_it_was_opened()
     app.begin_open();
     assert_eq!(
         fake.0.borrow().picks,
-        [("open".to_owned(), vec!["gossia".to_owned()])]
+        [(
+            "open".to_owned(),
+            vec!["gossia".to_owned(), "html".to_owned()]
+        )]
     );
     host::picked(Picked {
         purpose: purpose::OPEN.to_owned(),
@@ -894,4 +897,85 @@ fn a_secret_is_remembered_on_the_browser_only_when_asked() {
     // Elsewhere there is no such choice.
     fake.0.borrow_mut().keeps_files = false;
     assert_eq!(crate::sources_ui::SourceForm::new().remember, None);
+}
+
+// ------------------------------------------------------------ share files
+
+/// Save as share file in a host: saved as exports are, under the
+/// workbook's name with `.html`, and the workbook does not count as saved.
+#[test]
+fn a_share_file_is_saved_through_the_host_as_a_file() {
+    let (fake, mut app) = browser_hosted();
+    edit(&mut app);
+    app.run_command("saveShare").unwrap();
+    let files = fake.0.borrow().files.clone();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].0, "Untitled.html");
+    assert!(crate::share::is_share(&files[0].1));
+    assert!(app.is_dirty(), "a copy: the workbook is not saved by it");
+    assert!(fake.0.borrow().workbooks.is_empty());
+}
+
+/// A share file picked with File > Open, or dropped, opens as a new
+/// workbook: the host is told it has no file for it, so that Save asks
+/// where and never writes over the share file.
+#[test]
+fn a_share_file_from_the_host_opens_as_a_new_workbook() {
+    let (fake, mut app) = browser_hosted();
+    let html = app.share_file().unwrap().1;
+    host::picked(Picked {
+        purpose: purpose::OPEN.to_owned(),
+        name: "Orders.html".to_owned(),
+        bytes: html.clone(),
+    });
+    app.receive_picked();
+    assert!(app.doc.from_share);
+    assert_eq!(app.file_name(), "Untitled.gossia");
+    assert!(fake.0.borrow().workbooks_opened.is_empty());
+    assert_eq!(fake.0.borrow().new_workbooks, 1);
+
+    // Dropped, after the question about unsaved changes.
+    let ctx = egui::Context::default();
+    host::picked(Picked {
+        purpose: purpose::DROP.to_owned(),
+        name: "Orders.html".to_owned(),
+        bytes: html,
+    });
+    app.receive_picked();
+    assert!(matches!(
+        app.files.confirm,
+        Some(crate::workbook_file::Pending::OpenDropped(..))
+    ));
+    app.answer_unsaved(&ctx, false);
+    assert!(app.doc.from_share);
+    assert_eq!(fake.0.borrow().new_workbooks, 2);
+    assert!(fake.0.borrow().workbooks_opened.is_empty());
+}
+
+/// The workbook a share file's page sent to the site (the hand-over).
+#[test]
+fn a_workbook_handed_over_from_a_share_file_s_page_opens() {
+    let (fake, mut app) = browser_hosted();
+    let ctx = egui::Context::default();
+    let bytes = app.backup_bytes().unwrap();
+    edit(&mut app);
+    app.begin_open_shared("Orders.gossia", &bytes);
+    assert!(matches!(
+        app.files.confirm,
+        Some(crate::workbook_file::Pending::OpenShared(..))
+    ));
+    app.answer_unsaved(&ctx, false);
+    assert_eq!(app.file_name(), "Orders.gossia");
+    assert!(app.doc.from_share);
+    assert!(app.is_dirty());
+    // Save offers the original's name.
+    app.begin_save();
+    let saved: Vec<String> = fake
+        .0
+        .borrow()
+        .workbooks
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    assert_eq!(saved, ["Orders.gossia"]);
 }

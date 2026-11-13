@@ -2,6 +2,7 @@
   "description": "シートがスキーマで定義されたツリーで、Python の数式を使えるワークブック。",
   "customEditor.workbook": "Gossia ワークブック",
   "command.newTab": "新しいタブ...",
+  "command.saveShare": "共有ファイルとして保存...",
   "command.import": "インポート...",
   "command.export": "エクスポート...",
   "command.exportPdf": "PDF としてエクスポート...",

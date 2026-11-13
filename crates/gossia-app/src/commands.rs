@@ -10,6 +10,7 @@ use gossia_i18n::tr;
 /// (`gossia.<name>` in VS Code), and the title it shows.
 pub const COMMANDS: &[(&str, &str)] = &[
     ("newTab", "New Tab..."),
+    ("saveShare", "Save as Share File..."),
     ("import", "Import..."),
     ("export", "Export..."),
     ("exportPdf", "Export as PDF..."),
@@ -33,6 +34,8 @@ impl GossiaApp {
         let busy = || tr!("finish or cancel the edit first").to_owned();
         match name {
             "newTab" => self.begin_new_tab(),
+            "saveShare" if editing => return Err(busy()),
+            "saveShare" => self.begin_save_share(),
             "import" if editing => return Err(busy()),
             "import" => self.begin_import(),
             "export" | "exportPdf" | "exportHtml" if editing => return Err(busy()),

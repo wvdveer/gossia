@@ -73,6 +73,12 @@ pub const EXTENSION: &str = "gossia";
 pub struct Document {
     /// Where it is saved, if it has been.
     pub path: Option<PathBuf>,
+    /// The file name of a workbook not saved yet that has one: one opened
+    /// from a share file is named after the original.
+    pub name: Option<String>,
+    /// Opened from a share file and not saved yet: it has unsaved changes,
+    /// since it is in no file of the user's.
+    pub from_share: bool,
     /// The id the trust model knows the workbook by.
     pub workbook_id: String,
     /// What a newer version put in the file and this one does not know: kept,
@@ -94,6 +100,8 @@ impl Default for Document {
     fn default() -> Document {
         Document {
             path: None,
+            name: None,
+            from_share: false,
             workbook_id: new_workbook_id(),
             unknown: Vec::new(),
             views: BTreeMap::new(),
@@ -127,6 +135,8 @@ pub enum Pending {
     /// Opening a workbook dropped on the page of a host that keeps files:
     /// its name and file.
     OpenDropped(String, std::rc::Rc<[u8]>),
+    /// A share file's workbook sent to the web version from its page.
+    OpenShared(String, std::rc::Rc<[u8]>),
 }
 
 /// A save given to a host that keeps files, until it answers: what the
@@ -154,6 +164,8 @@ pub struct FileDialog {
 pub enum Browsing {
     Open,
     SaveAs,
+    /// Where a share file of the workbook goes.
+    SaveShare,
     /// A JSON, XML or text file to import as tabs.
     Import,
     /// The file a tab is exported to.
@@ -210,20 +222,30 @@ impl GossiaApp {
 
     /// The name of the file, or `Untitled`.
     pub fn file_name(&self) -> String {
-        self.doc
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map_or_else(
+        match (&self.doc.path, &self.doc.name) {
+            (Some(path), _) => path.file_name().map_or_else(
                 || tr!("Untitled").to_owned(),
                 |name| name.to_string_lossy().into_owned(),
-            )
+            ),
+            (None, Some(name)) => name.clone(),
+            (None, None) => tr!("Untitled").to_owned(),
+        }
+    }
+
+    /// The name Save As offers: the file's, or `Untitled.gossia`.
+    fn suggested_name(&self) -> String {
+        match (&self.doc.path, &self.doc.name) {
+            (None, None) => format!("Untitled.{EXTENSION}"),
+            _ => self.file_name(),
+        }
     }
 
     /// Whether there are changes that a save would keep: edits of the data,
     /// changes to the forms and reports, and parameters chosen.
     pub fn is_dirty(&self) -> bool {
-        self.calc().is_modified() || designs_version(self.calc()) != self.doc.saved_forms
+        self.doc.from_share
+            || self.calc().is_modified()
+            || designs_version(self.calc()) != self.doc.saved_forms
     }
 
     /// The title of the window.
@@ -241,6 +263,9 @@ impl GossiaApp {
     /// unsaved changes. Nothing changes if the file cannot be read.
     pub fn open_path(&mut self, path: &Path) -> Result<(), String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if crate::share::is_share(&bytes) {
+            return self.open_share_file(&bytes);
+        }
         let package = read_zip(&bytes, &self.user.prefs.limits)?;
         let opened =
             Calc::from_package(Arc::new(PythonSyntax), &package).map_err(|e| e.to_string())?;
@@ -252,6 +277,9 @@ impl GossiaApp {
     /// Opens a workbook the host gave as bytes, under the name of its file
     /// (DESIGN.md, Web port, 0.3.0: the host opens and saves the file).
     pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        if crate::share::is_share(bytes) {
+            return self.open_share_file(bytes);
+        }
         let package = read_zip(bytes, &self.user.prefs.limits)?;
         let opened =
             Calc::from_package(Arc::new(PythonSyntax), &package).map_err(|e| e.to_string())?;
@@ -263,13 +291,154 @@ impl GossiaApp {
     /// was asked for, whose file it now is; otherwise dropped), and tells
     /// the host. The caller has dealt with unsaved changes.
     pub fn open_from_host(&mut self, name: &str, bytes: &[u8], picked: bool) {
+        let share = crate::share::is_share(bytes);
         match self.open_bytes(name, bytes) {
+            // A share file is not the workbook's file (`open_shared`).
+            Ok(()) if share => {}
             Ok(()) => {
                 if let Some(host) = crate::host::current() {
                     host.workbook_opened(name, bytes, picked);
                 }
             }
             Err(e) => self.notice = Some(format!("{name}: {e}")),
+        }
+    }
+
+    /// Opens the workbook in a share file (DESIGN.md, 17e): see
+    /// [`GossiaApp::open_shared`].
+    pub fn open_share_file(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let (name, workbook) = crate::share::read(bytes)?;
+        self.open_shared(&name, &workbook)
+    }
+
+    /// Opens a workbook from a share file, `name` its original's file name:
+    /// a new workbook, not saved yet, named after the original. It gets an
+    /// id of its own, so that no trust given to the original carries over,
+    /// and is untrusted if it runs Python. The caller has dealt with unsaved
+    /// changes.
+    pub fn open_shared(&mut self, name: &str, workbook: &[u8]) -> Result<(), String> {
+        let package = read_zip(workbook, &self.user.prefs.limits)?;
+        let mut opened =
+            Calc::from_package(Arc::new(PythonSyntax), &package).map_err(|e| e.to_string())?;
+        opened.workbook_id = new_workbook_id();
+        self.install(opened, None);
+        self.doc.name = Some(name.to_owned());
+        self.doc.from_share = true;
+        let note = tr!(
+            "{name} came from a share file: it is a new workbook, not saved yet.",
+            name = name
+        );
+        self.notice = Some(match self.notice.take() {
+            Some(warnings) => format!("{note} {warnings}"),
+            None => note,
+        });
+        // A host that keeps files has no file for it.
+        if let Some(host) = crate::host::current() {
+            host.new_workbook();
+        }
+        Ok(())
+    }
+
+    /// A share file sent to the web version from its page (the hand-over):
+    /// asks first about unsaved changes.
+    pub fn begin_open_shared(&mut self, name: &str, workbook: &[u8]) {
+        self.commit_code();
+        if self.is_dirty() {
+            self.files.confirm = Some(Pending::OpenShared(name.to_owned(), workbook.into()));
+        } else if let Err(e) = self.open_shared(name, workbook) {
+            self.notice = Some(format!("{name}: {e}"));
+        }
+    }
+
+    // ----------------------------------------------------- share files
+
+    /// The share file of the workbook: its file name (`Orders.html`) and
+    /// bytes. The workbook does not count as saved.
+    pub fn share_file(&mut self) -> Result<(String, Vec<u8>), String> {
+        let bytes = self.backup_bytes()?;
+        let name = self.file_name();
+        let name = if name.ends_with(&format!(".{EXTENSION}")) {
+            name
+        } else {
+            format!("{name}.{EXTENSION}")
+        };
+        let html = crate::share::to_html(&name, &bytes);
+        Ok((crate::share::file_name(&name), html.into_bytes()))
+    }
+
+    /// What is said after a share file is saved: a warning when many mail
+    /// systems will not take it.
+    fn share_saved_notice(&mut self, name: &str, size: usize) {
+        if size > crate::share::MAIL_LIMIT {
+            self.notice = Some(tr!(
+                "{name} is {size} MB: many mail systems do not take attachments above 20 MB.",
+                name = name,
+                size = size.div_ceil(1024 * 1024)
+            ));
+        }
+    }
+
+    /// Writes the share file of the workbook. It is a copy: the workbook
+    /// keeps its own file and name.
+    pub fn save_share_to(&mut self, path: &Path) -> Result<(), String> {
+        let path = if path.extension().is_some() {
+            path.to_path_buf()
+        } else {
+            path.with_extension("html")
+        };
+        let (_, bytes) = self.share_file()?;
+        save_atomic(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.share_saved_notice(&name, bytes.len());
+        Ok(())
+    }
+
+    /// File > Save as share file...: a host saves it as it saves exports;
+    /// otherwise a file browser or the dialog asks where.
+    pub fn begin_save_share(&mut self) {
+        if let Some(host) = crate::host::current() {
+            match self.share_file() {
+                Ok((name, bytes)) => {
+                    let size = bytes.len();
+                    host.save_file(&name, bytes);
+                    self.share_saved_notice(&name, size);
+                }
+                Err(e) => self.notice = Some(e),
+            }
+            return;
+        }
+        let name = crate::share::file_name(&self.suggested_name());
+        if self.files.browse {
+            self.files.browser = new_browser()
+                .title(tr!("Save as share file"))
+                .initial_directory(self.start_folder())
+                .default_file_name(&name)
+                .add_save_extension(tr!("Gossia share file"), "html")
+                .default_save_extension(tr!("Gossia share file"));
+            self.files.browser.save_file();
+            self.files.browsing = Some(Browsing::SaveShare);
+            return;
+        }
+        self.files.dialog = Some(FileDialog {
+            purpose: Browsing::SaveShare,
+            text: self.start_folder().join(name).display().to_string(),
+            error: None,
+        });
+    }
+
+    /// Save As to a file the user chose: a share file for `.html`, else the
+    /// workbook.
+    fn save_as_chosen(&mut self, path: &Path) -> Result<(), String> {
+        let html = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
+        if html {
+            self.save_share_to(path)
+        } else {
+            self.save_as(path)
         }
     }
 
@@ -358,6 +527,8 @@ impl GossiaApp {
         fresh.applied = Some(effective);
         fresh.doc = Document {
             path,
+            name: None,
+            from_share: false,
             workbook_id,
             unknown,
             views: views.clone(),
@@ -449,10 +620,7 @@ impl GossiaApp {
     ) -> Result<(), String> {
         let (bytes, meta) = self.workbook_bytes()?;
         // A new workbook is offered under the name Save As would suggest.
-        let name = match self.doc.path {
-            Some(_) => self.file_name(),
-            None => format!("Untitled.{EXTENSION}"),
-        };
+        let name = self.suggested_name();
         if host.keeps_files() {
             self.files.host_save = Some(HostSave {
                 meta,
@@ -544,6 +712,8 @@ impl GossiaApp {
         self.doc.views = meta.views;
         self.doc.workbook_view = meta.workbook_view;
         self.doc.path = Some(path.to_path_buf());
+        self.doc.name = None;
+        self.doc.from_share = false;
         // What the user saved is what they trust, if they trust the workbook.
         if self.calc().is_trusted() {
             let content = self.calc().fingerprint();
@@ -647,7 +817,7 @@ impl GossiaApp {
 
     fn show_open_dialog(&mut self) {
         if let Some(host) = Self::host_keeps_files() {
-            host.pick_file(crate::host::purpose::OPEN, &[EXTENSION]);
+            host.pick_file(crate::host::purpose::OPEN, &[EXTENSION, "html"]);
             return;
         }
         if self.files.browse {
@@ -655,6 +825,7 @@ impl GossiaApp {
                 .title(tr!("Open a workbook"))
                 .initial_directory(self.start_folder())
                 .add_file_filter_extensions(tr!("Gossia workbooks"), vec![EXTENSION])
+                .add_file_filter_extensions(tr!("Gossia share files"), vec!["html", "htm"])
                 .default_file_filter(tr!("Gossia workbooks"));
             self.files.browser.pick_file();
             self.files.browsing = Some(Browsing::Open);
@@ -732,16 +903,13 @@ impl GossiaApp {
             return;
         }
         if self.files.browse {
-            let name = if self.doc.path.is_some() {
-                self.file_name()
-            } else {
-                format!("Untitled.{EXTENSION}")
-            };
+            let name = self.suggested_name();
             self.files.browser = new_browser()
                 .title(tr!("Save the workbook as"))
                 .initial_directory(self.start_folder())
                 .default_file_name(&name)
                 .add_save_extension(tr!("Gossia workbook"), EXTENSION)
+                .add_save_extension(tr!("Gossia share file"), "html")
                 .default_save_extension(tr!("Gossia workbook"));
             self.files.browser.save_file();
             self.files.browsing = Some(Browsing::SaveAs);
@@ -757,7 +925,7 @@ impl GossiaApp {
     fn default_file_text(&self) -> String {
         match &self.doc.path {
             Some(path) => path.display().to_string(),
-            None => format!("Untitled.{EXTENSION}"),
+            None => self.suggested_name(),
         }
     }
 
@@ -784,7 +952,8 @@ impl GossiaApp {
             return;
         }
         let done = match dialog.purpose {
-            Browsing::SaveAs => self.save_as(&path),
+            Browsing::SaveAs => self.save_as_chosen(&path),
+            Browsing::SaveShare => self.save_share_to(&path),
             Browsing::Open => self.open_path(&path),
             Browsing::Import => self.begin_import_path(&path),
             Browsing::Export => self.export_to(&path),
@@ -841,6 +1010,11 @@ impl GossiaApp {
                 }
             }
             Pending::OpenDropped(name, bytes) => self.open_from_host(&name, &bytes, false),
+            Pending::OpenShared(name, bytes) => {
+                if let Err(e) = self.open_shared(&name, &bytes) {
+                    self.notice = Some(format!("{name}: {e}"));
+                }
+            }
         }
     }
 
@@ -854,6 +1028,7 @@ impl GossiaApp {
             let mut open = true;
             egui::Window::new(match dialog.purpose {
                 Browsing::SaveAs => tr!("Save As"),
+                Browsing::SaveShare => tr!("Save as share file"),
                 Browsing::Open => tr!("Open a workbook"),
                 Browsing::Import => tr!("Import a file"),
                 Browsing::Export => tr!("Export"),
@@ -877,7 +1052,7 @@ impl GossiaApp {
                 ui.horizontal(|ui| {
                     apply |= ui
                         .button(match dialog.purpose {
-                            Browsing::SaveAs => tr!("Save"),
+                            Browsing::SaveAs | Browsing::SaveShare => tr!("Save"),
                             Browsing::Open => tr!("Open"),
                             Browsing::Import => tr!("Import"),
                             Browsing::Export | Browsing::ExportPdf | Browsing::ExportHtml => {
@@ -918,7 +1093,8 @@ impl GossiaApp {
                         Pending::Open
                         | Pending::OpenRecent(_)
                         | Pending::OpenHostRecent(_)
-                        | Pending::OpenDropped(..) => tr!(
+                        | Pending::OpenDropped(..)
+                        | Pending::OpenShared(..) => tr!(
                             "Save the changes to {file} before opening another workbook?",
                             file = file
                         ),
@@ -955,7 +1131,8 @@ impl GossiaApp {
             self.files.browsing = None;
             let done = match purpose {
                 Browsing::Open => self.open_path(&path),
-                Browsing::SaveAs => self.save_as(&path),
+                Browsing::SaveAs => self.save_as_chosen(&path),
+                Browsing::SaveShare => self.save_share_to(&path),
                 Browsing::Import => self.begin_import_path(&path),
                 Browsing::Export => self.export_to(&path),
                 Browsing::ExportPdf | Browsing::ExportHtml => self.export_report_to(&path),

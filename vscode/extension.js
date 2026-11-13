@@ -508,8 +508,10 @@ class WorkbookEditorProvider {
 
   async saveFile(document, name, bytes) {
     const folder = this.folderOf(document);
+    const ext = path.extname(name).slice(1);
     const target = await vscode.window.showSaveDialog({
       defaultUri: folder ? vscode.Uri.joinPath(folder, name) : undefined,
+      filters: ext ? { [ext.toUpperCase()]: [ext] } : undefined,
     });
     if (target) await vscode.workspace.fs.writeFile(target, bytes);
   }

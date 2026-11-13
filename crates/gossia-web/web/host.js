@@ -15,6 +15,11 @@ const STORAGE = 'gossia:';
 const SECRET = 'gossia-secret:';
 const RECENT_MAX = 10;
 const TYPES = [{ description: 'Gossia workbook', accept: { 'application/octet-stream': ['.gossia'] } }];
+// Opening also takes share files (DESIGN.md, 17e), which open as new
+// workbooks; saving writes workbooks only.
+const OPEN_TYPES = [
+  { description: 'Gossia workbook or share file', accept: { 'application/octet-stream': ['.gossia'], 'text/html': ['.html', '.htm'] } },
+];
 const ACCESS = typeof window.showOpenFilePicker === 'function'
   && typeof window.showSaveFilePicker === 'function';
 
@@ -339,7 +344,7 @@ export async function browserHost(gossia, record) {
       }
       if (purpose === 'open' && ACCESS) {
         try {
-          const [handle] = await window.showOpenFilePicker({ types: TYPES });
+          const [handle] = await window.showOpenFilePicker({ types: OPEN_TYPES });
           const file = await handle.getFile();
           pending = { key: await keyOf(handle), handle };
           file_picked(purpose, file.name, new Uint8Array(await file.arrayBuffer()));
