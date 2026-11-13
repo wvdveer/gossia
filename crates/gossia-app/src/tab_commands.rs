@@ -1170,6 +1170,7 @@ impl GossiaApp {
                 self.begin_delete_tab(tab);
                 ui.close();
             }
+            self.hide_tab_item(ui, tab);
             let data_tab = !self.calc().is_schema_sheet(tab);
             if ui
                 .add_enabled(data_tab, egui::Button::new(tr!("Change schema...")))

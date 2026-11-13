@@ -39,6 +39,8 @@ use crate::style::{DataFont, Typeface};
 
 /// The key of the font of the data views in `view.json`.
 const DATA_FONT: &str = "data_font";
+/// The key of the hidden tabs in `view.json`.
+const HIDDEN_TABS: &str = "hidden_tabs";
 use crate::table::{Condition, Filter, TableView, item_type};
 
 /// The keys of the view object this version writes. Anything else in it was
@@ -277,10 +279,10 @@ impl GossiaApp {
 
     /// The state of the view of the whole workbook, for `view.json`, merged
     /// over what the file had: the font of the data views, left out when it is
-    /// the default.
+    /// the default, and the hidden tabs in the order of the tabs.
     ///
     /// ```json
-    /// {"data_font": {"family": "serif", "size": 16}}
+    /// {"data_font": {"family": "serif", "size": 16}, "hidden_tabs": ["Notes"]}
     /// ```
     pub fn workbook_view(&self) -> Option<Json> {
         let mut object = self
@@ -291,11 +293,16 @@ impl GossiaApp {
             .cloned()
             .unwrap_or_default();
         object.remove(DATA_FONT);
+        object.remove(HIDDEN_TABS);
         if self.data_font != DataFont::default() {
             object.insert(
                 DATA_FONT.to_owned(),
                 json!({"family": self.data_font.family.key(), "size": self.data_font.size}),
             );
+        }
+        let hidden = self.hidden_tab_names();
+        if !hidden.is_empty() {
+            object.insert(HIDDEN_TABS.to_owned(), json!(hidden));
         }
         (!object.is_empty()).then_some(Json::Object(object))
     }
@@ -318,6 +325,10 @@ impl GossiaApp {
                 .filter(|s| FONT_SIZES.contains(s))
                 .unwrap_or(defaults.size),
         };
+        self.hidden_tabs = strings(view.and_then(|v| v.get(HIDDEN_TABS)))
+            .into_iter()
+            .collect();
+        self.tidy_hidden_tabs();
     }
 
     /// Changes the font of the data views. Like the rest of the view state it

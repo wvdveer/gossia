@@ -155,6 +155,7 @@ impl GossiaApp {
                 self.begin_delete_tab(tab);
                 ui.close();
             }
+            self.hide_tab_item(ui, tab);
         });
     }
 

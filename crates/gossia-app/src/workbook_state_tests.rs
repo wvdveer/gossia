@@ -520,3 +520,60 @@ fn a_recent_file_that_is_gone_is_taken_off_the_list() {
     // The sample is still shown.
     assert_eq!(app.sheet, "Orders");
 }
+
+// ------------------------------------------------------------ hidden tabs
+
+#[test]
+fn hidden_tabs_are_saved_in_the_view_and_come_back() {
+    let folder = Folder::new("hidden-tabs");
+    let path = folder.file("h.gossia");
+    let mut app = sample();
+    app.save_as(&path).unwrap();
+    app.hide_tab("Prices_schema");
+    app.hide_tab("Orders_schema");
+    assert!(!app.is_dirty(), "hiding a tab is view state, not an edit");
+    let before = app.calc().fingerprint();
+    app.save().unwrap();
+    assert_eq!(app.calc().fingerprint(), before);
+    let saved: Json = serde_json::from_str(&entry(&path, "view.json").unwrap()).unwrap();
+    // In the order of the tabs.
+    let order: Vec<String> = app
+        .calc()
+        .tab_names()
+        .into_iter()
+        .filter(|n| n.ends_with("_schema"))
+        .collect();
+    assert_eq!(saved, json!({ "hidden_tabs": order }));
+
+    let mut other = sample();
+    other.open_path(&path).unwrap();
+    assert_eq!(other.hidden_tab_names(), order);
+    other.new_workbook();
+    assert!(other.hidden_tabs.is_empty());
+}
+
+#[test]
+fn a_hidden_tab_follows_a_rename_and_goes_with_a_delete() {
+    let mut app = sample();
+    app.hide_tab("Prices");
+    app.rename_tab("Prices", "Rates").unwrap();
+    assert_eq!(app.hidden_tab_names(), ["Rates"]);
+    app.delete_tab("Rates").unwrap();
+    settle(&mut app);
+    assert!(app.hidden_tabs.is_empty());
+}
+
+#[test]
+fn a_file_with_every_tab_hidden_or_tabs_that_are_gone_shows_what_it_can() {
+    let mut app = sample();
+    let all = app.calc().tab_names();
+    let mut names: Vec<Json> = all.iter().map(|n| json!(n)).collect();
+    names.push(json!("Gone"));
+    app.restore_workbook_view(Some(&json!({ "hidden_tabs": names })));
+    assert!(app.hidden_tabs.is_empty(), "one tab stays on the bar");
+
+    app.switch_to("Prices");
+    app.restore_workbook_view(Some(&json!({ "hidden_tabs": ["Prices", "Gone"] })));
+    assert_eq!(app.hidden_tab_names(), ["Prices"]);
+    assert_ne!(app.sheet, "Prices", "the tab shown is on the bar");
+}

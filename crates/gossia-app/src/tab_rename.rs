@@ -108,6 +108,7 @@ impl GossiaApp {
         }
         self.expanded.remove(name);
         self.hidden.remove(name);
+        self.hidden_tabs.remove(name);
         self.views.remove(name);
         self.doc.views.remove(name);
         let tables = &mut self.tables;
@@ -159,6 +160,9 @@ impl GossiaApp {
         }
         rekey(&mut self.expanded, from, to);
         rekey(&mut self.hidden, from, to);
+        if self.hidden_tabs.remove(from) {
+            self.hidden_tabs.insert(to.to_owned());
+        }
         rekey(&mut self.views, from, to);
         if let Some(view) = self.doc.views.remove(from) {
             self.doc.views.insert(to.to_owned(), view);

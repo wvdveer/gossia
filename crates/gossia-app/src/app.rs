@@ -82,6 +82,8 @@ pub struct GossiaApp {
     pub expansion_rev: u64,
     /// The nodes hidden by hand in the tree view, for each tab.
     pub hidden: HashMap<String, HashSet<crate::tree_hidden::HiddenKey>>,
+    /// The tabs taken off the tab bar (`tab_hiding.rs`).
+    pub hidden_tabs: std::collections::BTreeSet<String>,
     pub rows: Vec<Row>,
     pub rows_key: Option<(String, u64, u64)>,
     pub editing: Option<Editing>,
@@ -224,6 +226,7 @@ impl GossiaApp {
             expanded,
             expansion_rev: 0,
             hidden: HashMap::new(),
+            hidden_tabs: std::collections::BTreeSet::new(),
             rows: Vec::new(),
             rows_key: None,
             editing: None,
@@ -441,6 +444,8 @@ impl GossiaApp {
     // ------------------------------------------------------------- tabs
 
     pub fn switch_to(&mut self, sheet: &str) {
+        // A hidden tab that is gone to is on the bar again.
+        self.hidden_tabs.remove(sheet);
         if sheet == self.sheet {
             return;
         }

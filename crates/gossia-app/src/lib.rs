@@ -60,6 +60,7 @@ pub mod sources_ui;
 pub mod status;
 pub mod style;
 pub mod tab_commands;
+pub mod tab_hiding;
 pub mod tab_rename;
 pub mod table;
 pub mod table_view;

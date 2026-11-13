@@ -581,6 +581,7 @@ impl GossiaApp {
                 self.forms_menu(ui);
             });
             ui.menu_button(tr!("Font"), |ui| self.font_menu(ui));
+            self.unhide_menu(ui);
             ui.separator();
             if ui
                 .checkbox(&mut self.show_toolbar, tr!("Toolbar"))
@@ -1989,10 +1990,16 @@ impl GossiaApp {
             let names = self.calc().tab_names();
             ui.spacing_mut().item_spacing.x = 2.0;
             // A tab dragged along the bar goes where it is let go: before the
-            // first tab whose middle is right of the pointer.
+            // first tab whose middle is right of the pointer. Hidden tabs are
+            // not on the bar: `places` has the place in the order of all the
+            // tabs of each one on it.
             let mut rects = Vec::with_capacity(names.len());
+            let mut places = Vec::with_capacity(names.len());
             let mut dragged = None;
             for (i, name) in names.iter().enumerate() {
+                if self.hidden_tabs.contains(name) {
+                    continue;
+                }
                 let selected = *name == self.sheet;
                 let report = self.calc().is_report(name);
                 let response = sheet_tab(ui, name, selected, report);
@@ -2003,9 +2010,10 @@ impl GossiaApp {
                     self.begin_rename_tab(name);
                 }
                 if response.dragged() || response.drag_stopped() {
-                    dragged = Some((i, response.drag_stopped()));
+                    dragged = Some((rects.len(), response.drag_stopped()));
                 }
                 rects.push(response.rect);
+                places.push(i);
                 response.context_menu(|ui| self.tab_menu_items(ui, name));
             }
             if let (Some((from, dropped)), Some(x)) =
@@ -2016,6 +2024,8 @@ impl GossiaApp {
                     .position(|r| r.center().x > x)
                     .unwrap_or(rects.len());
                 if place != from && place != from + 1 {
+                    let from_tab = places[from];
+                    let place_tab = places.get(place).copied().unwrap_or(names.len());
                     // The mark where it would go.
                     let edge = rects
                         .get(place)
@@ -2028,8 +2038,12 @@ impl GossiaApp {
                     );
                     if dropped {
                         // Taking it out first shifts the places after it.
-                        let to = if place > from { place - 1 } else { place };
-                        self.move_tab(&names[from], to);
+                        let to = if place_tab > from_tab {
+                            place_tab - 1
+                        } else {
+                            place_tab
+                        };
+                        self.move_tab(&names[from_tab], to);
                     }
                 }
             }
