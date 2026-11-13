@@ -100,3 +100,31 @@ fn on_a_wide_window_the_side_panel_does_not_fold() {
     assert!(harness.query_by_label("Unfold the side panel").is_none());
     assert!(harness.query_by_label("Fold the side panel").is_none());
 }
+
+#[test]
+fn on_a_narrow_window_the_grid_scrolls_sideways_to_the_formula_column() {
+    let mut harness = window(420.0);
+    let formula = harness.get_by_label("Formula").rect();
+    assert!(
+        formula.left() > 420.0,
+        "off the window at first: {formula:?}"
+    );
+    harness.event(egui::Event::PointerMoved(egui::pos2(200.0, 400.0)));
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(-1000.0, 0.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Unknown,
+    });
+    harness.run();
+    let formula = harness.get_by_label("Formula").rect();
+    assert!(formula.right() <= 420.0, "on the window: {formula:?}");
+}
+
+#[test]
+fn on_a_wide_window_the_formula_column_takes_the_rest() {
+    let harness = window(1300.0);
+    let formula = harness.get_by_label("Formula").rect();
+    assert!(formula.right() <= 1300.0, "{formula:?}");
+}

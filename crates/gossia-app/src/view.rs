@@ -744,41 +744,23 @@ impl GossiaApp {
     // ------------------------------------------------------ formula bar
 
     fn formula_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let name = match self.column_selected() {
-                Some(c) => format!("{}[].{}", self.name_of(&c.array), c.field),
-                None => self
-                    .selection
-                    .as_ref()
-                    .map(|p| self.name_of(p))
-                    .unwrap_or_default(),
-            };
-            // The name box: the path of the selection, in a box like a field's.
-            let palette = Palette::of_ui(ui);
-            egui::Frame::new()
-                .fill(palette.field)
-                .stroke(Stroke::new(1.0, palette.border))
-                .corner_radius(crate::style::CONTROL_RADIUS)
-                .inner_margin(egui::Margin::symmetric(6, 2))
-                .show(ui, |ui| {
-                    ui.set_width(248.0);
-                    ui.set_min_height(18.0);
-                    ui.add(egui::Label::new(RichText::new(name).monospace()).truncate());
-                });
-            let fx = crate::style::medium("fx").italics();
-            if ui
-                .button(fx)
-                .on_hover_text(tr!("Insert Function"))
-                .clicked()
-            {
-                self.open_insert_function();
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                self.expand_button(ui);
-                self.pick_button(ui);
-                self.bar_text(ui);
+        // On a narrow window (17d) the formula has a row of its own, under
+        // the name box, so that it has the whole width.
+        if crate::touch::narrow(ui.ctx()) {
+            ui.horizontal(|ui| {
+                // Room for the fx button after it.
+                let width = (ui.available_width() - 64.0).max(80.0);
+                self.name_box(ui, width);
+                self.fx_button(ui);
             });
-        });
+            ui.horizontal(|ui| self.formula_row(ui));
+        } else {
+            ui.horizontal(|ui| {
+                self.name_box(ui, 248.0);
+                self.fx_button(ui);
+                self.formula_row(ui);
+            });
+        }
         self.formula_bar_handle(ui);
         if self.picking() {
             ui.label(RichText::new(crate::pick::pick_hint()).italics());
@@ -786,6 +768,50 @@ impl GossiaApp {
             let color = error_color(ui);
             ui.colored_label(color, notice);
         }
+    }
+
+    /// The name box: the path of the selection, in a box like a field's.
+    fn name_box(&self, ui: &mut egui::Ui, width: f32) {
+        let name = match self.column_selected() {
+            Some(c) => format!("{}[].{}", self.name_of(&c.array), c.field),
+            None => self
+                .selection
+                .as_ref()
+                .map(|p| self.name_of(p))
+                .unwrap_or_default(),
+        };
+        let palette = Palette::of_ui(ui);
+        egui::Frame::new()
+            .fill(palette.field)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(crate::style::CONTROL_RADIUS)
+            .inner_margin(egui::Margin::symmetric(6, 2))
+            .show(ui, |ui| {
+                ui.set_width(width);
+                ui.set_min_height(18.0);
+                ui.add(egui::Label::new(RichText::new(name).monospace()).truncate());
+            });
+    }
+
+    fn fx_button(&mut self, ui: &mut egui::Ui) {
+        let fx = crate::style::medium("fx").italics();
+        if ui
+            .button(fx)
+            .on_hover_text(tr!("Insert Function"))
+            .clicked()
+        {
+            self.open_insert_function();
+        }
+    }
+
+    /// The formula's text with the pick and expand buttons after it, in the
+    /// rest of the row.
+    fn formula_row(&mut self, ui: &mut egui::Ui) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            self.expand_button(ui);
+            self.pick_button(ui);
+            self.bar_text(ui);
+        });
     }
 
     /// What the formula of the node at `path` returned, when the node is of
@@ -1201,34 +1227,79 @@ impl GossiaApp {
         let mut editing = self.editing.take();
         let mut actions: Vec<Action> = Vec::new();
         let scroll_to = self.scroll_to.take();
+        // On a narrow window (17d) the columns keep widths of their own and
+        // the grid scrolls sideways, so that Value and Formula can be seen.
+        if crate::touch::narrow(ui.ctx()) {
+            egui::ScrollArea::horizontal()
+                .id_salt("grid_sideways")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    self.grid_table(ui, &rows, &mut editing, &mut actions, scroll_to, true);
+                });
+        } else {
+            self.grid_table(ui, &rows, &mut editing, &mut actions, scroll_to, false);
+        }
+        self.rows = rows;
+        self.editing = editing;
+        for action in actions {
+            self.apply(action);
+        }
+    }
+
+    /// The grid's table. `narrow`: every column has a width of its own (none
+    /// takes the rest of the window), for a grid that scrolls sideways.
+    fn grid_table(
+        &mut self,
+        ui: &mut egui::Ui,
+        rows: &[Row],
+        editing: &mut Option<Editing>,
+        actions: &mut Vec<Action>,
+        scroll_to: Option<usize>,
+        narrow: bool,
+    ) {
         {
             let display = self.user.prefs.display;
+            // The width of the column that takes the rest on a wide window.
+            let rest = |at_least: f32, narrow_width: f32| {
+                if narrow {
+                    Column::initial(narrow_width).at_least(at_least).clip(true)
+                } else {
+                    Column::remainder().at_least(at_least).clip(true)
+                }
+            };
             let row_height = crate::style::grid_row_height(ui, display.density);
             let mut titles = vec![tr!("Name")];
             let mut table = TableBuilder::new(ui)
                 // The widths are kept for each set of columns, so that hiding
                 // one does not give its width to another.
-                .id_salt(("grid", display.type_column, display.formula_column))
+                .id_salt(("grid", display.type_column, display.formula_column, narrow))
                 .striped(true)
                 .resizable(true)
                 // A click anywhere in a row selects it, not only on its name.
                 .sense(Sense::click())
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .max_scroll_height(f32::INFINITY)
-                .column(Column::initial(300.0).at_least(120.0).clip(true));
+                .column(
+                    Column::initial(if narrow { 200.0 } else { 300.0 })
+                        .at_least(120.0)
+                        .clip(true),
+                );
             if display.type_column {
                 titles.push(tr!("Type"));
-                table = table.column(Column::initial(130.0).at_least(60.0).clip(true));
+                let width = if narrow { 100.0 } else { 130.0 };
+                table = table.column(Column::initial(width).at_least(60.0).clip(true));
             }
             titles.push(tr!("Value"));
             table = table.column(if display.formula_column {
-                Column::initial(260.0).at_least(80.0).clip(true)
+                Column::initial(if narrow { 180.0 } else { 260.0 })
+                    .at_least(80.0)
+                    .clip(true)
             } else {
-                Column::remainder().at_least(80.0).clip(true)
+                rest(80.0, 220.0)
             });
             if display.formula_column {
                 titles.push(tr!("Formula"));
-                table = table.column(Column::remainder().at_least(80.0).clip(true));
+                table = table.column(rest(80.0, 260.0));
             }
             if let Some(index) = scroll_to {
                 table = table.scroll_to_row(index, Some(egui::Align::Center));
@@ -1246,18 +1317,13 @@ impl GossiaApp {
                         let row = &rows[table_row.index()];
                         let selected = self.selection.as_ref() == Some(&row.path);
                         table_row.set_selected(selected);
-                        self.draw_row(&mut table_row, row, selected, &mut editing, &mut actions);
+                        self.draw_row(&mut table_row, row, selected, editing, actions);
                         // The rest of the row, around what its cells show.
                         if table_row.response().clicked() {
                             actions.push(Action::Select(row.path.clone()));
                         }
                     });
                 });
-        }
-        self.rows = rows;
-        self.editing = editing;
-        for action in actions {
-            self.apply(action);
         }
     }
 
