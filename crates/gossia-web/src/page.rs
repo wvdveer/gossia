@@ -684,7 +684,7 @@ pub async fn start_app(
     let started = runner
         .start(
             canvas,
-            eframe::WebOptions::default(),
+            web_options(),
             Box::new(move |cc| {
                 CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(cc.egui_ctx.clone()));
                 Ok(Box::new(PageApp {
@@ -696,4 +696,36 @@ pub async fn start_app(
         .await;
     RUNNER.with(|r| *r.borrow_mut() = Some(runner));
     started
+}
+
+/// eframe's options for the page. egui-wgpu asks the graphics device for
+/// textures of 8192 pixels, which many phones (WebGL 2 with 4096) refuse,
+/// and then nothing starts; ask for no more than the device has.
+fn web_options() -> eframe::WebOptions {
+    use eframe::egui_wgpu::{WgpuSetup, WgpuSetupCreateNew};
+    use std::sync::Arc;
+    let mut options = eframe::WebOptions::default();
+    let mut setup = match options.wgpu_options.wgpu_setup {
+        WgpuSetup::CreateNew(setup) => setup,
+        _ => WgpuSetupCreateNew::without_display_handle(),
+    };
+    let default_descriptor = setup.device_descriptor.clone();
+    setup.device_descriptor = Arc::new(move |adapter| {
+        let mut descriptor = default_descriptor(adapter);
+        let allowed = adapter.limits();
+        let limits = &mut descriptor.required_limits;
+        limits.max_texture_dimension_2d = limits
+            .max_texture_dimension_2d
+            .min(allowed.max_texture_dimension_2d);
+        // A device short of other limits too gets WebGL 2's, which egui
+        // needs no more than.
+        if !limits.check_limits(&allowed) {
+            *limits = eframe::wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(allowed.clone())
+                .using_alignment(allowed);
+        }
+        descriptor
+    });
+    options.wgpu_options.wgpu_setup = WgpuSetup::CreateNew(setup);
+    options
 }
