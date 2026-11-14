@@ -1,7 +1,7 @@
 name: CI
 
 # The full checks (DESIGN.md, Testing and CI), on the Gitea mirror's own
-# runner, for pushes to main: only the owner pushes there, so no one else's
+# runner, for pushes to main and develop: only the owner pushes there, so no one else's
 # code runs on it. GitHub runs lint and the tests on its own runners
 # (.github/workflows/ci.yml); everything that needs a display, a graphics
 # adapter, the test databases or the package registry runs here.
@@ -22,8 +22,10 @@ name: CI
 
 on:
   push:
-    # Builds are made from main only (owner, 2026-11-10).
-    branches: [main]
+    # The checks run for develop too, which is pushed here often to be tested
+    # before it goes to GitHub (owner, 2026-11-14). Packages and the .vsix are
+    # made from main only (owner, 2026-11-10).
+    branches: [main, develop]
   workflow_dispatch:
 
 env:
@@ -142,7 +144,7 @@ jobs:
         continue-on-error: true
         run: cd "$HOME/ci/gossia" && GOSSIA_VSCODE_VERSION=stable xvfb-run -a cargo xtask vscode-test
       - name: Pack and publish the .vsix
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         continue-on-error: true
         env:
           GITEA_URL: ${{ gitea.server_url }}
