@@ -21,6 +21,7 @@
 "Convert formula to values" = "将公式转换为值"
 "Convert formula to values at {place}" = "将 {place} 处的公式转换为值"
 "Dates without a year cannot be kept ({n})." = "无法保留没有年份的日期（{n}）。"
+"Defines the type of this node from what it holds" = "根据此节点所含的内容定义其类型"
 "Defines the type of this node from what its formula returned" = "根据其公式返回的内容定义此节点的类型"
 "Events" = "事件"
 "Excel workbook, a row for each item" = "Excel 工作簿，每个项目一行"

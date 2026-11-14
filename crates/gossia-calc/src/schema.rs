@@ -958,6 +958,153 @@ impl Calc {
     /// values (text, numbers), which the type refused.
     pub fn force_type_offered(&self, sheet: &str, path: &Path) -> bool {
         self.force_type_source(sheet, path).is_some()
+            || self.force_any_target(sheet, path).is_some()
+    }
+
+    /// Whether *Force type definition* on the node at `path` defines a type
+    /// of any value from what the node holds (rather than a record with no
+    /// fields from a refused result).
+    pub fn force_type_of_any(&self, sheet: &str, path: &Path) -> bool {
+        self.force_type_source(sheet, path).is_none()
+            && self.force_any_target(sheet, path).is_some()
+    }
+
+    /// The schema tab *Force type definition* of an `any` would change from
+    /// `sheet`, or why it cannot be changed from here.
+    pub fn force_any_schema_tab(&self, sheet: &str) -> Result<String, EditError> {
+        self.json_schema_tab_to_edit(sheet)
+    }
+
+    /// The schema tab of `sheet`, when a command may change it from there: a
+    /// JSON Schema tab with auto-update on and no error.
+    fn json_schema_tab_to_edit(&self, sheet: &str) -> Result<String, EditError> {
+        let s = self
+            .sheets
+            .get(sheet)
+            .ok_or_else(|| EditError::NoSheet(sheet.to_owned()))?;
+        let SchemaRole::Bound(schema_sheet) = &s.schema else {
+            return Err(EditError::Path(tr!(
+                "the type of {sheet} is not defined by a schema tab, so its fields cannot be \
+                 changed from here",
+                sheet = sheet
+            )));
+        };
+        if self.schema_format(schema_sheet) != Some(SchemaFormat::Json) {
+            return Err(EditError::Path(tr!(
+                "the type of an XML element is defined on its XSD tab, {schema_sheet}",
+                schema_sheet = schema_sheet
+            )));
+        }
+        if !self.auto_update(schema_sheet) {
+            return Err(EditError::Path(tr!(
+                "switch on auto-update on {schema_sheet} to change the schema from {sheet}",
+                schema_sheet = schema_sheet,
+                sheet = sheet
+            )));
+        }
+        if let Some(error) = self.schema_error(schema_sheet) {
+            return Err(EditError::Path(tr!(
+                "the schema in {schema_sheet} has an error: {error}",
+                schema_sheet = schema_sheet,
+                error = error
+            )));
+        }
+        Ok(schema_sheet.clone())
+    }
+
+    /// For *Force type definition* on a node of any value (`{}`, or an array
+    /// without `items`): where the `any` is written in the schema document,
+    /// and the schema inferred from what the node holds, to put there. On an
+    /// array of any values (or one of its items) that is the items' schema,
+    /// from all of them. None when the node holds nothing to define it from.
+    fn force_any_target(&self, sheet: &str, path: &Path) -> Option<(Path, Node)> {
+        let s = self.sheets.get(sheet)?;
+        let spec = &s.spec;
+        let is_any = |ty: TypeId| matches!(spec.get(ty).kind, Kind::Any);
+        let mut at = path.clone();
+        let mut ty = spec.resolve(&at)?.ty;
+        // An item of an array of any values: the array, from all its items.
+        if is_any(ty)
+            && matches!(at.segments().last(), Some(Segment::Index(_)))
+            && let Some(parent) = at.parent()
+            && let Some(r) = spec.resolve(&parent)
+            && matches!(spec.get(r.ty).kind, Kind::Array { items, .. } if is_any(items))
+        {
+            at = parent;
+            ty = r.ty;
+        }
+        let value = s.data.get(&at)?.value();
+        let (target, from_items) = match &spec.get(ty).kind {
+            Kind::Any => (ty, false),
+            Kind::Array { items, .. } if is_any(*items) => (*items, true),
+            _ => return None,
+        };
+        let holds_something = match value {
+            Value::Null | Value::Error(_) => false,
+            Value::Array(items) => items
+                .iter()
+                .any(|i| !matches!(i.value(), Value::Null | Value::Error(_))),
+            Value::Object(fields) => !fields.is_empty(),
+            _ => true,
+        };
+        if !holds_something || (from_items && !matches!(value, Value::Array(_))) {
+            return None;
+        }
+        let document_path = pointer_to_path(&spec.get(target).source)?;
+        let mut schema = gossia_core::infer::infer_json(&Node::new(value.clone())).schema;
+        if from_items {
+            schema = schema.value().as_object()?.get("items")?.clone();
+        }
+        if let Value::Object(map) = schema.value_mut() {
+            map.shift_remove("$schema");
+            map.shift_remove("title");
+        }
+        all_optional(&mut schema);
+        Some((document_path, schema))
+    }
+
+    /// *Force type definition* on a node of any value: see
+    /// [`Calc::force_any_target`]. What was written beside the `any` that
+    /// is not part of a type (a title, a description, and at the root
+    /// `$schema`, `$id` and `$defs`) is kept. One entry in the history.
+    fn force_any(&mut self, sheet: &str, path: &Path) -> Result<(), EditError> {
+        let (document_path, schema) = self.force_any_target(sheet, path).ok_or_else(|| {
+            EditError::Path(tr!(
+                "{place} is not a record with no fields, or a list of them, whose formula returned what could define it",
+                place = Loc::new(sheet, path.clone())
+            ))
+        })?;
+        let schema_sheet = self.json_schema_tab_to_edit(sheet)?;
+        let Value::Object(mut map) = schema.value().clone() else {
+            return Err(EditError::Path(
+                tr!("the type is not a schema object").to_owned(),
+            ));
+        };
+        let before = self
+            .sheets
+            .get(&schema_sheet)
+            .and_then(|d| d.data.get(&document_path))
+            .and_then(|n| n.value().as_object().cloned());
+        if let Some(before) = before {
+            let mut kept: IndexMap<String, Node> = before
+                .into_iter()
+                .filter(|(k, _)| {
+                    matches!(
+                        k.as_str(),
+                        "$schema" | "$id" | "$defs" | "title" | "description"
+                    )
+                })
+                .collect();
+            kept.extend(map);
+            map = kept;
+        }
+        let what = tr!(
+            "Force type definition of {place}",
+            place = Loc::new(sheet, path.clone())
+        );
+        self.entry(&what, |calc| {
+            calc.set_value(&schema_sheet, &document_path, Value::Object(map))
+        })
     }
 
     /// What a formula returned for the node at `path`, when the node is of a
@@ -1037,6 +1184,9 @@ impl Calc {
     /// it was. On the root, the root's record takes the inferred fields. One
     /// entry in the history.
     pub fn force_type(&mut self, sheet: &str, path: &Path) -> Result<(), EditError> {
+        if self.force_type_of_any(sheet, path) {
+            return self.force_any(sheet, path);
+        }
         let value = self
             .force_type_source(sheet, path)
             .cloned()

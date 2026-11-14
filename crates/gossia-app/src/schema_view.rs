@@ -107,8 +107,10 @@ impl GossiaApp {
 
     /// *Force type definition*, on a field whose type is a record with no
     /// fields (or an array of them) and whose formula returned records with
-    /// fields, or a list of simple values. Unavailable, with the reason, when the schema cannot be
-    /// changed from here.
+    /// fields, or a list of simple values; or on a node of any value (or an
+    /// array of any values) that holds something, whose type it defines
+    /// from what it holds. Unavailable, with the reason, when the schema
+    /// cannot be changed from here.
     pub(crate) fn force_type_item(
         &self,
         ui: &mut egui::Ui,
@@ -118,19 +120,36 @@ impl GossiaApp {
         if !self.calc().force_type_offered(&self.sheet, path) {
             return;
         }
-        let parent = path.parent().unwrap_or_default();
-        let reason = self.schema_edit_allowed(&parent).err().or_else(|| {
-            self.calc()
-                .field_places(&self.sheet, &parent)
-                .ok()
-                .filter(|p| p.xsd)
-                .map(|p| {
-                    tr!(
-                        "the type of an XML element is defined on its XSD tab, {schema_sheet}",
-                        schema_sheet = p.schema_sheet
-                    )
-                })
-        });
+        let of_any = self.calc().force_type_of_any(&self.sheet, path);
+        let reason = if of_any {
+            match self.calc().force_any_schema_tab(&self.sheet) {
+                Err(e) => Some(e.to_string()),
+                Ok(schema_sheet) => self
+                    .editing
+                    .as_ref()
+                    .filter(|editing| editing.sheet == schema_sheet)
+                    .map(|_| {
+                        tr!(
+                            "finish or cancel the edit in progress on {schema_sheet} first",
+                            schema_sheet = schema_sheet
+                        )
+                    }),
+            }
+        } else {
+            let parent = path.parent().unwrap_or_default();
+            self.schema_edit_allowed(&parent).err().or_else(|| {
+                self.calc()
+                    .field_places(&self.sheet, &parent)
+                    .ok()
+                    .filter(|p| p.xsd)
+                    .map(|p| {
+                        tr!(
+                            "the type of an XML element is defined on its XSD tab, {schema_sheet}",
+                            schema_sheet = p.schema_sheet
+                        )
+                    })
+            })
+        };
         ui.separator();
         let response = ui.add_enabled(
             reason.is_none(),
@@ -138,6 +157,9 @@ impl GossiaApp {
         );
         let response = match &reason {
             Some(why) => response.on_disabled_hover_text(why),
+            None if of_any => {
+                response.on_hover_text(tr!("Defines the type of this node from what it holds"))
+            }
             None => response.on_hover_text(tr!(
                 "Defines the type of this node from what its formula returned"
             )),

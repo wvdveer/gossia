@@ -21,6 +21,7 @@
 "Convert formula to values" = "数式を値に変換"
 "Convert formula to values at {place}" = "{place} の数式を値に変換"
 "Dates without a year cannot be kept ({n})." = "年のない日付は残せません ({n})。"
+"Defines the type of this node from what it holds" = "このノードが保持している内容から型を定義します"
 "Defines the type of this node from what its formula returned" = "数式が返した内容からこのノードの型を定義します"
 "Events" = "予定"
 "Excel workbook, a row for each item" = "Excel ブック (項目ごとに 1 行)"

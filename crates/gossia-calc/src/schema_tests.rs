@@ -1017,6 +1017,99 @@ fn a_misfit_inside_a_result_keeps_what_it_was() {
     assert_eq!(b.calc.refused_simple_value("Order", &p("info")), None);
 }
 
+/// A tab bound to a schema tab with auto-update on, for the commands that
+/// change the schema from the data.
+fn bound_with_auto_update(schema: &str, data: &str) -> Calc {
+    let mut calc = Calc::new(Arc::new(FakeEngine::new()));
+    calc.add_sheet(
+        "Data",
+        jsonschema::lower_str(schema).unwrap(),
+        json::parse(data).unwrap().node,
+    )
+    .unwrap();
+    calc.add_schema_sheet("DataSchema", json::parse(schema).unwrap().node)
+        .unwrap();
+    calc.bind_schema("Data", "DataSchema").unwrap();
+    calc.set_auto_update("DataSchema", true).unwrap();
+    calc.clear_history();
+    calc
+}
+
+#[test]
+fn force_type_definition_defines_an_array_of_any_values_from_its_items() {
+    // Owner, 2026-11-14 (issue 3): an array of any values can still be given
+    // the type of what it holds.
+    let mut calc = bound_with_auto_update(
+        r#"{"type": "array"}"#,
+        r#"[{"name": "Ann", "age": 41}, {"name": "Bo"}]"#,
+    );
+    let schema = |calc: &Calc| json::to_string(calc.data("DataSchema").unwrap(), false).unwrap();
+    // On the array, and on any one of its items, which means the same.
+    assert!(calc.force_type_offered("Data", &p("")));
+    assert!(calc.force_type_offered("Data", &p("[1]")));
+    assert!(calc.force_type_of_any("Data", &p("")));
+    calc.force_type("Data", &p("[1]")).unwrap();
+    let after = schema(&calc);
+    assert!(after.starts_with(r#"{"type":"array","items":{"#), "{after}");
+    assert!(after.contains(r#""name":{"type":"string"}"#), "{after}");
+    assert!(after.contains(r#""age":{"type":"integer"}"#), "{after}");
+    assert_eq!(calc.schema_error("DataSchema"), None);
+    let spec = calc.spec("Data").unwrap();
+    let gossia_core::Kind::Array { items, .. } = spec.get(spec.root()).kind else {
+        panic!("the root is a list");
+    };
+    assert!(matches!(
+        spec.get(items).kind,
+        gossia_core::Kind::Object { .. }
+    ));
+    // Defined now, so not offered again; one undo brings the `any` back.
+    assert!(!calc.force_type_offered("Data", &p("")));
+    calc.undo().unwrap();
+    assert_eq!(schema(&calc), r#"{"type":"array"}"#);
+
+    // An empty list holds nothing to define its items from.
+    let empty = bound_with_auto_update(r#"{"type": "array"}"#, "[]");
+    assert!(!empty.force_type_offered("Data", &p("")));
+}
+
+#[test]
+fn force_type_definition_defines_a_field_of_any_value_and_keeps_its_description() {
+    let mut calc = bound_with_auto_update(
+        r#"{"type": "object", "properties": {"meta": {"description": "Anything"}}}"#,
+        r#"{"meta": {"tags": ["a", "b"]}}"#,
+    );
+    assert!(calc.force_type_offered("Data", &p("meta")));
+    calc.force_type("Data", &p("meta")).unwrap();
+    let after = json::to_string(calc.data("DataSchema").unwrap(), false).unwrap();
+    assert!(
+        after.contains(r#""meta":{"description":"Anything","#),
+        "{after}"
+    );
+    assert!(after.contains(r#""tags":{"#), "{after}");
+    assert_eq!(calc.schema_error("DataSchema"), None);
+    let spec = calc.spec("Data").unwrap();
+    let meta = spec.resolve(&p("meta")).unwrap().ty;
+    assert!(matches!(
+        spec.get(meta).kind,
+        gossia_core::Kind::Object { .. }
+    ));
+    let tags = spec.resolve(&p("meta.tags")).unwrap().ty;
+    let gossia_core::Kind::Array { items, .. } = spec.get(tags).kind else {
+        panic!("tags is a list");
+    };
+    assert!(matches!(spec.get(items).kind, gossia_core::Kind::String(_)));
+
+    // Greyed, with the reason, when the schema tab cannot be changed.
+    let mut off = bound_with_auto_update(
+        r#"{"type": "object", "properties": {"meta": {}}}"#,
+        r#"{"meta": 3}"#,
+    );
+    off.set_auto_update("DataSchema", false).unwrap();
+    assert!(off.force_type_offered("Data", &p("meta")));
+    assert!(off.force_any_schema_tab("Data").is_err());
+    assert!(off.force_type("Data", &p("meta")).is_err());
+}
+
 #[test]
 fn a_value_typed_under_an_absent_record_of_the_schema_creates_it() {
     // A new workbook's schema, made a list on its schema tab: the type, then

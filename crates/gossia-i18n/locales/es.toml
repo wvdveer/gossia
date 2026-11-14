@@ -21,6 +21,7 @@
 "Convert formula to values" = "Convertir la fórmula en valores"
 "Convert formula to values at {place}" = "Convertir la fórmula en valores en {place}"
 "Dates without a year cannot be kept ({n})." = "Las fechas sin año no se pueden conservar ({n})."
+"Defines the type of this node from what it holds" = "Define el tipo de este nodo a partir de lo que contiene"
 "Defines the type of this node from what its formula returned" = "Define el tipo de este nodo a partir de lo que devolvió su fórmula"
 "Events" = "Eventos"
 "Excel workbook, a row for each item" = "Libro de Excel, una fila por elemento"
