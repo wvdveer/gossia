@@ -300,7 +300,6 @@
 "An array cannot have a comment; each of its items can." = "配列にはコメントを付けられません。配列の各項目には付けられます。"
 "an `xs:import` needs a `namespace`" = "`xs:import` には `namespace` が必要です"
 "an `xs:import` needs a `schemaLocation`: the schema tab for its namespace" = "`xs:import` には `schemaLocation`（その名前空間のスキーマのタブ）が必要です"
-"an array needs `items`, a schema for its elements" = "配列には要素のスキーマである `items` が必要です"
 "An attribute cannot have a comment: XML has no place for one inside a tag." = "属性にはコメントを付けられません。XML にはタグ内にコメントを置く場所がありません。"
 "an attribute has `type` or a `simpleType` inside it, not both" = "属性には `type` と内部の `simpleType` のどちらか一方を指定します"
 "an attribute has a simple type" = "属性の型は単純型です"

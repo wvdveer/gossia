@@ -300,7 +300,6 @@
 "An array cannot have a comment; each of its items can." = "Uma matriz não pode ter um comentário; cada um de seus itens pode."
 "an `xs:import` needs a `namespace`" = "um `xs:import` precisa de um `namespace`"
 "an `xs:import` needs a `schemaLocation`: the schema tab for its namespace" = "um `xs:import` precisa de um `schemaLocation`: a aba do esquema do seu namespace"
-"an array needs `items`, a schema for its elements" = "uma matriz precisa de `items`, um esquema para seus elementos"
 "An attribute cannot have a comment: XML has no place for one inside a tag." = "Um atributo não pode ter um comentário: o XML não tem lugar para um dentro de uma tag."
 "an attribute has `type` or a `simpleType` inside it, not both" = "um atributo tem `type` ou um `simpleType` dentro dele, não ambos"
 "an attribute has a simple type" = "um atributo tem um tipo simples"

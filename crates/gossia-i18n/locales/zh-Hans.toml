@@ -300,7 +300,6 @@
 "An array cannot have a comment; each of its items can." = "数组不能有注释；其每一项都可以。"
 "an `xs:import` needs a `namespace`" = "`xs:import` 需要 `namespace`"
 "an `xs:import` needs a `schemaLocation`: the schema tab for its namespace" = "`xs:import` 需要 `schemaLocation`：其命名空间的架构标签页"
-"an array needs `items`, a schema for its elements" = "数组需要 `items`，即其元素的架构"
 "An attribute cannot have a comment: XML has no place for one inside a tag." = "属性不能有注释：XML 在标记内部没有放置注释的位置。"
 "an attribute has `type` or a `simpleType` inside it, not both" = "属性只能有 `type` 或内部的 `simpleType` 之一，不能两者都有"
 "an attribute has a simple type" = "属性具有简单类型"
