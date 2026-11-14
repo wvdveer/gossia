@@ -572,6 +572,41 @@ impl Calc {
             .collect()
     }
 
+    /// Where a value set at `path` goes, and what goes there: `path` itself,
+    /// or, when records (or maps) on the way to it are missing, the highest
+    /// missing one, holding the value wrapped in the records below it. Only
+    /// keys of records the type defines are made; a missing array item is
+    /// left for `set` to refuse.
+    fn wrapped_in_missing_records(&self, sheet: &str, path: &Path, value: Value) -> (Path, Value) {
+        let Some(s) = self.sheets.get(sheet) else {
+            return (path.clone(), value);
+        };
+        let (mut target, mut value) = (path.clone(), value);
+        while let Some(parent) = target.parent() {
+            let Some(Segment::Key(key)) = target.segments().last().cloned() else {
+                break;
+            };
+            if parent.is_root() || s.data.get(&parent).is_some() {
+                break;
+            }
+            let record = matches!(parent.segments().last(), Some(Segment::Key(_)))
+                && s.spec.resolve(&parent).is_some_and(|r| {
+                    matches!(
+                        s.spec.get(r.ty).kind,
+                        gossia_core::Kind::Object { .. } | gossia_core::Kind::Map { .. }
+                    )
+                });
+            if !record {
+                break;
+            }
+            let mut fields = indexmap::IndexMap::new();
+            fields.insert(key, Node::new(value));
+            value = Value::Object(fields);
+            target = parent;
+        }
+        (target, value)
+    }
+
     fn set_value_only(
         &mut self,
         sheet: &str,
@@ -581,13 +616,17 @@ impl Calc {
     ) -> Result<(), EditError> {
         self.refuse_inside_computed(sheet, path)?;
         let formula = self.formula_text(sheet, path);
+        // A value typed under records that are not there yet (an optional
+        // `items` of a schema, still empty) creates them: it is set at the
+        // highest one missing, wrapped in the records on the way.
+        let (target, value) = self.wrapped_in_missing_records(sheet, path, value);
         let s = self.sheet_mut(sheet)?;
-        let before = s.data.get(path).cloned();
+        let before = s.data.get(&target).cloned();
         s.data
-            .set(path, value)
+            .set(&target, value)
             .map_err(|e| EditError::Path(e.to_string()))?;
-        let after = s.data.get(path).cloned().expect("it was just set");
-        let position = s.data.position_of(path).unwrap_or(0);
+        let after = s.data.get(&target).cloned().expect("it was just set");
+        let position = s.data.position_of(&target).unwrap_or(0);
         let mut ops = Vec::new();
         // A literal in one item of a column ends the column formula.
         ops.extend(self.release_column(sheet, path));
@@ -603,20 +642,20 @@ impl Calc {
         ops.push(match before {
             Some(before) => Op::Replace {
                 sheet: sheet.to_owned(),
-                path: path.clone(),
+                path: target.clone(),
                 before,
                 after,
             },
             None => Op::Add {
                 sheet: sheet.to_owned(),
-                path: path.clone(),
+                path: target.clone(),
                 position,
                 node: after,
                 moved: Vec::new(),
             },
         });
         self.drop_formula(sheet, path);
-        self.changed(sheet, path);
+        self.changed(sheet, &target);
         ops.extend(self.sync_columns(sheet, path));
         let key = merge.then(|| MergeKey {
             sheet: sheet.to_owned(),

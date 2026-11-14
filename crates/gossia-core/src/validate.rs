@@ -63,7 +63,9 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Array { .. } => "array",
         Kind::Object { .. } => "object",
         Kind::Choice { .. } => "object",
-        Kind::Map { .. } => "map",
+        // A map is an object with `additionalProperties`, as the Type
+        // column calls it (issue 3).
+        Kind::Map { .. } => "object",
         Kind::Enum { .. } => "string",
         Kind::Any => "any",
     }

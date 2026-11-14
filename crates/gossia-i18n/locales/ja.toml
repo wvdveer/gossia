@@ -507,6 +507,7 @@
 "Copy..." = "コピー..."
 "Counter, defaultdict, deque, OrderedDict." = "Counter、defaultdict、deque、OrderedDict。"
 "Create" = "作成"
+"Create (empty)" = "作成 (空)"
 "Ctrl+Enter or a click outside to save, Esc to cancel" = "Ctrl+Enter または外側をクリックで保存、Esc でキャンセル"
 "Cut: what it shows is taller than its box. Make it taller to show all of it." = "切れています。表示内容がボックスより高くなっています。すべて表示するにはボックスを高くしてください。"
 "d dd ddd dddd: the day; m mm mmm mmmm: the month; yy yyyy: the year." = "d dd ddd dddd: 日、m mm mmm mmmm: 月、yy yyyy: 年。"

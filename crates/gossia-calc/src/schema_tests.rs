@@ -839,10 +839,7 @@ fn an_array_field_can_hold_items_of_a_simple_type() {
         b.schema()
     );
     let spec = b.calc.spec("Order").unwrap();
-    assert_eq!(
-        spec.describe(spec.resolve(&p("tags")).unwrap().ty),
-        "array of string"
-    );
+    assert_eq!(spec.describe(spec.resolve(&p("tags")).unwrap().ty), "array");
     b.calc
         .set_value("Order", &p("tags"), Value::Array(Vec::new()))
         .unwrap();
@@ -884,10 +881,7 @@ fn changing_a_type_on_the_schema_tab_drops_the_keywords_it_cannot_have() {
         b.schema()
     );
     let spec = b.calc.spec("Order").unwrap();
-    assert_eq!(
-        spec.describe(spec.resolve(&p("tags")).unwrap().ty),
-        "array of string"
-    );
+    assert_eq!(spec.describe(spec.resolve(&p("tags")).unwrap().ty), "array");
     // One undo brings back both the type and its fields.
     b.calc.undo().unwrap();
     assert!(
@@ -1021,4 +1015,71 @@ fn a_misfit_inside_a_result_keeps_what_it_was() {
     // The part that fitted, and the record on the way, show nothing.
     assert_eq!(b.calc.refused_simple_value("Order", &p("info.label")), None);
     assert_eq!(b.calc.refused_simple_value("Order", &p("info")), None);
+}
+
+#[test]
+fn a_value_typed_under_an_absent_record_of_the_schema_creates_it() {
+    // A new workbook's schema, made a list on its schema tab: the type, then
+    // the type of the items, which are not there yet (issue 3).
+    let engine = FakeEngine::new();
+    let mut calc = Calc::new(Arc::new(engine.clone()));
+    let blank = r#"{"type": "object", "properties": {}}"#;
+    calc.add_sheet(
+        "Data",
+        jsonschema::lower_str(blank).unwrap(),
+        json::parse("{}").unwrap().node,
+    )
+    .unwrap();
+    calc.add_schema_sheet("DataSchema", json::parse(blank).unwrap().node)
+        .unwrap();
+    calc.bind_schema("Data", "DataSchema").unwrap();
+    calc.clear_history();
+    let schema = |calc: &Calc| json::to_string(calc.data("DataSchema").unwrap(), false).unwrap();
+    let root_kind = |calc: &Calc| {
+        let spec = calc.spec("Data").unwrap();
+        format!("{:?}", spec.get(spec.root()).kind)
+    };
+
+    calc.set_value("DataSchema", &p("type"), Value::Str("array".into()))
+        .unwrap();
+    calc.set_value("DataSchema", &p("items.type"), Value::Str("string".into()))
+        .unwrap();
+    assert_eq!(
+        schema(&calc),
+        r#"{"type":"array","items":{"type":"string"}}"#
+    );
+    assert_eq!(calc.schema_error("DataSchema"), None);
+    assert!(root_kind(&calc).starts_with("Array"));
+
+    // An array of arrays of text: two records down, both created at once.
+    calc.remove("DataSchema", &p("items")).unwrap();
+    calc.set_value(
+        "DataSchema",
+        &p("items.items.type"),
+        Value::Str("string".into()),
+    )
+    .unwrap();
+    calc.set_value("DataSchema", &p("items.type"), Value::Str("array".into()))
+        .unwrap();
+    assert_eq!(
+        schema(&calc),
+        r#"{"type":"array","items":{"items":{"type":"string"},"type":"array"}}"#
+    );
+    assert_eq!(calc.schema_error("DataSchema"), None);
+    // Two undos: the first takes back `items.type`, the second both records
+    // the value was put in, at once.
+    calc.undo().unwrap();
+    calc.undo().unwrap();
+    assert_eq!(schema(&calc), r#"{"type":"array"}"#);
+
+    // An array of any value: `items` made present and empty.
+    calc.set_value("DataSchema", &p("items"), Value::Object(Default::default()))
+        .unwrap();
+    assert_eq!(schema(&calc), r#"{"type":"array","items":{}}"#);
+    assert_eq!(calc.schema_error("DataSchema"), None);
+    let spec = calc.spec("Data").unwrap();
+    let gossia_core::Kind::Array { items, .. } = spec.get(spec.root()).kind else {
+        panic!("the root is a list");
+    };
+    assert!(matches!(spec.get(items).kind, gossia_core::Kind::Any));
 }

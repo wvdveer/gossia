@@ -507,6 +507,7 @@
 "Copy..." = "Copiar..."
 "Counter, defaultdict, deque, OrderedDict." = "Counter, defaultdict, deque, OrderedDict."
 "Create" = "Crear"
+"Create (empty)" = "Crear (vacío)"
 "Ctrl+Enter or a click outside to save, Esc to cancel" = "Ctrl+Intro o un clic fuera para guardar, Esc para cancelar"
 "Cut: what it shows is taller than its box. Make it taller to show all of it." = "Cortado: lo que muestra es más alto que su cuadro. Hágalo más alto para mostrarlo todo."
 "d dd ddd dddd: the day; m mm mmm mmmm: the month; yy yyyy: the year." = "d dd ddd dddd: el día; m mm mmm mmmm: el mes; yy yyyy: el año."

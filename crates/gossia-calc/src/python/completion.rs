@@ -435,7 +435,7 @@ mod tests {
             .iter()
             .map(|i| i.detail.clone())
             .collect();
-        assert_eq!(details[1], "array of object");
+        assert_eq!(details[1], "array");
         assert_eq!(details[3], "number");
     }
 

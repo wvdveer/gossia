@@ -423,6 +423,21 @@ impl GossiaApp {
         }
     }
 
+    /// Makes an absent optional record (or map) present, with nothing in it,
+    /// creating the records on the way to it that are absent too.
+    pub fn create_empty(&mut self, path: &Path) {
+        let sheet = self.sheet.clone();
+        let empty = Value::Object(Default::default());
+        match self.session.calc_mut().set_value(&sheet, path, empty) {
+            Ok(()) => {
+                self.notice = None;
+                self.session.tick();
+                self.refresh_rows();
+            }
+            Err(e) => self.notice = Some(e.to_string()),
+        }
+    }
+
     // ----------------------------------------------------- undo and redo
 
     pub fn undo(&mut self) {

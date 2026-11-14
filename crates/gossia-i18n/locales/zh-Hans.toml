@@ -507,6 +507,7 @@
 "Copy..." = "复制..."
 "Counter, defaultdict, deque, OrderedDict." = "Counter、defaultdict、deque、OrderedDict。"
 "Create" = "创建"
+"Create (empty)" = "创建（空）"
 "Ctrl+Enter or a click outside to save, Esc to cancel" = "按 Ctrl+Enter 或在外部单击以保存，按 Esc 取消"
 "Cut: what it shows is taller than its box. Make it taller to show all of it." = "已截断：显示的内容高于其框。请增加框的高度以显示全部内容。"
 "d dd ddd dddd: the day; m mm mmm mmmm: the month; yy yyyy: the year." = "d dd ddd dddd：日；m mm mmm mmmm：月；yy yyyy：年。"

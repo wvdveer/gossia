@@ -164,8 +164,11 @@ impl TypeSpec {
         }
     }
 
-    /// A short name for a type, for display: `integer`, `array of object`,
-    /// `map of number`, or the name a type was declared with.
+    /// A short name for a type, for display: `integer`, `array`, `object`, or
+    /// the name a type was declared with. An array does not name what it
+    /// holds, and a map is an `object`, as in JSON Schema: each item shows
+    /// its own type on its own row, however deep the nesting goes (and a type
+    /// that holds itself needs no end).
     pub fn describe(&self, ty: TypeId) -> String {
         let def = self.get(ty);
         if let Some(name) = &def.name {
@@ -181,8 +184,8 @@ impl TypeSpec {
             Kind::Enum { .. } => "string (choice)".to_owned(),
             Kind::Object { .. } => "object".to_owned(),
             Kind::Choice { .. } => "choice".to_owned(),
-            Kind::Array { items, .. } => format!("array of {}", self.describe(*items)),
-            Kind::Map { value } => format!("map of {}", self.describe(*value)),
+            Kind::Array { .. } => "array".to_owned(),
+            Kind::Map { .. } => "object".to_owned(),
             Kind::Any => "any".to_owned(),
         }
     }
@@ -456,8 +459,24 @@ mod tests {
         };
         assert_eq!(at(""), "object");
         assert_eq!(at("name"), "string");
-        assert_eq!(at("tags"), "array of string");
-        assert_eq!(at("prices"), "map of number");
+        assert_eq!(at("tags"), "array");
+        assert_eq!(at("tags[0]"), "string");
+        assert_eq!(at("prices"), "object");
+        assert_eq!(at("prices.x"), "number");
+    }
+
+    #[test]
+    fn describe_names_no_nesting_even_when_a_type_holds_itself() {
+        let deep = r#"{"type": "array", "items": {"type": "array", "items":
+            {"type": "array", "items": {"type": "string"}}}}"#;
+        let spec = lower_str(deep).unwrap();
+        let at = |text: &str| spec.describe(spec.resolve(&text.parse().unwrap()).unwrap().ty);
+        assert_eq!(spec.describe(spec.root()), "array");
+        assert_eq!(at("[0]"), "array");
+        assert_eq!(at("[0][0][0]"), "string");
+        // `#` gives the root no name, so it is an unnamed type inside itself.
+        let spec = lower_str(r##"{"type": "array", "items": {"$ref": "#"}}"##).unwrap();
+        assert_eq!(spec.describe(spec.root()), "array");
     }
 
     #[test]

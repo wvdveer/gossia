@@ -576,8 +576,8 @@ mod tests {
         );
         assert_eq!(r[4].path.to_string(), "tags[0]");
         assert_eq!(r[10].path.to_string(), "address.city");
-        assert_eq!(r[3].type_label, "array of string");
-        assert_eq!(r[6].type_label, "map of integer");
+        assert_eq!(r[3].type_label, "array");
+        assert_eq!(r[6].type_label, "object");
     }
 
     #[test]

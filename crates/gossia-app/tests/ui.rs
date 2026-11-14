@@ -310,7 +310,7 @@ fn typing_a_tab_name_and_a_dot_offers_its_fields_from_the_schema() {
     type_into_selected_cell(&mut harness, "=Orders.");
     harness.run();
     harness.get_by_label("customer    object");
-    harness.get_by_label("items    array of object");
+    harness.get_by_label("items    array");
     harness.get_by_label("tax_rate    number");
 }
 

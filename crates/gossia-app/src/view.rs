@@ -66,6 +66,8 @@ pub(crate) enum Action {
     AddEntry(Path),
     RenameKey(Path),
     Delete(Path),
+    /// An absent optional record (or map) made present and empty.
+    CreateEmpty(Path),
     Commit,
     Cancel,
     // The tabular view.
@@ -1399,6 +1401,7 @@ impl GossiaApp {
                 }
             }
             Action::Delete(path) => self.delete_node(&path),
+            Action::CreateEmpty(path) => self.create_empty(&path),
             Action::Commit => {
                 self.commit_editing();
             }
@@ -2028,6 +2031,18 @@ impl GossiaApp {
                 }
                 if ui.button(tr!("Delete item")).clicked() {
                     actions.push(Action::Delete(item.clone()));
+                    ui.close();
+                }
+            }
+            // An optional record that is not there: made present with no
+            // fields (on a JSON Schema tab, `items: {}` is any value).
+            Some(Segment::Key(_))
+                if row.node.is_none()
+                    && matches!(row.kind, RowKind::Object | RowKind::Map)
+                    && self.calc().formula_text(&self.sheet, path).is_none() =>
+            {
+                if ui.button(tr!("Create (empty)")).clicked() {
+                    actions.push(Action::CreateEmpty(path.clone()));
                     ui.close();
                 }
             }
