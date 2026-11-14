@@ -7,6 +7,7 @@
 "<{path}> has the attribute {name} both with and without a prefix, which version 1 does not support" = "<{path}> a l'attribut {name} à la fois avec et sans préfixe, ce que la version 1 ne prend pas en charge"
 "<{path}> holds text next to elements (mixed content); what is inside it is kept as XML, which is edited in the Raw view." = "<{path}> contient du texte à côté d'éléments (contenu mixte) ; ce qu'il contient est gardé en XML, qui se modifie dans la vue brute."
 "<{path}>: the child elements are not always in the same order, so they are kept in their order as one list, #children." = "<{path}> : les éléments enfants ne sont pas toujours dans le même ordre ; ils sont donc gardés dans leur ordre, en une seule liste, #children."
+"A list of any values: add items, then use Force type definition to give them a type." = "Une liste de valeurs de tout type : ajoutez des éléments, puis utilisez Forcer la définition de type pour leur donner un type."
 "A list of objects with no fields yet: add an item, then add fields to it." = "Une liste d'objets sans champs pour l'instant : ajoutez un élément, puis ajoutez-lui des champs."
 "A new schema for calendar events, called" = "Un nouveau schéma pour des événements d'agenda, nommé"
 "A new schema for calendar tasks, called" = "Un nouveau schéma pour des tâches d'agenda, nommé"

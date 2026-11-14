@@ -237,7 +237,6 @@ impl GossiaApp {
                     SchemaCommand::Add {
                         name,
                         kind,
-                        items,
                         required,
                         attribute,
                     } => {
@@ -267,25 +266,12 @@ impl GossiaApp {
                                 .response
                                 .labelled_by(label.id);
                         });
-                        // An array of a JSON tab: what its items are.
-                        let array = *kind == FieldKind::Array && !dialog.xml;
-                        if array {
-                            ui.horizontal(|ui| {
-                                let label = ui.label(tr!("Items"));
-                                egui::ComboBox::from_id_salt("item type")
-                                    .selected_text(items.label())
-                                    .height(f32::INFINITY)
-                                    .show_ui(ui, |ui| {
-                                        for k in FieldKind::ITEMS {
-                                            ui.selectable_value(items, k, k.label());
-                                        }
-                                    })
-                                    .response
-                                    .labelled_by(label.id);
-                            });
-                        }
-                        let hint = if array && *items != FieldKind::Object {
-                            None
+                        // An array of a JSON tab is of any values; an XSD
+                        // tab's is a repeated element with no fields yet.
+                        let hint = if *kind == FieldKind::Array && dialog.xml {
+                            Some(tr!(
+                                "A list of objects with no fields yet: add an item, then add fields to it."
+                            ))
                         } else {
                             kind.hint()
                         };
@@ -367,7 +353,6 @@ impl GossiaApp {
                 SchemaCommand::Add {
                     name: String::new(),
                     kind: FieldKind::Text,
-                    items: FieldKind::Object,
                     required: false,
                     attribute: false,
                 },

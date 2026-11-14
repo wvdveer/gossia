@@ -7,6 +7,7 @@
 "<{path}> has the attribute {name} both with and without a prefix, which version 1 does not support" = "<{path}> には属性 {name} が接頭辞付きと接頭辞なしの両方であります。これはバージョン 1 では使えません"
 "<{path}> holds text next to elements (mixed content); what is inside it is kept as XML, which is edited in the Raw view." = "<{path}> には要素と並んでテキストがあります (混合コンテンツ)。中身は XML のまま保持され、Raw ビューで編集します。"
 "<{path}>: the child elements are not always in the same order, so they are kept in their order as one list, #children." = "<{path}>: 子要素の順序が一定でないため、その順序のまま 1 つのリスト #children として保持します。"
+"A list of any values: add items, then use Force type definition to give them a type." = "任意の値のリストです。項目を追加してから「型定義を強制」で型を付けてください。"
 "A list of objects with no fields yet: add an item, then add fields to it." = "まだフィールドのないオブジェクトのリストです。項目を追加してから、その項目にフィールドを追加してください。"
 "A new schema for calendar events, called" = "カレンダーの予定用の新しいスキーマ、名前"
 "A new schema for calendar tasks, called" = "カレンダーのタスク用の新しいスキーマ、名前"

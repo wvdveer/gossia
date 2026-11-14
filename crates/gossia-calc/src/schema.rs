@@ -56,7 +56,7 @@ impl FieldKind {
                 "An object with no fields yet: add them to it in the same way."
             )),
             FieldKind::Array => Some(tr!(
-                "A list of objects with no fields yet: add an item, then add fields to it."
+                "A list of any values: add items, then use Force type definition to give them a type."
             )),
             _ => None,
         }
@@ -75,22 +75,14 @@ impl FieldKind {
         }
     }
 
-    /// The types an array's items can have: any but an array.
-    pub const ITEMS: [FieldKind; 7] = [
-        FieldKind::Text,
-        FieldKind::Integer,
-        FieldKind::Number,
-        FieldKind::Boolean,
-        FieldKind::Date,
-        FieldKind::DateTime,
-        FieldKind::Object,
-    ];
-
-    /// The schema of an array whose items are of type `items`.
-    fn array_schema(items: FieldKind) -> Node {
+    /// The schema of an array whose items are of type `items`, or of any
+    /// values (no `items`) when it is None.
+    fn array_schema(items: Option<FieldKind>) -> Node {
         let mut fields = IndexMap::new();
         fields.insert("type".to_owned(), text("array"));
-        fields.insert("items".to_owned(), items.schema());
+        if let Some(items) = items {
+            fields.insert("items".to_owned(), items.schema());
+        }
         Node::new(Value::Object(fields))
     }
 
@@ -107,7 +99,7 @@ impl FieldKind {
         };
         match self {
             FieldKind::Object => return record(),
-            FieldKind::Array => return FieldKind::array_schema(FieldKind::Object),
+            FieldKind::Array => return FieldKind::array_schema(Some(FieldKind::Object)),
             _ => {}
         }
         let (ty, format) = match self {
@@ -1261,7 +1253,21 @@ impl Calc {
         kind: FieldKind,
         required: bool,
     ) -> Result<(), EditError> {
-        self.add_field_of(sheet, object, name, kind, FieldKind::Object, required)
+        self.add_field_of(sheet, object, name, kind, Some(FieldKind::Object), required)
+    }
+
+    /// Adds an array field of any values (`{"type": "array"}`, no `items`),
+    /// as the *Add field* dialog does: what its items are is defined later,
+    /// on the schema tab or by *Force type definition* once it has some
+    /// (owner, 2026-11-14). On an XSD tab, a repeated element of any type.
+    pub fn add_untyped_array_field(
+        &mut self,
+        sheet: &str,
+        object: &Path,
+        name: &str,
+        required: bool,
+    ) -> Result<(), EditError> {
+        self.add_field_of(sheet, object, name, FieldKind::Array, None, required)
     }
 
     /// Adds an array field whose items are of type `items` (an object with no
@@ -1280,7 +1286,7 @@ impl Calc {
                 tr!("the items of an array cannot be arrays themselves").to_owned(),
             ));
         }
-        self.add_field_of(sheet, object, name, FieldKind::Array, items, required)
+        self.add_field_of(sheet, object, name, FieldKind::Array, Some(items), required)
     }
 
     fn add_field_of(
@@ -1289,7 +1295,7 @@ impl Calc {
         object: &Path,
         name: &str,
         kind: FieldKind,
-        items: FieldKind,
+        items: Option<FieldKind>,
         required: bool,
     ) -> Result<(), EditError> {
         // An element added to one whose children are an ordered list goes

@@ -17,9 +17,9 @@ use crate::table::item_type;
 pub enum SchemaCommand {
     Add {
         name: String,
+        /// An array is of any values: what its items are is defined later
+        /// (owner, 2026-11-14).
         kind: FieldKind,
-        /// For an array on a JSON tab, the type of its items.
-        items: FieldKind,
         required: bool,
         /// On an XML tab: an attribute rather than an element. Its name is
         /// typed without the `@`.
@@ -234,10 +234,9 @@ impl GossiaApp {
         match command {
             SchemaCommand::Add {
                 kind: FieldKind::Array,
-                items,
                 required,
                 ..
-            } => calc.add_array_field(&sheet, object, &new_name, *items, *required),
+            } => calc.add_untyped_array_field(&sheet, object, &new_name, *required),
             SchemaCommand::Add { kind, required, .. } => {
                 calc.add_field(&sheet, object, &new_name, *kind, *required)
             }

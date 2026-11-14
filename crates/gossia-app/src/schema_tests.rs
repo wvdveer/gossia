@@ -162,7 +162,6 @@ fn adding_a_field_checks_the_name_in_the_dialog_and_shows_a_new_column() {
     let add = |name: &str| SchemaCommand::Add {
         name: name.into(),
         kind: gossia_calc::FieldKind::Integer,
-        items: gossia_calc::FieldKind::Object,
         required: false,
         attribute: false,
     };
@@ -188,17 +187,18 @@ fn adding_a_field_checks_the_name_in_the_dialog_and_shows_a_new_column() {
     assert_eq!(names, ["sku", "qty", "price", "total", "note", "weight"]);
 }
 
-/// Reported by the owner (2026-11-10): *Add field* made every array an
-/// array of objects. The dialog's *Items* gives the type of its items.
+/// Owner, 2026-11-14 (issue 3): *Add field* does not ask what an array
+/// holds. It adds an array of any values, whose items are defined later on
+/// the schema tab or by *Force type definition*. (On 2026-11-10 it had
+/// made every array an array of objects, then asked for the item type.)
 #[test]
-fn add_field_makes_an_array_of_the_item_type_chosen() {
+fn add_field_makes_an_array_of_any_values() {
     let mut app = updatable();
     app.start_schema_command(
         &p(""),
         SchemaCommand::Add {
             name: "tags".into(),
             kind: gossia_calc::FieldKind::Array,
-            items: gossia_calc::FieldKind::Date,
             required: false,
             attribute: false,
         },
@@ -208,10 +208,8 @@ fn add_field_makes_an_array_of_the_item_type_chosen() {
     settle(&mut app);
     let schema =
         gossia_core::json::to_string(app.calc().data("Orders_schema").unwrap(), false).unwrap();
-    assert!(
-        schema.contains(r#""tags":{"type":"array","items":{"type":"string","format":"date"}}"#),
-        "{schema}"
-    );
+    assert!(schema.contains(r#""tags":{"type":"array"}"#), "{schema}");
+    assert_eq!(app.calc().schema_error("Orders_schema"), None);
 }
 
 #[test]
@@ -335,7 +333,6 @@ fn on_an_xml_tab_a_new_field_is_an_element_or_an_attribute() {
     let add = |name: &str, attribute: bool| SchemaCommand::Add {
         name: name.into(),
         kind: gossia_calc::FieldKind::Integer,
-        items: gossia_calc::FieldKind::Object,
         required: false,
         attribute,
     };
