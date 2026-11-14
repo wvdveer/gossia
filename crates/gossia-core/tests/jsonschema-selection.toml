@@ -75,7 +75,6 @@ skip = [
     { file = "required.json", group = "required validation", why = "no-type" },
     { file = "required.json", group = "required with empty array", why = "no-type" },
     { file = "required.json", group = "required with escaped characters", why = "no-type" },
-    { file = "type.json", group = "array type matches arrays", why = "array-without-items" },
     { file = "type.json", group = "object type matches objects", why = "object-without-properties" },
 ]
 
@@ -90,5 +89,4 @@ no-type = """The schema has no `type` but has keywords of a type. A schema with 
 ref-pointer = """`$ref` to a JSON pointer other than `#` or `#/$defs/Name`, to a URL, or to an anchor is not supported (DESIGN.md, Schema subsets: references are local and to `$defs`)."""
 empty-enum = """An `enum` with no values is refused: nothing could ever match it."""
 object-without-properties = """`{"type": "object"}` with no `properties` would be open content in JSON Schema; objects are closed, so a schema must list the properties (or give a schema-valued `additionalProperties`)."""
-array-without-items = """`{"type": "array"}` with no `items` has no element type; the subset requires one."""
 float-integer = """A float with a zero fractional part is not an integer: `1.0` stays a float (DESIGN.md, Scalar types), so it is invalid for an `integer` node."""
