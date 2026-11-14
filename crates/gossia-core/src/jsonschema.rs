@@ -532,17 +532,27 @@ impl<'a> Lowerer<'a> {
             Ty::Boolean => Kind::Bool,
             Ty::Any => Kind::Any,
             Ty::Array => {
-                let Some(items) = obj.get("items") else {
-                    return err(
-                        "items",
-                        ptr,
-                        tr!("an array needs `items`, a schema for its elements"),
-                    );
+                let items_ptr = child_ptr(ptr, &["items"]);
+                let items = match obj.get("items") {
+                    // No `items`: elements of any value, as in JSON Schema
+                    // (issue 3: `type: array` is the first step to a list,
+                    // before its items are given).
+                    None => {
+                        self.types.push(TypeDef {
+                            kind: Kind::Any,
+                            source: items_ptr,
+                            name: None,
+                            title: None,
+                            description: None,
+                            choices: Vec::new(),
+                        });
+                        TypeId(u32::try_from(self.types.len() - 1).expect("fewer than 2^32 types"))
+                    }
+                    Some(items) if items.value().as_object().is_none() => {
+                        return err("items", ptr, tr!("`items` must be a single schema"));
+                    }
+                    Some(items) => self.lower_sub(items.value(), &items_ptr)?,
                 };
-                if items.value().as_object().is_none() {
-                    return err("items", ptr, tr!("`items` must be a single schema"));
-                }
-                let items = self.lower_sub(items.value(), &child_ptr(ptr, &["items"]))?;
                 Kind::Array {
                     items,
                     min_items: count(obj, "minItems", ptr)?,

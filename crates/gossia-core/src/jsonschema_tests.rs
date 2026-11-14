@@ -544,9 +544,19 @@ fn required_names_must_be_declared_and_unique() {
 }
 
 #[test]
-fn an_array_needs_items() {
-    rejects(r#"{"type": "array"}"#, "items", "#");
-    rejects(r#"{"type": "array", "minItems": 1}"#, "items", "#");
+fn an_array_without_items_holds_any_value() {
+    // As in JSON Schema; the first step to a list on a schema tab (issue 3).
+    for schema in [
+        r#"{"type": "array"}"#,
+        r#"{"type": "array", "minItems": 1}"#,
+    ] {
+        let spec = lower_str(schema).unwrap();
+        let Kind::Array { items, .. } = spec.get(spec.root()).kind else {
+            panic!("{schema}: an array");
+        };
+        assert!(matches!(spec.get(items).kind, Kind::Any), "{schema}");
+    }
+    rejects(r#"{"type": "array", "items": []}"#, "items", "#");
 }
 
 #[test]

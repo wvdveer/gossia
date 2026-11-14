@@ -1042,6 +1042,9 @@ fn a_value_typed_under_an_absent_record_of_the_schema_creates_it() {
 
     calc.set_value("DataSchema", &p("type"), Value::Str("array".into()))
         .unwrap();
+    // A list with no `items` yet is a list of any values, not an error.
+    assert_eq!(calc.schema_error("DataSchema"), None);
+    assert!(root_kind(&calc).starts_with("Array"));
     calc.set_value("DataSchema", &p("items.type"), Value::Str("string".into()))
         .unwrap();
     assert_eq!(
