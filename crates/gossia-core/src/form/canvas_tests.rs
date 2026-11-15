@@ -597,3 +597,20 @@ fn a_control_is_placed_on_the_header_under_what_it_has() {
             .is_none()
     );
 }
+
+#[test]
+fn a_control_is_placed_on_a_section_and_a_new_context_gets_a_free_name() {
+    let spec = spec();
+    let mut d = FormDesign::new_canvas(None);
+    d.add_repeater("items").unwrap();
+    let at = d.place_in_section(&spec, 1, field("sku")).unwrap();
+    assert_eq!(at, vec![1, 0]);
+    let placed = d.get(&at).unwrap();
+    assert_eq!((placed.x, placed.y), (Some(8), Some(8)));
+    assert!(d.controls[1].height.unwrap() >= 8 + 24);
+    assert_eq!(d.free_context_name(), "sel");
+    let mut sel = Control::new(ControlKind::Field);
+    sel.context = Some("sel".to_owned());
+    d.place_on_header(&spec, sel).unwrap();
+    assert_eq!(d.free_context_name(), "sel2");
+}

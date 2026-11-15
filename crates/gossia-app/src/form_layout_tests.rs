@@ -186,12 +186,14 @@ fn controls_are_added_into_the_selected_group_or_after_the_selected_control() {
         app.selected_control(),
         Some(vec![0, 0, group.children.len() - 1])
     );
-    // A control that is not a group is selected: after it.
-    app.select_control(Some(vec![0, 1]));
+    // A control on a section that is not a group is selected: on its
+    // section, under what it has.
+    let count = app.design_of(DEFAULT_FORM).controls[1].children.len();
+    app.select_control(Some(vec![1, 1]));
     assert!(app.add_control(Control::new(ControlKind::Label)));
-    assert_eq!(app.selected_control(), Some(vec![0, 2]));
+    assert_eq!(app.selected_control(), Some(vec![1, count]));
     assert_eq!(
-        app.design_of(DEFAULT_FORM).get(&[0, 2]).unwrap().kind,
+        app.design_of(DEFAULT_FORM).get(&[1, count]).unwrap().kind,
         ControlKind::Label
     );
 }
@@ -425,6 +427,7 @@ fn a_dragged_control_goes_where_the_pointer_says() {
         group,
         free: None,
         grid: None,
+        section: false,
     };
     // A field at the top, then a group of two fields.
     let drops = vec![

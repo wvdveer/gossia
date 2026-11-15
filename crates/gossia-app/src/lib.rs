@@ -29,6 +29,7 @@ pub mod form_layout;
 #[cfg(test)]
 mod form_layout_tests;
 pub mod form_nav;
+pub mod form_sections;
 pub mod host;
 pub mod host_code;
 pub mod i18n;

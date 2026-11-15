@@ -7,21 +7,74 @@
 //! height, one under another; only the rows on the screen are drawn, the
 //! others only take their room, so a long array scrolls as a short one. A
 //! press in a row, or the focus going into one, makes it the current row.
-//! In layout mode a repeater section is drawn as its first row, which is
-//! what is designed.
+//! In layout mode the sections are canvases one under another, each with
+//! its name in a strip on its left, the line under it dragged for its
+//! height and the right edge of the stack for the form's width; a repeater
+//! section is drawn as its first row, which is what is designed. The
+//! controls on them are the form view's own widgets, moved and sized by the
+//! designer of Free groups.
 
-use egui::{Align, RichText};
-use gossia_core::form::canvas::{ContextType, Section};
-use gossia_core::form::{Control, FormDesign, LabelPosition, truthy};
-use gossia_core::{Node, Path, Segment, Value};
+use egui::{Align, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
+use gossia_core::form::canvas::{ContextType, FORM_WIDTHS, MIN_ROW_HEIGHT, Section};
+use gossia_core::form::{CONTROL_HEIGHTS, Control, ControlKind, FormDesign, LabelPosition, truthy};
+use gossia_core::{Node, Path, Segment, TypeSpec, Value};
 use gossia_i18n::tr;
 
 use super::{
-    Draft, FormAction, LABEL_WIDTH, Painter, Slot, error_color, label_cell, slots, value_text,
+    Draft, DropZone, FormAction, LABEL_WIDTH, Painter, Slot, error_color, label_cell, slots,
+    snapped, value_text,
 };
+use crate::form_layout::ControlAction;
 
 /// The width of the mark on the left of the current row.
 const CURRENT_MARK: f32 = 3.0;
+
+/// The width of the strip on the left of the sections, with their names.
+const STRIP: f32 = 140.0;
+
+/// The room between two sections, which holds the line dragged for the
+/// height of the one above.
+const SECTION_GAP: f32 = 8.0;
+
+/// How tall a hidden section (of height 0) is drawn in layout mode.
+const HIDDEN_HEIGHT: f32 = 12.0;
+
+/// The name of a section in the designer: *Form header*, *Repeater: lines
+/// (row2)*, *Section*, *Form footer*.
+pub(crate) fn section_title(design: &FormDesign, index: usize) -> String {
+    match design.section(index) {
+        Some(Section::Repeater(_)) => tr!(
+            "Repeater: {path} ({row})",
+            path = design.controls[index].path.as_deref().unwrap_or(""),
+            row = design.row_name_of(index).unwrap_or_default()
+        ),
+        Some(section) => section.label().to_owned(),
+        None => String::new(),
+    }
+}
+
+/// *Add repeater*, asking for the array: a menu of the arrays of the
+/// schema that are not inside another array. Gives the one chosen.
+pub(crate) fn add_repeater_menu(ui: &mut egui::Ui, spec: &TypeSpec) -> Option<String> {
+    let arrays = gossia_core::form::bindable(spec, ControlKind::Repeater);
+    if arrays.is_empty() {
+        ui.add_enabled(false, egui::Button::new(tr!("Add repeater")))
+            .on_disabled_hover_text(tr!("The schema has no arrays to repeat."));
+        return None;
+    }
+    let mut chosen = None;
+    ui.menu_button(tr!("Add repeater"), |ui| {
+        ui.weak(tr!("A row for each item of:"));
+        for path in arrays {
+            let text = path.to_string();
+            if ui.button(&text).clicked() {
+                chosen = Some(text);
+                ui.close();
+            }
+        }
+    });
+    chosen
+}
 
 /// The key of the draft of a context field, which no node of a tab can have.
 fn draft_path(name: &str) -> Path {
@@ -33,6 +86,10 @@ impl Painter<'_> {
     /// the form. A fixed section with a height of 0 is hidden, except in
     /// layout mode.
     pub(super) fn canvas(&mut self, ui: &mut egui::Ui, design: &FormDesign) {
+        if self.layout.is_some() {
+            self.designer_stack(ui, design);
+            return;
+        }
         let width = design.form_width() as f32;
         let all = slots(&design.controls, &[]);
         for (index, (c, slot)) in design.controls.iter().zip(all).enumerate() {
@@ -42,7 +99,7 @@ impl Painter<'_> {
                     self.repeater_section(ui, c, &slot, &name, width);
                 }
                 _ => {
-                    if c.height == Some(0) && self.layout.is_none() {
+                    if c.height == Some(0) {
                         continue;
                     }
                     self.in_width(ui, width, |this, ui| this.control_gated(ui, c, &slot));
@@ -89,16 +146,6 @@ impl Painter<'_> {
             .and_then(|n| n.value().as_array().map(<[Node]>::len))
             .unwrap_or(0);
         let height = c.height.unwrap_or(24).max(16) as f32;
-        if self.layout.is_some() {
-            // The first row, which is what is designed.
-            let item = array.map(|a| a.index(0));
-            self.in_width(ui, width, |this, ui| {
-                this.in_row(ui, item, 0, row_name, |this, ui| {
-                    this.section_row(ui, c, slot)
-                });
-            });
-            return;
-        }
         let Some(array) = array else {
             return;
         };
@@ -197,6 +244,323 @@ impl Painter<'_> {
                 row_name.to_owned(),
                 Value::Int(*i as i64),
             ));
+        }
+    }
+
+    /// The sections in layout mode: each a canvas with a grid, its name in
+    /// the strip on its left (a click selects the section, its menu adds
+    /// and removes repeaters), the line under it dragged for its height; the
+    /// right edge of the stack is dragged for the form's width. A click on
+    /// the form outside them selects nothing, for the form's own properties.
+    fn designer_stack(&mut self, ui: &mut egui::Ui, design: &FormDesign) {
+        let background = ui.interact(
+            ui.clip_rect(),
+            egui::Id::unique(("form_background", &self.app.sheet, self.form)),
+            Sense::click(),
+        );
+        if background.clicked() {
+            self.actions
+                .push(FormAction::Control(ControlAction::SelectNone));
+        }
+        let width = design.form_width() as f32;
+        let top = ui.cursor().top();
+        let left = ui.cursor().left();
+        let mut bottom = top;
+        let all = slots(&design.controls, &[]);
+        for (index, (c, slot)) in design.controls.iter().zip(all).enumerate() {
+            let Some(section) = design.section(index) else {
+                continue;
+            };
+            let height = c.height.unwrap_or(0) as f32;
+            let hidden = height == 0.0 && !section.is_repeater();
+            let shown = if hidden {
+                HIDDEN_HEIGHT
+            } else if section.is_repeater() {
+                height.max(MIN_ROW_HEIGHT as f32)
+            } else {
+                height
+            };
+            let (rect, _) = ui.allocate_exact_size(vec2(STRIP + width, shown), Sense::hover());
+            let strip =
+                egui::Rect::from_min_max(rect.min, pos2(rect.left() + STRIP, rect.bottom()));
+            let region = egui::Rect::from_min_max(pos2(rect.left() + STRIP, rect.top()), rect.max);
+            let mut name = section_title(design, index);
+            if hidden {
+                name = tr!("{name} (hidden)", name = name);
+            }
+            self.section_sheet(ui, region, index, hidden);
+            self.section_strip(ui, design, strip, region, index, &name);
+            let mut inside = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(region)
+                    .layout(egui::Layout::top_down(Align::Min)),
+            );
+            if section.is_repeater() {
+                // The first row, which is what is designed.
+                let row_name = design.row_name_of(index).unwrap_or_default();
+                let item = self.own_path(c).map(|a| a.index(0));
+                self.in_row(&mut inside, item, 0, &row_name, |this, ui| {
+                    this.section_controls(ui, c, &slot, region);
+                });
+            } else {
+                self.section_controls(&mut inside, c, &slot, region);
+            }
+            self.section_line(ui, region, (index, height), section, &name);
+            ui.add_space((SECTION_GAP - ui.spacing().item_spacing.y).max(0.0));
+            bottom = rect.bottom();
+        }
+        self.width_edge(ui, left + STRIP, top, bottom, width);
+    }
+
+    /// The sheet of a section: its colour and grid, a line every 16 points,
+    /// or a grey bar for a hidden one. A click on it, where no control is,
+    /// selects the section.
+    fn section_sheet(&mut self, ui: &mut egui::Ui, region: egui::Rect, index: usize, hidden: bool) {
+        let visuals = ui.visuals();
+        let border = visuals.widgets.noninteractive.bg_stroke.color;
+        let painter = ui.painter();
+        if hidden {
+            painter.rect_filled(region, 0.0, border.gamma_multiply(0.3));
+        } else {
+            painter.rect_filled(region, 0.0, visuals.extreme_bg_color);
+            let faint = Stroke::new(0.5, border.gamma_multiply(0.4));
+            let step = 16.0;
+            let mut x = region.left() + step;
+            while x < region.right() {
+                painter.vline(x, region.y_range(), faint);
+                x += step;
+            }
+            let mut y = region.top() + step;
+            while y < region.bottom() {
+                painter.hline(region.x_range(), y, faint);
+                y += step;
+            }
+        }
+        painter.rect_stroke(region, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
+        let id = egui::Id::unique(("form_section_area", &self.app.sheet, self.form, index));
+        if ui.interact(region, id, Sense::click()).clicked() {
+            self.actions
+                .push(FormAction::Control(ControlAction::Select(vec![index])));
+        }
+    }
+
+    /// The name of a section in the strip on its left: a click selects the
+    /// section; its menu adds a repeater, and removes a repeater section.
+    fn section_strip(
+        &mut self,
+        ui: &mut egui::Ui,
+        design: &FormDesign,
+        strip: egui::Rect,
+        region: egui::Rect,
+        index: usize,
+        name: &str,
+    ) {
+        let id = egui::Id::unique(("form_section_strip", &self.app.sheet, self.form, index));
+        let response = ui.interact(strip, id, Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&vec![index]);
+        let problem = self.problem_of(&design.controls[index]);
+        let colour = if problem.is_some() {
+            error_color(ui)
+        } else if selected {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().text_color()
+        };
+        let text = egui::Rect::from_min_max(
+            strip.min,
+            pos2(strip.right() - 6.0, strip.bottom().max(strip.top() + 14.0)),
+        );
+        ui.painter().with_clip_rect(text).text(
+            pos2(text.right(), text.top()),
+            egui::Align2::RIGHT_TOP,
+            name,
+            egui::FontId::proportional(11.0),
+            colour,
+        );
+        if selected {
+            ui.painter().rect_stroke(
+                region.expand(2.0),
+                0.0,
+                Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                StrokeKind::Outside,
+            );
+        }
+        if response.clicked() {
+            self.actions
+                .push(FormAction::Control(ControlAction::Select(vec![index])));
+        }
+        let response = match problem {
+            Some(problem) => response.on_hover_text(problem),
+            None => response,
+        };
+        let repeater = design.section(index).is_some_and(Section::is_repeater);
+        response.context_menu(|ui| {
+            if let Some(path) = add_repeater_menu(ui, self.spec) {
+                self.actions
+                    .push(FormAction::Control(ControlAction::AddRepeater(path)));
+            }
+            if repeater && ui.button(tr!("Remove repeater")).clicked() {
+                self.actions
+                    .push(FormAction::Control(ControlAction::RemoveRepeater(index)));
+                ui.close();
+            }
+        });
+    }
+
+    /// The controls of a section, at their places in `region`, which is
+    /// where a control is dropped or moved into it.
+    fn section_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Control,
+        slot: &Slot,
+        region: egui::Rect,
+    ) {
+        self.at = slot.at.clone();
+        let outer = (self.sized, self.label_width);
+        self.sized = false;
+        self.label_width = c.label_width.or(self.label_width);
+        self.free_in(ui, c, slot, region);
+        (self.sized, self.label_width) = outer;
+        self.rects.free.insert(slot.at.clone(), region);
+        self.drops.push(DropZone {
+            at: slot.at.clone(),
+            rect: region,
+            group: true,
+            free: Some((region, c.children.len())),
+            grid: None,
+            section: true,
+        });
+    }
+
+    /// The line under a section, dragged for its height: snapped to the
+    /// grid (Alt drags without), not above its lowest control, at least the
+    /// least height of a row for a repeater section; 0 hides a fixed one.
+    /// Letting go sets it, one step of undo.
+    fn section_line(
+        &mut self,
+        ui: &mut egui::Ui,
+        region: egui::Rect,
+        (index, stored): (usize, f32),
+        section: Section,
+        name: &str,
+    ) {
+        let line = egui::Rect::from_min_max(
+            pos2(region.left(), region.bottom() - 3.0),
+            pos2(region.right(), region.bottom() + SECTION_GAP),
+        );
+        let id = egui::Id::unique(("form_section_height", &self.app.sheet, self.form, index));
+        let response = ui.interact(line, id, Sense::drag());
+        let label = tr!("Height of {name}", name = name);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, &label));
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        if response.drag_started()
+            && let Some(p) = ui.input(|i| i.pointer.press_origin())
+        {
+            self.actions
+                .push(FormAction::Control(ControlAction::ResizeStart));
+            ui.data_mut(|d| d.insert_temp(id, (stored, p.y)));
+        }
+        let Some((start, grab)) = ui.data(|d| d.get_temp::<(f32, f32)>(id)) else {
+            return;
+        };
+        let Some(p) = ui.input(|i| i.pointer.latest_pos()) else {
+            return;
+        };
+        let lowest = self
+            .last
+            .controls
+            .iter()
+            .filter(|(a, _)| a.len() == 2 && a[0] == index)
+            .map(|(_, r)| r.bottom() - region.top())
+            .fold(0.0, f32::max);
+        let least = if section.is_repeater() {
+            MIN_ROW_HEIGHT
+        } else {
+            0
+        };
+        let snap = !ui.input(|i| i.modifiers.alt);
+        let range = least..=*CONTROL_HEIGHTS.end();
+        let height = snapped(start + p.y - grab, snap, &range).max(lowest.ceil() as u32);
+        if response.dragged() {
+            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::unique("form_guides"),
+            ));
+            let accent = ui.visuals().selection.stroke.color;
+            let y = region.top() + height as f32;
+            painter.hline(region.x_range(), y, Stroke::new(1.5, accent));
+            painter.text(
+                pos2(region.right() + 6.0, y),
+                egui::Align2::LEFT_CENTER,
+                format!("{height} pt"),
+                egui::FontId::proportional(11.0),
+                accent,
+            );
+        }
+        if response.drag_stopped() {
+            ui.data_mut(|d| d.remove::<(f32, f32)>(id));
+            if height as f32 != start {
+                self.actions.push(FormAction::Control(ControlAction::Resize(
+                    vec![index],
+                    None,
+                    Some(Some(height)),
+                )));
+            }
+        }
+    }
+
+    /// The right edge of the stack of sections, dragged for the width of
+    /// the form, within 240 to 2000 points.
+    fn width_edge(&mut self, ui: &mut egui::Ui, left: f32, top: f32, bottom: f32, width: f32) {
+        let x = left + width;
+        let edge = egui::Rect::from_x_y_ranges((x - 3.0)..=(x + 5.0), top..=bottom.max(top + 8.0));
+        let id = egui::Id::unique(("form_width_edge", &self.app.sheet, self.form));
+        let response = ui.interact(edge, id, Sense::drag());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Splitter, true, tr!("Width of the form"))
+        });
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if response.drag_started()
+            && let Some(p) = ui.input(|i| i.pointer.press_origin())
+        {
+            ui.data_mut(|d| d.insert_temp(id, p.x));
+        }
+        let Some(grab) = ui.data(|d| d.get_temp::<f32>(id)) else {
+            return;
+        };
+        let Some(p) = ui.input(|i| i.pointer.latest_pos()) else {
+            return;
+        };
+        let snap = !ui.input(|i| i.modifiers.alt);
+        let to = snapped(width + p.x - grab, snap, &FORM_WIDTHS);
+        if response.dragged() {
+            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::unique("form_guides"),
+            ));
+            let accent = ui.visuals().selection.stroke.color;
+            let x = left + to as f32;
+            painter.vline(x, top..=bottom, Stroke::new(1.5, accent));
+            painter.text(
+                pos2(x + 6.0, top),
+                egui::Align2::LEFT_TOP,
+                format!("{to} pt"),
+                egui::FontId::proportional(11.0),
+                accent,
+            );
+        }
+        if response.drag_stopped() {
+            ui.data_mut(|d| d.remove::<f32>(id));
+            if to as f32 != width {
+                self.actions
+                    .push(FormAction::Control(ControlAction::FormWidth(to)));
+            }
         }
     }
 

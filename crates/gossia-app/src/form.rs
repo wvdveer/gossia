@@ -917,6 +917,9 @@ pub(crate) struct DropZone {
     pub free: Option<(egui::Rect, usize)>,
     /// For a Grid group: its rows and columns, and how many controls it has.
     pub grid: Option<(GridGeom, usize)>,
+    /// A section of a canvas form: what is dropped goes in it, never beside
+    /// it, and nothing goes outside the sections.
+    pub section: bool,
 }
 
 /// Where a dragged control would be put down: in the list of `parent` at
@@ -965,8 +968,10 @@ pub(crate) fn drop_place(
     };
     let (parent, frame) = match over {
         Some(z) if !z.group => return beside(z, pos.y > z.rect.center().y),
-        Some(z) if pos.y < z.rect.top() + GROUP_EDGE => return beside(z, false),
-        Some(z) if pos.y > z.rect.bottom() - GROUP_EDGE => return beside(z, true),
+        Some(z) if !z.section && pos.y < z.rect.top() + GROUP_EDGE => return beside(z, false),
+        Some(z) if !z.section && pos.y > z.rect.bottom() - GROUP_EDGE => {
+            return beside(z, true);
+        }
         // In a Free group, at the end of its list, where the pointer is.
         Some(DropZone {
             at,
@@ -1005,6 +1010,8 @@ pub(crate) fn drop_place(
             });
         }
         Some(z) => (z.at.clone(), z.rect.shrink(GROUP_EDGE)),
+        // A canvas form has only its sections at the top level.
+        None if drops.iter().any(|z| z.section) => return None,
         None if area.contains(pos) => (Vec::new(), area),
         None => return None,
     };
@@ -1414,6 +1421,7 @@ impl Painter<'_> {
                         group: false,
                         free: None,
                         grid: None,
+                        section: false,
                     });
                 }
             }
@@ -1465,6 +1473,17 @@ impl Painter<'_> {
         free: &FreeParent,
     ) {
         let id = egui::Id::unique(("form_move", &self.app.sheet, self.form));
+        let into = id.with("into_section");
+        if target.drag_stopped()
+            && let Some((to, point)) = ui.data_mut(|d| d.remove_temp::<(Address, (f32, f32))>(into))
+        {
+            self.actions.push(FormAction::Control(ControlAction::MoveTo(
+                slot.at.clone(),
+                to,
+                point,
+            )));
+            return;
+        }
         if target.drag_started() {
             self.actions
                 .push(FormAction::Control(ControlAction::ResizeStart));
@@ -1484,6 +1503,41 @@ impl Painter<'_> {
         };
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         let moved = egui::Rect::from_min_size((start + (pos - from)).to_pos2(), rect.size());
+        // Over another section of a canvas form: moved into it when let go,
+        // where its outline shows, keeping its path text.
+        if free.at.len() == 1 && self.contexts.is_some() {
+            let over = self
+                .last
+                .free
+                .iter()
+                .find(|(a, r)| a.len() == 1 && **a != free.at && r.contains(pos))
+                .map(|(a, r)| (a.clone(), *r));
+            if let Some((to, region)) = over {
+                let screen = moved.translate(free.origin.to_vec2());
+                let grid = |v: f32| ((v / SNAP).round() * SNAP).max(0.0);
+                let point = (
+                    grid(screen.left() - region.left()),
+                    grid(screen.top() - region.top()),
+                );
+                let outline = egui::Rect::from_min_size(
+                    region.min + egui::vec2(point.0, point.1),
+                    rect.size(),
+                );
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::unique("form_guides"),
+                ));
+                painter.rect_stroke(
+                    outline,
+                    2.0,
+                    Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                    StrokeKind::Outside,
+                );
+                ui.data_mut(|d| d.insert_temp(into, (to, point)));
+                return;
+            }
+            ui.data_mut(|d| d.remove_temp::<(Address, (f32, f32))>(into));
+        }
         let others: Vec<egui::Rect> = self
             .last
             .controls
@@ -1748,7 +1802,33 @@ impl Painter<'_> {
         }
         .max(least);
         let (region, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
-        let size = (width, height);
+        let bottom = self.free_in(ui, c, slot, region);
+        if (fixed.is_none() || grows) && (bottom - last).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(key, bottom));
+            ui.ctx().request_repaint();
+        }
+        if layout {
+            self.rects.free.insert(slot.at.clone(), region);
+            ui.painter().rect_stroke(
+                region,
+                0.0,
+                Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                StrokeKind::Inside,
+            );
+        }
+    }
+
+    /// The controls of a Free group or section drawn in `region`, each at
+    /// its place, the later ones over the earlier. Returns how far down the
+    /// lowest reaches, from the top of the region.
+    pub(super) fn free_in(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Control,
+        slot: &Slot,
+        region: egui::Rect,
+    ) -> f32 {
+        let size = (region.width(), region.height());
         let mut bottom: f32 = 0.0;
         for (child, s) in c.children.iter().zip(slots(&c.children, &slot.at)) {
             let place = free_place(c, child, size);
@@ -1781,19 +1861,7 @@ impl Painter<'_> {
             self.sized = outer;
             bottom = bottom.max(child_ui.min_rect().bottom() - region.top());
         }
-        if (fixed.is_none() || grows) && (bottom - last).abs() > 0.5 {
-            ui.data_mut(|d| d.insert_temp(key, bottom));
-            ui.ctx().request_repaint();
-        }
-        if layout {
-            self.rects.free.insert(slot.at.clone(), region);
-            ui.painter().rect_stroke(
-                region,
-                0.0,
-                Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-                StrokeKind::Inside,
-            );
-        }
+        bottom
     }
 
     /// The handles of the selected control in layout mode: its right edge
@@ -2010,6 +2078,20 @@ impl Painter<'_> {
         let name = control_name(c);
         target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
         self.select_on(ui, target, &slot.at);
+        if c.hidden {
+            // Hidden when the form is used: a dashed outline.
+            let r = rect.expand(1.0);
+            let corners = [
+                r.left_top(),
+                r.right_top(),
+                r.right_bottom(),
+                r.left_bottom(),
+                r.left_top(),
+            ];
+            let stroke = Stroke::new(1.0, ui.visuals().weak_text_color());
+            ui.painter()
+                .extend(egui::Shape::dashed_line(&corners, stroke, 4.0, 3.0));
+        }
         if selected {
             ui.painter().rect_stroke(
                 rect.expand(2.0),
@@ -2293,6 +2375,7 @@ impl Painter<'_> {
                     .grids
                     .get(&slot.at)
                     .map(|g| (g.clone(), c.children.len())),
+                section: false,
             });
             self.rects
                 .controls
@@ -4982,11 +5065,11 @@ fn own_font(typeface: Option<Typeface>, size: Option<u32>, inherited: Font) -> O
     })
 }
 
+#[path = "form_canvas.rs"]
+pub(crate) mod canvas;
+
 /// A size dragged to `points`, snapped to the grid unless `snap` is off, and
 /// kept within `range`.
-#[path = "form_canvas.rs"]
-mod canvas;
-
 pub(crate) fn snapped(points: f32, snap: bool, range: &std::ops::RangeInclusive<u32>) -> u32 {
     let points = if snap {
         (points / SNAP).round() * SNAP

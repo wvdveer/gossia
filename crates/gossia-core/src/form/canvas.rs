@@ -568,6 +568,19 @@ impl FormDesign {
             .expect("some name is free")
     }
 
+    /// A name for a new context field that no context has yet: `sel`,
+    /// `sel2`, `sel3`...
+    pub fn free_context_name(&self) -> String {
+        let taken = self.context_names();
+        (1..)
+            .map(|k| match k {
+                1 => "sel".to_owned(),
+                k => format!("sel{k}"),
+            })
+            .find(|n| !taken.contains(n))
+            .expect("some name is free")
+    }
+
     /// Adds a repeater section over the array at `path` before the footer,
     /// after a new fixed section if there is a repeater already. Returns its
     /// top-level index. None if the form is not a canvas.
@@ -623,13 +636,24 @@ impl FormDesign {
     /// and 8 points under its lowest control, making the header taller to
     /// hold it, and gives its address. Heights not set are estimated as
     /// converting does (`spec` gives the kinds of fields).
-    pub fn place_on_header(&mut self, spec: &TypeSpec, mut control: Control) -> Option<Address> {
+    pub fn place_on_header(&mut self, spec: &TypeSpec, control: Control) -> Option<Address> {
+        self.place_in_section(spec, 0, control)
+    }
+
+    /// As [`place_on_header`](Self::place_on_header), on the section at the
+    /// top-level `index`; on a repeater section the row is made taller.
+    pub fn place_in_section(
+        &mut self,
+        spec: &TypeSpec,
+        index: usize,
+        mut control: Control,
+    ) -> Option<Address> {
         if !self.canvas {
             return None;
         }
-        let header = self.controls.first_mut()?;
+        let section = self.controls.get_mut(index)?;
         let height = |c: &Control| estimate_height(spec, &Path::root(), c);
-        let y = header
+        let y = section
             .children
             .iter()
             .map(|c| c.y.unwrap_or(0) + height(c) + 8)
@@ -638,9 +662,9 @@ impl FormDesign {
         control.x.get_or_insert(8);
         control.y = Some(y);
         let bottom = y + height(&control) + 8;
-        header.height = Some(header.height.unwrap_or(0).max(bottom));
-        header.children.push(control);
-        Some(vec![0, header.children.len() - 1])
+        section.height = Some(section.height.unwrap_or(0).max(bottom));
+        section.children.push(control);
+        Some(vec![index, section.children.len() - 1])
     }
 
     /// Why the control at `address` is wrong on a canvas form, or on a form

@@ -9,6 +9,7 @@
 //! has its own undo and redo, which last while it is on.
 
 use gossia_calc::{ExprKind, REPORT_FORM, entry};
+use gossia_core::form::canvas::FORM_WIDTHS;
 use gossia_core::form::{
     self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
     Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
@@ -93,6 +94,18 @@ pub(crate) enum ControlAction {
     /// A new width and height, each left alone when `None`, made automatic
     /// with `Some(None)`.
     Resize(Address, Option<Option<u32>>, Option<Option<u32>>),
+    /// Nothing selected: the property page shows the form's own.
+    SelectNone,
+    /// The width of a canvas form, in points.
+    FormWidth(u32),
+    /// A repeater section over the array at the path, before the footer.
+    AddRepeater(String),
+    /// Takes away the repeater section at the top-level index, with the
+    /// fixed section under it (above it, for the last).
+    RemoveRepeater(usize),
+    /// A control of a canvas form dragged into another section, put at the
+    /// point given of its inside; one step of undo with the drag.
+    MoveTo(Address, Address, (f32, f32)),
 }
 
 /// Where in a Free or Grid group something dragged is put down.
@@ -143,6 +156,27 @@ pub(crate) fn drop_allowed(item: &DragItem, parent: &[usize], index: usize) -> b
             };
             !parent.starts_with(from)
                 && !(parent == from_parent && (index == last || index == last + 1))
+        }
+    }
+}
+
+/// What a field on the property page shows: a node, what an expression
+/// comes to, or (on the header of a canvas form) a context of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldSource {
+    Path,
+    Value,
+    Context,
+}
+
+impl FieldSource {
+    const ALL: [FieldSource; 3] = [FieldSource::Path, FieldSource::Value, FieldSource::Context];
+
+    fn label(self) -> &'static str {
+        match self {
+            FieldSource::Path => tr!("Path"),
+            FieldSource::Value => tr!("Value"),
+            FieldSource::Context => tr!("Context"),
         }
     }
 }
@@ -487,7 +521,47 @@ impl GossiaApp {
                 let gesture = self.form.layout.as_ref().map_or(0, |l| l.gesture);
                 self.resize_control(&at, width, height, Some(format!("resize:{gesture}")));
             }
+            ControlAction::SelectNone => self.select_control(None),
+            ControlAction::FormWidth(width) => {
+                self.set_form_width(width);
+            }
+            ControlAction::AddRepeater(path) => {
+                self.add_repeater(&path);
+            }
+            ControlAction::RemoveRepeater(index) => {
+                self.edit_design(|d| d.remove_repeater(index).then_some(None));
+            }
+            ControlAction::MoveTo(at, target, (x, y)) => {
+                let gesture = self.form.layout.as_ref().map_or(0, |l| l.gesture);
+                self.edit_design_merging(Some(format!("move:{gesture}")), |d| {
+                    let index = d.get(&target).map_or(0, |g| g.children.len());
+                    let moved = d.move_to(&at, &target, index)?;
+                    let c = d.get_mut(&moved)?;
+                    c.x = Some(position(x));
+                    c.y = Some(position(y));
+                    Some(Some(moved))
+                });
+            }
         }
+    }
+
+    /// Sets the width of the canvas form being shown, within
+    /// [`FORM_WIDTHS`]. The selection is kept.
+    pub fn set_form_width(&mut self, width: u32) -> bool {
+        let keep = self.selected_control();
+        self.edit_design(|d| {
+            if !d.canvas {
+                return None;
+            }
+            d.width = Some(width.clamp(*FORM_WIDTHS.start(), *FORM_WIDTHS.end()));
+            Some(keep)
+        })
+    }
+
+    /// Adds a repeater section over the array at `path` to the canvas form
+    /// being shown, and selects it.
+    pub fn add_repeater(&mut self, path: &str) -> bool {
+        self.edit_design(|d| d.add_repeater(path).map(|i| Some(vec![i])))
     }
 
     /// Puts controls where the placements say, as they are seen: the Free
@@ -629,11 +703,20 @@ impl GossiaApp {
         let selected = self.selected_control();
         let spec = self.calc().spec(&self.sheet).cloned();
         self.edit_design(|d| {
-            // On a canvas the top level is the sections: what would go there
-            // goes on the header, under what it has, until the designer of
-            // canvases (step 18c).
-            if d.canvas && selected.as_ref().is_none_or(|at| at.len() == 1) {
-                return d.place_on_header(spec.as_ref()?, control).map(Some);
+            // On a canvas the top level is the sections: a control goes on
+            // the selected section, or the one of the selected control that
+            // is on a section and takes none, else the header, under what
+            // it has.
+            if d.canvas {
+                let section = match &selected {
+                    None => Some(0),
+                    Some(at) if at.len() == 1 => Some(at[0]),
+                    Some(at) if at.len() == 2 && !d.takes_children(at) => Some(at[0]),
+                    Some(_) => None,
+                };
+                if let Some(index) = section {
+                    return d.place_in_section(spec.as_ref()?, index, control).map(Some);
+                }
             }
             let at = match selected {
                 Some(at) if d.takes_children(&at) => d.insert(&at, None, control),
@@ -1066,6 +1149,7 @@ impl GossiaApp {
     /// the palette, undo and redo, and discarding the design.
     pub(crate) fn form_bar(&mut self, ui: &mut egui::Ui, form: &str) {
         let report = form == REPORT_FORM;
+        let canvas = !report && self.design_of(form).canvas;
         ui.horizontal_wrapped(|ui| {
             let mut on = self.layout_active();
             let switch = if report {
@@ -1093,6 +1177,10 @@ impl GossiaApp {
                 }
                 // Charts are for reports only, for now.
                 if !report && kind == ControlKind::Chart {
+                    continue;
+                }
+                // On a canvas form a repeater is a section: Add repeater.
+                if canvas && kind == ControlKind::Repeater {
                     continue;
                 }
                 let label = tr!("Add {kind}", kind = kind.label().to_lowercase());
@@ -1176,8 +1264,12 @@ impl GossiaApp {
                         .and_then(|at| design.get(at).map(|c| (at, c)))
                     {
                         Some((at, _)) if self.is_band(at) => self.band_properties(ui, at[0]),
+                        Some((at, _)) if design.canvas && at.len() == 1 => {
+                            self.section_properties(ui, &design, at[0]);
+                        }
                         Some((at, control)) => self.control_properties(ui, &design, at, control),
                         None if self.in_report() => self.report_properties(ui),
+                        None if design.canvas => self.canvas_properties(ui, &design),
                         None => {
                             ui.weak(tr!("Select a control on the form to change it."));
                         }
@@ -1238,15 +1330,29 @@ impl GossiaApp {
                 || edited.value.is_some()
                 || (edited.path.is_none()
                     && ui.data(|d| d.get_temp::<bool>(source_id)).unwrap_or(false)));
+        // On the header of a canvas form a field can also be a context
+        // field, whose value belongs to the form.
+        let can_context = design.canvas && at.first() == Some(&0) && at.len() == 2;
         if kind == ControlKind::Field && !report {
-            let before = by_value;
+            let before = if edited.context.is_some() {
+                FieldSource::Context
+            } else if by_value {
+                FieldSource::Value
+            } else {
+                FieldSource::Path
+            };
+            let mut source = before;
             ui.horizontal(|ui| {
                 ui.label(tr!("Source"));
                 let response = egui::ComboBox::from_id_salt("property_source")
-                    .selected_text(if by_value { tr!("Value") } else { tr!("Path") })
+                    .selected_text(source.label())
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut by_value, false, tr!("Path"));
-                        ui.selectable_value(&mut by_value, true, tr!("Value"));
+                        for s in FieldSource::ALL {
+                            if s == FieldSource::Context && !can_context && before != s {
+                                continue;
+                            }
+                            ui.selectable_value(&mut source, s, s.label());
+                        }
                     })
                     .response;
                 response.widget_info(|| {
@@ -1257,20 +1363,35 @@ impl GossiaApp {
                     )
                 });
             });
-            if by_value != before {
+            if source != before {
+                by_value = source == FieldSource::Value;
                 ui.data_mut(|d| d.insert_temp(source_id, by_value));
-                if by_value {
+                if source != FieldSource::Path {
                     edited.path = None;
-                } else {
+                }
+                if source != FieldSource::Value {
                     edited.value = None;
                     edited.write_procedure = None;
                 }
+                if source == FieldSource::Context {
+                    edited.context = Some(design.free_context_name());
+                } else {
+                    edited.context = None;
+                    edited.context_type = None;
+                    edited.context_default = None;
+                    edited.hidden = false;
+                }
             }
+        }
+        let is_context = kind == ControlKind::Field && edited.context.is_some();
+        if is_context && self.context_properties(ui, &mut edited) {
+            merge = Some(key("context"));
         }
 
         // What the control is bound to.
         if bound
             && !by_value
+            && !is_context
             && !edited.lists_items()
             && let Some(spec) = &spec
         {
@@ -1412,6 +1533,7 @@ impl GossiaApp {
             _ => {}
         }
         match kind {
+            ControlKind::Field if is_context => {}
             ControlKind::Field if report => {
                 // No schema says what the value is: a date shows the date
                 // formats, anything else the number formats.
@@ -1688,7 +1810,7 @@ impl GossiaApp {
             }
             self.expression_error(ui, at, None, expr);
         }
-        if kind == ControlKind::Field && !report {
+        if kind == ControlKind::Field && !report && !is_context {
             let expr = ExprKind::Choices;
             if expr_text(
                 ui,
@@ -1720,7 +1842,7 @@ impl GossiaApp {
              values, (code, text) pairs or {\"value\": .., \"label\": ..} dicts."
         ));
 
-        if kind == ControlKind::Field && !report {
+        if kind == ControlKind::Field && !report && !is_context {
             self.formula_editor(ui, design, at, &edited);
         }
 
