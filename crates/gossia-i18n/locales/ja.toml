@@ -2297,7 +2297,6 @@
 
 # Form canvases (step 18b-2, 2026-11-15)
 "The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}." = "タブ {tab} のフォーム {form} はキャンバス上に描画されるようになりました。式から表示されるリストは除外されました: {lists}。"
-"Adding and deleting rows is not available yet." = "行の追加と削除はまだ利用できません。"
 
 # Form canvases, the designer (step 18c, 2026-11-16)
 "Repeater: {path} ({row})" = "リピーター: {path} ({row})"
@@ -2326,3 +2325,16 @@
 "Type of the context field" = "コンテキストフィールドの型"
 "Not drawn when the form is used; its value still chooses." = "フォームの使用時には描画されませんが、その値は引き続き選択に使われます。"
 "Its value belongs to the form, not to the data. Paths use it by its name, as items[sel].name, and expressions as ctx.sel." = "その値はデータではなくフォームに属します。パスでは items[sel].name のように名前で、式では ctx.sel として使います。"
+
+# Form canvases, the add/delete button (step 18d-1, 2026-11-16)
+"A button runs for a row once it has been added." = "ボタンは行が追加されてからその行に対して実行されます。"
+"Worked out once the row has been added." = "行が追加されてから計算されます。"
+"The row was not added: {field}: {error}" = "行は追加されませんでした: {field}: {error}"
+"Allows" = "許可"
+"What the add/delete button allows" = "追加/削除ボタンで許可する操作"
+"Delete is in each row, and deletes its item. Add is in a blank row after the items: what is typed there is kept by the form until Add makes it an item." = "削除は各行にあり、その項目を削除します。追加は項目の後の空白行にあり、そこに入力した内容は追加で項目になるまでフォームが保持します。"
+"Add configuration" = "追加の設定"
+"Delete configuration" = "削除の設定"
+"The blank row has no item for an expression to run on, so Add takes only a fixed colour; Delete takes an expression too, run for each row." = "空白行には式を実行する項目がないため、追加には固定色のみ使えます。削除では各行に対して実行される式も使えます。"
+"Add an add/delete button" = "追加/削除ボタンを追加"
+"Each repeater section has an add/delete button already, or there is none." = "各リピーターセクションには既に追加/削除ボタンがあるか、リピーターセクションがありません。"

@@ -201,6 +201,26 @@ pub struct PythonEngine {
     interp: Interpreter,
 }
 
+/// RustPython frees objects by counting references, and the objects of an
+/// interpreter hold one another in cycles (a module's dict and the
+/// `__globals__` of its functions, a class and its methods), so dropping
+/// the interpreter alone keeps all of them, some 25 MB for each engine.
+/// Its modules are taken apart and its collector run first, as Python
+/// does when it exits.
+impl Drop for PythonEngine {
+    fn drop(&mut self) {
+        self.code.borrow_mut().clear();
+        self.interp.enter(|vm| {
+            self.shared.release();
+            self.globals.clear();
+            self.prelude.clear();
+            vm.state.gc.collect_force(2);
+            vm.finalize_modules();
+            vm.state.gc.collect_force(2);
+        });
+    }
+}
+
 impl PythonEngine {
     /// HTTP requests go to the host from now on (the wasm version's worker):
     /// a call without an answer asks for one and stops what runs.

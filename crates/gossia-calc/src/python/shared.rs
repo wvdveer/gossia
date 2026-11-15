@@ -86,6 +86,17 @@ impl fmt::Debug for Shared {
 }
 
 impl Shared {
+    /// Lets go of the Python objects it holds, which hold it in turn, so
+    /// that the engine's interpreter can be freed.
+    pub(super) fn release(&self) {
+        self.ctx.borrow_mut().take();
+        self.classes.borrow_mut().take();
+        self.modules.borrow_mut().clear();
+        self.stdlib.borrow_mut().clear();
+        self.last_value.borrow_mut().take();
+        self.writes.borrow_mut().take();
+    }
+
     pub fn new() -> Rc<Shared> {
         Rc::new(Shared {
             ctx: RefCell::new(None),

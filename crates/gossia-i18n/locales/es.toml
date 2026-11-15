@@ -2297,7 +2297,6 @@
 
 # Form canvases (step 18b-2, 2026-11-15)
 "The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}." = "El formulario {form} de la pestaña {tab} ahora se dibuja sobre lienzos; se han quitado sus listas mostradas a partir de una expresión: {lists}."
-"Adding and deleting rows is not available yet." = "Añadir y eliminar filas aún no está disponible."
 
 # Form canvases, the designer (step 18c, 2026-11-16)
 "Repeater: {path} ({row})" = "Repetidor: {path} ({row})"
@@ -2326,3 +2325,16 @@
 "Type of the context field" = "Tipo del campo de contexto"
 "Not drawn when the form is used; its value still chooses." = "No se dibuja cuando se usa el formulario; su valor sigue eligiendo."
 "Its value belongs to the form, not to the data. Paths use it by its name, as items[sel].name, and expressions as ctx.sel." = "Su valor pertenece al formulario, no a los datos. Las rutas lo usan por su nombre, como items[sel].name, y las expresiones como ctx.sel."
+
+# Form canvases, the add/delete button (step 18d-1, 2026-11-16)
+"A button runs for a row once it has been added." = "Un botón se ejecuta para una fila una vez que se ha añadido."
+"Worked out once the row has been added." = "Se calcula una vez añadida la fila."
+"The row was not added: {field}: {error}" = "No se añadió la fila: {field}: {error}"
+"Allows" = "Permite"
+"What the add/delete button allows" = "Lo que permite el botón añadir/eliminar"
+"Delete is in each row, and deletes its item. Add is in a blank row after the items: what is typed there is kept by the form until Add makes it an item." = "Eliminar está en cada fila y elimina su elemento. Añadir está en una fila en blanco tras los elementos: lo que se escribe ahí lo guarda el formulario hasta que Añadir lo convierte en un elemento."
+"Add configuration" = "Configuración Añadir"
+"Delete configuration" = "Configuración Eliminar"
+"The blank row has no item for an expression to run on, so Add takes only a fixed colour; Delete takes an expression too, run for each row." = "La fila en blanco no tiene elemento sobre el que ejecutar una expresión, así que Añadir solo admite un color fijo; Eliminar admite también una expresión, que se ejecuta para cada fila."
+"Add an add/delete button" = "Añadir un botón añadir/eliminar"
+"Each repeater section has an add/delete button already, or there is none." = "Cada sección repetidora ya tiene un botón añadir/eliminar, o no hay ninguna."

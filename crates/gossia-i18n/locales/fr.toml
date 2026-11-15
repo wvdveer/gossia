@@ -2297,7 +2297,6 @@
 
 # Form canvases (step 18b-2, 2026-11-15)
 "The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}." = "Le formulaire {form} de l'onglet {tab} est maintenant dessiné sur des canevas ; ses listes affichées à partir d'une expression ont été retirées : {lists}."
-"Adding and deleting rows is not available yet." = "L'ajout et la suppression de lignes ne sont pas encore disponibles."
 
 # Form canvases, the designer (step 18c, 2026-11-16)
 "Repeater: {path} ({row})" = "Répéteur : {path} ({row})"
@@ -2326,3 +2325,16 @@
 "Type of the context field" = "Type du champ de contexte"
 "Not drawn when the form is used; its value still chooses." = "Non dessiné quand le formulaire est utilisé ; sa valeur choisit toujours."
 "Its value belongs to the form, not to the data. Paths use it by its name, as items[sel].name, and expressions as ctx.sel." = "Sa valeur appartient au formulaire, pas aux données. Les chemins l'utilisent par son nom, comme items[sel].name, et les expressions comme ctx.sel."
+
+# Form canvases, the add/delete button (step 18d-1, 2026-11-16)
+"A button runs for a row once it has been added." = "Un bouton s'exécute pour une ligne une fois qu'elle a été ajoutée."
+"Worked out once the row has been added." = "Calculé une fois la ligne ajoutée."
+"The row was not added: {field}: {error}" = "La ligne n'a pas été ajoutée : {field} : {error}"
+"Allows" = "Permet"
+"What the add/delete button allows" = "Ce que permet le bouton ajouter/supprimer"
+"Delete is in each row, and deletes its item. Add is in a blank row after the items: what is typed there is kept by the form until Add makes it an item." = "Supprimer figure sur chaque ligne et supprime son élément. Ajouter figure sur une ligne vide après les éléments : ce qui y est saisi est gardé par le formulaire jusqu'à ce qu'Ajouter en fasse un élément."
+"Add configuration" = "Configuration Ajouter"
+"Delete configuration" = "Configuration Supprimer"
+"The blank row has no item for an expression to run on, so Add takes only a fixed colour; Delete takes an expression too, run for each row." = "La ligne vide n'a pas d'élément sur lequel exécuter une expression : Ajouter ne prend donc qu'une couleur fixe ; Supprimer accepte aussi une expression, exécutée pour chaque ligne."
+"Add an add/delete button" = "Ajouter un bouton ajouter/supprimer"
+"Each repeater section has an add/delete button already, or there is none." = "Chaque section répétée a déjà un bouton ajouter/supprimer, ou il n'y en a aucune."

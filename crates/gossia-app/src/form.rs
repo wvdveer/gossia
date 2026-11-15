@@ -104,6 +104,12 @@ pub struct FormState {
     /// Frames left to find the control of `scroll_to` (a stacked item has to
     /// be stepped to first).
     pub scroll_tries: u8,
+    /// What is typed into the blank row of a repeater section, by tab and
+    /// array: an item holding only what was typed. It belongs to the form,
+    /// not to the data, until *Add*.
+    pub row_drafts: HashMap<(String, Path), Node>,
+    /// Give the focus to the first field of this blank row (after *Add*).
+    pub focus_blank: Option<(String, Path)>,
 }
 
 /// Something a control asked for while it was drawn. They are applied after
@@ -142,6 +148,13 @@ pub(crate) enum FormAction {
     /// A command of the tabular view on a table of the form: a filter, hiding
     /// a row or a column, showing them again.
     Table(crate::view::Action),
+    /// An edit in the blank row of the repeater section over the array: it
+    /// goes into the row's draft.
+    InDraft(Path, Box<FormAction>),
+    /// *Add* in the blank row: the draft becomes a new item of the array.
+    AddRow(Path),
+    /// The first field of the blank row has been given the focus.
+    BlankFocused,
 }
 
 impl GossiaApp {
@@ -485,6 +498,8 @@ impl GossiaApp {
                         .canvas
                         .then(|| calc.form_contexts(&self.sheet, &name, &design)),
                     row: None,
+                    row_edit: None,
+                    blank: None,
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -645,6 +660,9 @@ impl GossiaApp {
             }
             FormAction::Control(action) => self.apply_control(action),
             FormAction::Table(action) => self.apply(action),
+            FormAction::InDraft(array, action) => self.edit_row_draft(&array, *action),
+            FormAction::AddRow(array) => self.add_from_draft(&array),
+            FormAction::BlankFocused => self.form.focus_blank = None,
         }
     }
 
@@ -888,6 +906,12 @@ struct Painter<'a> {
     /// In a row of a repeater section: its row name and the row, which a
     /// click on a button there makes the current row first.
     row: Option<(String, usize)>,
+    /// In the rows of a repeater section: its array, and what its add/delete
+    /// button may do there.
+    row_edit: Option<rows::RowEdit>,
+    /// In the blank row of a repeater section: the item it stands for, with
+    /// what has been typed into it.
+    blank: Option<rows::Blank>,
 }
 
 /// The Grid group a control is drawn in: where its rows and columns are.
@@ -2215,7 +2239,8 @@ impl Painter<'_> {
         if let Some(path) = &path
             && !layout
             && !path.is_root()
-            && self.data.get(path).is_none()
+            && self.node_at(path).is_none()
+            && !self.in_blank(path)
         {
             let ty = self.spec.resolve(path).map(|r| r.ty);
             ui.horizontal(|ui| {
@@ -2433,17 +2458,8 @@ impl Painter<'_> {
                     ui.separator();
                 }
             },
-            // The add/delete button of a canvas form's repeater section: in
-            // a row, its delete configuration. It does nothing until step
-            // 18d, so it is drawn disabled.
-            ControlKind::RowButton => {
-                let label = c.row_button_label(false);
-                ui.add_enabled(
-                    false,
-                    egui::Button::new(label).wrap_mode(egui::TextWrapMode::Truncate),
-                )
-                .on_disabled_hover_text(tr!("Adding and deleting rows is not available yet."));
-            }
+            // The add/delete button of a canvas form's repeater section.
+            ControlKind::RowButton => self.row_button(ui, c),
             // Charts are drawn in reports only, for now.
             ControlKind::Chart => {
                 ui.weak(tr!("A chart is drawn in reports only"));
@@ -2456,6 +2472,10 @@ impl Painter<'_> {
                     .running_procedure()
                     .map(|c| c.button.clone());
                 let (can, hint) = match &c.procedure {
+                    _ if self.blank.is_some() => (
+                        false,
+                        tr!("A button runs for a row once it has been added.").to_owned(),
+                    ),
                     None => (false, tr!("No procedure has been chosen.").to_owned()),
                     Some(_) if !self.app.calc().is_trusted() => (
                         false,
@@ -2617,7 +2637,7 @@ impl Painter<'_> {
         let Kind::Choice { fields } = &self.spec.get(ty).kind else {
             return;
         };
-        let held = match self.data.get(path).map(Node::value) {
+        let held = match self.node_at(path).map(Node::value) {
             Some(Value::Object(map)) if map.len() == 1 => map
                 .keys()
                 .next()
@@ -2658,7 +2678,7 @@ impl Painter<'_> {
             return;
         };
         let root = path.is_root();
-        if self.data.get(path).is_none() {
+        if self.node_at(path).is_none() && !self.in_blank(path) {
             // Absent: an empty control, and the object is made on request.
             ui.horizontal(|ui| {
                 let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
@@ -2760,11 +2780,11 @@ impl Painter<'_> {
         let untrusted = cell.as_ref().is_some_and(|c| c.untrusted);
         let stale = cell.as_ref().is_some_and(|c| c.stale);
         let computed = formula.is_some() || computed_by.is_some();
-        let read_only = computed || !app.can_edit(path);
-        let node = self.data.get(path);
-        let value = node.map(Node::value);
+        let read_only = computed || !(app.can_edit(path) || self.blank_typed(path));
+        let node = self.node_at(path).cloned();
+        let value = node.as_ref().map(Node::value);
         let kind = &self.spec.get(ty).kind;
-        let name = app.name_of(path);
+        let name = rows::blank_name(app.name_of(path));
         let key = self.key(path);
         let mut look = self
             .look
@@ -3032,12 +3052,13 @@ impl Painter<'_> {
 
         if let Some(draft) = self.drafts.get(&key) {
             problem = draft.error.clone();
-        } else if let (Some(node), false) = (node, matches!(value, Some(Value::Error(_)))) {
+        } else if let (Some(node), false) = (node.as_ref(), matches!(value, Some(Value::Error(_))))
+        {
             problem = validate_at(self.spec, ty, node, path)
                 .into_iter()
                 .next()
                 .map(|issue| issue.message);
-        } else if node.is_none() && required && !computed {
+        } else if node.is_none() && required && !computed && !self.in_blank(path) {
             problem = Some("required".to_owned());
         }
 
@@ -4047,6 +4068,10 @@ impl Painter<'_> {
     fn value_field(&mut self, ui: &mut egui::Ui, c: &Control) {
         if let Some(problem) = self.problem_of(c) {
             self.placeholder(ui, c, &problem);
+            return;
+        }
+        if self.blank.is_some() {
+            self.unbound_field(ui, c, tr!("Worked out once the row has been added."));
             return;
         }
         let label = c.label.clone().unwrap_or_default();
@@ -5067,6 +5092,9 @@ fn own_font(typeface: Option<Typeface>, size: Option<u32>, inherited: Font) -> O
 
 #[path = "form_canvas.rs"]
 pub(crate) mod canvas;
+
+#[path = "form_rows.rs"]
+mod rows;
 
 /// A size dragged to `points`, snapped to the grid unless `snap` is off, and
 /// kept within `range`.

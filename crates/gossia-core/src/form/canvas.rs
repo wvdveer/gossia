@@ -162,6 +162,28 @@ impl Control {
         self.allows.unwrap_or_default()
     }
 
+    /// The expression or fixed colour of the text (`text`) or the fill of a
+    /// control, as its colour expressions run: an add/delete button's are
+    /// those of its delete configuration, since it runs them in each row.
+    pub fn colour_of(&self, text: bool) -> Option<&str> {
+        match (self.kind == ControlKind::RowButton, text) {
+            (true, true) => self.delete_text_colour.as_deref(),
+            (true, false) => self.delete_fill_colour.as_deref(),
+            (false, true) => self.text_colour.as_deref(),
+            (false, false) => self.fill_colour.as_deref(),
+        }
+    }
+
+    /// As [`Control::colour_of`], to change it.
+    pub fn colour_slot(&mut self, text: bool) -> &mut Option<String> {
+        match (self.kind == ControlKind::RowButton, text) {
+            (true, true) => &mut self.delete_text_colour,
+            (true, false) => &mut self.delete_fill_colour,
+            (false, true) => &mut self.text_colour,
+            (false, false) => &mut self.fill_colour,
+        }
+    }
+
     /// The label of an add/delete button in its add or delete configuration.
     pub fn row_button_label(&self, add: bool) -> String {
         let (own, default) = if add {
@@ -651,6 +673,9 @@ impl FormDesign {
         if !self.canvas {
             return None;
         }
+        if control.kind == ControlKind::RowButton {
+            return self.place_row_button(index, control);
+        }
         let section = self.controls.get_mut(index)?;
         let height = |c: &Control| estimate_height(spec, &Path::root(), c);
         let y = section
@@ -665,6 +690,41 @@ impl FormDesign {
         section.height = Some(section.height.unwrap_or(0).max(bottom));
         section.children.push(control);
         Some(vec![index, section.children.len() - 1])
+    }
+
+    /// Puts an add/delete button at the right end of the row of the
+    /// repeater section at `index`, as the generated form does, if it can
+    /// take one.
+    fn place_row_button(&mut self, index: usize, mut control: Control) -> Option<Address> {
+        if !self.can_take_row_button(index) {
+            return None;
+        }
+        let width = self.form_width();
+        let section = self.controls.get_mut(index)?;
+        control.x = Some(width.saturating_sub(MARGIN + ROW_BUTTON_WIDTH));
+        control.y = Some(MARGIN / 2);
+        control.width.get_or_insert(ROW_BUTTON_WIDTH);
+        control.height.get_or_insert(ROW);
+        let bottom = MARGIN / 2 + control.height.unwrap_or(ROW) + MARGIN / 2;
+        section.height = Some(section.height.unwrap_or(0).max(bottom));
+        section.children.push(control);
+        Some(vec![index, section.children.len() - 1])
+    }
+
+    /// Whether the section at `index` is a repeater section without an
+    /// add/delete button.
+    pub fn can_take_row_button(&self, index: usize) -> bool {
+        self.canvas
+            && self.section(index).is_some_and(|s| s.is_repeater())
+            && self.row_button_of(index).is_none()
+    }
+
+    /// The add/delete button of the repeater section at `index`: the first
+    /// one on its row.
+    pub fn row_button_of(&self, index: usize) -> Option<(Address, &Control)> {
+        self.walk()
+            .into_iter()
+            .find(|(at, c)| at.len() > 1 && at[0] == index && c.kind == ControlKind::RowButton)
     }
 
     /// Why the control at `address` is wrong on a canvas form, or on a form

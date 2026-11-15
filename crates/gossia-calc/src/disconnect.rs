@@ -1026,8 +1026,8 @@ fn control_text(control: &Control, kind: ExprKind) -> Option<&str> {
     match kind {
         ExprKind::Visible => control.visible_when.as_deref(),
         ExprKind::Enabled => control.enabled_when.as_deref(),
-        ExprKind::TextColour => control.text_colour.as_deref(),
-        ExprKind::FillColour => control.fill_colour.as_deref(),
+        ExprKind::TextColour => control.colour_of(true),
+        ExprKind::FillColour => control.colour_of(false),
         ExprKind::Choices => control.choices.as_deref(),
         ExprKind::Value => control.value.as_deref(),
         ExprKind::Items => control.items.as_deref(),
@@ -1039,8 +1039,8 @@ fn control_slot(control: &mut Control, kind: ExprKind) -> Option<&mut Option<Str
     Some(match kind {
         ExprKind::Visible => &mut control.visible_when,
         ExprKind::Enabled => &mut control.enabled_when,
-        ExprKind::TextColour => &mut control.text_colour,
-        ExprKind::FillColour => &mut control.fill_colour,
+        ExprKind::TextColour => control.colour_slot(true),
+        ExprKind::FillColour => control.colour_slot(false),
         ExprKind::Choices => &mut control.choices,
         ExprKind::Value => &mut control.value,
         ExprKind::Items => &mut control.items,

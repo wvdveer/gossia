@@ -9,7 +9,7 @@
 //! has its own undo and redo, which last while it is on.
 
 use gossia_calc::{ExprKind, REPORT_FORM, entry};
-use gossia_core::form::canvas::FORM_WIDTHS;
+use gossia_core::form::canvas::{FORM_WIDTHS, RowAllows};
 use gossia_core::form::{
     self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
     Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
@@ -702,6 +702,13 @@ impl GossiaApp {
     pub fn add_control(&mut self, control: Control) -> bool {
         let selected = self.selected_control();
         let spec = self.calc().spec(&self.sheet).cloned();
+        if control.kind == ControlKind::RowButton {
+            let Some(index) = self.row_button_section() else {
+                return false;
+            };
+            return self
+                .edit_design(|d| d.place_in_section(spec.as_ref()?, index, control).map(Some));
+        }
         self.edit_design(|d| {
             // On a canvas the top level is the sections: a control goes on
             // the selected section, or the one of the selected control that
@@ -728,6 +735,25 @@ impl GossiaApp {
             };
             at.map(Some)
         })
+    }
+
+    /// The repeater section an add/delete button from the palette goes on:
+    /// the selected one, or the one the selection is on, if it has none yet;
+    /// else the first that has none.
+    pub(crate) fn row_button_section(&self) -> Option<usize> {
+        let design = self.design_of(&self.form_name());
+        if !design.canvas {
+            return None;
+        }
+        let selected = self.selected_control().and_then(|at| at.first().copied());
+        selected
+            .filter(|&i| design.can_take_row_button(i))
+            .or_else(|| {
+                design
+                    .repeater_sections()
+                    .into_iter()
+                    .find(|&i| design.can_take_row_button(i))
+            })
     }
 
     /// Adds the control the generated form has for a field that is not on the
@@ -1183,7 +1209,24 @@ impl GossiaApp {
                 if canvas && kind == ControlKind::Repeater {
                     continue;
                 }
-                let label = tr!("Add {kind}", kind = kind.label().to_lowercase());
+                // An add/delete button goes on a repeater section.
+                let row_button = kind == ControlKind::RowButton;
+                if row_button && !canvas {
+                    continue;
+                }
+                if row_button && self.row_button_section().is_none() {
+                    ui.add_enabled(false, egui::Button::new(tr!("Add an add/delete button")))
+                        .on_disabled_hover_text(tr!(
+                            "Each repeater section has an add/delete button already, or there \
+                             is none."
+                        ));
+                    continue;
+                }
+                let label = if row_button {
+                    tr!("Add an add/delete button").to_owned()
+                } else {
+                    tr!("Add {kind}", kind = kind.label().to_lowercase())
+                };
                 let button = ui
                     .add(egui::Button::new(label).sense(egui::Sense::click_and_drag()))
                     .on_hover_text(tr!("Click to add, or drag onto the form"));
@@ -1760,8 +1803,11 @@ impl GossiaApp {
                     merge = Some(key(&property));
                 }
             }
-            // Its two configurations come with step 18d.
-            ControlKind::RowButton => {}
+            ControlKind::RowButton => {
+                if let Some(property) = row_button_properties(ui, at, &mut edited) {
+                    merge = Some(key(property));
+                }
+            }
         }
         // On a report's canvas, the top level is placed as in a Free group.
         let canvas = report.then(|| {
@@ -1794,7 +1840,8 @@ impl GossiaApp {
             font_properties(ui, &mut edited.font, &mut edited.font_size, "", "control");
             emphasis_properties(ui, &mut edited.bold, &mut edited.italic, "control");
         }
-        let coloured = kind != ControlKind::Separator;
+        // An add/delete button has the colours of its two configurations.
+        let coloured = !matches!(kind, ControlKind::Separator | ControlKind::RowButton);
         let fields = [
             (ExprKind::Visible, &mut edited.visible_when, true),
             (ExprKind::Enabled, &mut edited.enabled_when, !report),
@@ -3087,6 +3134,88 @@ fn expr_box(
 }
 
 /// The box of an expression of a control or column: a colour, or another.
+/// The properties of an add/delete button: what it allows, and the label
+/// and colours of its add and delete configurations. Gives the property
+/// changed.
+fn row_button_properties(
+    ui: &mut egui::Ui,
+    at: &[usize],
+    edited: &mut Control,
+) -> Option<&'static str> {
+    let mut changed = None;
+    let mut allows = edited.row_allows();
+    ui.horizontal(|ui| {
+        ui.label(tr!("Allows"));
+        let response = egui::ComboBox::from_id_salt("property_row_allows")
+            .selected_text(allows.label())
+            .show_ui(ui, |ui| {
+                for a in RowAllows::ALL {
+                    ui.selectable_value(&mut allows, a, a.label());
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::ComboBox,
+                true,
+                tr!("What the add/delete button allows"),
+            )
+        });
+    });
+    if allows != edited.row_allows() {
+        edited.allows = (allows != RowAllows::default()).then_some(allows);
+        changed = Some("allows");
+    }
+    ui.weak(tr!(
+        "Delete is in each row, and deletes its item. Add is in a blank row after the items: \
+         what is typed there is kept by the form until Add makes it an item."
+    ));
+    let configurations = [
+        (
+            tr!("Add configuration"),
+            "add",
+            tr!("Add"),
+            &mut edited.add_label,
+            &mut edited.add_text_colour,
+            &mut edited.add_fill_colour,
+        ),
+        (
+            tr!("Delete configuration"),
+            "delete",
+            tr!("Delete"),
+            &mut edited.delete_label,
+            &mut edited.delete_text_colour,
+            &mut edited.delete_fill_colour,
+        ),
+    ];
+    for (title, id, hint, label, text, fill) in configurations {
+        ui.add_space(4.0);
+        ui.strong(title);
+        if option_text(ui, tr!("Label"), label, hint, false) {
+            changed = Some(if id == "add" {
+                "add_label"
+            } else {
+                "delete_label"
+            });
+        }
+        for (kind, value) in [(ExprKind::TextColour, text), (ExprKind::FillColour, fill)] {
+            if expression_box(ui, kind, value, draft_id(at, Some(id), kind)) {
+                changed = Some(match (id, kind) {
+                    ("add", ExprKind::TextColour) => "add_text_colour",
+                    ("add", _) => "add_fill_colour",
+                    (_, ExprKind::TextColour) => "delete_text_colour",
+                    _ => "delete_fill_colour",
+                });
+            }
+        }
+    }
+    ui.weak(tr!(
+        "The blank row has no item for an expression to run on, so Add takes only a fixed \
+         colour; Delete takes an expression too, run for each row."
+    ));
+    changed
+}
+
 pub(crate) fn expression_box(
     ui: &mut egui::Ui,
     kind: ExprKind,

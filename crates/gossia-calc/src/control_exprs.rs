@@ -92,12 +92,10 @@ impl ExprKind {
             ExprKind::Visible => control.visible_when.as_deref(),
             ExprKind::Enabled => control.enabled_when.as_deref(),
             ExprKind::TextColour => control
-                .text_colour
-                .as_deref()
+                .colour_of(true)
                 .filter(|t| fixed_colour(t).is_none()),
             ExprKind::FillColour => control
-                .fill_colour
-                .as_deref()
+                .colour_of(false)
                 .filter(|t| fixed_colour(t).is_none()),
             ExprKind::Choices => control.choices.as_deref(),
             ExprKind::Value => control

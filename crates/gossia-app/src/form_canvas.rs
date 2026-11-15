@@ -149,18 +149,36 @@ impl Painter<'_> {
         let Some(array) = array else {
             return;
         };
-        if len == 0 {
+        let edit = self.row_edit_of(c, &array);
+        let blank = usize::from(edit.allows.adds() && edit.editable);
+        if len == 0 && blank == 0 {
             self.in_width(ui, width, |_, ui| {
                 ui.add_space(4.0);
                 ui.weak(tr!("No items"));
             });
             return;
         }
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(width, height * len as f32), egui::Sense::hover());
+        let total = len + blank;
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(width, height * total as f32),
+            egui::Sense::hover(),
+        );
         let clip = ui.clip_rect();
         let first = (((clip.top() - rect.top()) / height).floor().max(0.0)) as usize;
-        let last = ((((clip.bottom() - rect.top()) / height).ceil()).max(0.0) as usize).min(len);
+        let last = ((((clip.bottom() - rect.top()) / height).ceil()).max(0.0) as usize).min(total);
+        let outer_edit = self.row_edit.replace(edit);
+        if blank == 1 {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.top() + height * len as f32),
+                egui::vec2(width, height),
+            );
+            if (first..last).contains(&len) {
+                self.blank_row(ui, c, slot, &array, row_name, row);
+            } else if self.wants_blank_focus(&array) {
+                // Off the screen, so not drawn: scrolled to first.
+                ui.scroll_to_rect(row, None);
+            }
+        }
         let current = match self.contexts.as_ref().and_then(|c| c.get(row_name)) {
             Some(Value::Int(i)) => Some(*i as usize),
             _ => None,
@@ -195,7 +213,7 @@ impl Painter<'_> {
                 .filter(|_| i.pointer.primary_pressed())
         });
         let mut drawn = Vec::new();
-        for i in first..last.max(first) {
+        for i in first..last.max(first).min(len) {
             let row = egui::Rect::from_min_size(
                 egui::pos2(rect.left(), rect.top() + height * i as f32),
                 egui::vec2(width, height),
@@ -230,6 +248,7 @@ impl Painter<'_> {
             }
             drawn.push((i, row));
         }
+        self.row_edit = outer_edit;
         // The focus gone into another row (Tab, the arrow keys).
         let focused = ui
             .memory(|m| m.focused())
@@ -244,6 +263,76 @@ impl Painter<'_> {
                 row_name.to_owned(),
                 Value::Int(*i as i64),
             ));
+        }
+    }
+
+    /// The canvas of a repeater section for the blank row after its items,
+    /// whose fields are typed into its draft, and whose add/delete button
+    /// is *Add*.
+    fn blank_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Control,
+        slot: &Slot,
+        array: &Path,
+        row_name: &str,
+        row: egui::Rect,
+    ) {
+        let item = array.index(super::rows::BLANK_ROW);
+        let node = self
+            .app
+            .form
+            .row_drafts
+            .get(&(self.app.sheet.clone(), array.clone()))
+            .cloned()
+            .unwrap_or_else(super::rows::empty_draft);
+        let outer = self.blank.replace(super::rows::Blank {
+            item: item.clone(),
+            node,
+        });
+        let actions = self.actions.len();
+        let stops = self.nav.len();
+        let mut row_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::top_down(Align::Min)),
+        );
+        self.in_row(
+            &mut row_ui,
+            Some(item),
+            super::rows::BLANK_ROW,
+            row_name,
+            |this, ui| this.section_row(ui, c, slot),
+        );
+        self.blank = outer;
+        // What was typed there goes into the draft; nothing else it asked
+        // for is for a row that is not there.
+        let asked: Vec<FormAction> = self.actions.drain(actions..).collect();
+        for action in asked {
+            match action {
+                FormAction::Commit(..) | FormAction::Direct(..) | FormAction::Create(..) => self
+                    .actions
+                    .push(FormAction::InDraft(array.clone(), Box::new(action))),
+                FormAction::AddRow(_) | FormAction::Control(_) => self.actions.push(action),
+                _ => {}
+            }
+        }
+        if self.wants_blank_focus(array) {
+            let first = self.nav[stops..]
+                .iter()
+                .min_by(|a, b| {
+                    (a.rect.top(), a.rect.left())
+                        .partial_cmp(&(b.rect.top(), b.rect.left()))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|s| s.id);
+            if let Some(id) = first {
+                ui.memory_mut(|m| m.request_focus(id));
+            }
+            if !ui.clip_rect().contains_rect(row) {
+                ui.scroll_to_rect(row, None);
+            }
+            self.actions.push(FormAction::BlankFocused);
         }
     }
 
@@ -578,7 +667,13 @@ impl Painter<'_> {
         let outer_row = self.row.replace((row_name.to_owned(), i));
         let outer_contexts = self.contexts.clone();
         if let Some(contexts) = &mut self.contexts {
-            contexts.insert(row_name.to_owned(), Value::Int(i as i64));
+            // The blank row is no row yet.
+            let value = if i == super::rows::BLANK_ROW {
+                Value::Null
+            } else {
+                Value::Int(i as i64)
+            };
+            contexts.insert(row_name.to_owned(), value);
         }
         self.rows.push(i);
         body(self, ui);
@@ -708,7 +803,9 @@ impl Painter<'_> {
         };
         let mut at = Path::root();
         for seg in path.segments() {
-            if let Segment::Index(i) = seg {
+            if let Segment::Index(i) = seg
+                && *i != super::rows::BLANK_ROW
+            {
                 let len = self
                     .data
                     .get(&at)

@@ -373,6 +373,41 @@ fn a_row_button_has_two_configurations() {
     assert!(!button.row_allows().adds());
 }
 
+#[test]
+fn an_add_delete_button_is_placed_at_the_end_of_a_row_once() {
+    let spec = spec();
+    let mut design = form(vec![], vec![]);
+    let button = || Control::new(ControlKind::RowButton);
+    // Not on the header.
+    assert!(!design.can_take_row_button(0));
+    assert_eq!(design.place_in_section(&spec, 0, button()), None);
+    assert!(design.can_take_row_button(1));
+    let at = design.place_in_section(&spec, 1, button()).unwrap();
+    assert_eq!(at, vec![1, 0]);
+    let placed = design.get(&at).unwrap();
+    let right = placed.x.unwrap() + placed.width.unwrap();
+    assert_eq!(right, design.form_width() - 8);
+    assert_eq!(design.row_button_of(1).map(|(a, _)| a), Some(vec![1, 0]));
+    // One on each repeater.
+    assert!(!design.can_take_row_button(1));
+    assert_eq!(design.place_in_section(&spec, 1, button()), None);
+    assert!(problems(&design, &spec).is_empty());
+}
+
+#[test]
+fn an_add_delete_button_runs_the_colours_of_its_delete_configuration() {
+    let mut button = Control::new(ControlKind::RowButton);
+    button.text_colour = Some("'red'".into());
+    button.delete_fill_colour = Some("'blue'".into());
+    assert_eq!(button.colour_of(false), Some("'blue'"));
+    assert_eq!(button.colour_of(true), None);
+    *button.colour_slot(true) = Some("'green'".into());
+    assert_eq!(button.delete_text_colour.as_deref(), Some("'green'"));
+    let mut field = Control::new(ControlKind::Field);
+    field.fill_colour = Some("'red'".into());
+    assert_eq!(field.colour_of(false), Some("'red'"));
+}
+
 // ------------------------------------------------- storing and the version
 
 #[test]

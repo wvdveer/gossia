@@ -58,7 +58,7 @@ pub enum ControlKind {
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 7] = [
+    pub const ALL: [ControlKind; 8] = [
         ControlKind::Field,
         ControlKind::Group,
         ControlKind::Repeater,
@@ -66,6 +66,7 @@ impl ControlKind {
         ControlKind::Button,
         ControlKind::Separator,
         ControlKind::Chart,
+        ControlKind::RowButton,
     ];
 
     pub fn label(self) -> &'static str {

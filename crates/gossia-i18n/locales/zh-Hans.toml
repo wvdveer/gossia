@@ -2297,7 +2297,6 @@
 
 # Form canvases (step 18b-2, 2026-11-15)
 "The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}." = "标签页 {tab} 的表单 {form} 现在绘制在画布上；其由表达式显示的列表已被去掉：{lists}。"
-"Adding and deleting rows is not available yet." = "添加和删除行尚不可用。"
 
 # Form canvases, the designer (step 18c, 2026-11-16)
 "Repeater: {path} ({row})" = "重复区：{path}（{row}）"
@@ -2326,3 +2325,16 @@
 "Type of the context field" = "上下文字段的类型"
 "Not drawn when the form is used; its value still chooses." = "使用表单时不绘制；其值仍起选择作用。"
 "Its value belongs to the form, not to the data. Paths use it by its name, as items[sel].name, and expressions as ctx.sel." = "其值属于表单而非数据。路径按名称使用它，如 items[sel].name，表达式则用 ctx.sel。"
+
+# Form canvases, the add/delete button (step 18d-1, 2026-11-16)
+"A button runs for a row once it has been added." = "按钮在行添加之后才对该行运行。"
+"Worked out once the row has been added." = "行添加后再计算。"
+"The row was not added: {field}: {error}" = "未添加该行：{field}：{error}"
+"Allows" = "允许"
+"What the add/delete button allows" = "添加/删除按钮允许的操作"
+"Delete is in each row, and deletes its item. Add is in a blank row after the items: what is typed there is kept by the form until Add makes it an item." = "删除在每一行中，删除该行的项。添加在各项之后的空白行中：在那里输入的内容由表单保留，直到“添加”将其变为一项。"
+"Add configuration" = "“添加”配置"
+"Delete configuration" = "“删除”配置"
+"The blank row has no item for an expression to run on, so Add takes only a fixed colour; Delete takes an expression too, run for each row." = "空白行没有可供表达式运行的项，因此“添加”只接受固定颜色；“删除”也接受表达式，对每一行运行。"
+"Add an add/delete button" = "添加“添加/删除”按钮"
+"Each repeater section has an add/delete button already, or there is none." = "每个重复分区都已有添加/删除按钮，或者没有重复分区。"
