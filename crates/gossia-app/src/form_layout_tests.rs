@@ -34,16 +34,20 @@ fn default_is_generated_until_the_first_change_and_is_then_stored() {
     let mut app = app();
     assert!(!app.is_customised(DEFAULT_FORM));
     let generated = app.design_of(DEFAULT_FORM);
-    assert_eq!(generated.controls[0].path.as_deref(), Some("customer"));
+    assert!(generated.canvas);
+    assert_eq!(
+        generated.get(&[0, 0]).unwrap().path.as_deref(),
+        Some("customer")
+    );
     app.set_layout(true);
     assert!(app.layout_active());
     // Turning layout mode on changes nothing; the first edit stores the form.
     assert!(!app.is_customised(DEFAULT_FORM));
-    assert!(app.edit_design(|d| d.remove(&[1]).map(|_| None)));
+    assert!(app.edit_design(|d| d.remove(&[0, 1]).map(|_| None)));
     assert!(app.is_customised(DEFAULT_FORM));
     assert_eq!(
-        app.design_of(DEFAULT_FORM).controls.len(),
-        generated.controls.len() - 1
+        app.design_of(DEFAULT_FORM).controls[0].children.len(),
+        generated.controls[0].children.len() - 1
     );
     // Taking the change back leaves the form generated again.
     app.layout_undo();
@@ -108,7 +112,7 @@ fn a_form_is_duplicated_renamed_and_deleted() {
     let mut app = app();
     app.new_form("Packing").unwrap();
     app.set_layout(true);
-    app.edit_design(|d| d.remove(&[0]).map(|_| None));
+    app.edit_design(|d| d.remove(&[0, 0]).map(|_| None));
     app.duplicate_form("Packing_copy").unwrap();
     assert_eq!(app.form_name(), "Packing_copy");
     assert_eq!(app.design_of("Packing_copy"), app.design_of("Packing"));
@@ -160,28 +164,34 @@ fn a_dialog_waits_for_a_valid_name_and_keeps_its_reason() {
 fn controls_are_added_into_the_selected_group_or_after_the_selected_control() {
     let mut app = app();
     app.set_layout(true);
-    let before = app.design_of(DEFAULT_FORM).controls.len();
-    // Nothing selected: at the end.
+    let before = app.design_of(DEFAULT_FORM).controls[0].children.len();
+    // Nothing selected: at the bottom of the header, under what it has.
     assert!(app.add_control(Control::new(ControlKind::Separator)));
-    assert_eq!(app.selected_control(), Some(vec![before]));
+    assert_eq!(app.selected_control(), Some(vec![0, before]));
+    let design = app.design_of(DEFAULT_FORM);
+    let added = design.get(&[0, before]).unwrap();
+    let lowest = design.controls[0].children[..before]
+        .iter()
+        .map(|c| c.y.unwrap_or(0))
+        .max()
+        .unwrap();
+    assert!(added.y.unwrap() > lowest);
     // A group is selected: into it.
-    app.select_control(Some(vec![0]));
+    app.select_control(Some(vec![0, 0]));
     assert!(app.add_control(Control::new(ControlKind::Separator)));
     let design = app.design_of(DEFAULT_FORM);
-    assert_eq!(
-        design.controls[0].children.last().unwrap().kind,
-        ControlKind::Separator
-    );
+    let group = design.get(&[0, 0]).unwrap();
+    assert_eq!(group.children.last().unwrap().kind, ControlKind::Separator);
     assert_eq!(
         app.selected_control(),
-        Some(vec![0, design.controls[0].children.len() - 1])
+        Some(vec![0, 0, group.children.len() - 1])
     );
     // A control that is not a group is selected: after it.
-    app.select_control(Some(vec![1]));
+    app.select_control(Some(vec![0, 1]));
     assert!(app.add_control(Control::new(ControlKind::Label)));
-    assert_eq!(app.selected_control(), Some(vec![2]));
+    assert_eq!(app.selected_control(), Some(vec![0, 2]));
     assert_eq!(
-        app.design_of(DEFAULT_FORM).controls[2].kind,
+        app.design_of(DEFAULT_FORM).get(&[0, 2]).unwrap().kind,
         ControlKind::Label
     );
 }
@@ -190,7 +200,7 @@ fn controls_are_added_into_the_selected_group_or_after_the_selected_control() {
 fn a_field_that_is_not_on_the_form_is_added_back() {
     let mut app = app();
     app.set_layout(true);
-    app.edit_design(|d| d.remove(&[0, 1]).map(|_| None));
+    app.edit_design(|d| d.remove(&[0, 0, 1]).map(|_| None));
     let spec = app.calc().spec("Orders").unwrap().clone();
     let unplaced = app.design_of(DEFAULT_FORM).unplaced(&spec);
     assert_eq!(unplaced, [p("customer.city")]);
@@ -207,13 +217,13 @@ fn a_form_keeps_its_controls_when_the_schema_loses_their_fields() {
     // The form is stored, so it no longer follows the schema: a control whose
     // path the schema lacks is broken, and the rest still works.
     app.edit_design(|d| {
-        d.get_mut(&[0, 0])?.path = Some("customer.nickname".to_owned());
+        d.get_mut(&[0, 0, 0])?.path = Some("customer.nickname".to_owned());
         Some(None)
     });
     let spec = app.calc().spec("Orders").unwrap().clone();
     let broken = app.design_of("Packing").broken(&spec);
     assert_eq!(broken.len(), 1);
-    assert_eq!(broken[0].0, vec![0, 0]);
+    assert_eq!(broken[0].0, vec![0, 0, 0]);
     assert!(broken[0].1.contains("customer.nickname"));
 }
 
@@ -233,16 +243,16 @@ fn a_field_can_be_given_a_label_an_editor_and_made_read_only() {
     let mut app = app();
     app.set_layout(true);
     let edited = app.edit_design(|d| {
-        let c = d.get_mut(&[0, 0])?;
+        let c = d.get_mut(&[0, 0, 0])?;
         c.label = Some("Customer".to_owned());
         c.editor = Some(Editor::Multiline);
         c.read_only = true;
         c.masked = true;
-        Some(Some(vec![0, 0]))
+        Some(Some(vec![0, 0, 0]))
     });
     assert!(edited);
     let design = app.design_of(DEFAULT_FORM);
-    let c = design.get(&[0, 0]).unwrap();
+    let c = design.get(&[0, 0, 0]).unwrap();
     assert_eq!(c.label.as_deref(), Some("Customer"));
     assert!(c.read_only);
     assert!(c.masked);
@@ -452,9 +462,9 @@ fn a_dragged_control_goes_where_the_pointer_says() {
 fn a_resize_sets_the_size_and_one_drag_is_one_step_of_undo() {
     let mut app = app();
     app.set_layout(true);
-    let at = vec![0, 0];
+    let at = vec![0, 0, 0];
     app.edit_design(|d| {
-        d.get_mut(&[0, 0])?.fill = true;
+        d.get_mut(&[0, 0, 0])?.fill = true;
         Some(None)
     });
     let merge = Some("resize:1".to_owned());

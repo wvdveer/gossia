@@ -116,10 +116,11 @@ fn the_elements_of_a_list_are_fields_of_its_items() {
     );
 }
 
-/// On the generated form an ordered list is shown one item at a time, each
-/// as its element, and New asks which element.
+/// On the generated form an ordered list is a repeater section, a row for
+/// each item, each as its element. (Adding a row, which asks which element,
+/// is the add/delete button's, step 18d.)
 #[test]
-fn a_form_shows_an_ordered_list_one_item_at_a_time() {
+fn a_form_shows_an_ordered_list_as_a_row_for_each_item() {
     let mut harness = window();
     assert!(
         harness
@@ -127,16 +128,6 @@ fn a_form_shows_an_ordered_list_one_item_at_a_time() {
             .set_view(View::Form("Default".to_owned()))
     );
     settle(&mut harness);
-    harness.get_by_label("1 of 2");
     harness.get_by_label("rect");
-    harness.get_by_label("Next item").click();
-    settle(&mut harness);
-    harness.get_by_label("2 of 2");
     harness.get_by_label("title");
-    harness.get_by_label("New").click();
-    harness.run();
-    harness.get_by_label("rect").click();
-    settle(&mut harness);
-    assert_eq!(items(&harness), ["rect", "title", "rect"]);
-    harness.get_by_label("3 of 3");
 }

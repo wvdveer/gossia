@@ -42,7 +42,7 @@ fn grid_form(layout: bool, change: impl FnOnce(&mut Control)) -> Harness<'static
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
-        let group = design.get_mut(&[0]).unwrap();
+        let group = design.get_mut(&[0, 0]).unwrap();
         group.layout = Some(GroupLayout::Grid);
         change(group);
         app.session
@@ -145,21 +145,21 @@ fn dragging_a_control_puts_it_in_the_cell_where_it_is_let_go() {
     let mut harness = grid_form(true, |g| {
         g.grid_columns = vec![TrackSize::Share(1), TrackSize::Share(1)];
     });
-    let city = target(&harness, &[0, 1]);
-    let vip = target(&harness, &[0, 2]);
+    let city = target(&harness, &[0, 0, 1]);
+    let vip = target(&harness, &[0, 0, 2]);
     // Below the last row, in the first column: a new third row.
     let from = city.left_center() + egui::vec2(20.0, 0.0);
     let to = egui::pos2(vip.left() + 20.0, vip.bottom() + 16.0);
     drag(&mut harness, from, to);
-    assert_eq!(cell(&harness, &[0, 1]), (Some(3), Some(1)));
-    assert_eq!(harness.state().selected_control(), Some(vec![0, 1]));
-    let moved = target(&harness, &[0, 1]);
+    assert_eq!(cell(&harness, &[0, 0, 1]), (Some(3), Some(1)));
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 0, 1]));
+    let moved = target(&harness, &[0, 0, 1]);
     assert!(moved.top() > vip.bottom(), "{moved:?} {vip:?}");
     assert!((moved.left() - vip.left()).abs() < 1.0);
     // One change.
     harness.state_mut().layout_undo();
     harness.run();
-    assert_eq!(cell(&harness, &[0, 1]), (None, None));
+    assert_eq!(cell(&harness, &[0, 0, 1]), (None, None));
 }
 
 #[test]
@@ -174,14 +174,14 @@ fn a_new_control_dropped_on_a_cell_goes_in_it() {
         let status = &mut g.children[3];
         status.grid_column = Some(2);
     });
-    let name = target(&harness, &[0, 0]);
-    let status = target(&harness, &[0, 3]);
+    let name = target(&harness, &[0, 0, 0]);
+    let status = target(&harness, &[0, 0, 3]);
     let from = harness.get_by_label("Add label").rect().center();
     // The second column of the first row, which is empty.
     let to = egui::pos2(status.left() + 30.0, name.center().y);
     drag(&mut harness, from, to);
     let design = harness.state().design_of("Default");
-    let label = &design.get(&[0]).unwrap().children[4];
+    let label = &design.get(&[0, 0]).unwrap().children[4];
     assert_eq!(label.text.as_deref(), Some("Label"));
     assert_eq!((label.grid_row, label.grid_column), (Some(1), Some(2)));
 }
@@ -191,7 +191,7 @@ fn the_property_page_turns_a_flow_into_a_grid_and_adds_columns() {
     let mut harness = window();
     harness.state_mut().set_layout(true);
     harness.run();
-    let before: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, i])).collect();
+    let before: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, 0, i])).collect();
     harness.get_by_label("Group customer").click();
     harness.run();
     harness.get_by_label("Layout of the group").click();
@@ -200,13 +200,13 @@ fn the_property_page_turns_a_flow_into_a_grid_and_adds_columns() {
     harness.run();
     harness.run();
     let design = harness.state().design_of("Default");
-    let group = design.get(&[0]).unwrap();
+    let group = design.get(&[0, 0]).unwrap();
     assert!(group.is_grid());
     assert_eq!(group.grid_columns, vec![TrackSize::Share(1)]);
     for i in 0..4 {
-        assert_eq!(cell(&harness, &[0, i]), (Some(i as u32 + 1), Some(1)));
+        assert_eq!(cell(&harness, &[0, 0, i]), (Some(i as u32 + 1), Some(1)));
     }
-    let after: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, i])).collect();
+    let after: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, 0, i])).collect();
     for (b, a) in before.iter().zip(&after) {
         assert!((a.left() - b.left()).abs() < 3.0, "{b:?} -> {a:?}");
     }
@@ -217,11 +217,11 @@ fn the_property_page_turns_a_flow_into_a_grid_and_adds_columns() {
     harness.run();
     let design = harness.state().design_of("Default");
     assert_eq!(
-        design.get(&[0]).unwrap().grid_columns,
+        design.get(&[0, 0]).unwrap().grid_columns,
         vec![TrackSize::Share(1), TrackSize::Auto]
     );
     // A control in a grid shows its cell.
-    harness.get(button(&name(&harness, &[0, 1]))).click();
+    harness.get(button(&name(&harness, &[0, 0, 1]))).click();
     harness.run();
     assert!(harness.query_by_label("Cell in the grid").is_some());
     assert!(harness.query_by_label("Row of the cell").is_some());

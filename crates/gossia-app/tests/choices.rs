@@ -11,7 +11,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use gossia_app::GossiaApp;
 use gossia_app::form::View;
 use gossia_app::form_exprs::{ChoiceList, choice_list};
-use gossia_core::form::{ColumnDesign, Control, ControlKind, Editor};
+use gossia_core::form::{Control, ControlKind, Editor};
 use gossia_core::{Path, Value};
 
 fn settle(harness: &mut Harness<'_, GossiaApp>) {
@@ -300,21 +300,21 @@ fn set_choices(harness: &mut Harness<'_, GossiaApp>, at: &[usize], text: &str) {
 }
 
 #[test]
-fn the_choices_of_a_column_run_for_each_row() {
+fn the_choices_of_a_field_in_a_row_run_for_each_row() {
     let (mut harness, _) = form("customer.city", |_| {});
     let at;
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
+        let section = design.repeater_sections()[0];
         at = design
             .walk()
             .into_iter()
-            .find(|(_, c)| c.kind == ControlKind::Repeater && c.bound_path() == Some(p("items")))
+            .find(|(at, c)| at[0] == section && c.path.as_deref() == Some("note"))
             .map(|(at, _)| at)
-            .expect("the Default form has a table of items");
-        let mut note = ColumnDesign::named("note");
-        note.choices = Some("[parent.sku + ' gift', parent.sku + ' rush']".into());
-        design.get_mut(&at).unwrap().table_columns = vec![note];
+            .expect("the row of the items has a note");
+        design.get_mut(&at).unwrap().choices =
+            Some("[parent.sku + ' gift', parent.sku + ' rush']".into());
         app.session
             .calc_mut()
             .forms_mut()
@@ -322,15 +322,8 @@ fn the_choices_of_a_column_run_for_each_row() {
     }
     settle(&mut harness);
     let row = |h: &Harness<'_, GossiaApp>, row: usize| {
-        let list = choice_list(
-            h.state().calc(),
-            "Orders",
-            "Default",
-            &at,
-            Some(("note", row)),
-            &[],
-        )
-        .expect("the column has choices");
+        let list = choice_list(h.state().calc(), "Orders", "Default", &at, None, &[row])
+            .expect("the field has choices");
         texts(&list)
     };
     assert_eq!(row(&harness, 1), ["B-220 gift", "B-220 rush"]);

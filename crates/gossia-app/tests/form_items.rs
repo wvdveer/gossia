@@ -1,5 +1,5 @@
-//! The design of a stacked repeater's items (DESIGN.md, "Forms", "Designed
-//! items"): controls whose paths are read from the item shown, and whose
+//! The design of the rows of a repeater section (DESIGN.md, Form canvases,
+//! 0.7.0): controls whose paths are read from the row's item, and whose
 //! expressions run for each item.
 
 use std::time::Duration;
@@ -9,7 +9,7 @@ use egui_kittest::kittest::Queryable;
 use gossia_app::GossiaApp;
 use gossia_app::form::View;
 use gossia_core::Path;
-use gossia_core::form::{self as design, Address, Control, ControlKind, RepeaterMode};
+use gossia_core::form::{Address, Control, ControlKind};
 
 fn p(text: &str) -> Path {
     text.parse().unwrap()
@@ -43,8 +43,8 @@ fn repeater_at(app: &GossiaApp) -> Address {
         .unwrap()
 }
 
-/// The items of Orders shown stacked, each as a label, its sku, and its
-/// price only when more than one is ordered.
+/// The rows of the repeater section of the items of Orders designed as a
+/// label, the sku, and the price only when more than one is ordered.
 fn designed() -> Harness<'static, GossiaApp> {
     let mut harness = harness();
     {
@@ -52,13 +52,18 @@ fn designed() -> Harness<'static, GossiaApp> {
         let at = repeater_at(app);
         let mut form = app.design_of("Default");
         let repeater = form.get_mut(&at).unwrap();
-        repeater.mode = Some(RepeaterMode::Stacked);
+        let place = |mut c: Control, x: u32| {
+            c.x = Some(x);
+            c.y = Some(4);
+            c.width = Some(140);
+            c
+        };
         let mut label = Control::new(ControlKind::Label);
         label.text = Some("One line of the order".into());
         let sku = Control::bound(ControlKind::Field, &p("sku"));
         let mut price = Control::bound(ControlKind::Field, &p("price"));
         price.visible_when = Some("parent.qty > 1".into());
-        repeater.children = vec![label, sku, price];
+        repeater.children = vec![place(label, 8), place(sku, 160), place(price, 320)];
         app.session
             .calc_mut()
             .forms_mut()
@@ -71,16 +76,16 @@ fn designed() -> Harness<'static, GossiaApp> {
 }
 
 #[test]
-fn the_item_shown_is_drawn_by_its_design() {
-    let mut harness = designed();
-    harness.get_by_label("One line of the order");
+fn each_row_is_drawn_by_the_design_of_its_section() {
+    let harness = designed();
+    assert_eq!(
+        harness.query_all_by_label("One line of the order").count(),
+        3
+    );
     assert!(harness.query_by_label("Orders.items[0].sku").is_some());
     // qty is 2: the price is shown. The fields left out of the design are not.
     assert!(harness.query_by_label("Orders.items[0].price").is_some());
     assert!(harness.query_by_label("Orders.items[0].qty").is_none());
-    harness.get_by_label("Next item").click();
-    settle(&mut harness);
-    harness.get_by_label("2 of 3");
     assert!(harness.query_by_label("Orders.items[1].sku").is_some());
     // qty is 1: the price is hidden, for this item only.
     assert!(harness.query_by_label("Orders.items[1].price").is_none());
@@ -119,71 +124,6 @@ fn the_expressions_of_the_design_run_for_each_item() {
     harness.state_mut().add_row(&p("items"), None);
     settle(&mut harness);
     assert!(visible(harness.state(), 3).is_some());
-}
-
-#[test]
-fn designing_the_items_starts_from_the_generated_look() {
-    let mut harness = harness();
-    let at = repeater_at(harness.state());
-    {
-        let app = harness.state_mut();
-        assert!(app.set_view(View::Form("Default".to_owned())));
-        app.set_layout(true);
-        app.select_control(Some(at.clone()));
-    }
-    harness.run();
-    harness.run();
-    harness.get_by_label("Design the items").click();
-    harness.run();
-    let form = harness.state().design_of("Default");
-    let repeater = form.get(&at).unwrap();
-    assert_eq!(repeater.mode, Some(RepeaterMode::Stacked));
-    let paths: Vec<Option<&str>> = repeater
-        .children
-        .iter()
-        .map(|c| c.path.as_deref())
-        .collect();
-    assert_eq!(
-        paths,
-        [
-            Some("sku"),
-            Some("qty"),
-            Some("price"),
-            Some("total"),
-            Some("note")
-        ]
-    );
-    assert!(
-        form.broken(harness.state().calc().spec("Orders").unwrap())
-            .is_empty()
-    );
-
-    // A control added with the repeater selected goes into the design.
-    assert!(
-        harness
-            .state_mut()
-            .add_control(Control::new(ControlKind::Separator))
-    );
-    let form = harness.state().design_of("Default");
-    assert_eq!(form.get(&at).unwrap().children.len(), 6);
-    // A field not on the form is added after the repeater, not into it.
-    harness.state_mut().select_control(Some(at.clone()));
-    let name =
-        design::control_for(harness.state().calc().spec("Orders").unwrap(), &p("tax")).unwrap();
-    assert!(name.path.as_deref() == Some("tax"));
-    assert!(harness.state_mut().add_field_to_form(&p("tax")));
-    let form = harness.state().design_of("Default");
-    let mut after = at.clone();
-    *after.last_mut().unwrap() += 1;
-    assert_eq!(form.get(&after).unwrap().path.as_deref(), Some("tax"));
-
-    // Back to the generated items.
-    harness.state_mut().select_control(Some(at.clone()));
-    harness.run();
-    harness.get_by_label("Use the generated items").click();
-    harness.run();
-    let form = harness.state().design_of("Default");
-    assert!(form.get(&at).unwrap().children.is_empty());
 }
 
 #[test]

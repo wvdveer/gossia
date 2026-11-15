@@ -567,3 +567,33 @@ fn a_canvas_is_not_converted_again() {
     let design = generate_canvas(&spec);
     assert_eq!(to_canvas(&design, &spec).design, design);
 }
+
+#[test]
+fn a_control_is_placed_on_the_header_under_what_it_has() {
+    let spec = spec();
+    let mut d = FormDesign::new_canvas(None);
+    // An empty header: at the top.
+    let at = d.place_on_header(&spec, field("name")).unwrap();
+    assert_eq!(at, vec![0, 0]);
+    assert_eq!(
+        (d.get(&at).unwrap().x, d.get(&at).unwrap().y),
+        (Some(8), Some(8))
+    );
+    // The next under it, 8 points apart; the header grows to hold it.
+    let mut tall = Control::new(ControlKind::Label);
+    tall.text = Some("Note".to_owned());
+    tall.height = Some(100);
+    let at = d.place_on_header(&spec, tall).unwrap();
+    let field_height = d.controls[0].children[0].height.unwrap_or(24);
+    assert!(field_height >= 24);
+    let y = d.get(&at).unwrap().y.unwrap();
+    assert!(y >= 8 + 24 + 8, "{y}");
+    assert!(d.controls[0].height.unwrap() >= y + 100);
+    assert!(problems(&d, &spec).is_empty(), "{:?}", problems(&d, &spec));
+    // Not on a form that is not a canvas.
+    assert!(
+        FormDesign::default()
+            .place_on_header(&spec, field("name"))
+            .is_none()
+    );
+}

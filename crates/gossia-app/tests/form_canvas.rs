@@ -236,3 +236,60 @@ fn a_button_in_a_row_runs_its_procedure_with_that_row() {
     assert_eq!(note, Some(Value::Str("row 1".into())));
     assert_eq!(chosen(&harness, "row"), Some(Value::Int(1)));
 }
+
+#[test]
+fn a_form_made_before_canvases_is_converted_when_shown() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 900.0))
+        .build_ui_state(|ui, app: &mut GossiaApp| app.show(ui), GossiaApp::sample());
+    settle(&mut harness);
+    {
+        let app = harness.state_mut();
+        let spec = app.calc().spec("Orders").unwrap().clone();
+        // As 0.6.0 stored it: Flow, a table of the items, and a list of
+        // the large lines from an expression, which cannot be a section.
+        let mut old = gossia_core::form::generate(&spec);
+        assert!(!old.canvas);
+        let mut big = Control::new(ControlKind::Repeater);
+        big.label = Some("Big lines".to_owned());
+        big.items = Some("[i for i in Orders.items if i.qty > 1]".to_owned());
+        old.controls.push(big);
+        app.session
+            .calc_mut()
+            .forms_mut()
+            .set("Orders", "Packing", old);
+        assert!(app.set_view(View::Form("Packing".to_owned())));
+    }
+    settle(&mut harness);
+    let app = harness.state();
+    let design = app.calc().forms().get("Orders", "Packing").unwrap();
+    assert!(design.canvas);
+    assert_eq!(design.repeater_sections().len(), 1);
+    let notice = app.notice.clone().unwrap_or_default();
+    assert!(notice.contains("Big lines"), "{notice}");
+    assert_eq!(count(&harness, "Orders.items[2].sku"), 1);
+}
+
+#[test]
+fn a_section_grows_to_hold_a_control_drawn_taller_than_its_room() {
+    // The header is 80 points tall; the group of four fields is taller.
+    let mut group = Control {
+        label: Some("Customer".to_owned()),
+        x: Some(8),
+        y: Some(8),
+        width: Some(400),
+        ..Control::new(ControlKind::Group)
+    };
+    group.children = ["name", "city", "vip", "status"]
+        .iter()
+        .map(|f| Control {
+            path: Some(format!("customer.{f}")),
+            ..Control::new(ControlKind::Field)
+        })
+        .collect();
+    let mut harness = canvas(vec![group]);
+    harness.run();
+    let status = harness.get_by_label("Orders.customer.status").rect();
+    let row = harness.get_by_label("Orders.items[0].sku").rect();
+    assert!(status.bottom() < row.top(), "{status:?} {row:?}");
+}

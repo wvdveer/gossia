@@ -190,7 +190,7 @@ impl GossiaApp {
         }
         self.calc()
             .spec(&self.sheet)
-            .map(design::generate)
+            .map(gossia_core::form::canvas::generate_canvas)
             .unwrap_or_default()
     }
 
@@ -627,7 +627,14 @@ impl GossiaApp {
     /// selected control, or at the end. The new control is selected.
     pub fn add_control(&mut self, control: Control) -> bool {
         let selected = self.selected_control();
+        let spec = self.calc().spec(&self.sheet).cloned();
         self.edit_design(|d| {
+            // On a canvas the top level is the sections: what would go there
+            // goes on the header, under what it has, until the designer of
+            // canvases (step 18c).
+            if d.canvas && selected.as_ref().is_none_or(|at| at.len() == 1) {
+                return d.place_on_header(spec.as_ref()?, control).map(Some);
+            }
             let at = match selected {
                 Some(at) if d.takes_children(&at) => d.insert(&at, None, control),
                 Some(at) => {
@@ -653,6 +660,11 @@ impl GossiaApp {
         // Its path is the whole path, so it goes after the stacked repeater
         // whose items the selection is in, or that is selected.
         let design = self.design_of(&self.form_name());
+        // On a canvas a whole path belongs on the header.
+        if design.canvas {
+            let spec = self.calc().spec(&self.sheet).cloned();
+            return self.edit_design(|d| d.place_on_header(spec.as_ref()?, control).map(Some));
+        }
         let selected = self.selected_control();
         let outside = selected.as_ref().and_then(|at| {
             design.item_scope(at).or_else(|| {
@@ -824,7 +836,7 @@ impl GossiaApp {
         let design = self
             .calc()
             .spec(&self.sheet)
-            .map(design::generate)
+            .map(gossia_core::form::canvas::generate_canvas)
             .ok_or(tr!("there is no such tab"))?;
         self.put_design(name, Some(design));
         self.show_form(name);
@@ -2240,7 +2252,13 @@ impl GossiaApp {
         };
         let first = message.lines().next().unwrap_or_default();
         let place: String = rows.iter().map(|i| format!("[{i}]")).collect();
-        let text = match (rows.is_empty(), column.is_some() && kind.per_row()) {
+        // The rows of a repeater section are rows, as a table's are.
+        let in_section = self
+            .design_of(&form)
+            .section(at[0])
+            .is_some_and(|s| s.is_repeater());
+        let per_row = (column.is_some() && kind.per_row()) || in_section;
+        let text = match (rows.is_empty(), per_row) {
             (true, _) => first.to_owned(),
             (false, true) => tr!("Row {place}: {first}", place = place, first = first),
             (false, false) => tr!("Item {place}: {first}", place = place, first = first),

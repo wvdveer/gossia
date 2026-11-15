@@ -1,7 +1,7 @@
 //! A form used from the keyboard and its smaller marks (DESIGN.md, "Forms"):
 //! the arrow keys going from control to control, the mark of a formula not
-//! run, the calendar of a date, and going to a node that a stacked item
-//! shows.
+//! run, the calendar of a date, and going to a node in a row of a repeater
+//! section.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,7 +11,6 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use gossia_app::GossiaApp;
 use gossia_app::form::View;
-use gossia_core::form::{ControlKind, RepeaterMode};
 use gossia_core::{Path, json, jsonschema};
 
 fn p(text: &str) -> Path {
@@ -129,10 +128,17 @@ fn the_keys_pass_by_a_computed_field() {
     assert!(focused(&harness, "Orders.items[0].note"));
     press(&mut harness, Key::ArrowLeft);
     assert!(focused(&harness, "Orders.items[0].price"));
-    // Below the table only computed fields follow tax_rate: Down stays.
+    // On the header only computed fields follow tax_rate: Down passes them
+    // to the first row of the items, in the section below, to the field
+    // most nearly in line.
     click_field(&mut harness, "Orders.tax_rate");
     press(&mut harness, Key::ArrowDown);
-    assert!(focused(&harness, "Orders.tax_rate"));
+    assert!(
+        ["sku", "qty", "price", "note"]
+            .iter()
+            .any(|f| focused(&harness, &format!("Orders.items[0].{f}"))),
+        "a field of the first row has the focus"
+    );
 }
 
 #[test]
@@ -188,22 +194,10 @@ fn a_date_is_picked_from_a_calendar() {
 }
 
 #[test]
-fn going_to_a_node_of_a_stacked_item_steps_to_that_item() {
+fn going_to_a_node_of_a_row_makes_it_the_current_row() {
     let mut harness = harness_of(GossiaApp::sample());
     {
         let app = harness.state_mut();
-        let mut design = app.design_of("Default");
-        let at = design
-            .walk()
-            .into_iter()
-            .find(|(_, c)| c.kind == ControlKind::Repeater && c.bound_path() == Some(p("items")))
-            .map(|(at, _)| at)
-            .unwrap();
-        design.get_mut(&at).unwrap().mode = Some(RepeaterMode::Stacked);
-        app.session
-            .calc_mut()
-            .forms_mut()
-            .set("Orders", "Default", design);
         app.set_open(&p("items"), true);
         app.select(&p("items[2].sku"));
         assert!(app.set_view(View::Form("Default".to_owned())));
@@ -211,6 +205,12 @@ fn going_to_a_node_of_a_stacked_item_steps_to_that_item() {
     for _ in 0..4 {
         harness.run();
     }
-    harness.get_by_label("3 of 3");
+    settle(&mut harness);
+    let row = harness
+        .state()
+        .calc()
+        .chosen_contexts("Orders", "Default")
+        .and_then(|c| c.get("row").cloned());
+    assert_eq!(row, Some(gossia_core::Value::Int(2)));
     assert!(harness.query_by_label("Orders.items[2].sku").is_some());
 }

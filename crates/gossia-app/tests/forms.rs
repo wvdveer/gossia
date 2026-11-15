@@ -35,6 +35,13 @@ fn click(harness: &mut Harness<'_, GossiaApp>, label: &str) {
     harness.run();
 }
 
+/// Clicks the first of the widgets with this label: the header's, when a
+/// row of a repeater has one too.
+fn click_first(harness: &mut Harness<'_, GossiaApp>, label: &str) {
+    harness.query_all_by_label(label).next().unwrap().click();
+    harness.run();
+}
+
 /// Chooses a view of the current tab: View, Show as, the view.
 fn show_as(harness: &mut Harness<'_, GossiaApp>, view: &str) {
     harness.get_by_label("View").click();
@@ -219,82 +226,6 @@ fn an_optional_field_that_is_absent_is_empty_and_a_value_creates_it() {
     assert_eq!(
         value(&harness, "Orders", "items[0].note"),
         Some(Value::Str("fragile".into()))
-    );
-}
-
-/// Opens the context menu of the table row whose header reads `row` and
-/// chooses `item`.
-fn row_menu(harness: &mut Harness<'_, GossiaApp>, row: &str, item: &str) {
-    harness.get_by_label(row).click_secondary();
-    harness.run();
-    harness.get_by_label(item).click();
-    harness.run();
-    settle(harness);
-}
-
-#[test]
-fn the_items_of_an_array_are_a_table_with_row_commands() {
-    let mut harness = form();
-    harness.get_by_label("Orders.items[2].sku");
-    // New adds a row at the end.
-    click(&mut harness, "New");
-    settle(&mut harness);
-    assert_eq!(
-        harness
-            .state()
-            .calc()
-            .data("Orders")
-            .unwrap()
-            .get(&p("items"))
-            .unwrap()
-            .value()
-            .as_array()
-            .unwrap()
-            .len(),
-        4
-    );
-    harness.get_by_label("Orders.items[3].sku");
-    // A row is deleted from its context menu.
-    row_menu(&mut harness, "[3]", "Delete row");
-    assert_eq!(
-        harness
-            .state()
-            .calc()
-            .data("Orders")
-            .unwrap()
-            .get(&p("items"))
-            .unwrap()
-            .value()
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    );
-    // Moving a row down swaps it with the next.
-    row_menu(&mut harness, "[0]", "Move down");
-    assert_eq!(
-        value(&harness, "Orders", "items[0].sku"),
-        Some(Value::Str("B-220".into()))
-    );
-    assert_eq!(
-        value(&harness, "Orders", "items[1].sku"),
-        Some(Value::Str("A-100".into()))
-    );
-}
-
-#[test]
-fn the_columns_of_a_table_sort_the_array() {
-    let mut harness = form();
-    // Ascending by quantity: 1, 2, 12.
-    click(&mut harness, "qty");
-    settle(&mut harness);
-    assert_eq!(
-        value(&harness, "Orders", "items[0].sku"),
-        Some(Value::Str("B-220".into()))
-    );
-    assert_eq!(
-        harness.state().calc().undo_label(),
-        Some("Sort Orders.items")
     );
 }
 
@@ -547,7 +478,7 @@ fn layout_mode_selects_a_control_and_edits_its_label_on_the_property_page() {
     edit_form(&mut harness);
     assert!(harness.state().layout_active());
     click(&mut harness, "Field customer.name");
-    assert_eq!(harness.state().selected_control(), Some(vec![0, 0]));
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 0, 0]));
     harness
         .get_by_role_and_label(egui::accesskit::Role::TextInput, "Label")
         .click();
@@ -559,7 +490,7 @@ fn layout_mode_selects_a_control_and_edits_its_label_on_the_property_page() {
     harness.run();
     let design = harness.state().design_of("Default");
     assert_eq!(
-        design.get(&[0, 0]).unwrap().label.as_deref(),
+        design.get(&[0, 0, 0]).unwrap().label.as_deref(),
         Some("Customer")
     );
     assert!(harness.state().is_customised("Default"));
@@ -608,8 +539,14 @@ fn a_control_has_a_font_and_the_controls_of_a_group_inherit_it() {
         let mut small = label("Small print");
         small.font_size = Some(10);
         group.children = vec![label("Big title"), small];
-        d.controls.insert(0, label("Plain text"));
-        d.controls.insert(1, group);
+        group.x = Some(8);
+        group.y = Some(40);
+        let mut plain = label("Plain text");
+        plain.x = Some(8);
+        plain.y = Some(8);
+        let header = &mut d.controls[0].children;
+        header.insert(0, plain);
+        header.insert(1, group);
         Some(None)
     });
     harness.run();
@@ -632,7 +569,7 @@ fn the_font_of_a_control_is_chosen_on_the_property_page() {
     click(&mut harness, "Font size of the control");
     click(&mut harness, "20 pt");
     let design = harness.state().design_of("Default");
-    let control = design.get(&[0, 0]).unwrap();
+    let control = design.get(&[0, 0, 0]).unwrap();
     assert_eq!(control.font, Some(FontFamily::Script));
     assert_eq!(control.font_size, Some(20));
 }
@@ -642,7 +579,7 @@ fn a_control_whose_field_is_gone_is_a_placeholder_that_can_be_removed() {
     let mut harness = form();
     new_form(&mut harness, "Packing");
     harness.state_mut().edit_design(|d| {
-        d.get_mut(&[0, 0])?.path = Some("customer.nickname".to_owned());
+        d.get_mut(&[0, 0, 0])?.path = Some("customer.nickname".to_owned());
         Some(None)
     });
     harness.run();
@@ -658,80 +595,23 @@ fn a_control_whose_field_is_gone_is_a_placeholder_that_can_be_removed() {
     assert!(!has(&harness, name));
 }
 
-// ------------------------------------------------- table columns, formats
+// --------------------------------------------------------------- formats
 
 fn text_of(harness: &Harness<'_, GossiaApp>, label: &str) -> String {
     harness.get_by_label(label).value().unwrap_or_default()
 }
 
 #[test]
-fn a_column_of_a_table_is_selected_by_its_title_and_has_its_own_properties() {
-    use gossia_core::form::Alignment;
-    let mut harness = form();
-    edit_form(&mut harness);
-    click(&mut harness, "Column qty of Repeater items");
-    assert_eq!(
-        harness.state().selected_column(),
-        Some((vec![1], "qty".to_owned()))
-    );
-    let label = || (egui::accesskit::Role::TextInput, "Label");
-    harness.get_by_role_and_label(label().0, label().1).click();
-    harness.run();
-    harness
-        .get_by_role_and_label(label().0, label().1)
-        .type_text("Quantity");
-    harness.run();
-    // The row numbers are a column too.
-    click(&mut harness, "Column # of Repeater items");
-    assert_eq!(
-        harness.state().selected_column(),
-        Some((vec![1], "#".to_owned()))
-    );
-    click(&mut harness, "Alignment of the cells");
-    click(&mut harness, "Right");
-    let design = harness.state().design_of("Default");
-    let columns = &design.get(&[1]).unwrap().table_columns;
-    let find = |name: &str| columns.iter().find(|c| c.name == name).unwrap();
-    assert_eq!(find("qty").label.as_deref(), Some("Quantity"));
-    assert_eq!(find("#").align, Some(Alignment::Right));
-    click(&mut harness, "Back to the table");
-    assert_eq!(harness.state().selected_column(), None);
-    assert_eq!(harness.state().selected_control(), Some(vec![1]));
-    // Out of layout mode, the column has its title.
-    edit_form(&mut harness);
-    assert!(has(&harness, "Quantity"));
-}
-
-#[test]
-fn the_order_and_visibility_of_the_columns_are_properties_of_the_table() {
-    let mut harness = form();
-    edit_form(&mut harness);
-    click(&mut harness, "Repeater items");
-    click(&mut harness, "Show column note");
-    click(&mut harness, "Move column price up");
-    click(&mut harness, "Show column #");
-    edit_form(&mut harness);
-    assert!(!has(&harness, "Orders.items[0].note"));
-    assert!(!has(&harness, "[0]"), "the row numbers are hidden");
-    let left = |label: &str| harness.get_by_label(label).rect().left();
-    assert!(left("Orders.items[0].price") < left("Orders.items[0].qty"));
-    assert!(left("Orders.items[0].sku") < left("Orders.items[0].price"));
-}
-
-#[test]
 fn numbers_are_shown_in_their_format_and_typed_as_they_are() {
-    use gossia_core::form::ColumnDesign;
     let mut harness = form();
     harness.state_mut().edit_design(|d| {
-        let total = d.get_mut(&[5])?;
+        let total = d.get_mut(&[0, 4])?;
         assert_eq!(total.path.as_deref(), Some("total"));
         total.decimals = Some(3);
-        let items = d.get_mut(&[1])?;
-        items.table_columns = vec![ColumnDesign {
-            thousands: true,
-            decimals: Some(2),
-            ..ColumnDesign::named("price")
-        }];
+        let price = d.get_mut(&[1, 2])?;
+        assert_eq!(price.path.as_deref(), Some("price"));
+        price.thousands = true;
+        price.decimals = Some(2);
         Some(None)
     });
     harness.run();
@@ -755,12 +635,12 @@ fn numbers_are_shown_in_their_format_and_typed_as_they_are() {
 fn the_format_of_a_number_field_is_chosen_on_the_property_page() {
     let mut harness = form();
     edit_form(&mut harness);
-    click(&mut harness, "Field total");
+    click_first(&mut harness, "Field total");
     click(&mut harness, "Thousands separator of the field");
     click(&mut harness, "Decimal places of the field");
     click(&mut harness, "Automatic");
     let design = harness.state().design_of("Default");
-    let total = design.get(&[5]).unwrap();
+    let total = design.get(&[0, 4]).unwrap();
     assert!(total.thousands);
     assert_eq!(total.decimals, None);
     // A text field has no number format.
@@ -770,7 +650,6 @@ fn the_format_of_a_number_field_is_chosen_on_the_property_page() {
 
 #[test]
 fn a_date_is_shown_in_its_format() {
-    use gossia_core::form::ColumnDesign;
     use gossia_core::{json, jsonschema};
     let schema = r#"{"type": "object", "properties": {
         "due": {"type": "string", "format": "date"},
@@ -790,11 +669,8 @@ fn a_date_is_shown_in_its_format() {
     settle(&mut harness);
     show_as(&mut harness, "Default");
     harness.state_mut().edit_design(|d| {
-        d.get_mut(&[0])?.date_format = Some("d mmm yyyy".to_owned());
-        d.get_mut(&[1])?.table_columns = vec![ColumnDesign {
-            date_format: Some("dd/mm/yyyy".to_owned()),
-            ..ColumnDesign::named("on")
-        }];
+        d.get_mut(&[0, 0])?.date_format = Some("d mmm yyyy".to_owned());
+        d.get_mut(&[1, 0])?.date_format = Some("dd/mm/yyyy".to_owned());
         Some(None)
     });
     harness.run();
@@ -803,98 +679,10 @@ fn a_date_is_shown_in_its_format() {
 }
 
 #[test]
-fn the_title_of_a_column_in_layout_mode_is_as_wide_as_the_column() {
-    let mut harness = form();
-    edit_form(&mut harness);
-    // As wide as the cells below it, and not into the next column.
-    let title = harness.get_by_label("Column sku of Repeater items").rect();
-    let cell = harness.get_by_label("Orders.items[0].sku").rect();
-    let next = harness.get_by_label("Orders.items[0].qty").rect();
-    assert!(
-        (title.left() - cell.left()).abs() < 1.0 && (title.right() - cell.right()).abs() < 1.0,
-        "{title:?} against {cell:?}"
-    );
-    assert!(title.right() < next.left());
-}
-
-#[test]
-fn the_row_numbers_have_a_numbering_and_a_start() {
-    use gossia_core::form::{ColumnDesign, Numbering, ROW_NUMBER};
-    let mut harness = form();
-    edit_form(&mut harness);
-    click(&mut harness, "Column # of Repeater items");
-    click(&mut harness, "Numbering of the rows");
-    click(&mut harness, "i, ii, iii");
-    let design = harness.state().design_of("Default");
-    let row = design.get(&[1]).unwrap().table_columns[0].clone();
-    assert_eq!(row.name, ROW_NUMBER);
-    assert_eq!(row.numbering, Some(Numbering::LowerRoman));
-    assert_eq!(row.start, None, "counting starts at 1");
-    edit_form(&mut harness);
-    for label in ["i", "ii", "iii"] {
-        assert!(has(&harness, label), "{label}");
-    }
-    // Any integer starts the count.
-    let changed = harness.state_mut().set_column(
-        None,
-        &vec![1],
-        ColumnDesign {
-            numbering: Some(Numbering::Decimal),
-            start: Some(100),
-            ..row
-        },
-    );
-    assert!(changed);
-    harness.run();
-    for label in ["100", "101", "102"] {
-        assert!(has(&harness, label), "{label}");
-    }
-}
-
-#[test]
-fn the_fonts_of_the_titles_are_the_tables_and_a_column_aligns_its_title() {
-    use gossia_core::form::{Alignment, FontFamily};
-    let mut harness = form();
-    let title_before = height(&harness, "sku");
-    let cell_before = height(&harness, "Orders.items[0].sku");
-    edit_form(&mut harness);
-    click(&mut harness, "Repeater items");
-    click(&mut harness, "Font size of the column titles");
-    click(&mut harness, "28 pt");
-    click(&mut harness, "Font of the table title");
-    click(&mut harness, "Serif (Source Serif 4)");
-    click(&mut harness, "Column qty of Repeater items");
-    click(&mut harness, "Alignment of the title");
-    click(&mut harness, "Right");
-    let design = harness.state().design_of("Default");
-    let items = design.get(&[1]).unwrap();
-    assert_eq!(items.header_font_size, Some(28));
-    assert_eq!(items.title_font, Some(FontFamily::Serif));
-    let qty = items
-        .table_columns
-        .iter()
-        .find(|c| c.name == "qty")
-        .unwrap();
-    assert_eq!(qty.title_align, Some(Alignment::Right));
-    assert_eq!(qty.align, None, "the cells keep their own alignment");
-    edit_form(&mut harness);
-    // The titles are larger; the cells are not.
-    assert!(height(&harness, "sku") > title_before * 1.5);
-    assert!((height(&harness, "Orders.items[0].sku") - cell_before).abs() < 1.0);
-    // The title of qty is on the right of its column.
-    let title = harness.get_by_label("qty").rect();
-    let cell = harness.get_by_label("Orders.items[0].qty").rect();
-    assert!(
-        title.right() > cell.center().x,
-        "{title:?} against {cell:?}"
-    );
-}
-
-#[test]
 fn a_masked_field_shows_dots_and_stores_what_is_typed() {
     let mut harness = form();
     harness.state_mut().edit_design(|d| {
-        let name = d.get_mut(&[0, 0])?;
+        let name = d.get_mut(&[0, 0, 0])?;
         assert_eq!(name.path.as_deref(), Some("customer.name"));
         name.masked = true;
         Some(None)
@@ -920,12 +708,12 @@ fn masked_is_a_property_of_a_string_field() {
         harness
             .state()
             .design_of("Default")
-            .get(&[0, 0])
+            .get(&[0, 0, 0])
             .unwrap()
             .masked
     );
     // A number cannot be dots.
-    click(&mut harness, "Field total");
+    click_first(&mut harness, "Field total");
     assert!(!has(&harness, "Masked"));
 }
 
@@ -961,16 +749,16 @@ fn field_name(harness: &Harness<'_, GossiaApp>, at: &[usize]) -> String {
 fn a_control_is_moved_by_dragging_it_and_added_by_dragging_from_the_palette() {
     let mut harness = form();
     edit_form(&mut harness);
-    let first = field_name(&harness, &[0, 0]);
-    let second = field_name(&harness, &[0, 1]);
+    let first = field_name(&harness, &[0, 0, 0]);
+    let second = field_name(&harness, &[0, 0, 1]);
     // Onto the lower half of the next one: it goes after it.
     let from = harness.get_by_label(&first).rect().center();
     let target = harness.get_by_label(&second).rect();
     let to = egui::pos2(target.center().x, target.bottom() - 2.0);
     drag(&mut harness, from, to);
-    assert_eq!(field_name(&harness, &[0, 0]), second);
-    assert_eq!(field_name(&harness, &[0, 1]), first);
-    assert_eq!(harness.state().selected_control(), Some(vec![0, 1]));
+    assert_eq!(field_name(&harness, &[0, 0, 0]), second);
+    assert_eq!(field_name(&harness, &[0, 0, 1]), first);
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 0, 1]));
     assert!(harness.state().can_layout_undo());
     // A new label from the palette, onto the upper half of a field.
     let from = harness.get_by_label("Add label").rect().center();
@@ -978,29 +766,41 @@ fn a_control_is_moved_by_dragging_it_and_added_by_dragging_from_the_palette() {
     let to = egui::pos2(target.center().x, target.top() + 2.0);
     drag(&mut harness, from, to);
     let design = harness.state().design_of("Default");
-    assert_eq!(design.get(&[0, 0]).unwrap().text.as_deref(), Some("Label"));
-    assert_eq!(field_name(&harness, &[0, 1]), second);
+    assert_eq!(
+        design.get(&[0, 0, 0]).unwrap().text.as_deref(),
+        Some("Label")
+    );
+    assert_eq!(field_name(&harness, &[0, 0, 1]), second);
     // One undo of layout takes the label away again, and moving is not an
     // edit of the workbook.
     harness.state_mut().layout_undo();
     harness.run();
-    assert_eq!(field_name(&harness, &[0, 0]), second);
+    assert_eq!(field_name(&harness, &[0, 0, 0]), second);
     assert_eq!(harness.state().calc().history_len().0, 0);
     // A group is not dropped into itself: dragging the customer group onto
-    // one of its own fields changes nothing.
+    // one of its own fields at most moves it on the header's canvas.
     let before = harness.state().design_of("Default");
     let group = harness.get_by_label("Group customer").rect();
     let from = egui::pos2(group.left() + 20.0, group.top() + 10.0);
     let to = harness.get_by_label(&first).rect().center();
     drag(&mut harness, from, to);
-    assert_eq!(harness.state().design_of("Default"), before);
+    let after = harness.state().design_of("Default");
+    assert_eq!(after.walk().len(), before.walk().len());
+    assert_eq!(
+        after.controls[0].children.len(),
+        before.controls[0].children.len()
+    );
+    assert_eq!(
+        after.get(&[0, 0]).unwrap().children,
+        before.get(&[0, 0]).unwrap().children
+    );
 }
 
 #[test]
 fn the_width_handle_sizes_the_selected_control_and_a_double_click_resets_it() {
     let mut harness = form();
     edit_form(&mut harness);
-    let name = field_name(&harness, &[0, 0]);
+    let name = field_name(&harness, &[0, 0, 0]);
     click(&mut harness, &name);
     let rect = target(&harness, &name);
     let handle = harness.get_by_label("Width handle").rect().center();
@@ -1010,7 +810,7 @@ fn the_width_handle_sizes_the_selected_control_and_a_double_click_resets_it() {
     let width = harness
         .state()
         .design_of("Default")
-        .get(&[0, 0])
+        .get(&[0, 0, 0])
         .unwrap()
         .width;
     assert_eq!(width, Some(252), "snapped to 4 points");
@@ -1027,7 +827,7 @@ fn the_width_handle_sizes_the_selected_control_and_a_double_click_resets_it() {
         harness
             .state()
             .design_of("Default")
-            .get(&[0, 0])
+            .get(&[0, 0, 0])
             .unwrap()
             .width,
         None
@@ -1067,7 +867,7 @@ fn the_width_handle_sizes_the_selected_control_and_a_double_click_resets_it() {
         harness
             .state()
             .design_of("Default")
-            .get(&[0, 0])
+            .get(&[0, 0, 0])
             .unwrap()
             .width,
         None
@@ -1079,13 +879,13 @@ fn a_group_of_columns_lines_its_controls_up_in_rows_with_spans() {
     let mut harness = form();
     edit_form(&mut harness);
     harness.state_mut().edit_design(|d| {
-        let group = d.get_mut(&[0])?;
+        let group = d.get_mut(&[0, 0])?;
         group.columns = Some(2);
         group.children[0].span = Some(2);
         Some(None)
     });
     harness.run();
-    let names: Vec<String> = (0..3).map(|i| field_name(&harness, &[0, i])).collect();
+    let names: Vec<String> = (0..3).map(|i| field_name(&harness, &[0, 0, i])).collect();
     let rects: Vec<egui::Rect> = names.iter().map(|n| target(&harness, n)).collect();
     assert!(
         rects[1].top() > rects[0].bottom() - 1.0,
@@ -1108,8 +908,8 @@ fn the_label_of_a_field_can_be_above_or_left_out() {
     let editor = harness.get_by_label("Orders.customer.name").rect();
     harness.state_mut().set_layout(true);
     harness.state_mut().edit_design(|d| {
-        d.get_mut(&[0, 0])?.label_position = Some(gossia_core::form::LabelPosition::Top);
-        d.get_mut(&[0, 1])?.label_position = Some(gossia_core::form::LabelPosition::None);
+        d.get_mut(&[0, 0, 0])?.label_position = Some(gossia_core::form::LabelPosition::Top);
+        d.get_mut(&[0, 0, 1])?.label_position = Some(gossia_core::form::LabelPosition::None);
         Some(None)
     });
     harness.state_mut().set_layout(false);
@@ -1125,15 +925,15 @@ fn the_label_of_a_field_can_be_above_or_left_out() {
 fn the_property_page_sets_a_width_and_a_group_spacing() {
     let mut harness = form();
     edit_form(&mut harness);
-    let name = field_name(&harness, &[0, 0]);
+    let name = field_name(&harness, &[0, 0, 0]);
     click(&mut harness, &name);
     click(&mut harness, "Width");
     let design = harness.state().design_of("Default");
-    assert_eq!(design.get(&[0, 0]).unwrap().width, Some(200));
+    assert_eq!(design.get(&[0, 0, 0]).unwrap().width, Some(200));
     click(&mut harness, "Group customer");
     click(&mut harness, "Spacing");
     let design = harness.state().design_of("Default");
-    assert_eq!(design.get(&[0]).unwrap().spacing, Some(8));
+    assert_eq!(design.get(&[0, 0]).unwrap().spacing, Some(8));
 }
 
 /// Where the control of layout mode called `name` is drawn (its name is also
@@ -1146,107 +946,4 @@ fn target(harness: &Harness<'_, GossiaApp>, name: &str) -> egui::Rect {
                 .role(egui::accesskit::Role::Button),
         )
         .rect()
-}
-
-/// The edge of a column's title is dragged to make the column wider: out
-/// of layout mode for as long as the window is open, in layout mode as the
-/// column's width in the design, which undo takes back.
-#[test]
-fn a_column_of_a_table_is_resized_by_dragging_its_edge() {
-    let mut harness = form();
-    let left =
-        |harness: &Harness<'_, GossiaApp>, label: &str| harness.get_by_label(label).rect().left();
-    // Between qty and price, in the row of the titles.
-    let edge = |harness: &Harness<'_, GossiaApp>| {
-        let title = harness.get_by_label("qty").rect();
-        let x = left(harness, "Orders.items[0].price") - 3.0;
-        egui::pos2(x, title.center().y)
-    };
-    let before = left(&harness, "Orders.items[0].price");
-    let from = edge(&harness);
-    drag(&mut harness, from, from + egui::vec2(60.0, 0.0));
-    let after = left(&harness, "Orders.items[0].price");
-    assert!(
-        (after - before - 60.0).abs() < 4.0,
-        "the price column moved from {before} to {after}"
-    );
-    let design = harness.state().design_of("Default");
-    let width = |design: &gossia_core::form::FormDesign| {
-        design
-            .get(&[1])
-            .unwrap()
-            .table_columns
-            .iter()
-            .find(|c| c.name == "qty")
-            .and_then(|c| c.width)
-    };
-    assert_eq!(width(&design), None, "not in the design out of layout mode");
-
-    // In layout mode the width goes into the design.
-    edit_form(&mut harness);
-    let shown = harness
-        .get_by_label("Column qty of Repeater items")
-        .rect()
-        .width();
-    let from = edge(&harness);
-    drag(&mut harness, from, from + egui::vec2(30.0, 0.0));
-    let set = width(&harness.state().design_of("Default")).expect("a width was set");
-    assert!(
-        (set as f32 - shown - 30.0).abs() < 4.0,
-        "{shown} wide, dragged 30 further, became {set}"
-    );
-    assert!(harness.state().can_layout_undo());
-    harness.state_mut().layout_undo();
-    harness.run();
-    assert_eq!(width(&harness.state().design_of("Default")), None);
-}
-
-/// The width of the column sku of the table of items, as the property page
-/// sets it.
-fn sku_width(harness: &Harness<'_, GossiaApp>) -> Option<u32> {
-    harness
-        .state()
-        .design_of("Default")
-        .get(&[1])
-        .unwrap()
-        .table_columns
-        .iter()
-        .find(|c| c.name == "sku")
-        .and_then(|c| c.width)
-}
-
-fn sku_selected() -> Harness<'static, GossiaApp> {
-    let mut harness = form();
-    edit_form(&mut harness);
-    click(&mut harness, "Column sku of Repeater items");
-    harness
-}
-
-#[test]
-fn a_column_width_is_ticked_then_typed_on_the_property_page() {
-    let mut harness = sku_selected();
-    click(&mut harness, "Fixed width of the column");
-    assert_eq!(sku_width(&harness), Some(80));
-    harness.get_by_label("Width of the column").click();
-    harness.run();
-    harness.get_by_label("Width of the column").type_text("120");
-    harness.run();
-    harness.key_press(egui::Key::Enter);
-    harness.run();
-    harness.run();
-    assert_eq!(sku_width(&harness), Some(120));
-}
-
-/// The box once started at 0 for automatic, and the first 24 points of a
-/// drag disappeared under the narrowest width.
-#[test]
-fn a_column_width_is_dragged_as_one_step_of_undo_layout() {
-    let mut harness = sku_selected();
-    click(&mut harness, "Fixed width of the column");
-    let from = harness.get_by_label("Width of the column").rect().center();
-    drag(&mut harness, from, from + egui::vec2(150.0, 0.0));
-    let width = sku_width(&harness).unwrap_or(0);
-    assert!(width > 80, "{width}");
-    click(&mut harness, "Undo layout");
-    assert_eq!(sku_width(&harness), Some(80));
 }

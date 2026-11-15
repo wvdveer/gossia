@@ -34,7 +34,7 @@ fn free_form(change: impl FnOnce(&mut Control)) -> Harness<'static, GossiaApp> {
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
-        let group = design.get_mut(&[0]).unwrap();
+        let group = design.get_mut(&[0, 0]).unwrap();
         group.layout = Some(GroupLayout::Free);
         for (i, c) in group.children.iter_mut().enumerate() {
             c.x = Some(0);
@@ -106,58 +106,59 @@ fn the_controls_of_a_free_group_are_drawn_at_their_places() {
         g.children[1].x = Some(120);
         g.children[1].y = Some(8);
     });
-    let origin = target(&harness, &[0, 0]).min;
-    let city = target(&harness, &[0, 1]).min;
+    let origin = target(&harness, &[0, 0, 0]).min;
+    let city = target(&harness, &[0, 0, 1]).min;
     assert!(
         (city.x - origin.x - 120.0).abs() < 1.0,
         "{city:?} {origin:?}"
     );
     assert!((city.y - origin.y - 8.0).abs() < 1.0, "{city:?} {origin:?}");
-    // The group is as tall as its lowest control: what follows the group
-    // is under it.
-    let lowest = target(&harness, &[0, 3]);
-    let next = harness.get(button("Field tax_rate")).rect();
-    assert!(lowest.bottom() < next.top(), "{lowest:?} {next:?}");
+    // The lowest is at its place too, 120 points down.
+    let lowest = target(&harness, &[0, 0, 3]).min;
+    assert!(
+        (lowest.y - origin.y - 120.0).abs() < 1.0,
+        "{lowest:?} {origin:?}"
+    );
 }
 
 #[test]
 fn dragging_a_control_moves_it_on_the_grid_as_one_change() {
     let mut harness = free_form(|_| {});
-    let rect = target(&harness, &[0, 1]);
+    let rect = target(&harness, &[0, 0, 1]);
     let from = rect.left_center() + egui::vec2(20.0, 0.0);
     drag(&mut harness, from, from + egui::vec2(61.0, 200.0));
     assert_eq!(
-        place(&harness, &[0, 1]),
+        place(&harness, &[0, 0, 1]),
         (Some(60), Some(240)),
         "snapped to 4 points"
     );
-    assert_eq!(harness.state().selected_control(), Some(vec![0, 1]));
-    let moved = target(&harness, &[0, 1]);
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 0, 1]));
+    let moved = target(&harness, &[0, 0, 1]);
     assert!((moved.left() - rect.left() - 60.0).abs() < 1.0);
     // The others stay where they are, and the order is unchanged.
-    assert_eq!(place(&harness, &[0, 0]), (Some(0), Some(0)));
-    assert!(name(&harness, &[0, 1]).ends_with("city"));
+    assert_eq!(place(&harness, &[0, 0, 0]), (Some(0), Some(0)));
+    assert!(name(&harness, &[0, 0, 1]).ends_with("city"));
     // The frames of the drag are one step of undo.
     harness.state_mut().layout_undo();
     harness.run();
-    assert_eq!(place(&harness, &[0, 1]), (Some(0), Some(40)));
+    assert_eq!(place(&harness, &[0, 0, 1]), (Some(0), Some(40)));
 }
 
 #[test]
 fn a_dragged_control_snaps_to_the_edge_of_another() {
     let mut harness = free_form(|_| {});
-    let rect = target(&harness, &[0, 2]);
+    let rect = target(&harness, &[0, 0, 2]);
     let from = rect.left_center() + egui::vec2(20.0, 0.0);
     // Three points to the right of the left edge of the others: it snaps
     // to it, not to the grid's 4.
     drag(&mut harness, from, from + egui::vec2(3.0, 200.0));
-    assert_eq!(place(&harness, &[0, 2]), (Some(0), Some(280)));
+    assert_eq!(place(&harness, &[0, 0, 2]), (Some(0), Some(280)));
 }
 
 #[test]
 fn the_arrow_keys_move_the_selected_control_by_a_point_or_a_grid_step() {
     let mut harness = free_form(|_| {});
-    harness.state_mut().select_control(Some(vec![0, 3]));
+    harness.state_mut().select_control(Some(vec![0, 0, 3]));
     harness.run();
     harness.key_press(Key::ArrowRight);
     harness.run();
@@ -165,11 +166,11 @@ fn the_arrow_keys_move_the_selected_control_by_a_point_or_a_grid_step() {
     harness.run();
     harness.key_press_modifiers(Modifiers::SHIFT, Key::ArrowDown);
     harness.run();
-    assert_eq!(place(&harness, &[0, 3]), (Some(2), Some(124)));
+    assert_eq!(place(&harness, &[0, 0, 3]), (Some(2), Some(124)));
     // The presses are one change.
     harness.state_mut().layout_undo();
     harness.run();
-    assert_eq!(place(&harness, &[0, 3]), (Some(0), Some(120)));
+    assert_eq!(place(&harness, &[0, 0, 3]), (Some(0), Some(120)));
 }
 
 #[test]
@@ -177,8 +178,8 @@ fn ctrl_and_a_click_selects_several_and_the_align_tools_line_them_up() {
     let mut harness = free_form(|g| {
         g.children[1].x = Some(40);
     });
-    let city = name(&harness, &[0, 1]);
-    let vip = name(&harness, &[0, 2]);
+    let city = name(&harness, &[0, 0, 1]);
+    let vip = name(&harness, &[0, 0, 2]);
     harness.get(button(&city)).click();
     harness.run();
     harness
@@ -187,19 +188,19 @@ fn ctrl_and_a_click_selects_several_and_the_align_tools_line_them_up() {
     harness.run();
     assert_eq!(
         harness.state().selected_controls(),
-        vec![vec![0, 1], vec![0, 2]]
+        vec![vec![0, 0, 1], vec![0, 0, 2]]
     );
     assert!(harness.query_by_label("2 controls selected").is_some());
     harness.get_by_label("Align left").click();
     harness.run();
-    assert_eq!(place(&harness, &[0, 2]).0, Some(40), "follows the first");
-    assert_eq!(place(&harness, &[0, 1]).0, Some(40));
+    assert_eq!(place(&harness, &[0, 0, 2]).0, Some(40), "follows the first");
+    assert_eq!(place(&harness, &[0, 0, 1]).0, Some(40));
     // Ctrl and a click again takes it out.
     harness
         .get(button(&vip))
         .click_modifiers(Modifiers::COMMAND);
     harness.run();
-    assert_eq!(harness.state().selected_controls(), vec![vec![0, 1]]);
+    assert_eq!(harness.state().selected_controls(), vec![vec![0, 0, 1]]);
     assert!(harness.query_by_label("2 controls selected").is_none());
 }
 
@@ -215,7 +216,7 @@ fn an_anchor_to_the_right_keeps_the_distance_to_the_right_edge() {
             city.width = Some(200);
             city.anchor_x = Some(Anchor::End);
         });
-        target(&harness, &[0, 1]).left() - target(&harness, &[0, 0]).left()
+        target(&harness, &[0, 0, 1]).left() - target(&harness, &[0, 0, 0]).left()
     };
     let moved = left_for(400) - left_for(500);
     assert!((moved - 100.0).abs() < 1.0, "moved {moved}");
@@ -234,7 +235,7 @@ fn the_property_page_turns_a_group_free_without_moving_its_controls() {
     );
     harness.state_mut().set_layout(true);
     harness.run();
-    let before: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, i])).collect();
+    let before: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, 0, i])).collect();
     harness.get_by_label("Group customer").click();
     harness.run();
     harness.get_by_label("Layout of the group").click();
@@ -243,9 +244,9 @@ fn the_property_page_turns_a_group_free_without_moving_its_controls() {
     harness.run();
     harness.run();
     let design = harness.state().design_of("Default");
-    assert!(design.get(&[0]).unwrap().is_free());
-    assert_eq!(place(&harness, &[0, 0]), (Some(0), Some(0)));
-    let after: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, i])).collect();
+    assert!(design.get(&[0, 0]).unwrap().is_free());
+    assert_eq!(place(&harness, &[0, 0, 0]), (Some(0), Some(0)));
+    let after: Vec<Rect> = (0..4).map(|i| target(&harness, &[0, 0, i])).collect();
     for (b, a) in before.iter().zip(&after) {
         assert!((a.left() - b.left()).abs() < 3.0, "{b:?} -> {a:?}");
         assert!((a.top() - b.top()).abs() < 4.0, "{b:?} -> {a:?}");
@@ -253,19 +254,19 @@ fn the_property_page_turns_a_group_free_without_moving_its_controls() {
     // A Free group lists its controls in tab order; moving one later keeps
     // the group selected.
     assert!(harness.query_by_label("Tab order").is_some());
-    let first = name(&harness, &[0, 0]);
+    let first = name(&harness, &[0, 0, 0]);
     harness
         .get_by_label(format!("Later: {first}").as_str())
         .click();
     harness.run();
-    assert_eq!(name(&harness, &[0, 1]), first);
-    assert_eq!(harness.state().selected_control(), Some(vec![0]));
+    assert_eq!(name(&harness, &[0, 0, 1]), first);
+    assert_eq!(harness.state().selected_control(), Some(vec![0, 0]));
 }
 
 #[test]
 fn the_property_page_places_a_control_by_its_numbers() {
     let mut harness = free_form(|_| {});
-    harness.state_mut().select_control(Some(vec![0, 1]));
+    harness.state_mut().select_control(Some(vec![0, 0, 1]));
     harness.run();
     assert!(harness.query_by_label("Place in the group").is_some());
     harness.get_by_label("Anchor across").click();
@@ -273,20 +274,20 @@ fn the_property_page_places_a_control_by_its_numbers() {
     harness.get_by_label("Right").click();
     harness.run();
     let design = harness.state().design_of("Default");
-    assert_eq!(design.get(&[0, 1]).unwrap().anchor_x, Some(Anchor::End));
+    assert_eq!(design.get(&[0, 0, 1]).unwrap().anchor_x, Some(Anchor::End));
     // Anchoring does not move it.
-    assert_eq!(place(&harness, &[0, 1]), (Some(0), Some(40)));
+    assert_eq!(place(&harness, &[0, 0, 1]), (Some(0), Some(40)));
 }
 
 #[test]
 fn a_new_control_dragged_into_a_free_group_goes_where_it_is_let_go() {
     let mut harness = free_form(|g| g.height = Some(260));
-    let origin = target(&harness, &[0, 0]).min;
+    let origin = target(&harness, &[0, 0, 0]).min;
     let from = harness.get_by_label("Add label").rect().center();
     let to = origin + egui::vec2(301.0, 181.0);
     drag(&mut harness, from, to);
     let design = harness.state().design_of("Default");
-    let group = design.get(&[0]).unwrap();
+    let group = design.get(&[0, 0]).unwrap();
     assert_eq!(group.children.len(), 5);
     let label = &group.children[4];
     assert_eq!(label.text.as_deref(), Some("Label"));

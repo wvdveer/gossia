@@ -9,8 +9,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use gossia_app::GossiaApp;
 use gossia_app::form::View;
-use gossia_app::form_exprs::{Gate, column_gate, gate};
-use gossia_core::form::{ColumnDesign, Control, ControlKind};
+use gossia_app::form_exprs::{Gate, gate};
+use gossia_core::form::{Control, ControlKind};
 use gossia_core::{Path, Value};
 
 const PROCEDURES: &str = "\
@@ -41,7 +41,8 @@ fn button(label: &str) -> Control {
 }
 
 /// The Default form of Orders with buttons whose expressions are given, at
-/// the end of the form, in this order.
+/// the bottom of its header, in this order; gives the place of the first
+/// among the header's controls.
 fn form(buttons: Vec<Control>) -> (Harness<'static, GossiaApp>, usize) {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 1400.0))
@@ -55,8 +56,11 @@ fn form(buttons: Vec<Control>) -> (Harness<'static, GossiaApp>, usize) {
             .add_module("procs", PROCEDURES)
             .unwrap();
         let mut design = app.design_of("Default");
-        first = design.controls.len();
-        design.controls.extend(buttons);
+        let spec = app.calc().spec("Orders").unwrap().clone();
+        first = design.controls[0].children.len();
+        for b in buttons {
+            design.place_on_header(&spec, b);
+        }
         app.session
             .calc_mut()
             .forms_mut()
@@ -68,7 +72,7 @@ fn form(buttons: Vec<Control>) -> (Harness<'static, GossiaApp>, usize) {
 }
 
 fn the_gate(harness: &Harness<'_, GossiaApp>, at: usize) -> Gate {
-    gate(harness.state().calc(), "Orders", "Default", &[at], &[])
+    gate(harness.state().calc(), "Orders", "Default", &[0, at], &[])
 }
 
 fn disabled(harness: &Harness<'_, GossiaApp>, label: &str) -> bool {
@@ -159,90 +163,95 @@ fn in_a_workbook_that_is_not_trusted_nothing_runs() {
     assert!(g.why[0].contains("trusted"), "{:?}", g.why);
 }
 
-// ------------------------------------------------------- columns of a table
+// ------------------------------------------------- fields in the rows
 
-/// The Default form with the columns of the table of items given these
-/// designs; gives the address of the table's control.
-fn with_columns(columns: Vec<ColumnDesign>) -> (Harness<'static, GossiaApp>, Vec<usize>) {
+/// A field of the row of the items, by path, and how its design is changed.
+type RowField = (&'static str, fn(&mut Control));
+
+/// The Default form with these expressions on the fields of the row of its
+/// repeater section of items, by path; gives the section's place.
+fn with_row_fields(set: Vec<RowField>) -> (Harness<'static, GossiaApp>, usize) {
     let (mut harness, _) = form(Vec::new());
-    let at;
+    let section;
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
-        at = design
-            .walk()
-            .into_iter()
-            .find(|(_, c)| c.kind == ControlKind::Repeater && c.bound_path() == Some(p("items")))
-            .map(|(at, _)| at)
-            .expect("the Default form has a table of items");
-        design.get_mut(&at).unwrap().table_columns = columns;
+        section = design.repeater_sections()[0];
+        for (path, change) in set {
+            let field = design.controls[section]
+                .children
+                .iter_mut()
+                .find(|c| c.path.as_deref() == Some(path))
+                .expect("the row has the field");
+            change(field);
+        }
         app.session
             .calc_mut()
             .forms_mut()
             .set("Orders", "Default", design);
     }
     settle(&mut harness);
-    (harness, at)
+    (harness, section)
 }
 
-fn column(name: &str, set: impl FnOnce(&mut ColumnDesign)) -> ColumnDesign {
-    let mut c = ColumnDesign::named(name);
-    set(&mut c);
-    c
-}
-
-fn cell(harness: &Harness<'_, GossiaApp>, at: &[usize], name: &str, row: usize) -> Gate {
-    column_gate(
+/// The gate of the field `path` in row `row` of the section at `section`.
+fn cell(harness: &Harness<'_, GossiaApp>, section: usize, path: &str, row: usize) -> Gate {
+    let design = harness.state().design_of("Default");
+    let k = design.controls[section]
+        .children
+        .iter()
+        .position(|c| c.path.as_deref() == Some(path))
+        .unwrap();
+    gate(
         harness.state().calc(),
         "Orders",
         "Default",
-        at,
-        name,
-        Some(row),
+        &[section, k],
+        &[row],
     )
 }
 
-fn columns() -> Vec<ColumnDesign> {
+fn row_fields() -> Vec<RowField> {
     vec![
-        column("sku", |c| c.enabled_when = Some("parent.qty < 10".into())),
-        column("qty", |c| {
+        ("sku", |c| c.enabled_when = Some("parent.qty < 10".into())),
+        ("qty", |c| {
             c.fill_colour = Some("'red' if this > 5 else None".into());
         }),
-        column("price", |c| {
+        ("price", |c| {
             c.visible_when = Some("Orders.customer.vip".into())
         }),
         // The first item has no note: `this` is None.
-        column("note", |c| {
+        ("note", |c| {
             c.text_colour = Some("'blue' if this else None".into());
         }),
     ]
 }
 
 #[test]
-fn the_expressions_of_a_column_run_for_each_cell() {
-    let (mut harness, at) = with_columns(columns());
+fn the_expressions_of_a_field_run_for_each_row() {
+    let (mut harness, at) = with_row_fields(row_fields());
     let red = Some(Color32::from_rgb(255, 0, 0));
-    assert_eq!(cell(&harness, &at, "qty", 0).fill, None);
-    assert_eq!(cell(&harness, &at, "qty", 2).fill, red);
-    assert_eq!(cell(&harness, &at, "note", 0).text, None);
+    assert_eq!(cell(&harness, at, "qty", 0).fill, None);
+    assert_eq!(cell(&harness, at, "qty", 2).fill, red);
+    assert_eq!(cell(&harness, at, "note", 0).text, None);
     assert_eq!(
-        cell(&harness, &at, "note", 1).text,
+        cell(&harness, at, "note", 1).text,
         Some(Color32::from_rgb(0, 0, 255))
     );
     assert!(!disabled(&harness, "Orders.items[0].sku"));
     assert!(disabled(&harness, "Orders.items[2].sku"));
     // Each cell follows its row.
     set(&mut harness, "items[2].qty", Value::Int(3));
-    assert_eq!(cell(&harness, &at, "qty", 2).fill, None);
+    assert_eq!(cell(&harness, at, "qty", 2).fill, None);
     assert!(!disabled(&harness, "Orders.items[2].sku"));
     set(&mut harness, "items[0].qty", Value::Int(30));
-    assert_eq!(cell(&harness, &at, "qty", 0).fill, red);
+    assert_eq!(cell(&harness, at, "qty", 0).fill, red);
     assert!(disabled(&harness, "Orders.items[0].sku"));
 }
 
 #[test]
-fn visible_when_on_a_column_hides_the_whole_column() {
-    let (mut harness, _) = with_columns(columns());
+fn visible_when_on_a_field_in_a_row_follows_each_row() {
+    let (mut harness, _) = with_row_fields(row_fields());
     assert!(harness.query_by_label("Orders.items[0].price").is_some());
     set(&mut harness, "customer.vip", Value::Bool(false));
     for row in 0..3 {
@@ -255,14 +264,14 @@ fn visible_when_on_a_column_hides_the_whole_column() {
 }
 
 #[test]
-fn the_expressions_of_a_column_do_not_run_in_a_workbook_that_is_not_trusted() {
-    let (mut harness, at) = with_columns(columns());
+fn the_expressions_of_a_row_do_not_run_in_a_workbook_that_is_not_trusted() {
+    let (mut harness, at) = with_row_fields(row_fields());
     harness.state_mut().session.calc_mut().set_trusted(false);
     settle(&mut harness);
     assert!(disabled(&harness, "Orders.items[0].sku"));
-    let g = cell(&harness, &at, "sku", 0);
+    let g = cell(&harness, at, "sku", 0);
     assert!(g.why[0].contains("trusted"), "{:?}", g.why);
-    assert_eq!(cell(&harness, &at, "qty", 2).fill, None);
+    assert_eq!(cell(&harness, at, "qty", 2).fill, None);
 }
 
 // --------------------------------------------------- errors on the property page
@@ -307,18 +316,15 @@ fn the_property_page_shows_why_an_expression_failed() {
     assert!(!error_shown(&harness, "NameError"));
 }
 
-/// For a column, the first row that failed.
+/// For a field in the row of a repeater section, the first row that failed.
 #[test]
-fn the_property_page_of_a_column_names_the_row_that_failed() {
-    let columns = vec![column("note", |c| {
+fn the_property_page_of_a_field_in_a_row_names_the_row_that_failed() {
+    let (mut harness, _) = with_row_fields(vec![("note", |c| {
         c.text_colour = Some("'red' if this.startswith('g') else None".into());
-    })];
-    let (mut harness, _) = with_columns(columns);
+    })]);
     harness.get_by_label("Edit form").click();
     harness.run();
-    harness
-        .get_by_label("Column note of Repeater items")
-        .click();
+    harness.get_by_label("Field note").click();
     harness.run();
     // The first item has no note: None has no startswith.
     assert!(error_shown(&harness, "Row [0]: "));

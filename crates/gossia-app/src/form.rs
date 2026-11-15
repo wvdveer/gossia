@@ -394,12 +394,43 @@ impl GossiaApp {
 
     /// The form of the tab, filling the central panel: the strip with the
     /// switch to layout mode, then the controls of its design.
+    /// Turns a stored form made before 0.7.0 into canvases the first time
+    /// it is shown (DESIGN.md, Form canvases, "Converting existing
+    /// designs"), as a report made before the canvas is. In layout mode
+    /// Undo layout puts the old design back. Repeaters over an items
+    /// expression, which cannot be sections, are named in a notice.
+    fn turn_form_into_canvas(&mut self, form: &str) {
+        if form == REPORT_FORM {
+            return;
+        }
+        let Some(stored) = self.stored_design(form).filter(|d| !d.canvas) else {
+            return;
+        };
+        let Some(spec) = self.calc().spec(&self.sheet) else {
+            return;
+        };
+        let converted = gossia_core::form::canvas::to_canvas(&stored, spec);
+        if !converted.dropped.is_empty() {
+            self.notice = Some(tr!(
+                "The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}.",
+                form = form,
+                tab = self.sheet,
+                lists = converted.dropped.join(", ")
+            ));
+        }
+        self.edit_design(|design| {
+            *design = converted.design;
+            Some(None)
+        });
+    }
+
     pub(crate) fn form_view(&mut self, ui: &mut egui::Ui) {
         if let Some(notice) = &self.notice {
             let color = error_color(ui);
             ui.colored_label(color, notice);
         }
         let name = self.form_name();
+        self.turn_form_into_canvas(&name);
         self.form_bar(ui, &name);
         let design = self.design_of(&name);
         let layout = self.layout_selection(&name);
@@ -501,12 +532,17 @@ impl GossiaApp {
                 nav = painter.nav;
                 // A node with no control of its own: the nearest one above
                 // it that has, in the next frame (a stacked repeater may
-                // be stepping to its item first).
+                // be stepping to its item first, or a repeater section
+                // scrolling to its row).
                 if let Some(missed) = painter.scroll_to
                     && tries > 0
                 {
                     tried = true;
-                    let stepping = actions.iter().any(|a| matches!(a, FormAction::Step(..)));
+                    // Stepping to the item, or making its row the current
+                    // one and scrolling to it: look again for the node itself.
+                    let stepping = actions
+                        .iter()
+                        .any(|a| matches!(a, FormAction::Step(..) | FormAction::SetContext(..)));
                     next_scroll = if stepping {
                         Some(missed)
                     } else {
@@ -1697,7 +1733,20 @@ impl Painter<'_> {
         });
         let last = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0);
         let least = if layout { 48.0 } else { 0.0 };
-        let height = fixed.unwrap_or(last).max(least);
+        // A fixed section of a canvas form (not the row of a repeater, whose
+        // rows are all one height) grows to hold what is drawn on it: a
+        // control drawn taller than its box is not cut off or drawn over
+        // the next section.
+        let grows = fixed.is_some()
+            && slot.at.len() == 1
+            && self.contexts.is_some()
+            && self.row.is_none()
+            && !layout;
+        let height = match fixed {
+            Some(h) if grows => h.max(last),
+            _ => fixed.unwrap_or(last),
+        }
+        .max(least);
         let (region, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
         let size = (width, height);
         let mut bottom: f32 = 0.0;
@@ -1732,7 +1781,7 @@ impl Painter<'_> {
             self.sized = outer;
             bottom = bottom.max(child_ui.min_rect().bottom() - region.top());
         }
-        if fixed.is_none() && (bottom - last).abs() > 0.5 {
+        if (fixed.is_none() || grows) && (bottom - last).abs() > 0.5 {
             ui.data_mut(|d| d.insert_temp(key, bottom));
             ui.ctx().request_repaint();
         }
@@ -2301,10 +2350,16 @@ impl Painter<'_> {
                     ui.separator();
                 }
             },
-            // The add/delete button of a canvas form's repeater section is
-            // drawn by the section (step 18b); here it is only named.
+            // The add/delete button of a canvas form's repeater section: in
+            // a row, its delete configuration. It does nothing until step
+            // 18d, so it is drawn disabled.
             ControlKind::RowButton => {
-                ui.weak(c.kind.label());
+                let label = c.row_button_label(false);
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(label).wrap_mode(egui::TextWrapMode::Truncate),
+                )
+                .on_disabled_hover_text(tr!("Adding and deleting rows is not available yet."));
             }
             // Charts are drawn in reports only, for now.
             ControlKind::Chart => {

@@ -160,8 +160,8 @@ fn a_schema_tab_and_its_field_dialog() {
     check(&mut harness, "add_field_dialog", &mut results);
 }
 
-/// The Default form of Orders with its first control coloured by expressions
-/// and the second hidden by one.
+/// The Default form of Orders with the first control of its header coloured
+/// by expressions and the second hidden by one.
 #[test]
 fn a_form_with_expressions_on_its_controls() {
     if !enabled() {
@@ -172,10 +172,10 @@ fn a_form_with_expressions_on_its_controls() {
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
-        design.controls[0].fill_colour =
-            Some("'#fff2cc' if Orders.customer.vip else None".to_owned());
-        design.controls[0].text_colour = Some("'darkred'".to_owned());
-        design.controls[1].visible_when = Some("not Orders.customer.vip".to_owned());
+        let header = &mut design.controls[0].children;
+        header[0].fill_colour = Some("'#fff2cc' if Orders.customer.vip else None".to_owned());
+        header[0].text_colour = Some("'darkred'".to_owned());
+        header[1].visible_when = Some("not Orders.customer.vip".to_owned());
         app.session
             .calc_mut()
             .forms_mut()
@@ -235,7 +235,11 @@ fn a_form_with_its_look() {
         after.text = Some("after a vertical line".into());
         after.fill_colour = Some("#fff2cc".into());
         group.children = vec![share, price, weight, note, line, after];
-        design.controls.insert(0, group);
+        // Three columns of fields with labels need a wider form.
+        design.width = Some(1000);
+        group.width = Some(984);
+        let spec = app.calc().spec("Orders").unwrap().clone();
+        design.place_on_header(&spec, group);
         app.session
             .calc_mut()
             .forms_mut()
@@ -246,8 +250,11 @@ fn a_form_with_its_look() {
     check(&mut harness, "form_look", &mut results);
 }
 
+/// The fields of the row of the repeater section of items with expressions:
+/// colours that follow each row, a field disabled in some rows, and one
+/// hidden in all.
 #[test]
-fn a_table_with_expressions_on_its_columns() {
+fn a_repeater_row_with_expressions_on_its_fields() {
     if !enabled() {
         return;
     }
@@ -256,23 +263,21 @@ fn a_table_with_expressions_on_its_columns() {
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
-        let at = design
-            .walk()
-            .into_iter()
-            .find(|(_, c)| c.kind == gossia_core::form::ControlKind::Repeater)
-            .map(|(at, _)| at)
-            .unwrap();
-        let column = |name: &str| gossia_core::form::ColumnDesign::named(name);
-        let mut qty = column("qty");
-        qty.fill_colour = Some("'#ffd6d6' if this > 5 else None".to_owned());
-        qty.text_colour = Some("'darkred' if this > 5 else None".to_owned());
-        let mut sku = column("sku");
-        sku.enabled_when = Some("parent.qty < 10".to_owned());
-        let mut note = column("note");
-        note.visible_when = Some("False".to_owned());
-        let mut total = column("total");
-        total.fill_colour = Some("'lightgreen' if this > 20 else None".to_owned());
-        design.get_mut(&at).unwrap().table_columns = vec![sku, qty, note, total];
+        let section = design.repeater_sections()[0];
+        for field in &mut design.controls[section].children {
+            match field.path.as_deref() {
+                Some("qty") => {
+                    field.fill_colour = Some("'#ffd6d6' if this > 5 else None".to_owned());
+                    field.text_colour = Some("'darkred' if this > 5 else None".to_owned());
+                }
+                Some("sku") => field.enabled_when = Some("parent.qty < 10".to_owned()),
+                Some("note") => field.visible_when = Some("False".to_owned()),
+                Some("total") => {
+                    field.fill_colour = Some("'lightgreen' if this > 20 else None".to_owned());
+                }
+                _ => {}
+            }
+        }
         app.session
             .calc_mut()
             .forms_mut()
@@ -280,7 +285,7 @@ fn a_table_with_expressions_on_its_columns() {
     }
     show_as(&mut harness, "Default");
     settle(&mut harness);
-    check(&mut harness, "table_column_expressions", &mut results);
+    check(&mut harness, "row_expressions", &mut results);
 }
 
 #[test]
@@ -326,7 +331,7 @@ fn layout_mode_and_a_custom_form() {
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.state_mut().edit_design(|d| {
-        d.get_mut(&[0])?.columns = Some(2);
+        d.get_mut(&[0, 0])?.columns = Some(2);
         Some(None)
     });
     harness.run();

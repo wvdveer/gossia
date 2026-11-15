@@ -2294,3 +2294,7 @@
 # Form canvases (step 18b-1, 2026-11-15)
 "No items" = "項目がありません"
 "{path} is past the end of its list" = "{path} はリストの末尾を越えています"
+
+# Form canvases (step 18b-2, 2026-11-15)
+"The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}." = "タブ {tab} のフォーム {form} はキャンバス上に描画されるようになりました。式から表示されるリストは除外されました: {lists}。"
+"Adding and deleting rows is not available yet." = "行の追加と削除はまだ利用できません。"

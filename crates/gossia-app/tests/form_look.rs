@@ -22,7 +22,8 @@ fn settle(harness: &mut Harness<'_, GossiaApp>) {
     harness.run();
 }
 
-/// The Default form of Orders with these controls at its end.
+/// The Default form of Orders with these controls at the bottom of its
+/// header.
 fn form(controls: Vec<Control>) -> Harness<'static, GossiaApp> {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 1800.0))
@@ -31,7 +32,10 @@ fn form(controls: Vec<Control>) -> Harness<'static, GossiaApp> {
     {
         let app = harness.state_mut();
         let mut design = app.design_of("Default");
-        design.controls.extend(controls);
+        let spec = app.calc().spec("Orders").unwrap().clone();
+        for c in controls {
+            design.place_on_header(&spec, c);
+        }
         app.session
             .calc_mut()
             .forms_mut()

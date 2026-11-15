@@ -619,6 +619,30 @@ impl FormDesign {
         }
     }
 
+    /// Puts `control` on the header of a canvas form, 8 points from the left
+    /// and 8 points under its lowest control, making the header taller to
+    /// hold it, and gives its address. Heights not set are estimated as
+    /// converting does (`spec` gives the kinds of fields).
+    pub fn place_on_header(&mut self, spec: &TypeSpec, mut control: Control) -> Option<Address> {
+        if !self.canvas {
+            return None;
+        }
+        let header = self.controls.first_mut()?;
+        let height = |c: &Control| estimate_height(spec, &Path::root(), c);
+        let y = header
+            .children
+            .iter()
+            .map(|c| c.y.unwrap_or(0) + height(c) + 8)
+            .max()
+            .unwrap_or(8);
+        control.x.get_or_insert(8);
+        control.y = Some(y);
+        let bottom = y + height(&control) + 8;
+        header.height = Some(header.height.unwrap_or(0).max(bottom));
+        header.children.push(control);
+        Some(vec![0, header.children.len() - 1])
+    }
+
     /// Why the control at `address` is wrong on a canvas form, or on a form
     /// that is not one, for what only a canvas has. Paths that use a context
     /// must name one the form has.

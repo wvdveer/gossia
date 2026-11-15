@@ -118,6 +118,30 @@ impl Painter<'_> {
             Some(Value::Int(i)) => Some(*i as usize),
             _ => None,
         };
+        // Going to a node inside a row (from the data tree, or the Issues
+        // pane): that row becomes the current one and is scrolled to, since
+        // a row off the screen is not drawn to scroll to itself.
+        if let Some(wanted) = &self.scroll_to
+            && wanted.len() > array.len()
+            && wanted.segments().starts_with(array.segments())
+            && let gossia_core::Segment::Index(i) = wanted.segments()[array.len()]
+            && i < len
+        {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.top() + height * i as f32),
+                egui::vec2(width, height),
+            );
+            if !clip.contains_rect(row) {
+                ui.scroll_to_rect(row, Some(Align::Center));
+            }
+            // Also when it is current already: the action keeps the node
+            // looked for until its row is drawn (a choice that changes
+            // nothing does nothing).
+            self.actions.push(FormAction::SetContext(
+                row_name.to_owned(),
+                Value::Int(i as i64),
+            ));
+        }
         let pressed = ui.input(|i| {
             i.pointer
                 .press_origin()

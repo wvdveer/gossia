@@ -75,6 +75,7 @@ fn form() -> Harness<'static, GossiaApp> {
             .add_module("procs", PROCEDURES)
             .unwrap();
         let mut design = app.design_of("Default");
+        let spec = app.calc().spec("Orders").unwrap().clone();
         for (label, procedure) in [
             ("Mark shipped", "mark_shipped"),
             ("Shout city", "shout_city"),
@@ -82,9 +83,9 @@ fn form() -> Harness<'static, GossiaApp> {
             ("Bad write", "bad_write"),
             ("Nothing", "missing"),
         ] {
-            design.controls.push(button(label, procedure));
+            design.place_on_header(&spec, button(label, procedure));
         }
-        design.controls.push(Control::new(ControlKind::Button));
+        design.place_on_header(&spec, Control::new(ControlKind::Button));
         app.session
             .calc_mut()
             .forms_mut()

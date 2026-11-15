@@ -2294,3 +2294,7 @@
 # Form canvases (step 18b-1, 2026-11-15)
 "No items" = "Sin elementos"
 "{path} is past the end of its list" = "{path} está más allá del final de su lista"
+
+# Form canvases (step 18b-2, 2026-11-15)
+"The form {form} of tab {tab} is now drawn on canvases; its lists shown from an expression were left out: {lists}." = "El formulario {form} de la pestaña {tab} ahora se dibuja sobre lienzos; se han quitado sus listas mostradas a partir de una expresión: {lists}."
+"Adding and deleting rows is not available yet." = "Añadir y eliminar filas aún no está disponible."
