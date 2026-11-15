@@ -197,8 +197,8 @@ pub struct PythonEngine {
     evaluations: Cell<usize>,
     watchdog: Rc<Watchdog>,
     time_limit: Cell<Option<Duration>>,
-    // Last, so that it is dropped after everything that lives in it.
-    interp: Interpreter,
+    /// Taken by `drop`, which finalizes it.
+    interp: Option<Interpreter>,
 }
 
 /// RustPython frees objects by counting references, and the objects of an
@@ -210,14 +210,19 @@ pub struct PythonEngine {
 impl Drop for PythonEngine {
     fn drop(&mut self) {
         self.code.borrow_mut().clear();
-        self.interp.enter(|vm| {
+        let Some(interp) = self.interp.take() else {
+            return;
+        };
+        interp.enter(|vm| {
             self.shared.release();
             self.globals.clear();
             self.prelude.clear();
-            vm.state.gc.collect_force(2);
-            vm.finalize_modules();
-            vm.state.gc.collect_force(2);
+            // Its own, empty, dicts in their place: the interpreter goes
+            // before the fields do.
+            drop(std::mem::replace(&mut self.globals, vm.ctx.new_dict()));
+            drop(std::mem::replace(&mut self.prelude, vm.ctx.new_dict()));
         });
+        interp.finalize(None);
     }
 }
 
@@ -279,8 +284,14 @@ impl PythonEngine {
             evaluations: Cell::new(0),
             watchdog,
             time_limit: Cell::new(None),
-            interp,
+            interp: Some(interp),
         }
+    }
+
+    fn interp(&self) -> &Interpreter {
+        self.interp
+            .as_ref()
+            .expect("an engine has its interpreter until dropped")
     }
 
     /// How many formulas have been run.
@@ -293,7 +304,7 @@ impl PythonEngine {
     /// tests of what is reachable from inside.
     #[cfg(test)]
     fn probe(&self, sources: &[&str]) -> Vec<String> {
-        self.interp.enter(|vm| {
+        self.interp().enter(|vm| {
             sources
                 .iter()
                 .map(|source| {
@@ -324,7 +335,7 @@ impl PythonEngine {
     /// Whether `import name` works for a formula's interpreter.
     #[cfg(test)]
     fn can_import(&self, name: &'static str) -> bool {
-        self.interp.enter(|vm| vm.import(name, 0).is_ok())
+        self.interp().enter(|vm| vm.import(name, 0).is_ok())
     }
 
     /// How long one formula may run before it is stopped with `#TIMEOUT!`.
@@ -336,7 +347,7 @@ impl PythonEngine {
 
     /// Changes the longest sequence `range` will make.
     pub fn set_max_range(&self, max_range: i64) {
-        self.interp.enter(|vm| {
+        self.interp().enter(|vm| {
             self.prelude
                 .set_item("_max_range", vm.ctx.new_int(max_range).into(), vm)
                 .expect("a dict takes a new item");
@@ -668,7 +679,7 @@ impl Engine for PythonEngine {
     }
 
     fn call(&self, call: &Call, ctx: Rc<dyn Context>) -> Result<Vec<Write>, Failure> {
-        self.interp.enter(|vm| {
+        self.interp().enter(|vm| {
             self.sync_sheets(vm, &*ctx);
             self.shared.begin(ctx.clone());
             *self.shared.writes.borrow_mut() = Some(Vec::new());
@@ -694,7 +705,7 @@ impl Engine for PythonEngine {
         limit: Option<Duration>,
     ) -> Result<String, Failure> {
         let text = text.trim();
-        self.interp.enter(|vm| {
+        self.interp().enter(|vm| {
             self.sync_sheets(vm, &*ctx);
             self.shared.begin(ctx.clone());
             self.shared.side_effects.set(true);
@@ -739,7 +750,7 @@ impl Engine for PythonEngine {
     fn eval_answer(&self, formula: &str, ctx: Rc<dyn Context>) -> Result<Answer, Failure> {
         self.evaluations.set(self.evaluations.get() + 1);
         let text = formula.trim();
-        self.interp.enter(|vm| {
+        self.interp().enter(|vm| {
             self.sync_sheets(vm, &*ctx);
             self.shared.begin(ctx.clone());
             if let Some(limit) = self.time_limit.get() {
@@ -932,3 +943,7 @@ mod tests_disconnect;
 #[cfg(test)]
 #[path = "tests_pyplot.rs"]
 mod tests_pyplot;
+
+#[cfg(test)]
+#[path = "tests_gc.rs"]
+mod tests_gc;

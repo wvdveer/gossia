@@ -40,7 +40,7 @@ impl PythonEngine {
     /// workbook always knows what became of the generation it has.
     pub(super) fn load_modules(&self, specs: &[ModuleSpec], tabs: &[String]) -> Vec<ModuleReport> {
         self.tabs.replace(tabs.to_vec());
-        self.interp.enter(|vm| self.load_modules_in(vm, specs))
+        self.interp().enter(|vm| self.load_modules_in(vm, specs))
     }
 
     fn load_modules_in(&self, vm: &VirtualMachine, specs: &[ModuleSpec]) -> Vec<ModuleReport> {

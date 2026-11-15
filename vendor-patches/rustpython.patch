@@ -91,3 +91,40 @@ index 5eb8062..1d48313 100644
 +        unicodedata::module_def(ctx),
 +    ]
 +}
+diff --git a/crates/vm/src/builtins/descriptor.rs b/crates/vm/src/builtins/descriptor.rs
+index 7e40482..20119c8 100644
+--- a/crates/vm/src/builtins/descriptor.rs
++++ b/crates/vm/src/builtins/descriptor.rs
+@@ -27,10 +27,12 @@ pub struct PyDescriptor {
+     pub qualname: PyRwLock<Option<String>>,
+ }
+ 
+-#[derive(Debug)]
++#[derive(Debug, Traverse)]
+ pub struct PyDescriptorOwned {
+     pub typ: PyRef<PyType>,
++    #[pytraverse(skip)]
+     pub name: &'static PyStrInterned,
++    #[pytraverse(skip)]
+     pub qualname: PyRwLock<Option<String>>,
+ }
+ 
+@@ -735,13 +737,17 @@ impl PyMemberSpec {
+ }
+ 
+ // = PyMemberDescrObject
+-#[pyclass(name = "member_descriptor", module = false)]
++// Traversed, so that the collector sees the class it holds: a class with
++// `__slots__` is otherwise never freed, nor its module (Gossia).
++#[pyclass(name = "member_descriptor", module = false, traverse)]
+ #[derive(Debug)]
+ pub struct PyMemberDescriptor {
+     #[pymember(name = "__objclass__", path = "typ")]
+     #[pymember(name = "__name__", path = "name")]
+     pub common: PyDescriptorOwned,
++    #[pytraverse(skip)]
+     pub member: PyMemberDef,
++    #[pytraverse(skip)]
+     pub access: MemberAccess,
+ }
+ 

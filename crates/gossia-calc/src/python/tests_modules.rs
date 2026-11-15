@@ -308,7 +308,7 @@ fn module_names_are_checked_when_they_are_given() {
 #[test]
 fn every_builtin_of_the_interpreter_is_a_reserved_name() {
     let engine = PythonEngine::new();
-    let found: Vec<String> = engine.interp.enter(|vm| {
+    let found: Vec<String> = engine.interp().enter(|vm| {
         vm.builtins
             .dict()
             .items_vec()
