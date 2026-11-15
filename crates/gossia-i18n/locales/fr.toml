@@ -2290,3 +2290,7 @@
 "a repeater" = "un répéteur"
 "Item" = "Élément"
 "Add/delete button" = "Bouton ajouter/supprimer"
+
+# Form canvases (step 18b-1, 2026-11-15)
+"No items" = "Aucun élément"
+"{path} is past the end of its list" = "{path} est au-delà de la fin de sa liste"

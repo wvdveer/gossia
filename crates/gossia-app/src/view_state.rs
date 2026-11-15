@@ -21,7 +21,9 @@
 //! }
 //! ```
 //!
-//! `show` is `"raw"` or a form, and is left out for the data tree. Rows are
+//! `show` is `"raw"` or a form, and is left out for the data tree.
+//! `contexts` holds the values chosen for the contexts of canvas forms, by
+//! form and name (`{"Default": {"sel": 3, "row": 1}}`). Rows are
 //! saved by position and become the items at those positions again when the
 //! file is read. What a newer version put in the object is kept. State that no
 //! longer fits the tab (a form or an array that is gone) is dropped quietly,
@@ -45,7 +47,7 @@ use crate::table::{Condition, Filter, TableView, item_type};
 
 /// The keys of the view object this version writes. Anything else in it was
 /// written by a newer version and is kept.
-const KNOWN: [&str; 4] = ["show", "tables", "table", "hidden"];
+const KNOWN: [&str; 5] = ["show", "tables", "table", "hidden", "contexts"];
 
 fn condition_to_json(condition: &Condition) -> Json {
     let (is, operands): (&str, Vec<&String>) = match condition {
@@ -175,6 +177,22 @@ impl GossiaApp {
             if !hidden.is_empty() {
                 object.insert("hidden".to_owned(), json!(hidden));
             }
+            // The contexts chosen on its canvas forms, by form.
+            let contexts: Map<String, Json> = self
+                .calc()
+                .chosen_contexts_of_tab(tab)
+                .into_iter()
+                .map(|(form, values)| {
+                    let values: Map<String, Json> = values
+                        .iter()
+                        .map(|(name, v)| (name.clone(), gossia_calc::value_to_json(v)))
+                        .collect();
+                    (form, Json::Object(values))
+                })
+                .collect();
+            if !contexts.is_empty() {
+                object.insert("contexts".to_owned(), Json::Object(contexts));
+            }
             if !object.is_empty() {
                 out.insert(tab.to_owned(), Json::Object(object));
             }
@@ -271,6 +289,24 @@ impl GossiaApp {
                 self.tables.active.insert(tab.clone(), active);
             }
             self.restore_hidden(tab, &strings(state.get("hidden")));
+            for (form, values) in state
+                .get("contexts")
+                .and_then(Json::as_object)
+                .into_iter()
+                .flatten()
+            {
+                let values: gossia_calc::Contexts = values
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(name, v)| {
+                        Some((name.clone(), gossia_calc::value_from_json(v).ok()?))
+                    })
+                    .collect();
+                self.session
+                    .calc_mut()
+                    .set_chosen_contexts(tab, form, values);
+            }
         }
         self.tables.rev += 1;
         self.expansion_rev += 1;

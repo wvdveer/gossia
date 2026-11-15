@@ -69,16 +69,56 @@ class PropagatedError(Exception):
         self.__cause__ = error.exception
 
 
+class FormContext:
+    """`ctx.context`: the contexts of a canvas form by name, its context
+    fields and the row of each repeater. Setting one chooses its value, once
+    the procedure has ended without an error."""
+
+    def __init__(self, values):
+        object.__setattr__(self, "_values", dict(values))
+        object.__setattr__(self, "_changed", {})
+
+    def _known(self, name):
+        if name not in self._values:
+            raise AttributeError("the form has no context called " + repr(name))
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        self._known(name)
+        return self._values[name]
+
+    def __setattr__(self, name, value):
+        self._known(name)
+        self._values[name] = value
+        self._changed[name] = value
+
+    def __getitem__(self, name):
+        self._known(name)
+        return self._values[name]
+
+    def __setitem__(self, name, value):
+        self.__setattr__(name, value)
+
+    def __contains__(self, name):
+        return name in self._values
+
+    def __repr__(self):
+        return "context(" + ", ".join(k + "=" + repr(v) for k, v in self._values.items()) + ")"
+
+
 class ProcedureContext:
     """The `ctx` of a procedure: which form and which button (or, for a write
     procedure, which field) were used, the index of the item of the repeater
-    the control is in (None outside one; the innermost, when they nest), and
-    the tabs of the workbook by name, which it may read and write."""
+    the control is in (None outside one; the innermost, when they nest), the
+    contexts of a canvas form (`ctx.context`), and the tabs of the workbook
+    by name, which it may read and write."""
 
-    def __init__(self, form, button, tabs, index=None):
+    def __init__(self, form, button, tabs, index=None, context=None):
         self.form = form
         self.button = button
         self.index = index
+        self.context = FormContext(context or {})
         self._tabs = tabs
 
     def tab(self, name):

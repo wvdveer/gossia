@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
 use egui_extras::{Column as TableColumn, TableBuilder};
-use gossia_calc::{ExprKind, ExprState, REPORT_FORM, entry};
+use gossia_calc::{Contexts, ExprKind, ExprState, REPORT_FORM, entry};
 use gossia_core::form::{
     Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
     DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, TrackSize, flow_rows,
@@ -126,12 +126,17 @@ pub(crate) enum FormAction {
     Step(Path, usize),
     AddEntry(Path, String),
     DeleteEntry(Path, String),
-    /// A click on a button: its label, the procedure it runs, and inside
-    /// the items of repeaters, the item of each (`ctx.index`).
-    Button(String, String, Vec<usize>),
+    /// A click on a button: its label, the procedure it runs, inside the
+    /// items of repeaters the item of each (`ctx.index`), and on a canvas
+    /// form its contexts (`ctx.context`).
+    Button(String, String, Vec<usize>, Option<Contexts>),
     /// Text typed into a field that shows an expression: the label of the
-    /// field, its write procedure, the text, and the items it is in.
-    Write(String, String, String, Vec<usize>),
+    /// field, its write procedure, the text, the items it is in, and the
+    /// contexts.
+    Write(String, String, String, Vec<usize>, Option<Contexts>),
+    /// Choose a value for a context of the canvas form shown: a context
+    /// field, or a repeater's current row.
+    SetContext(String, Value),
     /// A command on a control, in layout mode.
     Control(ControlAction),
     /// A command of the tabular view on a table of the form: a filter, hiding
@@ -243,13 +248,13 @@ impl GossiaApp {
     /// date, and its outcome is shown by [`GossiaApp::collect_procedures`].
     /// Returns why it did not start.
     pub fn click_button(&mut self, procedure: &str, label: &str) -> Result<(), String> {
-        self.start_procedure(procedure, label, None, Vec::new())
+        self.start_procedure(procedure, label, None, Vec::new(), None)
     }
 
     /// Passes the text typed into a field that shows an expression to its
     /// write procedure, `name(form, ctx, value)`, as a click runs a button's.
     pub fn write_field(&mut self, procedure: &str, label: &str, text: &str) -> Result<(), String> {
-        self.start_procedure(procedure, label, Some(text.to_owned()), Vec::new())
+        self.start_procedure(procedure, label, Some(text.to_owned()), Vec::new(), None)
     }
 
     fn start_procedure(
@@ -258,6 +263,7 @@ impl GossiaApp {
         label: &str,
         value: Option<String>,
         rows: Vec<usize>,
+        contexts: Option<Contexts>,
     ) -> Result<(), String> {
         if let Some(call) = self.session.running_procedure() {
             let message = format!("{} is still running", call.button);
@@ -267,13 +273,21 @@ impl GossiaApp {
         if !self.commit_editing() || !self.enter_drafts() {
             return Err(self.notice.clone().unwrap_or_default());
         }
+        // Without the contexts the control was drawn with (a command of the
+        // control server), the form's own.
+        let form = self.form_name();
+        let contexts = contexts.unwrap_or_else(|| {
+            let design = self.design_of(&form);
+            self.calc().form_contexts(&self.sheet, &form, &design)
+        });
         let call = gossia_calc::Call {
             procedure: procedure.to_owned(),
             sheet: self.sheet.clone(),
-            form: self.form_name(),
+            form,
             button: label.to_owned(),
             value,
             rows,
+            contexts: contexts.into_iter().collect(),
             time_limit: None,
         };
         match self.session.run_procedure(call) {
@@ -436,6 +450,10 @@ impl GossiaApp {
                     seen: Vec::new(),
                     item: None,
                     rows: Vec::new(),
+                    contexts: design
+                        .canvas
+                        .then(|| calc.form_contexts(&self.sheet, &name, &design)),
+                    row: None,
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -459,7 +477,11 @@ impl GossiaApp {
                                 "This form has no controls. Add some from the palette above."
                             ));
                         }
-                        painter.controls(ui, &design.controls, &[]);
+                        if design.canvas {
+                            painter.canvas(ui, &design);
+                        } else {
+                            painter.controls(ui, &design.controls, &[]);
+                        }
                         if painter.layout.is_some() {
                             let area = ui.clip_rect();
                             if let Some(action) = drop_target(ui, &painter.drops, area) {
@@ -526,11 +548,17 @@ impl GossiaApp {
                     self.set_node(&path, value);
                 }
             }
-            FormAction::Button(label, procedure, rows) => {
-                let _ = self.start_procedure(&procedure, &label, None, rows);
+            FormAction::Button(label, procedure, rows, contexts) => {
+                let _ = self.start_procedure(&procedure, &label, None, rows, contexts);
             }
-            FormAction::Write(label, procedure, text, rows) => {
-                let _ = self.start_procedure(&procedure, &label, Some(text), rows);
+            FormAction::Write(label, procedure, text, rows, contexts) => {
+                let _ = self.start_procedure(&procedure, &label, Some(text), rows, contexts);
+            }
+            FormAction::SetContext(name, value) => {
+                let form = self.form_name();
+                self.session
+                    .calc_mut()
+                    .set_form_context(&sheet, &form, &name, value);
             }
             FormAction::Select(path) if self.picking() => self.finish_pick(&path),
             FormAction::Select(path) => self.selection = Some(path),
@@ -818,6 +846,12 @@ struct Painter<'a> {
     /// In the design of the items of repeaters: the item drawn of each,
     /// outermost first, for the results of the expressions there.
     rows: Vec<usize>,
+    /// On a canvas form: the contexts its paths are bound with, a
+    /// repeater's row name being the row drawn inside its rows.
+    contexts: Option<Contexts>,
+    /// In a row of a repeater section: its row name and the row, which a
+    /// click on a button there makes the current row first.
+    row: Option<(String, usize)>,
 }
 
 /// The Grid group a control is drawn in: where its rows and columns are.
@@ -1156,6 +1190,11 @@ impl Painter<'_> {
     }
 
     fn control_gated(&mut self, ui: &mut egui::Ui, c: &Control, slot: &Slot) {
+        // A hidden control (a context field that only chooses) is drawn in
+        // layout mode only.
+        if c.hidden && self.layout.is_none() {
+            return;
+        }
         if self.layout.is_some() {
             // Only the fixed colours, which run nothing.
             let gate =
@@ -2314,16 +2353,23 @@ impl Painter<'_> {
                     if response.on_hover_text(hint).clicked()
                         && let Some(procedure) = &c.procedure
                     {
+                        // A click in a row makes it the current row first.
+                        if let Some((name, i)) = &self.row {
+                            self.actions
+                                .push(FormAction::SetContext(name.clone(), Value::Int(*i as i64)));
+                        }
                         self.actions.push(FormAction::Button(
                             label.clone(),
                             procedure.clone(),
                             self.rows.clone(),
+                            self.contexts.clone(),
                         ));
                     }
                 } else {
                     response.on_disabled_hover_text(hint);
                 }
             }
+            ControlKind::Field if c.context.is_some() => self.context_field(ui, c),
             ControlKind::Field if c.shows_value() => self.value_field(ui, c),
             ControlKind::Repeater if c.lists_items() => self.items_repeater(ui, c),
             ControlKind::Field | ControlKind::Repeater => self.bound(ui, c),
@@ -2335,6 +2381,12 @@ impl Painter<'_> {
     fn bound(&mut self, ui: &mut egui::Ui, c: &Control) {
         if let Some(problem) = self.problem_of(c) {
             self.placeholder(ui, c, &problem);
+            return;
+        }
+        // On a canvas form: a path its contexts do not bind, or past the end
+        // of a list.
+        if let Some(why) = self.unbound(c) {
+            self.unbound_field(ui, c, &why);
             return;
         }
         let Some(path) = self.path_of(c) else {
@@ -3996,6 +4048,7 @@ impl Painter<'_> {
                         procedure.to_owned(),
                         text.clone(),
                         b.rows,
+                        self.contexts.clone(),
                     ));
                 }
             } else if draft.is_some() {
@@ -4365,12 +4418,22 @@ impl Painter<'_> {
     /// repeater's items, its path in the item drawn (the item itself for a
     /// control that is not bound).
     fn path_of(&self, c: &Control) -> Option<Path> {
+        let own = self.own_path(c);
         match &self.item {
-            None => c.bound_path(),
-            Some(item) => match c.bound_path() {
+            None => own,
+            Some(item) => match own {
                 Some(rest) => Some(item.join(&rest)),
+                None if c.path.is_some() => None,
                 None => Some(item.clone()),
             },
+        }
+    }
+
+    /// A control's own path, bound with the contexts on a canvas form.
+    fn own_path(&self, c: &Control) -> Option<Path> {
+        match (&self.contexts, c.path.as_deref()) {
+            (Some(contexts), Some(text)) => gossia_calc::bind_path(text, contexts),
+            _ => c.bound_path(),
         }
     }
 
@@ -4866,6 +4929,9 @@ fn own_font(typeface: Option<Typeface>, size: Option<u32>, inherited: Font) -> O
 
 /// A size dragged to `points`, snapped to the grid unless `snap` is off, and
 /// kept within `range`.
+#[path = "form_canvas.rs"]
+mod canvas;
+
 pub(crate) fn snapped(points: f32, snap: bool, range: &std::ops::RangeInclusive<u32>) -> u32 {
     let points = if snap {
         (points / SNAP).round() * SNAP

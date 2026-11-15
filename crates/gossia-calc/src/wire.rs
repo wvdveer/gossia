@@ -44,7 +44,7 @@ pub enum FromWorker {
     /// to run. Sent before it runs, so it reaches the page even while the
     /// worker is busy; the page uses it to see that a formula is stuck.
     Started(Loc),
-    Done(Done),
+    Done(Box<Done>),
     /// The data source definitions, changed by the job that just ran
     /// (`sources.define` in the Immediate window), so that the page keeps
     /// them. Sent before that job's `Done`.
@@ -226,7 +226,7 @@ impl Worker {
         } else {
             engine.with_fetches(|f| f.end_pass());
         }
-        send(FromWorker::Done(done));
+        send(FromWorker::Done(Box::new(done)));
     }
 }
 

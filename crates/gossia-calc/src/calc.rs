@@ -141,13 +141,15 @@ pub use reports::TabKind;
 #[path = "report_params.rs"]
 mod report_params;
 pub use report_params::{ParamState, today};
-pub(crate) use report_params::{mentions_params, param_key};
+pub(crate) use report_params::{mentions_name, mentions_params, param_key};
+
+#[path = "form_contexts.rs"]
+mod form_contexts;
+pub use form_contexts::{Contexts, bind_path, context_object, contexts_of};
 
 #[path = "report_cache.rs"]
 mod report_cache;
-pub use report_cache::{ReportCache, design_digest};
-#[cfg(test)]
-pub(crate) use report_cache::{value_from_json, value_to_json};
+pub use report_cache::{ReportCache, design_digest, value_from_json, value_to_json};
 
 #[path = "disconnect.rs"]
 mod disconnect;
@@ -314,6 +316,11 @@ pub struct Calc {
     params: HashMap<String, indexmap::IndexMap<String, Value>>,
     /// Counts the changes to `params`.
     params_version: u64,
+    /// The values chosen for the contexts of canvas forms, by tab and form
+    /// (DESIGN.md, Later versions, "Form canvases, 0.7.0").
+    contexts: HashMap<(String, String), indexmap::IndexMap<String, Value>>,
+    /// Counts the changes to `contexts`.
+    contexts_version: u64,
     /// The results cache of each report, by report (DESIGN.md, Reports,
     /// "Report storage and the results cache").
     caches: HashMap<String, report_cache::ReportCache>,
@@ -351,6 +358,8 @@ impl Calc {
             exprs: control_exprs::ControlExprs::default(),
             params: HashMap::new(),
             params_version: 0,
+            contexts: HashMap::new(),
+            contexts_version: 0,
             caches: HashMap::new(),
         }
     }

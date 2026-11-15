@@ -161,6 +161,7 @@ fn a_procedure_run_through_the_wire_makes_its_writes() {
         button: "Go".to_owned(),
         value: None,
         rows: Vec::new(),
+        contexts: vec![("sel".to_owned(), Value::Int(3))],
         time_limit: None,
     };
     let job = Job::Call {

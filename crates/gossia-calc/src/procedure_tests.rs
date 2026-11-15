@@ -92,6 +92,7 @@ fn call(procedure: &str) -> Call {
         button: "Go".to_owned(),
         value: None,
         rows: Vec::new(),
+        contexts: Vec::new(),
         time_limit: None,
     }
 }
@@ -410,4 +411,40 @@ fn ctx_index_is_the_item_the_control_is_in() {
     let done = run(&mut s, "where");
     assert_eq!(done.outcome, Ok(()));
     assert_eq!(get(&s, "S", "note"), Some(Value::Str("None".into())));
+}
+
+/// `ctx.context` reads the form's contexts, and what a procedure sets in it
+/// is chosen once its writes are applied.
+#[test]
+fn ctx_context_reads_and_chooses_the_forms_contexts() {
+    let mut s = session(
+        "def pick(form, ctx):\n    form.note = repr(ctx.context.sel)\n    ctx.context.sel = ctx.context.sel + 4\n",
+    );
+    let mut c = call("pick");
+    c.contexts = vec![("sel".to_owned(), Value::Int(1))];
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG));
+    assert_eq!(s.take_finished()[0].outcome, Ok(()));
+    assert_eq!(get(&s, "S", "note"), Some(Value::Str("1".into())));
+    assert_eq!(
+        s.calc()
+            .chosen_contexts("S", "Default")
+            .and_then(|c| c.get("sel")),
+        Some(&Value::Int(5))
+    );
+}
+
+/// Setting a context the form does not have fails the procedure, and
+/// nothing it wrote is applied.
+#[test]
+fn an_unknown_context_fails_the_procedure() {
+    let mut s = session("def pick(form, ctx):\n    form.note = 'x'\n    ctx.context.nope = 1\n");
+    let mut c = call("pick");
+    c.contexts = vec![("sel".to_owned(), Value::Int(1))];
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG));
+    let outcome = s.take_finished().remove(0).outcome;
+    assert!(outcome.unwrap_err().contains("nope"));
+    assert_ne!(get(&s, "S", "note"), Some(Value::Str("x".into())));
+    assert!(s.calc().chosen_contexts("S", "Default").is_none());
 }

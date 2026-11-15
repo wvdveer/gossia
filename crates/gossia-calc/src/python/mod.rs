@@ -545,6 +545,12 @@ impl PythonEngine {
             let proxy = node::lazy_proxy(&self.shared, vm, &tab, Path::root());
             let _ = tabs.set_item(name.as_str(), proxy, vm);
         }
+        let contexts = vm.ctx.new_dict();
+        for (name, value) in &call.contexts {
+            let value = convert::value_to_py(&self.shared, vm, value)
+                .map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
+            let _ = contexts.set_item(name.as_str(), value, vm);
+        }
         let context = self
             .prelude
             .get_item("ProcedureContext", vm)
@@ -558,18 +564,48 @@ impl PythonEngine {
                             Some(&i) => vm.ctx.new_int(i).into(),
                             None => vm.ctx.none(),
                         },
+                        contexts,
                     ),
                     vm,
                 )
             })
             .map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
         let called = match &call.value {
-            Some(text) => function.call((form, context, vm.ctx.new_str(text.as_str())), vm),
-            None => function.call((form, context), vm),
+            Some(text) => function.call((form, context.clone(), vm.ctx.new_str(text.as_str())), vm),
+            None => function.call((form, context.clone()), vm),
         };
-        called
-            .map(|_| ())
-            .map_err(|exc| convert::failure(&self.shared, vm, &exc))
+        called.map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
+        self.context_writes(vm, &context)
+    }
+
+    /// The contexts a procedure set (`ctx.context.sel = 4`), as writes to
+    /// [`crate::engine::CONTEXT_WRITES`], after its other writes.
+    fn context_writes(&self, vm: &VirtualMachine, ctx: &PyObjectRef) -> Result<(), Failure> {
+        let fail = |exc| convert::failure(&self.shared, vm, &exc);
+        let changed = ctx
+            .get_attr("context", vm)
+            .and_then(|c| c.get_attr("_changed", vm))
+            .map_err(fail)?;
+        let Some(dict) = changed.downcast_ref::<rustpython::vm::builtins::PyDict>() else {
+            return Ok(());
+        };
+        for (name, value) in dict.items_vec() {
+            let name = name.str(vm).map_err(fail)?.to_string_lossy().into_owned();
+            let value = match convert::to_value(&self.shared, vm, &value) {
+                Ok(v) => v,
+                Err(convert::Bad::Value(kind, message)) => {
+                    return Err(Failure::new(kind, format!("ctx.context.{name}: {message}")));
+                }
+                Err(convert::Bad::Raised(exc)) => return Err(fail(exc)),
+            };
+            if let Some(writes) = self.shared.writes.borrow_mut().as_mut() {
+                writes.push(crate::engine::Write {
+                    loc: crate::Loc::new(crate::engine::CONTEXT_WRITES, Path::root().key(name)),
+                    op: crate::engine::WriteOp::Set(value),
+                });
+            }
+        }
+        Ok(())
     }
 }
 

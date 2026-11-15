@@ -48,15 +48,16 @@ pub use calc::{
     apply_and_rerun, cell_of, comment_text_problem, design_digest, find_disconnect, matplotlib_fix,
     today,
 };
+pub use calc::{Contexts, bind_path, context_object, contexts_of, value_from_json, value_to_json};
 pub use calc::{
     ENGINE_NAME, ENGINE_REVISION, FORMAT_MAJOR, FORMAT_MINOR, Meta, Opened, Package, PackageError,
     RESERVED_NAMES_VERSION, safe_path,
 };
 pub use check::Computed;
 pub use engine::{
-    Answer, Call, ChartInfo, ChartParam, Context, Depth, Engine, Failure, Immediate,
-    ImmediateResult, ModuleInfo, ModuleReport, ModuleSpec, Read, SourceRead, SourceScan, Syntax,
-    SyntaxError, Write, WriteOp,
+    Answer, CONTEXT_WRITES, Call, ChartInfo, ChartParam, Context, Depth, Engine, Failure,
+    Immediate, ImmediateResult, ModuleInfo, ModuleReport, ModuleSpec, Read, SourceRead, SourceScan,
+    Syntax, SyntaxError, Write, WriteOp,
 };
 pub use eval::{Evaluation, Hooks, Outcome, ProcedureResult, Snapshot};
 pub use forms::{DEFAULT_FORM, FormStore};
@@ -149,6 +150,10 @@ mod report_exprs_tests;
 #[cfg(test)]
 #[path = "report_bands_tests.rs"]
 mod report_bands_tests;
+
+#[cfg(test)]
+#[path = "form_contexts_tests.rs"]
+mod form_contexts_tests;
 
 #[cfg(test)]
 #[path = "report_params_tests.rs"]

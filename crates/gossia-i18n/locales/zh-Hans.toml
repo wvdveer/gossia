@@ -2290,3 +2290,7 @@
 "a repeater" = "一个重复器"
 "Item" = "项"
 "Add/delete button" = "添加/删除按钮"
+
+# Form canvases (step 18b-1, 2026-11-15)
+"No items" = "没有项"
+"{path} is past the end of its list" = "{path} 超出了其列表的末尾"

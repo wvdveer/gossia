@@ -2290,3 +2290,7 @@
 "a repeater" = "リピーター"
 "Item" = "項目"
 "Add/delete button" = "追加/削除ボタン"
+
+# Form canvases (step 18b-1, 2026-11-15)
+"No items" = "項目がありません"
+"{path} is past the end of its list" = "{path} はリストの末尾を越えています"

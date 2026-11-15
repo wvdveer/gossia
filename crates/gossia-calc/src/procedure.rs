@@ -9,7 +9,7 @@
 //! edit.
 
 use super::*;
-use crate::engine::{Write, WriteOp};
+use crate::engine::{CONTEXT_WRITES, Write, WriteOp};
 use crate::eval::ProcedureResult;
 use gossia_core::validate::validate_at;
 use gossia_i18n::tr;
@@ -57,9 +57,23 @@ impl Calc {
     pub fn apply_procedure(&mut self, result: ProcedureResult) -> Result<(), String> {
         let label = tr!("Run {button}", button = result.call.button);
         match result.result {
-            Ok(writes) => self
-                .apply_writes(result.base, &label, &writes)
-                .map_err(|e| e.to_string()),
+            Ok(writes) => {
+                // The contexts it chose are applied once its writes are.
+                let (contexts, writes): (Vec<Write>, Vec<Write>) = writes
+                    .into_iter()
+                    .partition(|w| w.loc.sheet == CONTEXT_WRITES);
+                self.apply_writes(result.base, &label, &writes)
+                    .map_err(|e| e.to_string())?;
+                let (tab, form) = (&result.call.sheet, &result.call.form);
+                for write in contexts {
+                    if let (Some(Segment::Key(name)), WriteOp::Set(value)) =
+                        (write.loc.path.segments().first(), write.op)
+                    {
+                        self.set_form_context(tab, form, name, value);
+                    }
+                }
+                Ok(())
+            }
             Err(failure) => Err(failure.error.message),
         }
     }

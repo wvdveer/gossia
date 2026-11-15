@@ -56,10 +56,15 @@ pub(crate) fn param_key(report: &str, name: &str, kind: ExprKind) -> ExprKey {
 
 /// Whether an expression names `params`.
 pub(crate) fn mentions_params(text: &str) -> bool {
+    mentions_name(text, "params")
+}
+
+/// Whether `text` has `name` in it as a whole word.
+pub(crate) fn mentions_name(text: &str, name: &str) -> bool {
     let ident = |c: char| c.is_alphanumeric() || c == '_';
-    text.match_indices("params").any(|(i, _)| {
+    text.match_indices(name).any(|(i, _)| {
         !text[..i].chars().next_back().is_some_and(ident)
-            && !text[i + 6..].chars().next().is_some_and(ident)
+            && !text[i + name.len()..].chars().next().is_some_and(ident)
     })
 }
 

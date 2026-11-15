@@ -288,6 +288,10 @@ pub enum WriteOp {
     Append(Value),
 }
 
+/// The tab of the writes that choose a context of the form (`ctx.context.sel =
+/// 4`), which no tab can be called: the path is the context's name.
+pub const CONTEXT_WRITES: &str = "\u{1}context";
+
 /// One write of a procedure, in the order it was made.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Write {
@@ -296,7 +300,7 @@ pub struct Write {
 }
 
 /// A button procedure to run.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Call {
     /// The function, as the button names it: `name`, or `module.name`.
     pub procedure: String,
@@ -313,6 +317,11 @@ pub struct Call {
     /// For a control inside the items of repeaters: the item of each,
     /// outermost first. `ctx.index` is the last, the item the control is in.
     pub rows: Vec<usize>,
+    /// On a canvas form: its contexts by name (`ctx.context`), the row name
+    /// of the repeater the control is in being its row. A procedure that
+    /// sets one gives a write to [`CONTEXT_WRITES`].
+    #[serde(default)]
+    pub contexts: Vec<(String, Value)>,
     /// The longest the procedure may run, if it is limited.
     pub time_limit: Option<std::time::Duration>,
 }

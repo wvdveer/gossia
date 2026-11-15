@@ -269,7 +269,7 @@ impl Evaluator {
                         running.current = Some((loc, Instant::now()));
                     }
                 }
-                Ok(FromWorker::Done(done)) => self.take(done),
+                Ok(FromWorker::Done(done)) => self.take(*done),
                 // The page's store is the user's: whoever keeps it (the
                 // host) sees that it changed.
                 Ok(FromWorker::Sources(defs)) => {

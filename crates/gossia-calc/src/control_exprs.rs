@@ -41,7 +41,9 @@
 //! header and footer of the section around. The pages come from
 //! [`gossia_core::report::paginate`], as the layout's do.
 
-use gossia_core::form::{ColumnDesign, Control, ControlKind, fixed_colour, template, truthy};
+use gossia_core::form::{
+    ColumnDesign, Control, ControlKind, FormDesign, fixed_colour, template, truthy,
+};
 use gossia_core::report::{BandKind, ReportDesign, paginate};
 use gossia_core::{Kind, Node, Path, Value};
 use gossia_i18n::tr;
@@ -402,6 +404,9 @@ struct Instance {
     /// The names the repeaters around give their items and lists, and `this`
     /// for an item that an expression gave.
     bindings: Bindings,
+    /// On a canvas form: the contexts its paths are bound with, a repeater's
+    /// row name being the row inside its rows.
+    contexts: Option<crate::Contexts>,
 }
 
 /// Makes the key of an expression of the control being synced: its kind,
@@ -462,18 +467,19 @@ fn bind(base: &Bindings, more: impl IntoIterator<Item = (String, Value)>) -> Bin
     out
 }
 
-/// The names an expression is given: all of them, but `params` only if it
-/// names it, so that a change to a parameter runs only those that use one.
+/// The names an expression is given: all of them, but `params` and
+/// `context` only if it names them, so that a change to a parameter or a
+/// context runs only those that use one.
 fn fit(bindings: &Bindings, text: &str) -> Bindings {
-    if bindings.iter().any(|(n, _)| n == "params") && !mentions_params(text) {
-        bindings
-            .iter()
-            .filter(|(n, _)| n != "params")
-            .cloned()
-            .collect()
-    } else {
-        bindings.clone()
-    }
+    bindings
+        .iter()
+        .filter(|(n, _)| match n.as_str() {
+            "params" => mentions_params(text),
+            "context" => crate::calc::mentions_name(text, "context"),
+            _ => true,
+        })
+        .cloned()
+        .collect()
 }
 
 /// The names an item of a repeater whose items come from an expression is
@@ -525,10 +531,24 @@ impl Calc {
         let mut has_rows = false;
         // The forms, then the report being shown, whose expressions have no
         // node: `this`, `parent` and `root` are None.
-        let mut designs: Vec<(&str, &str, Seeds)> = self
+        // A canvas form's paths are bound with its contexts, which its
+        // expressions see as `context`.
+        let mut designs: Vec<(&str, &str, Seeds, Option<&FormDesign>)> = self
             .forms
             .iter()
-            .map(|(tab, form, design)| (tab, form, seed(&design.controls, &Instance::default())))
+            .map(|(tab, form, design)| {
+                let top = if design.canvas {
+                    let contexts = self.form_contexts(tab, form, design);
+                    Instance {
+                        bindings: vec![("context".to_owned(), crate::context_object(&contexts))],
+                        contexts: Some(contexts),
+                        ..Instance::default()
+                    }
+                } else {
+                    Instance::default()
+                };
+                (tab, form, seed(&design.controls, &top), Some(design))
+            })
             .collect();
         if let Some(name) = &self.exprs.shown_report
             && let Some(report) = self.reports.get(name)
@@ -572,9 +592,9 @@ impl Calc {
                 }
                 None => seed(&report.layout.controls, &top),
             };
-            designs.push((name.as_str(), REPORT_FORM, seeds));
+            designs.push((name.as_str(), REPORT_FORM, seeds, None));
         }
-        for (tab, form, seeds) in designs {
+        for (tab, form, seeds, design) in designs {
             let mut stack = seeds;
             while let Some((at, control, instances)) = stack.pop() {
                 let key = |kind, column: Option<&str>, rows: Vec<usize>| ExprKey {
@@ -590,11 +610,19 @@ impl Calc {
                     .filter_map(|k| Some((k, k.text(control)?)))
                     .chain(self.chart_text(control).map(|t| (ExprKind::Chart, t)))
                     .collect();
-                let own_path = (!control.shows_value() && !control.lists_items())
-                    .then(|| control.bound_path())
-                    .flatten();
+                let binds = !control.shows_value() && !control.lists_items();
+                // A repeater section's row name, for the rows inside it.
+                let row_name = design
+                    .filter(|d| d.canvas && at.len() == 1)
+                    .and_then(|d| d.row_name_of(at[0]));
                 let mut inner: Vec<Instance> = Vec::new();
                 for inst in &instances {
+                    let own_path = match (&inst.contexts, control.path.as_deref()) {
+                        _ if !binds => None,
+                        (Some(contexts), Some(text)) => crate::bind_path(text, contexts),
+                        (None, _) => control.bound_path(),
+                        (Some(_), None) => None,
+                    };
                     let path = match (&own_path, &inst.base) {
                         (Some(rest), Some(base)) => base.join(rest),
                         (Some(rest), None) => rest.clone(),
@@ -636,6 +664,7 @@ impl Calc {
                                             &inst.bindings,
                                             item_names(control, item.value(), &list),
                                         ),
+                                        contexts: inst.contexts.clone(),
                                     });
                                 }
                             } else {
@@ -650,7 +679,7 @@ impl Calc {
                                 );
                             }
                         }
-                        ControlKind::Repeater if control.is_stacked() => {
+                        ControlKind::Repeater if control.designs_items() => {
                             let Some(array) = own_path.as_ref().map(|_| path.clone()) else {
                                 continue;
                             };
@@ -659,10 +688,24 @@ impl Calc {
                             for i in 0..len {
                                 let mut rows = inst.rows.clone();
                                 rows.push(i);
+                                // In a row of a section, its row name is that row.
+                                let (bindings, contexts) = match (&inst.contexts, &row_name) {
+                                    (Some(contexts), Some(name)) => {
+                                        let mut contexts = contexts.clone();
+                                        contexts.insert(name.clone(), Value::Int(i as i64));
+                                        let object = crate::context_object(&contexts);
+                                        (
+                                            bind(&inst.bindings, [("context".to_owned(), object)]),
+                                            Some(contexts),
+                                        )
+                                    }
+                                    _ => (inst.bindings.clone(), inst.contexts.clone()),
+                                };
                                 inner.push(Instance {
                                     rows,
                                     base: Some(array.index(i)),
-                                    bindings: inst.bindings.clone(),
+                                    bindings,
+                                    contexts,
                                 });
                             }
                         }
@@ -785,6 +828,7 @@ impl Calc {
                 rows: vec![p],
                 base: None,
                 bindings: bind(&top.bindings, [("page".to_owned(), page_value(p, pages))]),
+                contexts: None,
             };
             for band in [BandKind::PageHeader, BandKind::PageFooter] {
                 walk.per_band[band.index(sections)].push(instance.clone());
@@ -861,6 +905,7 @@ impl Calc {
                 rows,
                 base: None,
                 bindings: bind(&around.bindings, item_names(control, item.value(), &list)),
+                contexts: None,
             };
             if level == sections {
                 walk.details += 1;
