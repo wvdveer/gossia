@@ -498,7 +498,7 @@ fn has_text(text: &Option<String>) -> bool {
 
 fn control_problem(c: &Control) -> Option<String> {
     let kind = c.kind.label().to_lowercase();
-    if c.kind == ControlKind::Button {
+    if matches!(c.kind, ControlKind::Button | ControlKind::RowButton) {
         return Some(tr!("a report has no buttons").to_owned());
     }
     // A list is the detail band of a multipage report (owner, 2026-11-03).
@@ -736,7 +736,7 @@ fn field_type(spec: &TypeSpec, ty: TypeId, fields: &[String]) -> Option<TypeId> 
 
 /// The scalar fields of items of type `ty` that are objects with arrays or
 /// maps in them: each as the names that reach it, objects flattened.
-fn scalar_fields(spec: &TypeSpec, ty: TypeId) -> Vec<Vec<String>> {
+pub(crate) fn scalar_fields(spec: &TypeSpec, ty: TypeId) -> Vec<Vec<String>> {
     fn collect(
         spec: &TypeSpec,
         ty: TypeId,

@@ -2262,6 +2262,11 @@ impl Painter<'_> {
                     ui.separator();
                 }
             },
+            // The add/delete button of a canvas form's repeater section is
+            // drawn by the section (step 18b); here it is only named.
+            ControlKind::RowButton => {
+                ui.weak(c.kind.label());
+            }
             // Charts are drawn in reports only, for now.
             ControlKind::Chart => {
                 ui.weak(tr!("A chart is drawn in reports only"));

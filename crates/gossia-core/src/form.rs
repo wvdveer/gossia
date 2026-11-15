@@ -18,8 +18,13 @@ use crate::typespec::{Kind, TypeSpec};
 use crate::validate::validate;
 use crate::{Path, json, jsonschema};
 
-/// The version of the design document this build writes.
+/// The version of the design document of a form that is not a canvas.
 pub const DESIGN_VERSION: u32 = 1;
+
+/// The version of a canvas design (DESIGN.md, Later versions, "Form
+/// canvases, 0.7.0"), and the highest this build reads: an older build
+/// refuses a canvas design rather than misreading it.
+pub const CANVAS_VERSION: u32 = 2;
 
 /// The place of a control in a design: the index in the list of the design,
 /// then in the children of that control, and so on.
@@ -46,6 +51,10 @@ pub enum ControlKind {
     /// An SVG image a chart function draws (DESIGN.md, Reports, "Chart
     /// functions"). In reports only, for now.
     Chart,
+    /// The add/delete button of a repeater section of a canvas form
+    /// (DESIGN.md, Later versions, "Form canvases, 0.7.0").
+    #[serde(rename = "row_button")]
+    RowButton,
 }
 
 impl ControlKind {
@@ -68,6 +77,7 @@ impl ControlKind {
             ControlKind::Button => tr!("Button"),
             ControlKind::Separator => tr!("Separator"),
             ControlKind::Chart => tr!("Chart"),
+            ControlKind::RowButton => tr!("Add/delete button"),
         }
     }
 }
@@ -1094,6 +1104,41 @@ pub struct Control {
     pub grid_column: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_span: Option<u32>,
+    /// A repeater section of a canvas form: the name of its row number
+    /// context. Absent: `row`, `row2`... by its place among the repeaters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_name: Option<String>,
+    /// A context field: its name. Its value belongs to the form, not to the
+    /// tab, so it has no path and no value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    /// The type of a context field's value. Absent: a whole number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_type: Option<ContextType>,
+    /// A context field's value when the form is first shown, as typed (read
+    /// by its type). Absent: `None`.
+    #[serde(default, rename = "default", skip_serializing_if = "Option::is_none")]
+    pub context_default: Option<String>,
+    /// Not drawn in the form view (a context field that only chooses).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
+    /// What the add/delete button does. Absent: both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allows: Option<RowAllows>,
+    /// The add configuration of the add/delete button.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_fill_colour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_text_colour: Option<String>,
+    /// The delete configuration of the add/delete button.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_fill_colour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_text_colour: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
 }
@@ -1137,13 +1182,30 @@ fn has_text(text: &Option<String>) -> bool {
     text.as_deref().is_some_and(|t| !t.trim().is_empty())
 }
 
+pub mod canvas;
+#[cfg(test)]
+mod canvas_tests;
 pub mod template;
+
+pub use canvas::{ContextType, RowAllows};
 
 impl Control {
     /// Whether it is a repeater that shows one item at a time. Its items can
     /// be designed: the controls in it are drawn for the item shown.
     pub fn is_stacked(&self) -> bool {
         self.kind == ControlKind::Repeater && self.mode == Some(RepeaterMode::Stacked)
+    }
+
+    /// Whether it is a repeater section of a canvas form: a repeater whose
+    /// row is a Free canvas, its controls being the row.
+    pub fn is_section(&self) -> bool {
+        self.kind == ControlKind::Repeater && self.layout == Some(GroupLayout::Free)
+    }
+
+    /// Whether the controls in it are drawn for each item: a stacked
+    /// repeater's designed items, or the row of a repeater section.
+    pub fn designs_items(&self) -> bool {
+        self.is_stacked() || self.is_section()
     }
 
     /// Whether it is a group that places its controls freely.
@@ -1225,6 +1287,18 @@ impl Control {
             grid_row: None,
             grid_column: None,
             row_span: None,
+            row_name: None,
+            context: None,
+            context_type: None,
+            context_default: None,
+            hidden: false,
+            allows: None,
+            add_label: None,
+            add_fill_colour: None,
+            add_text_colour: None,
+            delete_label: None,
+            delete_fill_colour: None,
+            delete_text_colour: None,
             children: Vec::new(),
         }
     }
@@ -1358,6 +1432,14 @@ pub struct FormDesign {
     /// of the tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Whether the form is a stack of section canvases (DESIGN.md, Later
+    /// versions, "Form canvases, 0.7.0"): its controls are then its sections,
+    /// see [`canvas`].
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub canvas: bool,
+    /// The width of a canvas form in points. Absent: 600.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
     pub controls: Vec<Control>,
 }
 
@@ -1366,6 +1448,8 @@ impl Default for FormDesign {
         FormDesign {
             version: DESIGN_VERSION,
             title: None,
+            canvas: false,
+            width: None,
             controls: Vec::new(),
         }
     }
@@ -1509,6 +1593,8 @@ pub fn form_schema_source() -> &'static str {
       "properties": {
         "version": {"type": "integer", "minimum": 1},
         "title": {"type": "string"},
+        "canvas": {"type": "boolean"},
+        "width": {"type": "integer", "minimum": 240, "maximum": 2000},
         "controls": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["version", "controls"]
@@ -1516,7 +1602,7 @@ pub fn form_schema_source() -> &'static str {
     "Control": {
       "type": "object",
       "properties": {
-        "type": {"type": "string", "enum": ["field", "group", "repeater", "label", "button", "separator", "chart"]},
+        "type": {"type": "string", "enum": ["field", "group", "repeater", "label", "button", "separator", "chart", "row_button"]},
         "path": {"type": "string"},
         "label": {"type": "string"},
         "help": {"type": "string"},
@@ -1583,6 +1669,18 @@ pub fn form_schema_source() -> &'static str {
         "y": {"type": "integer", "minimum": 0, "maximum": 4000},
         "anchor_x": {"type": "string", "enum": ["start", "end", "both"]},
         "anchor_y": {"type": "string", "enum": ["start", "end", "both"]},
+        "row_name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "context": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "context_type": {"type": "string", "enum": ["integer", "number", "text", "date", "boolean"]},
+        "default": {"type": "string"},
+        "hidden": {"type": "boolean"},
+        "allows": {"type": "string", "enum": ["both", "add", "delete"]},
+        "add_label": {"type": "string"},
+        "add_fill_colour": {"type": "string"},
+        "add_text_colour": {"type": "string"},
+        "delete_label": {"type": "string"},
+        "delete_fill_colour": {"type": "string"},
+        "delete_text_colour": {"type": "string"},
         "children": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["type"]
@@ -1656,11 +1754,11 @@ impl FormDesign {
             return Err(format!("{at}: {}", issue.message));
         }
         let design: FormDesign = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        if design.version > DESIGN_VERSION {
+        if design.version > CANVAS_VERSION {
             return Err(tr!(
                 "this form was made by a newer version (design version {version}, this build reads up to {DESIGN_VERSION})",
                 version = design.version,
-                DESIGN_VERSION = DESIGN_VERSION
+                DESIGN_VERSION = CANVAS_VERSION
             ));
         }
         Ok(design)
@@ -1807,6 +1905,7 @@ impl FormDesign {
         }
         match self.get(address) {
             Some(c) if c.kind == ControlKind::Group => true,
+            Some(c) if c.is_section() => true,
             Some(c) if c.is_stacked() => {
                 !c.children.is_empty() && self.item_scope(address).is_none()
             }
@@ -1891,6 +1990,8 @@ pub fn generate(spec: &TypeSpec) -> FormDesign {
     FormDesign {
         version: DESIGN_VERSION,
         title: None,
+        canvas: false,
+        width: None,
         controls,
     }
 }
@@ -2015,11 +2116,14 @@ impl FormDesign {
         address: &[usize],
         control: &Control,
     ) -> Option<String> {
+        if let Some(problem) = self.canvas_problem(spec, address, control) {
+            return Some(problem);
+        }
         let Some(scope) = self.item_scope(address) else {
             return control_problem(spec, control);
         };
         let repeater = self.get(&scope)?;
-        if !repeater.is_stacked() {
+        if !repeater.designs_items() {
             return Some(
                 tr!("its repeater shows a table, so the design of its items is not used")
                     .to_owned(),
@@ -2031,7 +2135,17 @@ impl FormDesign {
                     .to_owned(),
             );
         }
-        let array = repeater.bound_path().filter(|a| {
+        let array = match repeater
+            .path
+            .as_deref()
+            .map(|text| canvas::sample_path(spec, &Path::root(), text))
+        {
+            // A context on an object: what it reaches cannot be known.
+            Some(Ok(None)) => return None,
+            Some(Ok(Some(a))) => Some(a),
+            _ => None,
+        };
+        let array = array.filter(|a| {
             spec.resolve(a)
                 .is_some_and(|r| matches!(spec.get(r.ty).kind, Kind::Array { .. }))
         });
@@ -2097,6 +2211,10 @@ pub fn control_problem_at(spec: &TypeSpec, control: &Control, base: &Path) -> Op
     if control.shows_value() || control.lists_items() {
         return None;
     }
+    // A context field has no node: its checks are the canvas's.
+    if control.context.is_some() {
+        return None;
+    }
     let Some(text) = control.path.as_deref() else {
         return match control.kind {
             ControlKind::Field | ControlKind::Repeater => Some(format!(
@@ -2117,8 +2235,11 @@ pub fn control_problem_at(spec: &TypeSpec, control: &Control, base: &Path) -> Op
     ) {
         return None;
     }
-    let path: Path = match text.parse() {
-        Ok(path) => base.join(&path),
+    // A path can take an index or a key from a context (`items[sel]`).
+    let path: Path = match canvas::sample_path(spec, base, text) {
+        Ok(Some(path)) => path,
+        // A context names a field of an object: which one is not known.
+        Ok(None) => return None,
         Err(e) => {
             return Some(tr!(
                 "the path {text} is not a path: {e}",

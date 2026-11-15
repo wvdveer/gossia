@@ -1626,6 +1626,8 @@ impl GossiaApp {
                     merge = Some(key(&property));
                 }
             }
+            // Its two configurations come with step 18d.
+            ControlKind::RowButton => {}
         }
         // On a report's canvas, the top level is placed as in a Free group.
         let canvas = report.then(|| {
