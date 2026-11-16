@@ -322,13 +322,17 @@ fn layout_mode_and_a_custom_form() {
     let mut results = SnapshotResults::new();
     let mut harness = window();
     show_as(&mut harness, "Default");
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     click(&mut harness, "Field customer.name");
     check(&mut harness, "layout_mode_orders", &mut results);
 
     // A form of its own: the customer group in two columns, no layout mode.
-    harness.get_by_label("Edit form").click();
+    harness.get_by_label("Finish edit").click();
     harness.run();
     harness.state_mut().edit_design(|d| {
         d.get_mut(&[0, 0])?.columns = Some(2);

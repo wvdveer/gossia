@@ -299,6 +299,10 @@ fn error_shown(harness: &Harness<'_, GossiaApp>, text: &str) -> bool {
 #[test]
 fn the_property_page_shows_why_an_expression_failed() {
     let (mut harness, _) = form(Vec::new());
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.get_by_label("Field customer.name").click();
@@ -322,6 +326,10 @@ fn the_property_page_of_a_field_in_a_row_names_the_row_that_failed() {
     let (mut harness, _) = with_row_fields(vec![("note", |c| {
         c.text_colour = Some("'red' if this.startswith('g') else None".into());
     })]);
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.get_by_label("Field note").click();

@@ -444,6 +444,10 @@ fn new_form(harness: &mut Harness<'_, GossiaApp>, name: &str) {
 }
 
 fn edit_form(harness: &mut Harness<'_, GossiaApp>) {
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
 }

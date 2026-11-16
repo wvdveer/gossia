@@ -81,6 +81,10 @@ fn percent_prefix_and_suffix_dress_the_numbers_a_field_shows() {
 #[test]
 fn the_property_page_picks_a_fixed_colour() {
     let mut harness = form(Vec::new());
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.get_by_label("Field customer.name").click();

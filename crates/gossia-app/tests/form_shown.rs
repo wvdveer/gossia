@@ -109,6 +109,10 @@ fn an_untrusted_workbook_shows_marks_in_place_of_results() {
 #[test]
 fn a_new_field_given_a_value_on_the_property_page_needs_no_path() {
     let mut harness = form(Vec::new());
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.get_by_label("Add field").click();
@@ -272,6 +276,10 @@ fn a_value_field_without_a_write_procedure_is_read_only() {
 #[test]
 fn the_source_of_a_field_is_a_path_or_a_value() {
     let mut harness = form_with_writers(Vec::new());
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.get_by_label("Field customer.city").click();

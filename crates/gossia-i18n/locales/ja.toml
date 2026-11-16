@@ -1795,7 +1795,7 @@
 "Trust this version" = "このバージョンを信頼"
 "Trusted workbooks" = "信頼済みのワークブック"
 "Tuples of the elements taken together." = "各要素を組にしたタプル。"
-"Turn on Edit report to add controls, or edit its design in the code editor, under Reports." = "[レポートを編集] をオンにしてコントロールを追加するか、コードエディターの [レポート] でデザインを編集してください。"
+"Click Edit report to add controls, or edit its design in the code editor, under Reports." = "[レポートを編集] をクリックしてコントロールを追加するか、コードエディターの [レポート] でデザインを編集してください。"
 "two parameters are named {name}" = "{name} という名前のパラメーターが 2 つあります"
 "two tabs are called {name} (names ignore case)" = "{name} という名前のタブが 2 つあります (名前の大文字と小文字は区別されません)"
 "Type" = "型"
@@ -2323,3 +2323,8 @@
 # Form canvases, the old tables and stepper taken out (2026-11-16)
 "A list is shown in a repeater section of its own." = "リストは専用の繰り返しセクションに表示されます。"
 "a list goes in a repeater section of its own" = "リストは専用の繰り返しセクションに置きます"
+
+# Finish edit in place of the Edit form / Edit report check boxes (2026-11-16)
+"Finish edit" = "編集を終了"
+"Leave layout mode and use the form" = "レイアウト モードを終了してフォームを使います"
+"Leave the report editor and show the report" = "レポート エディターを終了してレポートを表示します"

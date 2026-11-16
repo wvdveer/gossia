@@ -1795,7 +1795,7 @@
 "Trust this version" = "Confiar nesta versão"
 "Trusted workbooks" = "Pastas de trabalho confiáveis"
 "Tuples of the elements taken together." = "Tuplas dos elementos tomados juntos."
-"Turn on Edit report to add controls, or edit its design in the code editor, under Reports." = "Ative Editar relatório para adicionar controles ou edite o design no editor de código, em Relatórios."
+"Click Edit report to add controls, or edit its design in the code editor, under Reports." = "Clique em Editar relatório para adicionar controles ou edite o design no editor de código, em Relatórios."
 "two parameters are named {name}" = "dois parâmetros se chamam {name}"
 "two tabs are called {name} (names ignore case)" = "duas guias se chamam {name} (os nomes não diferenciam maiúsculas)"
 "Type" = "Tipo"
@@ -2323,3 +2323,8 @@
 # Form canvases, the old tables and stepper taken out (2026-11-16)
 "A list is shown in a repeater section of its own." = "Uma lista é mostrada numa secção repetida própria."
 "a list goes in a repeater section of its own" = "uma lista vai numa secção repetida própria"
+
+# Finish edit in place of the Edit form / Edit report check boxes (2026-11-16)
+"Finish edit" = "Terminar edição"
+"Leave layout mode and use the form" = "Sair do modo de esquema e usar o formulário"
+"Leave the report editor and show the report" = "Sair do editor de relatórios e mostrar o relatório"

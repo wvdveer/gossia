@@ -1049,20 +1049,35 @@ impl GossiaApp {
 
     // ------------------------------------------------------- the strip
 
-    /// The strip above a form: the switch to layout mode, and in layout mode
-    /// the palette, undo and redo, and discarding the design.
+    /// The strip above a form in layout mode: *Finish edit*, the palette,
+    /// undo and redo, and discarding the design. Out of layout mode a form
+    /// has no strip: View > Forms > Edit form starts editing it. A report
+    /// has an *Edit report* button out of the editor (*Finish edit* in it),
+    /// and its tools.
     pub(crate) fn form_bar(&mut self, ui: &mut egui::Ui, form: &str) {
         let report = form == REPORT_FORM;
+        if !report && !self.layout_active() {
+            return;
+        }
         let canvas = !report && self.design_of(form).canvas;
         ui.horizontal_wrapped(|ui| {
             let mut on = self.layout_active();
-            let switch = if report {
-                tr!("Edit report")
-            } else {
-                tr!("Edit form")
-            };
-            if ui.checkbox(&mut on, switch).changed() {
-                self.set_layout(on);
+            if report && !on {
+                if ui.button(tr!("Edit report")).clicked() {
+                    self.set_layout(true);
+                    on = true;
+                }
+            } else if ui
+                .button(tr!("Finish edit"))
+                .on_hover_text(if report {
+                    tr!("Leave the report editor and show the report")
+                } else {
+                    tr!("Leave layout mode and use the form")
+                })
+                .clicked()
+            {
+                self.set_layout(false);
+                on = false;
             }
             if report {
                 self.report_tools(ui);

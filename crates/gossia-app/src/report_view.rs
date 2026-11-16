@@ -439,7 +439,7 @@ impl GossiaApp {
         if self.calc().report(name).is_some_and(has_no_controls) {
             ui.label(tr!("This report has no controls yet."));
             ui.weak(tr!(
-                "Turn on Edit report to add controls, or edit its design in the code editor, \
+                "Click Edit report to add controls, or edit its design in the code editor, \
                  under Reports."
             ));
             let open = ui.button(tr!("Open the design in the code editor"));

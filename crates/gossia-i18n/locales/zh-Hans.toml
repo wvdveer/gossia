@@ -1795,7 +1795,7 @@
 "Trust this version" = "信任此版本"
 "Trusted workbooks" = "受信任的工作簿"
 "Tuples of the elements taken together." = "将元素组合在一起的元组。"
-"Turn on Edit report to add controls, or edit its design in the code editor, under Reports." = "打开“编辑报表”以添加控件，或在代码编辑器的“报表”下编辑其设计。"
+"Click Edit report to add controls, or edit its design in the code editor, under Reports." = "点击“编辑报表”以添加控件，或在代码编辑器的“报表”下编辑其设计。"
 "two parameters are named {name}" = "有两个参数都叫 {name}"
 "two tabs are called {name} (names ignore case)" = "有两个标签页都叫 {name}（名称不区分大小写）"
 "Type" = "类型"
@@ -2323,3 +2323,8 @@
 # Form canvases, the old tables and stepper taken out (2026-11-16)
 "A list is shown in a repeater section of its own." = "列表显示在其自己的重复区段中。"
 "a list goes in a repeater section of its own" = "列表应放在其自己的重复区段中"
+
+# Finish edit in place of the Edit form / Edit report check boxes (2026-11-16)
+"Finish edit" = "完成编辑"
+"Leave layout mode and use the form" = "退出布局模式并使用表单"
+"Leave the report editor and show the report" = "退出报表编辑器并显示报表"

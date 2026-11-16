@@ -381,7 +381,7 @@ fn edit_report_is_layout_mode_with_a_palette_without_buttons() {
     // The canvas is drawn as the report is, with its value.
     assert_eq!(texts(&harness), ["Total", "62.92"]);
     assert!(harness.state().report.canvas_at.is_some());
-    click(&mut harness, "Edit report");
+    click(&mut harness, "Finish edit");
     assert!(!harness.state().layout_active());
     assert_eq!(texts(&harness), ["Total", "62.92"]);
 }

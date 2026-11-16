@@ -335,6 +335,10 @@ fn the_choices_of_a_field_in_a_row_run_for_each_row() {
 #[test]
 fn the_property_page_sets_the_choices_and_counts_what_an_enumeration_leaves_out() {
     let (mut harness, at) = form("customer.status", |_| {});
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Forms").click();
+    harness.run();
     harness.get_by_label("Edit form").click();
     harness.run();
     harness.get_by_label("Field customer.status").click();

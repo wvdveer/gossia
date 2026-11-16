@@ -220,6 +220,8 @@ fn buttons_are_disabled_while_the_workbook_is_not_trusted() {
 #[test]
 fn the_procedure_of_a_button_is_chosen_from_the_functions_of_the_modules() {
     let mut harness = form();
+    click(&mut harness, "View");
+    click(&mut harness, "Forms");
     click(&mut harness, "Edit form");
     click(&mut harness, "Button Nothing");
     let combo = harness.get_by_label("Procedure of the button");
@@ -243,7 +245,7 @@ fn the_procedure_of_a_button_is_chosen_from_the_functions_of_the_modules() {
     assert_eq!(nothing.procedure.as_deref(), Some("shout_city"));
 
     // Out of layout mode the button runs it.
-    click(&mut harness, "Edit form");
+    click(&mut harness, "Finish edit");
     click(&mut harness, "Nothing");
     settle(&mut harness);
     let name = value(&harness, "customer.name").unwrap();
