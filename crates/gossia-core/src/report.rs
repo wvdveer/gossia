@@ -498,7 +498,13 @@ fn has_text(text: &Option<String>) -> bool {
 
 fn control_problem(c: &Control) -> Option<String> {
     let kind = c.kind.label().to_lowercase();
-    if matches!(c.kind, ControlKind::Button | ControlKind::RowButton) {
+    if matches!(
+        c.kind,
+        ControlKind::Button
+            | ControlKind::RowButton
+            | ControlKind::RowMark
+            | ControlKind::RowsButton
+    ) {
         return Some(tr!("a report has no buttons").to_owned());
     }
     // A list is the detail band of a multipage report (owner, 2026-11-03).

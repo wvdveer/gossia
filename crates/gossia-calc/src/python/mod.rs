@@ -582,6 +582,11 @@ impl PythonEngine {
                 .map_err(|exc| convert::failure(&self.shared, vm, &exc))?;
             let _ = contexts.set_item(name.as_str(), value, vm);
         }
+        let marked = vm.ctx.new_dict();
+        for (name, rows) in &call.marked {
+            let rows: Vec<_> = rows.iter().map(|&i| vm.ctx.new_int(i).into()).collect();
+            let _ = marked.set_item(name.as_str(), vm.ctx.new_list(rows).into(), vm);
+        }
         let context = self
             .prelude
             .get_item("ProcedureContext", vm)
@@ -596,6 +601,7 @@ impl PythonEngine {
                             None => vm.ctx.none(),
                         },
                         contexts,
+                        marked,
                     ),
                     vm,
                 )

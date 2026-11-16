@@ -408,6 +408,135 @@ fn an_add_delete_button_runs_the_colours_of_its_delete_configuration() {
     assert_eq!(field.colour_of(false), Some("'red'"));
 }
 
+// ------------------------------------------------------------ marking rows
+
+fn rows_button(repeater: Option<&str>, action: RowsAction) -> Control {
+    Control {
+        repeater: repeater.map(str::to_owned),
+        rows_action: Some(action),
+        ..Control::new(ControlKind::RowsButton)
+    }
+}
+
+#[test]
+fn a_row_mark_goes_at_the_start_of_a_row_once() {
+    let spec = spec();
+    let mut design = form(vec![], vec![field("sku")]);
+    let mark = || Control::new(ControlKind::RowMark);
+    assert!(!design.can_take_row_mark(0));
+    assert_eq!(design.place_in_section(&spec, 0, mark()), None);
+    let at = design.place_in_section(&spec, 1, mark()).unwrap();
+    assert_eq!(design.row_mark_of(1).map(|(a, _)| a), Some(at.clone()));
+    let placed = design.get(&at).unwrap();
+    assert_eq!(placed.x, Some(4));
+    // What was at the start of the row moves out of its way.
+    let name = &design.controls[1].children[0];
+    assert!(name.x.unwrap() >= placed.x.unwrap() + placed.width.unwrap());
+    assert!(!design.can_take_row_mark(1));
+    assert!(problems(&design, &spec).is_empty());
+}
+
+#[test]
+fn a_repeater_uses_the_add_delete_button_or_marking() {
+    let spec = spec();
+    let mut design = form(vec![], vec![]);
+    design
+        .place_in_section(&spec, 1, Control::new(ControlKind::RowButton))
+        .unwrap();
+    // The palette offers one or the other.
+    assert!(!design.can_take_row_mark(1));
+    let mut marked = form(vec![], vec![]);
+    marked
+        .place_in_section(&spec, 1, Control::new(ControlKind::RowMark))
+        .unwrap();
+    assert!(!marked.can_take_row_button(1));
+    // Both, put there by hand, is a problem.
+    let both = form(
+        vec![],
+        vec![
+            Control::new(ControlKind::RowButton),
+            Control::new(ControlKind::RowMark),
+        ],
+    );
+    assert_eq!(
+        problems(&both, &spec),
+        vec!["Uses both the add/delete button and marking"]
+    );
+    let named = form(
+        vec![rows_button(Some("row"), RowsAction::AddRow)],
+        vec![Control::new(ControlKind::RowButton)],
+    );
+    assert_eq!(
+        problems(&named, &spec),
+        vec!["Uses both the add/delete button and marking"]
+    );
+}
+
+#[test]
+fn a_rows_button_names_a_repeater_with_what_its_action_needs() {
+    let spec = spec();
+    let mark = || Control::new(ControlKind::RowMark);
+    let good = form(
+        vec![
+            rows_button(Some("row"), RowsAction::DeleteMarked),
+            rows_button(Some("row"), RowsAction::ToggleAll),
+            rows_button(Some("row"), RowsAction::AddRow),
+        ],
+        vec![mark()],
+    );
+    assert!(problems(&good, &spec).is_empty());
+    // Adding needs no mark; deleting and toggling do.
+    let unmarked = form(
+        vec![
+            rows_button(Some("row"), RowsAction::AddRow),
+            rows_button(Some("row"), RowsAction::DeleteMarked),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        problems(&unmarked, &spec),
+        vec!["Delete marked needs a row mark on the repeater row"]
+    );
+    let unnamed = form(vec![rows_button(None, RowsAction::AddRow)], vec![]);
+    assert_eq!(
+        problems(&unnamed, &spec),
+        vec!["a rows button needs the repeater it acts on"]
+    );
+    let unknown = form(vec![rows_button(Some("nope"), RowsAction::AddRow)], vec![]);
+    assert_eq!(
+        problems(&unknown, &spec),
+        vec!["the form has no repeater whose row name is nope"]
+    );
+    // Never in a row.
+    let in_row = form(vec![], vec![rows_button(Some("row"), RowsAction::AddRow)]);
+    assert_eq!(
+        problems(&in_row, &spec),
+        vec!["a rows button goes on the header, the footer or a section between repeaters"]
+    );
+    // A row mark only in a row, once.
+    let on_header = form(vec![mark()], vec![]);
+    assert_eq!(
+        problems(&on_header, &spec),
+        vec!["a row mark goes on a repeater section"]
+    );
+    let twice = form(vec![], vec![mark(), mark()]);
+    assert_eq!(problems(&twice, &spec), vec!["a repeater has one row mark"]);
+}
+
+#[test]
+fn a_rows_button_reads_back_with_its_repeater_and_action() {
+    let button = rows_button(Some("row2"), RowsAction::ToggleAll);
+    let text = serde_json::to_string(&button).unwrap();
+    assert!(text.contains(r#""type":"rows_button""#), "{text}");
+    assert!(text.contains(r#""action":"toggle_all""#), "{text}");
+    let back: Control = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, button);
+    assert_eq!(back.rows_button_label(), "Toggle all");
+    let plain = Control::new(ControlKind::RowsButton);
+    assert_eq!(plain.rows_action(), RowsAction::DeleteMarked);
+    assert_eq!(plain.rows_button_label(), "Delete");
+}
+
 // ------------------------------------------------- storing and the version
 
 #[test]

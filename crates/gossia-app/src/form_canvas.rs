@@ -86,6 +86,7 @@ impl Painter<'_> {
     /// the form. A fixed section with a height of 0 is hidden, except in
     /// layout mode.
     pub(super) fn canvas(&mut self, ui: &mut egui::Ui, design: &FormDesign) {
+        self.prepare_repeaters(design);
         if self.layout.is_some() {
             self.designer_stack(ui, design);
             return;
@@ -212,6 +213,19 @@ impl Painter<'_> {
                 .press_origin()
                 .filter(|_| i.pointer.primary_pressed())
         });
+        // The row a rows button has just added, off the screen: scrolled to,
+        // to be drawn and focused in the next frame.
+        if let Some(i) = (0..len)
+            .rev()
+            .find(|&i| self.wants_row_focus(&array.index(i)))
+            && !(first..last).contains(&i)
+        {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.top() + height * i as f32),
+                egui::vec2(width, height),
+            );
+            ui.scroll_to_rect(row, None);
+        }
         let mut drawn = Vec::new();
         for i in first..last.max(first).min(len) {
             let row = egui::Rect::from_min_size(
@@ -223,6 +237,7 @@ impl Painter<'_> {
                     .max_rect(row)
                     .layout(egui::Layout::top_down(Align::Min)),
             );
+            let stops = self.nav.len();
             self.in_row(
                 &mut row_ui,
                 Some(array.index(i)),
@@ -232,6 +247,10 @@ impl Painter<'_> {
                     this.section_row(ui, c, slot);
                 },
             );
+            if self.wants_row_focus(&array.index(i)) {
+                self.focus_first(ui, stops, row);
+                self.actions.push(FormAction::RowFocused);
+            }
             if current == Some(i) {
                 let mark = egui::Rect::from_min_size(
                     row.min + egui::vec2(0.0, 2.0),
@@ -318,20 +337,7 @@ impl Painter<'_> {
             }
         }
         if self.wants_blank_focus(array) {
-            let first = self.nav[stops..]
-                .iter()
-                .min_by(|a, b| {
-                    (a.rect.top(), a.rect.left())
-                        .partial_cmp(&(b.rect.top(), b.rect.left()))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|s| s.id);
-            if let Some(id) = first {
-                ui.memory_mut(|m| m.request_focus(id));
-            }
-            if !ui.clip_rect().contains_rect(row) {
-                ui.scroll_to_rect(row, None);
-            }
+            self.focus_first(ui, stops, row);
             self.actions.push(FormAction::BlankFocused);
         }
     }

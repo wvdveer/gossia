@@ -93,6 +93,7 @@ fn call(procedure: &str) -> Call {
         value: None,
         rows: Vec::new(),
         contexts: Vec::new(),
+        marked: Vec::new(),
         time_limit: None,
     }
 }
@@ -447,4 +448,34 @@ fn an_unknown_context_fails_the_procedure() {
     assert!(outcome.unwrap_err().contains("nope"));
     assert_ne!(get(&s, "S", "note"), Some(Value::Str("x".into())));
     assert!(s.calc().chosen_contexts("S", "Default").is_none());
+}
+
+/// `ctx.marked` gives the marked rows of each repeater by its row name, in
+/// order, and cannot be changed.
+#[test]
+fn ctx_marked_reads_the_marked_rows() {
+    let mut s = session(
+        "def go(form, ctx):\n    form.note = repr(ctx.marked['row']) + repr(ctx.marked['row2'])\n",
+    );
+    let mut c = call("go");
+    c.marked = vec![
+        ("row".to_owned(), vec![0, 3]),
+        ("row2".to_owned(), Vec::new()),
+    ];
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG));
+    assert_eq!(s.take_finished()[0].outcome, Ok(()));
+    assert_eq!(get(&s, "S", "note"), Some(Value::Str("[0, 3][]".into())));
+
+    let mut s = session("def go(form, ctx):\n    ctx.marked['row'] = [1]\n");
+    let mut c = call("go");
+    c.marked = vec![("row".to_owned(), vec![0])];
+    s.run_procedure(c).unwrap();
+    assert!(s.wait_idle(LONG));
+    let outcome = s.take_finished().remove(0).outcome;
+    assert!(
+        outcome
+            .unwrap_err()
+            .contains("ctx.marked cannot be changed")
+    );
 }

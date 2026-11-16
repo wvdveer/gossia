@@ -51,6 +51,9 @@ const ROW: u32 = 24;
 /// row.
 const ROW_BUTTON_WIDTH: u32 = 72;
 
+/// The size of the row mark the palette puts at the start of a row.
+const ROW_MARK_SIZE: u32 = 20;
+
 /// The least width of a column of fields the converter makes in a row; more
 /// columns than fit start another line of the row.
 const MIN_COLUMN: u32 = 80;
@@ -156,7 +159,62 @@ impl RowAllows {
     }
 }
 
+/// What a rows button does to the rows of its repeater.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowsAction {
+    /// Deletes the marked rows.
+    #[default]
+    DeleteMarked,
+    /// Adds a row at the end.
+    AddRow,
+    /// Marks every row when any is unmarked, else clears every mark.
+    ToggleAll,
+}
+
+impl RowsAction {
+    pub const ALL: [RowsAction; 3] = [
+        RowsAction::DeleteMarked,
+        RowsAction::AddRow,
+        RowsAction::ToggleAll,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RowsAction::DeleteMarked => tr!("Delete marked"),
+            RowsAction::AddRow => tr!("Add row"),
+            RowsAction::ToggleAll => tr!("Toggle all"),
+        }
+    }
+
+    /// The label of a rows button that has none of its own.
+    pub fn default_label(self) -> &'static str {
+        match self {
+            RowsAction::DeleteMarked => tr!("Delete"),
+            RowsAction::AddRow => tr!("Add"),
+            RowsAction::ToggleAll => tr!("Toggle all"),
+        }
+    }
+
+    /// Whether it acts on marks, so its repeater needs a row mark.
+    pub fn needs_marks(self) -> bool {
+        self != RowsAction::AddRow
+    }
+}
+
 impl Control {
+    /// What a rows button does.
+    pub fn rows_action(&self) -> RowsAction {
+        self.rows_action.unwrap_or_default()
+    }
+
+    /// The label of a rows button, without the count *Delete marked* adds.
+    pub fn rows_button_label(&self) -> String {
+        self.label
+            .clone()
+            .unwrap_or_else(|| self.rows_action().default_label().to_owned())
+    }
+
     /// What an add/delete button allows.
     pub fn row_allows(&self) -> RowAllows {
         self.allows.unwrap_or_default()
@@ -676,6 +734,9 @@ impl FormDesign {
         if control.kind == ControlKind::RowButton {
             return self.place_row_button(index, control);
         }
+        if control.kind == ControlKind::RowMark {
+            return self.place_row_mark(index, control);
+        }
         let section = self.controls.get_mut(index)?;
         let height = |c: &Control| estimate_height(spec, &Path::root(), c);
         let y = section
@@ -711,12 +772,88 @@ impl FormDesign {
         Some(vec![index, section.children.len() - 1])
     }
 
+    /// Puts a row mark at the left of the row of the repeater section at
+    /// `index`, if it can take one, moving what is there to the right to
+    /// make room.
+    fn place_row_mark(&mut self, index: usize, mut control: Control) -> Option<Address> {
+        if !self.can_take_row_mark(index) {
+            return None;
+        }
+        let section = self.controls.get_mut(index)?;
+        let room = ROW_MARK_SIZE + MARGIN / 2;
+        for c in &mut section.children {
+            if c.kind != ControlKind::RowButton && c.x.unwrap_or(0) < MARGIN / 2 + room {
+                c.x = Some(c.x.unwrap_or(0) + room);
+            }
+        }
+        control.x = Some(MARGIN / 2);
+        control.y = Some(MARGIN / 2 + (ROW - ROW_MARK_SIZE) / 2);
+        control.width.get_or_insert(ROW_MARK_SIZE);
+        control.height.get_or_insert(ROW_MARK_SIZE);
+        let bottom = MARGIN / 2 + ROW + MARGIN / 2;
+        section.height = Some(section.height.unwrap_or(0).max(bottom));
+        section.children.push(control);
+        Some(vec![index, section.children.len() - 1])
+    }
+
+    /// Whether the section at `index` is a repeater section without a row
+    /// mark or an add/delete button: one way to add and delete or the other.
+    pub fn can_take_row_mark(&self, index: usize) -> bool {
+        self.canvas
+            && self.section(index).is_some_and(|s| s.is_repeater())
+            && self.row_mark_of(index).is_none()
+            && self.row_button_of(index).is_none()
+    }
+
+    /// The row mark of the repeater section at `index`: the first one on
+    /// its row.
+    pub fn row_mark_of(&self, index: usize) -> Option<(Address, &Control)> {
+        self.walk()
+            .into_iter()
+            .find(|(at, c)| at.len() > 1 && at[0] == index && c.kind == ControlKind::RowMark)
+    }
+
+    /// The repeater section whose row name is `name`.
+    pub fn repeater_named(&self, name: &str) -> Option<usize> {
+        self.repeater_sections()
+            .into_iter()
+            .find(|&i| self.row_name_of(i).as_deref() == Some(name))
+    }
+
+    /// The fixed section a rows button would go on: `selected` if it is
+    /// one, else the form header. None on a form that is not a canvas or
+    /// has no repeater for it to act on.
+    pub fn rows_button_section(&self, selected: Option<usize>) -> Option<usize> {
+        if !self.canvas || self.repeater_sections().is_empty() {
+            return None;
+        }
+        Some(
+            selected
+                .filter(|&i| self.section(i).is_some_and(|s| !s.is_repeater()))
+                .unwrap_or(0),
+        )
+    }
+
+    /// Whether the repeater section at `index` uses both ways to add and
+    /// delete: an add/delete button, and a row mark or a rows button.
+    pub fn mixes_row_editing(&self, index: usize) -> bool {
+        if self.row_button_of(index).is_none() {
+            return false;
+        }
+        let name = self.row_name_of(index);
+        self.row_mark_of(index).is_some()
+            || self.walk().into_iter().any(|(_, c)| {
+                c.kind == ControlKind::RowsButton && c.repeater.is_some() && c.repeater == name
+            })
+    }
+
     /// Whether the section at `index` is a repeater section without an
     /// add/delete button.
     pub fn can_take_row_button(&self, index: usize) -> bool {
         self.canvas
             && self.section(index).is_some_and(|s| s.is_repeater())
             && self.row_button_of(index).is_none()
+            && self.row_mark_of(index).is_none()
     }
 
     /// The add/delete button of the repeater section at `index`: the first
@@ -790,6 +927,50 @@ impl FormDesign {
                 .map(|(at, _)| at);
             if first.as_deref() != Some(address) {
                 return Some(tr!("a repeater has one add/delete button").to_owned());
+            }
+        }
+        if control.kind == ControlKind::RowMark {
+            let Some(&index) = address.first().filter(|_| self.canvas && address.len() > 1) else {
+                return Some(tr!("a row mark goes on a repeater section").to_owned());
+            };
+            if !self.controls.get(index).is_some_and(Control::is_section) {
+                return Some(tr!("a row mark goes on a repeater section").to_owned());
+            }
+            if self.row_mark_of(index).map(|(at, _)| at).as_deref() != Some(address) {
+                return Some(tr!("a repeater has one row mark").to_owned());
+            }
+            if self.mixes_row_editing(index) {
+                return Some(tr!("Uses both the add/delete button and marking").to_owned());
+            }
+        }
+        if control.kind == ControlKind::RowsButton {
+            let on_fixed = self.canvas
+                && address.len() > 1
+                && self.section(address[0]).is_some_and(|s| !s.is_repeater());
+            if !on_fixed {
+                return Some(
+                    tr!("a rows button goes on the header, the footer or a section between repeaters")
+                        .to_owned(),
+                );
+            }
+            let Some(name) = control.repeater.as_deref() else {
+                return Some(tr!("a rows button needs the repeater it acts on").to_owned());
+            };
+            let Some(index) = self.repeater_named(name) else {
+                return Some(tr!(
+                    "the form has no repeater whose row name is {name}",
+                    name = name
+                ));
+            };
+            if self.mixes_row_editing(index) {
+                return Some(tr!("Uses both the add/delete button and marking").to_owned());
+            }
+            if control.rows_action().needs_marks() && self.row_mark_of(index).is_none() {
+                return Some(tr!(
+                    "{action} needs a row mark on the repeater {name}",
+                    action = control.rows_action().label(),
+                    name = name
+                ));
             }
         }
         if let Some(name) = &control.context {
@@ -1006,7 +1187,11 @@ fn estimate_height(spec: &TypeSpec, base: &Path, c: &Control) -> u32 {
             }
         }
         ControlKind::Label => 20,
-        ControlKind::Button | ControlKind::RowButton | ControlKind::Repeater => 28,
+        ControlKind::Button
+        | ControlKind::RowButton
+        | ControlKind::RowsButton
+        | ControlKind::Repeater => 28,
+        ControlKind::RowMark => ROW_MARK_SIZE,
         ControlKind::Separator => 9,
         ControlKind::Chart => CHART_SIZE.1,
         ControlKind::Group => {

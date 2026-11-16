@@ -55,10 +55,18 @@ pub enum ControlKind {
     /// (DESIGN.md, Later versions, "Form canvases, 0.7.0").
     #[serde(rename = "row_button")]
     RowButton,
+    /// The checkbox in each row of a repeater section that marks it, for a
+    /// rows button to act on (DESIGN.md, "Marking rows").
+    #[serde(rename = "row_mark")]
+    RowMark,
+    /// A button on a fixed section of a canvas form that acts on the rows of
+    /// a repeater: deletes the marked ones, adds one, or marks them all.
+    #[serde(rename = "rows_button")]
+    RowsButton,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 8] = [
+    pub const ALL: [ControlKind; 10] = [
         ControlKind::Field,
         ControlKind::Group,
         ControlKind::Repeater,
@@ -67,6 +75,8 @@ impl ControlKind {
         ControlKind::Separator,
         ControlKind::Chart,
         ControlKind::RowButton,
+        ControlKind::RowMark,
+        ControlKind::RowsButton,
     ];
 
     pub fn label(self) -> &'static str {
@@ -79,6 +89,8 @@ impl ControlKind {
             ControlKind::Separator => tr!("Separator"),
             ControlKind::Chart => tr!("Chart"),
             ControlKind::RowButton => tr!("Add/delete button"),
+            ControlKind::RowMark => tr!("Row mark"),
+            ControlKind::RowsButton => tr!("Rows button"),
         }
     }
 }
@@ -1140,6 +1152,12 @@ pub struct Control {
     pub delete_fill_colour: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_text_colour: Option<String>,
+    /// A rows button: the row name of the repeater it acts on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeater: Option<String>,
+    /// A rows button: what it does. Absent: delete the marked rows.
+    #[serde(default, rename = "action", skip_serializing_if = "Option::is_none")]
+    pub rows_action: Option<RowsAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Control>,
 }
@@ -1188,7 +1206,7 @@ pub mod canvas;
 mod canvas_tests;
 pub mod template;
 
-pub use canvas::{ContextType, RowAllows};
+pub use canvas::{ContextType, RowAllows, RowsAction};
 
 impl Control {
     /// Whether it is a repeater that shows one item at a time. Its items can
@@ -1300,6 +1318,8 @@ impl Control {
             delete_label: None,
             delete_fill_colour: None,
             delete_text_colour: None,
+            repeater: None,
+            rows_action: None,
             children: Vec::new(),
         }
     }
@@ -1603,7 +1623,7 @@ pub fn form_schema_source() -> &'static str {
     "Control": {
       "type": "object",
       "properties": {
-        "type": {"type": "string", "enum": ["field", "group", "repeater", "label", "button", "separator", "chart", "row_button"]},
+        "type": {"type": "string", "enum": ["field", "group", "repeater", "label", "button", "separator", "chart", "row_button", "row_mark", "rows_button"]},
         "path": {"type": "string"},
         "label": {"type": "string"},
         "help": {"type": "string"},
@@ -1682,6 +1702,8 @@ pub fn form_schema_source() -> &'static str {
         "delete_label": {"type": "string"},
         "delete_fill_colour": {"type": "string"},
         "delete_text_colour": {"type": "string"},
+        "repeater": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "action": {"type": "string", "enum": ["delete_marked", "add_row", "toggle_all"]},
         "children": {"type": "array", "items": {"$ref": "#/$defs/Control"}}
       },
       "required": ["type"]

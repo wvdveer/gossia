@@ -153,6 +153,8 @@ pub(crate) fn sized_control(kind: ControlKind) -> Control {
         ControlKind::Separator => (240, 16),
         ControlKind::Button => (100, 24),
         ControlKind::RowButton => (72, 24),
+        ControlKind::RowMark => (20, 20),
+        ControlKind::RowsButton => (100, 24),
         ControlKind::Chart => gossia_core::form::CHART_SIZE,
     };
     if kind == ControlKind::Field {

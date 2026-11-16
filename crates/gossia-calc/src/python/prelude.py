@@ -107,18 +107,31 @@ class FormContext:
         return "context(" + ", ".join(k + "=" + repr(v) for k, v in self._values.items()) + ")"
 
 
+class MarkedRows(dict):
+    """`ctx.marked`: the marked rows of each repeater of the form by its row
+    name, in order. The procedure reads them; the marks are the form's."""
+
+    def _refuse(self, *args, **kwargs):
+        raise TypeError("ctx.marked cannot be changed: rows are marked on the form")
+
+    __setitem__ = __delitem__ = _refuse
+    clear = pop = popitem = setdefault = update = _refuse
+
+
 class ProcedureContext:
     """The `ctx` of a procedure: which form and which button (or, for a write
     procedure, which field) were used, the index of the item of the repeater
     the control is in (None outside one; the innermost, when they nest), the
-    contexts of a canvas form (`ctx.context`), and the tabs of the workbook
-    by name, which it may read and write."""
+    contexts of a canvas form (`ctx.context`), the marked rows of each of
+    its repeaters by row name (`ctx.marked`, read only), and the tabs of the
+    workbook by name, which it may read and write."""
 
-    def __init__(self, form, button, tabs, index=None, context=None):
+    def __init__(self, form, button, tabs, index=None, context=None, marked=None):
         self.form = form
         self.button = button
         self.index = index
         self.context = FormContext(context or {})
+        self.marked = MarkedRows(marked or {})
         self._tabs = tabs
 
     def tab(self, name):

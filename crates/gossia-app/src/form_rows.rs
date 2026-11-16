@@ -7,11 +7,20 @@
 //! index no item has, so what is typed there, and the text being typed, are
 //! kept by paths that never meet an item's, whatever is added or deleted
 //! meanwhile.
+//!
+//! The other way ("Marking rows"): a row mark in each row, and rows buttons
+//! on the fixed sections that delete the marked rows, add a row, or mark
+//! them all. The marks belong to the form in this window, with the array
+//! and the number of items they were made for: when either changes (an
+//! edit elsewhere, Undo, a formula, another current row of a master
+//! repeater) they no longer fit, and are cleared.
+
+use std::collections::BTreeSet;
 
 use egui::RichText;
 use gossia_calc::entry::{self, Entered};
-use gossia_core::form::canvas::RowAllows;
-use gossia_core::form::{Control, ControlKind};
+use gossia_core::form::canvas::{RowAllows, RowsAction};
+use gossia_core::form::{Control, ControlKind, FormDesign};
 use gossia_core::{Kind, Node, Path, Segment, Value};
 use gossia_i18n::tr;
 
@@ -38,6 +47,31 @@ pub(super) struct RowEdit {
     /// Its items can be added and deleted: the array is not computed. A
     /// section without an add/delete button cannot.
     pub editable: bool,
+}
+
+/// The marked rows of a repeater section, with the array and the number of
+/// items they were marked in.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Marks {
+    pub array: Path,
+    pub len: usize,
+    pub rows: BTreeSet<usize>,
+}
+
+/// A repeater section of the canvas form being drawn, as its row mark and
+/// the rows buttons that name it see it.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Repeater {
+    /// Its array, bound with the contexts; None if they do not bind it.
+    pub array: Option<Path>,
+    pub len: usize,
+    /// Its items can be added, deleted and marked: the array is not
+    /// computed, and the form is not being designed.
+    pub changeable: bool,
+    /// It has a row mark.
+    pub marking: bool,
+    /// The marked rows, if they fit the array.
+    pub marked: BTreeSet<usize>,
 }
 
 /// A draft with nothing typed into it.
@@ -186,6 +220,206 @@ impl Painter<'_> {
         }
     }
 
+    /// Finds the repeater sections of a canvas form, for row marks and rows
+    /// buttons; marks that no longer fit their array are cleared.
+    pub(super) fn prepare_repeaters(&mut self, design: &FormDesign) {
+        self.repeaters.clear();
+        for index in design.repeater_sections() {
+            let (Some(name), Some(c)) = (design.row_name_of(index), design.controls.get(index))
+            else {
+                continue;
+            };
+            let array = self.own_path(c);
+            let len = array
+                .as_ref()
+                .and_then(|a| self.data.get(a))
+                .and_then(|n| n.value().as_array().map(<[Node]>::len))
+                .unwrap_or(0);
+            let changeable = self.layout.is_none()
+                && array
+                    .as_ref()
+                    .is_some_and(|a| self.data.get(a).is_none() || self.app.can_reorder(a));
+            let key = (self.app.sheet.clone(), self.form.to_owned(), name.clone());
+            let marked = match self.app.form.marks.get(&key) {
+                Some(m) if Some(&m.array) == array.as_ref() && m.len == len => m.rows.clone(),
+                Some(_) => {
+                    self.actions.push(FormAction::ClearMarks(name.clone()));
+                    BTreeSet::new()
+                }
+                None => BTreeSet::new(),
+            };
+            let marking = design.row_mark_of(index).is_some();
+            self.repeaters.insert(
+                name,
+                Repeater {
+                    array,
+                    len,
+                    changeable,
+                    marking,
+                    marked,
+                },
+            );
+        }
+    }
+
+    /// Gives the focus to the first of the controls the arrow keys can go
+    /// to that were drawn since `stops`, and scrolls `row` into view.
+    pub(super) fn focus_first(&mut self, ui: &mut egui::Ui, stops: usize, row: egui::Rect) {
+        let first = self.nav[stops..]
+            .iter()
+            .min_by(|a, b| {
+                (a.rect.top(), a.rect.left())
+                    .partial_cmp(&(b.rect.top(), b.rect.left()))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|s| s.id);
+        if let Some(id) = first {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+        if !ui.clip_rect().contains_rect(row) {
+            ui.scroll_to_rect(row, None);
+        }
+    }
+
+    /// Whether the first field of the row of `item` is to be given the
+    /// focus.
+    pub(super) fn wants_row_focus(&self, item: &Path) -> bool {
+        self.app
+            .form
+            .focus_row
+            .as_ref()
+            .is_some_and(|(sheet, i)| sheet == &self.app.sheet && i == item)
+    }
+
+    /// The row mark: a checkbox in each row of a repeater section, ticked
+    /// when the row is marked. Not drawn in the blank row, nor where the
+    /// rows cannot be deleted (a computed array).
+    pub(super) fn row_mark(&mut self, ui: &mut egui::Ui, c: &Control) {
+        let size = c.height.map_or(0.0, |h| h as f32);
+        if self.layout.is_some() {
+            ui.add_enabled(false, egui::Checkbox::without_text(&mut false))
+                .on_disabled_hover_text(tr!("Marks the row, for a rows button to act on."));
+            let _ = size;
+            return;
+        }
+        if self.blank.is_some() {
+            return;
+        }
+        let Some((name, index)) = self.row.clone() else {
+            return;
+        };
+        let Some(repeater) = self.repeaters.get(&name) else {
+            return;
+        };
+        let (Some(array), true) = (repeater.array.clone(), repeater.changeable) else {
+            return;
+        };
+        let len = repeater.len;
+        let was = repeater.marked.contains(&index);
+        let mut on = was;
+        let response = ui.add(egui::Checkbox::without_text(&mut on));
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::Role::CheckBox,
+                true,
+                was,
+                tr!("Mark row {row}", row = index + 1),
+            )
+        });
+        self.nav.push(crate::form_nav::NavStop {
+            id: response.id,
+            rect: response.rect,
+            text: false,
+            vertical: true,
+        });
+        if on != was {
+            self.actions.push(FormAction::Mark {
+                row: name,
+                array,
+                len,
+                index,
+                on,
+            });
+        }
+    }
+
+    /// A rows button: *Delete marked* with the count of marked rows, *Add
+    /// row*, or *Toggle all*, acting on the repeater it names by row name.
+    pub(super) fn rows_button(&mut self, ui: &mut egui::Ui, c: &Control) {
+        let action = c.rows_action();
+        let repeater = c
+            .repeater
+            .as_deref()
+            .and_then(|n| self.repeaters.get(n))
+            .cloned();
+        let count = repeater.as_ref().map_or(0, |r| r.marked.len());
+        let mut label = c.rows_button_label();
+        if action == RowsAction::DeleteMarked {
+            label = format!("{label} ({count})");
+        }
+        let (can, hint) = match &repeater {
+            _ if self.layout.is_some() => (false, String::new()),
+            None => (
+                false,
+                tr!("Choose the repeater this button acts on.").to_owned(),
+            ),
+            Some(r) if r.array.is_none() => (
+                false,
+                tr!("The repeater's path does not lead to a list.").to_owned(),
+            ),
+            Some(r) if !r.changeable => (
+                false,
+                tr!("The rows of this repeater are worked out by a formula.").to_owned(),
+            ),
+            Some(r) if action.needs_marks() && !r.marking => {
+                (false, tr!("The repeater has no row mark.").to_owned())
+            }
+            Some(_) if action == RowsAction::DeleteMarked && count == 0 => {
+                (false, tr!("No row is marked.").to_owned())
+            }
+            Some(r) if action == RowsAction::ToggleAll && r.len == 0 => {
+                (false, tr!("There are no rows.").to_owned())
+            }
+            Some(_) => (true, action.label().to_owned()),
+        };
+        let width = if self.sized {
+            ui.available_width()
+        } else {
+            0.0
+        };
+        let height = c.height.map_or(0.0, |h| h as f32);
+        let button = egui::Button::new(&label)
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .min_size(egui::vec2(width, height));
+        let response = ui.add_enabled(can, button);
+        if !can {
+            if !hint.is_empty() {
+                response.on_disabled_hover_text(hint);
+            }
+            return;
+        }
+        self.nav.push(crate::form_nav::NavStop {
+            id: response.id,
+            rect: response.rect,
+            text: false,
+            vertical: true,
+        });
+        if !response.on_hover_text(hint).clicked() {
+            return;
+        }
+        let (Some(r), Some(name)) = (repeater, c.repeater.clone()) else {
+            return;
+        };
+        let Some(array) = r.array else {
+            return;
+        };
+        self.actions.push(match action {
+            RowsAction::DeleteMarked => FormAction::DeleteMarked(name, array),
+            RowsAction::AddRow => FormAction::AppendRow(name, array),
+            RowsAction::ToggleAll => FormAction::ToggleMarks(name, array, r.len),
+        });
+    }
+
     /// Whether the first field of the blank row of `array` is to be given
     /// the focus.
     pub(super) fn wants_blank_focus(&self, array: &Path) -> bool {
@@ -251,6 +485,116 @@ impl Painter<'_> {
 }
 
 impl GossiaApp {
+    fn marks_key(&self, row: &str) -> (String, String, String) {
+        (self.sheet.clone(), self.form_name(), row.to_owned())
+    }
+
+    /// The marks of the repeater `row` of the form shown, made afresh when
+    /// they were made for another array or number of items.
+    fn marks_mut(&mut self, row: &str, array: &Path, len: usize) -> &mut Marks {
+        let key = self.marks_key(row);
+        let marks = self.form.marks.entry(key).or_default();
+        if &marks.array != array || marks.len != len {
+            *marks = Marks {
+                array: array.clone(),
+                len,
+                rows: BTreeSet::new(),
+            };
+        }
+        marks
+    }
+
+    /// Marks or unmarks a row of the repeater `row`.
+    pub(super) fn set_mark(&mut self, row: &str, array: &Path, len: usize, index: usize, on: bool) {
+        if index >= len {
+            return;
+        }
+        let marks = self.marks_mut(row, array, len);
+        if on {
+            marks.rows.insert(index);
+        } else {
+            marks.rows.remove(&index);
+        }
+    }
+
+    /// *Toggle all*: marks every row of the repeater `row` when any is
+    /// unmarked, else clears every mark.
+    pub(super) fn toggle_marks(&mut self, row: &str, array: &Path, len: usize) {
+        let marks = self.marks_mut(row, array, len);
+        marks.rows = if marks.rows.len() < len {
+            (0..len).collect()
+        } else {
+            BTreeSet::new()
+        };
+    }
+
+    /// *Delete marked*: deletes the marked rows of the repeater `row`, as
+    /// one edit to undo, without asking. Undo brings them back, unmarked.
+    pub(super) fn delete_marked(&mut self, row: &str, array: &Path) {
+        let key = self.marks_key(row);
+        let Some(marks) = self.form.marks.remove(&key) else {
+            return;
+        };
+        if &marks.array != array || marks.rows.is_empty() {
+            return;
+        }
+        let sheet = self.sheet.clone();
+        let count = marks.rows.len();
+        let calc = self.session.calc_mut();
+        calc.begin_entry(&tr!("Delete {count} rows", count = count));
+        let mut refused = None;
+        // From the last, so the numbers of the others stay as marked.
+        for &i in marks.rows.iter().rev() {
+            if let Err(e) = calc.remove(&sheet, &array.index(i)) {
+                refused = Some(e.to_string());
+                break;
+            }
+        }
+        calc.end_entry();
+        self.notice = refused;
+        self.session.tick();
+    }
+
+    /// *Add row* on a rows button: appends an item as *New* makes one to the
+    /// array of the repeater `row`, as one edit; it becomes the current row
+    /// and its first field gets the focus.
+    pub(super) fn append_row(&mut self, row: &str, array: &Path) {
+        let before = self.array_len(array);
+        self.apply_form(FormAction::Add(array.clone()));
+        if self.array_len(array) <= before {
+            return;
+        }
+        let form = self.form_name();
+        let sheet = self.sheet.clone();
+        self.session
+            .calc_mut()
+            .set_form_context(&sheet, &form, row, Value::Int(before as i64));
+        self.form.focus_row = Some((sheet, array.index(before)));
+    }
+
+    /// The marked rows of each repeater of the form `form`, by row name, for
+    /// a procedure's `ctx.marked`: an empty list for one with none.
+    pub(super) fn marked_rows(&self, form: &str) -> Vec<(String, Vec<usize>)> {
+        let design = self.design_of(form);
+        if !design.canvas {
+            return Vec::new();
+        }
+        design
+            .row_names()
+            .into_iter()
+            .map(|name| {
+                let key = (self.sheet.clone(), form.to_owned(), name.clone());
+                let rows = self
+                    .form
+                    .marks
+                    .get(&key)
+                    .map(|m| m.rows.iter().copied().collect())
+                    .unwrap_or_default();
+                (name, rows)
+            })
+            .collect()
+    }
+
     /// Enters an edit made in the blank row of the repeater section over
     /// `array` into its draft, read and checked as typing into the node
     /// would be. Refused text stays in the field with the reason.

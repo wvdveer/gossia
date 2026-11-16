@@ -846,7 +846,11 @@ impl Placer<'_> {
             // A report has no repeaters or buttons (see
             // `ReportDesign::problems`): a list is the detail band of a
             // multipage report.
-            ControlKind::Repeater | ControlKind::Button | ControlKind::RowButton => Laid::default(),
+            ControlKind::Repeater
+            | ControlKind::Button
+            | ControlKind::RowButton
+            | ControlKind::RowMark
+            | ControlKind::RowsButton => Laid::default(),
         };
         laid.width = width;
         if let Some(h) = c.height {

@@ -116,7 +116,7 @@ pub enum Job {
         recalc_limit: Option<Duration>,
     },
     /// Run a button procedure.
-    Call { snapshot: Snapshot, call: Call },
+    Call { snapshot: Snapshot, call: Box<Call> },
     /// Run an expression of the Immediate window.
     Immediate {
         snapshot: Snapshot,

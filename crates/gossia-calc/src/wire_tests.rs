@@ -162,11 +162,12 @@ fn a_procedure_run_through_the_wire_makes_its_writes() {
         value: None,
         rows: Vec::new(),
         contexts: vec![("sel".to_owned(), Value::Int(3))],
+        marked: Vec::new(),
         time_limit: None,
     };
     let job = Job::Call {
         snapshot: calc.snapshot(),
-        call,
+        call: Box::new(call),
     };
     let Done::Procedure(result) = through_the_wire(&engine, &job) else {
         panic!("a procedure did not come back as one");

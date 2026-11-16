@@ -215,7 +215,7 @@ impl Evaluator {
         }
         let job = Job::Call {
             snapshot,
-            call: call.clone(),
+            call: Box::new(call.clone()),
         };
         self.send(job, Some(call), None);
         Ok(())

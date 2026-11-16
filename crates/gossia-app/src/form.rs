@@ -110,6 +110,12 @@ pub struct FormState {
     pub row_drafts: HashMap<(String, Path), Node>,
     /// Give the focus to the first field of this blank row (after *Add*).
     pub focus_blank: Option<(String, Path)>,
+    /// The marked rows of the repeater sections of canvas forms, by tab,
+    /// form and row name. They belong to the form in this window.
+    pub(crate) marks: HashMap<(String, String, String), rows::Marks>,
+    /// Give the focus to the first field of this row, by tab and item
+    /// (after a rows button's *Add row*).
+    pub focus_row: Option<(String, Path)>,
 }
 
 /// Something a control asked for while it was drawn. They are applied after
@@ -155,6 +161,25 @@ pub(crate) enum FormAction {
     AddRow(Path),
     /// The first field of the blank row has been given the focus.
     BlankFocused,
+    /// Mark or unmark a row of the repeater with this row name, over this
+    /// array of this many items.
+    Mark {
+        row: String,
+        array: Path,
+        len: usize,
+        index: usize,
+        on: bool,
+    },
+    /// *Toggle all* on a rows button: the row name, the array, its length.
+    ToggleMarks(String, Path, usize),
+    /// Marks that no longer fit their repeater's array: cleared.
+    ClearMarks(String),
+    /// *Delete marked* on a rows button: the row name and the array.
+    DeleteMarked(String, Path),
+    /// *Add row* on a rows button: the row name and the array.
+    AppendRow(String, Path),
+    /// The first field of the row of `focus_row` has been given the focus.
+    RowFocused,
 }
 
 impl GossiaApp {
@@ -293,6 +318,7 @@ impl GossiaApp {
             let design = self.design_of(&form);
             self.calc().form_contexts(&self.sheet, &form, &design)
         });
+        let marked = self.marked_rows(&form);
         let call = gossia_calc::Call {
             procedure: procedure.to_owned(),
             sheet: self.sheet.clone(),
@@ -301,6 +327,7 @@ impl GossiaApp {
             value,
             rows,
             contexts: contexts.into_iter().collect(),
+            marked,
             time_limit: None,
         };
         match self.session.run_procedure(call) {
@@ -500,6 +527,7 @@ impl GossiaApp {
                     row: None,
                     row_edit: None,
                     blank: None,
+                    repeaters: HashMap::new(),
                 };
                 // Both ways: a form whose rows are wider than the window
                 // scrolls sideways to its rightmost fields.
@@ -663,10 +691,25 @@ impl GossiaApp {
             FormAction::InDraft(array, action) => self.edit_row_draft(&array, *action),
             FormAction::AddRow(array) => self.add_from_draft(&array),
             FormAction::BlankFocused => self.form.focus_blank = None,
+            FormAction::Mark {
+                row,
+                array,
+                len,
+                index,
+                on,
+            } => self.set_mark(&row, &array, len, index, on),
+            FormAction::ToggleMarks(row, array, len) => self.toggle_marks(&row, &array, len),
+            FormAction::ClearMarks(row) => {
+                let key = (sheet, self.form_name(), row);
+                self.form.marks.remove(&key);
+            }
+            FormAction::DeleteMarked(row, array) => self.delete_marked(&row, &array),
+            FormAction::AppendRow(row, array) => self.append_row(&row, &array),
+            FormAction::RowFocused => self.form.focus_row = None,
         }
     }
 
-    fn array_len(&self, array: &Path) -> usize {
+    pub(super) fn array_len(&self, array: &Path) -> usize {
         self.calc()
             .data(&self.sheet)
             .and_then(|d| d.get(array))
@@ -912,6 +955,9 @@ struct Painter<'a> {
     /// In the blank row of a repeater section: the item it stands for, with
     /// what has been typed into it.
     blank: Option<rows::Blank>,
+    /// On a canvas form: its repeater sections by row name, for their row
+    /// marks and the rows buttons that act on them.
+    repeaters: HashMap<String, rows::Repeater>,
 }
 
 /// The Grid group a control is drawn in: where its rows and columns are.
@@ -2460,6 +2506,9 @@ impl Painter<'_> {
             },
             // The add/delete button of a canvas form's repeater section.
             ControlKind::RowButton => self.row_button(ui, c),
+            // Marking rows, and the buttons that act on the marks.
+            ControlKind::RowMark => self.row_mark(ui, c),
+            ControlKind::RowsButton => self.rows_button(ui, c),
             // Charts are drawn in reports only, for now.
             ControlKind::Chart => {
                 ui.weak(tr!("A chart is drawn in reports only"));

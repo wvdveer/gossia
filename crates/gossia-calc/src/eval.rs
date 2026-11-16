@@ -93,7 +93,7 @@ pub struct Evaluation {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProcedureResult {
     pub(crate) base: u64,
-    pub(crate) call: Call,
+    pub(crate) call: Box<Call>,
     pub(crate) result: Result<Vec<Write>, Failure>,
 }
 
@@ -106,7 +106,7 @@ impl ProcedureResult {
     pub(crate) fn failed(base: u64, call: Call, failure: Failure) -> ProcedureResult {
         ProcedureResult {
             base,
-            call,
+            call: Box::new(call),
             result: Err(failure),
         }
     }
@@ -135,7 +135,7 @@ impl Snapshot {
         let result = engine.call(call, ctx);
         ProcedureResult {
             base: self.version,
-            call: call.clone(),
+            call: Box::new(call.clone()),
             result,
         }
     }

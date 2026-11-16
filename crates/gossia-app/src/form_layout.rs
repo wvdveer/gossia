@@ -9,7 +9,7 @@
 //! has its own undo and redo, which last while it is on.
 
 use gossia_calc::{ExprKind, REPORT_FORM, entry};
-use gossia_core::form::canvas::{FORM_WIDTHS, RowAllows};
+use gossia_core::form::canvas::{FORM_WIDTHS, RowAllows, RowsAction};
 use gossia_core::form::{
     self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
     Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
@@ -709,6 +709,43 @@ impl GossiaApp {
             return self
                 .edit_design(|d| d.place_in_section(spec.as_ref()?, index, control).map(Some));
         }
+        if control.kind == ControlKind::RowMark {
+            let Some(index) = self.row_mark_section() else {
+                return false;
+            };
+            return self
+                .edit_design(|d| d.place_in_section(spec.as_ref()?, index, control).map(Some));
+        }
+        if control.kind == ControlKind::RowsButton {
+            let mut control = control;
+            let design = self.design_of(&self.form_name());
+            let on = selected.as_ref().and_then(|at| at.first().copied());
+            let Some(index) = design.rows_button_section(on) else {
+                return false;
+            };
+            // The selected repeater, else the first with a row mark, else
+            // the first; without a row mark the button adds rows.
+            let repeaters = design.repeater_sections();
+            let repeater = on
+                .filter(|i| repeaters.contains(i))
+                .or_else(|| {
+                    repeaters
+                        .iter()
+                        .copied()
+                        .find(|&i| design.row_mark_of(i).is_some())
+                })
+                .or_else(|| repeaters.first().copied());
+            if control.repeater.is_none() {
+                control.repeater = repeater.and_then(|i| design.row_name_of(i));
+            }
+            if control.rows_action.is_none()
+                && repeater.is_some_and(|i| design.row_mark_of(i).is_none())
+            {
+                control.rows_action = Some(RowsAction::AddRow);
+            }
+            return self
+                .edit_design(|d| d.place_in_section(spec.as_ref()?, index, control).map(Some));
+        }
         self.edit_design(|d| {
             // On a canvas the top level is the sections: a control goes on
             // the selected section, or the one of the selected control that
@@ -735,6 +772,25 @@ impl GossiaApp {
             };
             at.map(Some)
         })
+    }
+
+    /// The repeater section a row mark from the palette goes on: the
+    /// selected one, or the one the selection is on, if it can take one;
+    /// else the first that can.
+    pub(crate) fn row_mark_section(&self) -> Option<usize> {
+        let design = self.design_of(&self.form_name());
+        if !design.canvas {
+            return None;
+        }
+        let selected = self.selected_control().and_then(|at| at.first().copied());
+        selected
+            .filter(|&i| design.can_take_row_mark(i))
+            .or_else(|| {
+                design
+                    .repeater_sections()
+                    .into_iter()
+                    .find(|&i| design.can_take_row_mark(i))
+            })
     }
 
     /// The repeater section an add/delete button from the palette goes on:
@@ -1222,8 +1278,35 @@ impl GossiaApp {
                         ));
                     continue;
                 }
+                let row_mark = kind == ControlKind::RowMark;
+                let rows_button = kind == ControlKind::RowsButton;
+                if (row_mark || rows_button) && !canvas {
+                    continue;
+                }
+                if row_mark && self.row_mark_section().is_none() {
+                    ui.add_enabled(false, egui::Button::new(tr!("Add a row mark")))
+                        .on_disabled_hover_text(tr!(
+                            "Each repeater section has a row mark or an add/delete button \
+                             already, or there is none."
+                        ));
+                    continue;
+                }
+                if rows_button
+                    && self
+                        .design_of(&self.form_name())
+                        .repeater_sections()
+                        .is_empty()
+                {
+                    ui.add_enabled(false, egui::Button::new(tr!("Add a rows button")))
+                        .on_disabled_hover_text(tr!("The form has no repeater to act on."));
+                    continue;
+                }
                 let label = if row_button {
                     tr!("Add an add/delete button").to_owned()
+                } else if row_mark {
+                    tr!("Add a row mark").to_owned()
+                } else if rows_button {
+                    tr!("Add a rows button").to_owned()
                 } else {
                     tr!("Add {kind}", kind = kind.label().to_lowercase())
                 };
@@ -1480,12 +1563,20 @@ impl GossiaApp {
         }
         if matches!(
             kind,
-            ControlKind::Field | ControlKind::Group | ControlKind::Repeater | ControlKind::Button
+            ControlKind::Field
+                | ControlKind::Group
+                | ControlKind::Repeater
+                | ControlKind::Button
+                | ControlKind::RowsButton
         ) {
-            let hint = edited
-                .bound_path()
-                .and_then(|p| last_name(&p))
-                .unwrap_or_default();
+            let hint = if kind == ControlKind::RowsButton {
+                edited.rows_action().default_label().to_owned()
+            } else {
+                edited
+                    .bound_path()
+                    .and_then(|p| last_name(&p))
+                    .unwrap_or_default()
+            };
             if option_text(ui, tr!("Label"), &mut edited.label, &hint, false) {
                 merge = Some(key("label"));
             }
@@ -1808,6 +1899,18 @@ impl GossiaApp {
                     merge = Some(key(property));
                 }
             }
+            ControlKind::RowMark => {
+                ui.weak(tr!(
+                    "A checkbox in each row that marks it, for a rows button on the form to \
+                     delete the marked rows or mark them all. Procedures read the marks as \
+                     ctx.marked."
+                ));
+            }
+            ControlKind::RowsButton => {
+                if let Some(property) = rows_button_properties(ui, design, &mut edited) {
+                    merge = Some(key(property));
+                }
+            }
         }
         // On a report's canvas, the top level is placed as in a Free group.
         let canvas = report.then(|| {
@@ -1841,7 +1944,10 @@ impl GossiaApp {
             emphasis_properties(ui, &mut edited.bold, &mut edited.italic, "control");
         }
         // An add/delete button has the colours of its two configurations.
-        let coloured = !matches!(kind, ControlKind::Separator | ControlKind::RowButton);
+        let coloured = !matches!(
+            kind,
+            ControlKind::Separator | ControlKind::RowButton | ControlKind::RowMark
+        );
         let fields = [
             (ExprKind::Visible, &mut edited.visible_when, true),
             (ExprKind::Enabled, &mut edited.enabled_when, !report),
@@ -3213,6 +3319,69 @@ fn row_button_properties(
         "The blank row has no item for an expression to run on, so Add takes only a fixed \
          colour; Delete takes an expression too, run for each row."
     ));
+    changed
+}
+
+/// The properties of a rows button: the repeater it acts on, by row name,
+/// and what it does.
+fn rows_button_properties(
+    ui: &mut egui::Ui,
+    design: &FormDesign,
+    edited: &mut Control,
+) -> Option<&'static str> {
+    let mut changed = None;
+    let names = design.row_names();
+    let mut repeater = edited.repeater.clone();
+    ui.horizontal(|ui| {
+        ui.label(tr!("Repeater"));
+        let response = egui::ComboBox::from_id_salt("property_rows_repeater")
+            .selected_text(repeater.clone().unwrap_or_default())
+            .show_ui(ui, |ui| {
+                for name in &names {
+                    ui.selectable_value(&mut repeater, Some(name.clone()), name);
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::ComboBox,
+                true,
+                tr!("The repeater the rows button acts on"),
+            )
+        });
+    });
+    if repeater != edited.repeater {
+        edited.repeater = repeater;
+        changed = Some("repeater");
+    }
+    let mut action = edited.rows_action();
+    ui.horizontal(|ui| {
+        ui.label(tr!("Action"));
+        let response = egui::ComboBox::from_id_salt("property_rows_action")
+            .selected_text(action.label())
+            .show_ui(ui, |ui| {
+                for a in RowsAction::ALL {
+                    ui.selectable_value(&mut action, a, a.label());
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("What the rows button does"))
+        });
+    });
+    if action != edited.rows_action() {
+        edited.rows_action = (action != RowsAction::default()).then_some(action);
+        changed = Some("action");
+    }
+    ui.weak(match action {
+        RowsAction::DeleteMarked => tr!(
+            "Deletes the marked rows, as one edit to undo; the label shows how many are marked."
+        ),
+        RowsAction::AddRow => tr!("Adds a row at the end, and puts the focus in its first field."),
+        RowsAction::ToggleAll => {
+            tr!("Marks every row when any is unmarked, else clears every mark.")
+        }
+    });
     changed
 }
 

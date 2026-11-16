@@ -322,6 +322,10 @@ pub struct Call {
     /// sets one gives a write to [`CONTEXT_WRITES`].
     #[serde(default)]
     pub contexts: Vec<(String, Value)>,
+    /// On a canvas form: the marked rows of each repeater, by its row name,
+    /// in order (`ctx.marked`).
+    #[serde(default)]
+    pub marked: Vec<(String, Vec<usize>)>,
     /// The longest the procedure may run, if it is limited.
     pub time_limit: Option<std::time::Duration>,
 }
