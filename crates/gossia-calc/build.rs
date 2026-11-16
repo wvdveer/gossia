@@ -46,6 +46,9 @@ const ROOTS: &[&str] = &[
     "copyreg",
     "codecs",
     "string.templatelib",
+    // `datetime.strptime` imports it (vendor-patches/rustpython.patch takes
+    // its `os` out).
+    "_strptime",
 ];
 
 /// Modules the engine cannot have: `os` needs `posix` or `nt`, which give

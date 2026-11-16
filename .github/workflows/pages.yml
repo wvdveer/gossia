@@ -39,7 +39,7 @@ jobs:
       # wasm-bindgen's command line, at the version in Cargo.lock: installed
       # by cargo xtask web into target/wasm-tools when it is not there.
       - name: Keep wasm-bindgen
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target/wasm-tools
           key: wasm-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
@@ -56,7 +56,7 @@ jobs:
             echo "gzipped wasm: $(gzip -9c target/web/pkg/gossia_web_bg.wasm | wc -c) bytes"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: target/web
 
@@ -69,7 +69,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
       # Whether GitHub Pages compresses the module (DESIGN.md, 17b): the
       # loading screen shows progress either way, but the download is a
       # third of the size when it does.

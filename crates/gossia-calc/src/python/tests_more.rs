@@ -39,6 +39,24 @@ fn formulas_use_python_expressions_and_the_exposed_modules() {
     assert_eq!(b.get("note"), Some(Value::Str("dctn".into())));
 }
 
+/// `datetime.strptime` reads text into a date by a format in a formula
+/// (0.7.0: `_strptime` is patched not to import `os`).
+#[test]
+fn strptime_reads_text_by_a_format_in_a_formula() {
+    let mut b = Book::new();
+    b.formula(
+        "name",
+        "datetime.datetime.strptime('16/11/2026', '%d/%m/%Y').date().isoformat()",
+    );
+    b.formula(
+        "x",
+        "datetime.datetime.strptime('3 Mar 2026 08:30', '%d %b %Y %H:%M').minute",
+    );
+    b.run();
+    assert_eq!(b.get("name"), Some(Value::Str("2026-11-16".into())));
+    assert_eq!(b.get("x"), Some(Value::Int(30)));
+}
+
 /// `true`, `false` and `null` are `True`, `False` and `None` (owner, 2026-11-12), so JSON
 /// pasted into a formula works.
 #[test]

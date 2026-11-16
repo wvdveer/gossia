@@ -17,6 +17,29 @@ index 5b4efbd..529470b 100644
  
  der = { version = "0.8", features = ["alloc", "oid", "pem", "zeroize"] }
  phf = { version = "0.14.0", default-features = false, features = ["macros"]}
+diff --git a/Lib/_strptime.py b/Lib/_strptime.py
+index 746b090..a226c25 100644
+--- a/Lib/_strptime.py
++++ b/Lib/_strptime.py
+@@ -10,7 +10,8 @@
+     _strptime -- Calculates the time struct represented by the passed-in string
+ 
+ """
+-import os
++# No os (a patch of Gossia's): its engine has none, and os was used only
++# for the folder of this file in a warning.
+ import time
+ import locale
+ import calendar
+@@ -496,7 +497,7 @@ def repl(m):
+ To avoid trouble, add a specific year to the input and format.
+ See https://github.com/python/cpython/issues/70647.""",
+                               DeprecationWarning,
+-                              skip_file_prefixes=(os.path.dirname(__file__),))
++                              skip_file_prefixes=(__file__[:-len('_strptime.py')],))
+         return format
+ 
+     def compile(self, format):
 diff --git a/Lib/random.py b/Lib/random.py
 index 7db7610..85efe14 100644
 --- a/Lib/random.py

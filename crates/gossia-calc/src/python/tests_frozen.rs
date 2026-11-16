@@ -110,9 +110,18 @@ fn what_formulas_use_imports_what_it_needs() {
     ];
     // And a workbook module cannot import what the engine does not offer.
     assert!(!engine.can_import("os"));
-    // `strptime` needs `os` (through `_strptime`), so it fails, and says so.
-    let strptime = engine.probe(&["datetime.datetime.strptime('2026', '%Y')"]);
-    assert!(strptime[0].contains("Error"), "{strptime:?}");
+    // `strptime` reads text by a format through `_strptime`, patched not
+    // to import `os`.
+    let strptime = engine.probe(&[
+        "datetime.datetime.strptime('16/11/2026 14:05', '%d/%m/%Y %H:%M').isoformat()",
+        "datetime.datetime.strptime('Mon 16 Nov 2026', '%a %d %b %Y').date().isoformat()",
+        "datetime.date.fromisoformat('2026-11-16').strftime('%B') + str(datetime.datetime.strptime('12 PM', '%I %p').hour)",
+    ]);
+    assert_eq!(
+        strptime,
+        ["'2026-11-16T14:05:00'", "'2026-11-16'", "'November12'"],
+        "strptime"
+    );
     let failed: Vec<String> = uses
         .iter()
         .zip(engine.probe(&uses))

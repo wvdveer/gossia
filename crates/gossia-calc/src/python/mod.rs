@@ -102,10 +102,12 @@ pub(crate) fn importable() -> &'static [&'static str] {
 /// calls it: `date.strftime` imports `time`, the `n` format of a number
 /// `locale`, some codecs `_pycodecs`. The replacement `__import__` serves
 /// them as Python's own does, since it is the one in force while a formula
-/// runs. build.rs freezes those written in Python. (`datetime.strptime`
-/// imports `_strptime`, which needs `os`, so it is not available.)
+/// runs. build.rs freezes those written in Python. `datetime.strptime`
+/// imports `_strptime`, patched not to import `os`
+/// (vendor-patches/rustpython.patch).
 pub(crate) const INTERNAL_MODULES: &[&str] = &[
     "time",
+    "_strptime",
     "locale",
     "_pycodecs",
     "typing",
