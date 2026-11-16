@@ -79,10 +79,13 @@ fn a_single_page_report_is_one_page_with_its_text_as_text() {
     assert!(html.contains("fill=\"#336699\" fill-opacity=\"0.5\""));
     assert!(html.contains("<line x1=\"0\" y1=\"60\" x2=\"300\" y2=\"60\""));
     assert!(html.contains("<rect x=\"0.5\" y=\"70.5\" width=\"99\" height=\"19\" fill=\"none\""));
-    // Only Inter, the sans serif typeface's font, is embedded; there is no
-    // paper to print on, and nothing runs.
-    assert_eq!(count(&html, "@font-face"), 1);
+    // Only Inter, the sans serif typeface's font, is embedded, reduced, once
+    // for each weight; there is no paper to print on, and nothing runs.
+    assert_eq!(count(&html, "@font-face"), 2);
     assert!(html.contains("font-family: \"gossia-0\"; src: url(data:font/ttf;base64,"));
+    assert!(html.contains("font-weight: 400; }"));
+    assert!(html.contains("font-weight: 700; }"));
+    assert!(html.len() < 60_000, "{} bytes", html.len());
     assert!(!html.contains("@page"));
     assert!(html.contains("default-src 'none'"));
     assert!(!html.contains("<script"));

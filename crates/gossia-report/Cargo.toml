@@ -24,6 +24,11 @@ krilla-svg = "0.8.1"
 usvg = { version = "0.47.0", default-features = false, features = ["text"] }
 # The fonts embedded in an HTML export, as data: URLs.
 base64 = "0.22.1"
+# Those fonts reduced to the characters a report uses: krilla's subsetter,
+# at the version krilla uses, and write-fonts, at the version it uses, for
+# the cmap a browser needs (DESIGN.md, Reports, "Export as HTML").
+subsetter = { version = "=0.2.6", features = ["variable-fonts"] }
+write-fonts = { version = "=0.48.1", features = ["read"] }
 
 [dev-dependencies]
 # Reads the text of each page back from the PDF in the tests.

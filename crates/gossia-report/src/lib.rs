@@ -21,6 +21,7 @@
 //! same layout as an HTML page.
 
 pub mod html;
+pub mod web_font;
 pub mod workbook;
 
 use gossia_i18n::tr;

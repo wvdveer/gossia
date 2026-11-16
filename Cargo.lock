@@ -2557,7 +2557,9 @@ dependencies = [
  "krilla",
  "krilla-svg",
  "pdf-extract",
+ "subsetter",
  "usvg",
+ "write-fonts",
 ]
 
 [[package]]

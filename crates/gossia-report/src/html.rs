@@ -8,8 +8,10 @@
 //!   selected, searched and read aloud; each line is given the width the
 //!   layout measured (`textLength`), so the browser's shaping cannot move
 //!   where a line ends. Italic is slanted as the window slants it.
-//! - The bundled fonts a report uses are embedded, whole, as `data:` URLs:
-//!   a font is only embedded when a line of the report is set in it.
+//! - The bundled fonts a report uses are embedded as `data:` URLs, each
+//!   reduced to the characters it draws and instanced at the weights it is
+//!   drawn in (`web_font`): a font is only embedded when a line of the
+//!   report is set in it.
 //! - A chart's SVG is parsed with usvg and written again by it, with the
 //!   options and style sheet the window renders it with. What comes out
 //!   has only shapes and embedded images, with its text as paths: no
@@ -24,11 +26,11 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use base64::Engine as _;
-use gossia_layout::fonts::{self, FILES};
+use gossia_layout::fonts;
 use gossia_layout::report::{Ink, Laid, Paged, Paint, Rect};
 use gossia_layout::text::Fonts;
 
-use crate::paper_colour;
+use crate::{paper_colour, web_font};
 
 /// How far italic text leans, as in the PDF.
 const SLANT: f32 = 0.25;
@@ -66,15 +68,19 @@ fn write(title: &str, width: f32, height: f32, pages: &[&Laid], paper: bool) -> 
     );
     let _ = writeln!(out, "<title>{}</title>", escape(title));
     out.push_str("<style>\n");
-    let used = used_fonts(pages);
-    for &font in &used {
-        let file = &FILES[font];
+    let chars = web_font::used_chars(pages);
+    let used: BTreeSet<usize> = chars.keys().map(|&(font, _)| font).collect();
+    for font in web_font::embedded(&chars) {
+        // A font embedded whole is variable over every weight.
+        let weight = font
+            .weight
+            .map_or_else(|| "100 900".to_owned(), |w| w.to_string());
         let _ = writeln!(
             out,
             "@font-face {{ font-family: \"{}\"; src: url(data:font/ttf;base64,{}) \
-             format(\"truetype\"); font-weight: 100 900; }}",
-            family(font),
-            base64::engine::general_purpose::STANDARD.encode(file.bytes)
+             format(\"truetype\"); font-weight: {weight}; }}",
+            family(font.font),
+            base64::engine::general_purpose::STANDARD.encode(&font.bytes)
         );
     }
     if paper {
@@ -121,21 +127,6 @@ fn write(title: &str, width: f32, height: f32, pages: &[&Laid], paper: bool) -> 
     }
     out.push_str("</body>\n</html>\n");
     out
-}
-
-/// The fonts the report's text is set in, as places in [`FILES`]: those its
-/// characters were shaped with.
-fn used_fonts(pages: &[&Laid]) -> BTreeSet<usize> {
-    let measure = Fonts::shared();
-    let mut used = BTreeSet::new();
-    for laid in pages {
-        for paint in &laid.paints {
-            if let Paint::Text { text, style, .. } = paint {
-                used.extend(measure.shape(text, style).glyphs.iter().map(|g| g.font));
-            }
-        }
-    }
-    used
 }
 
 /// The name a bundled font is embedded under, so that it cannot be taken
