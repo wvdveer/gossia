@@ -2143,7 +2143,8 @@ impl FormDesign {
             return Some(problem);
         }
         let Some(scope) = self.item_scope(address) else {
-            return control_problem(spec, control);
+            return control_problem(spec, control)
+                .or_else(|| self.list_in_field(spec, control, &Path::root()));
         };
         let repeater = self.get(&scope)?;
         if !repeater.designs_items() {
@@ -2175,7 +2176,21 @@ impl FormDesign {
         let Some(array) = array else {
             return Some(tr!("its repeater is broken").to_owned());
         };
-        control_problem_at(spec, control, &array.index(0))
+        let base = array.index(0);
+        control_problem_at(spec, control, &base)
+            .or_else(|| self.list_in_field(spec, control, &base))
+    }
+
+    /// On a canvas a list is a repeater section of its own: a field bound to
+    /// an array is a problem (DESIGN.md, "Form canvases, 0.7.0").
+    fn list_in_field(&self, spec: &TypeSpec, control: &Control, base: &Path) -> Option<String> {
+        if !self.canvas || control.kind != ControlKind::Field || control.context.is_some() {
+            return None;
+        }
+        let path = canvas::sample_path(spec, base, control.path.as_deref()?).ok()??;
+        let resolved = spec.resolve(&path)?;
+        matches!(spec.get(resolved.ty).kind, Kind::Array { .. })
+            .then(|| tr!("a list goes in a repeater section of its own").to_owned())
     }
 
     /// The controls that are broken, with the reason.

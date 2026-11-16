@@ -50,39 +50,6 @@ pub fn gate(calc: &Calc, tab: &str, form: &str, at: &[usize], rows: &[usize]) ->
     })
 }
 
-/// What the expressions of a column of the table of the control at `at` come
-/// to: with no row, whether the column is shown (its *visible when*); for a
-/// row, how that cell is drawn (the others).
-pub fn column_gate(
-    calc: &Calc,
-    tab: &str,
-    form: &str,
-    at: &[usize],
-    column: &str,
-    row: Option<usize>,
-) -> Gate {
-    column_gate_at(calc, tab, form, at, &[], column, row)
-}
-
-/// As [`column_gate`], for a table inside the items of repeaters, `outer`
-/// being the item of each.
-pub fn column_gate_at(
-    calc: &Calc,
-    tab: &str,
-    form: &str,
-    at: &[usize],
-    outer: &[usize],
-    column: &str,
-    row: Option<usize>,
-) -> Gate {
-    gate_of(calc.is_trusted(), |kind| {
-        if (kind == ExprKind::Visible) != row.is_none() {
-            return None;
-        }
-        calc.column_expression_at(tab, form, at, outer, column, row, kind)
-    })
-}
-
 fn gate_of(trusted: bool, state_of: impl Fn(ExprKind) -> Option<ExprState>) -> Gate {
     let mut gate = Gate::default();
     for kind in ExprKind::ALL {
@@ -236,23 +203,16 @@ pub struct ChoiceList {
     pub pending: bool,
 }
 
-/// The choices of the field of the control at `at` (for item `item`, in the
-/// design of a stacked repeater's items), or of a cell of a column of its
-/// table (`column` and the row). None if it has no choices.
+/// The choices of the field of the control at `at`, in the rows `rows` of
+/// the repeater sections it is in. None if it has no choices.
 pub fn choice_list(
     calc: &Calc,
     tab: &str,
     form: &str,
     at: &[usize],
-    column: Option<(&str, usize)>,
     rows: &[usize],
 ) -> Option<ChoiceList> {
-    let state = match column {
-        None => calc.control_expression_at(tab, form, at, rows, ExprKind::Choices),
-        Some((name, row)) => {
-            calc.column_expression_at(tab, form, at, rows, name, Some(row), ExprKind::Choices)
-        }
-    }?;
+    let state = calc.control_expression_at(tab, form, at, rows, ExprKind::Choices)?;
     Some(list_of(calc.is_trusted(), state))
 }
 

@@ -128,7 +128,6 @@ impl GossiaApp {
         tables.layout = None;
         tables.rev += 1;
         self.form.drafts.retain(|(sheet, _), _| sheet != name);
-        self.form.steps.retain(|(sheet, _), _| sheet != name);
         self.form.new_keys.retain(|(sheet, _), _| sheet != name);
         if self.form.layout.as_ref().is_some_and(|l| l.sheet == name) {
             self.form.layout = None;
@@ -183,7 +182,6 @@ impl GossiaApp {
         tables.layout = None;
         tables.rev += 1;
         rekey_pair(&mut self.form.drafts, from, to);
-        rekey_pair(&mut self.form.steps, from, to);
         rekey_pair(&mut self.form.new_keys, from, to);
         if let Some(layout) = &mut self.form.layout {
             moved(&mut layout.sheet);

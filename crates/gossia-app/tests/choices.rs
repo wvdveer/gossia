@@ -80,7 +80,7 @@ fn form(
 }
 
 fn list(harness: &Harness<'_, GossiaApp>, at: &[usize]) -> ChoiceList {
-    choice_list(harness.state().calc(), "Orders", "Default", at, None, &[])
+    choice_list(harness.state().calc(), "Orders", "Default", at, &[])
         .expect("the field has choices")
 }
 
@@ -322,7 +322,7 @@ fn the_choices_of_a_field_in_a_row_run_for_each_row() {
     }
     settle(&mut harness);
     let row = |h: &Harness<'_, GossiaApp>, row: usize| {
-        let list = choice_list(h.state().calc(), "Orders", "Default", &at, None, &[row])
+        let list = choice_list(h.state().calc(), "Orders", "Default", &at, &[row])
             .expect("the field has choices");
         texts(&list)
     };

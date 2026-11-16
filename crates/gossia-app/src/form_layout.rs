@@ -11,10 +11,10 @@
 use gossia_calc::{ExprKind, REPORT_FORM, entry};
 use gossia_core::form::canvas::{FORM_WIDTHS, RowAllows, RowsAction};
 use gossia_core::form::{
-    self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign,
-    Control, ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS,
-    LabelPosition, MAX_TRACKS, POSITIONS, RepeaterMode, SEPARATOR_THICKNESS, SPACINGS,
-    TRACK_POINTS, TRACK_SHARES, TrackSize, flow_rows, free_place, grid_cells, rebase_free,
+    self as design, Address, Alignment, Anchor, CONTROL_HEIGHTS, CONTROL_WIDTHS, Control,
+    ControlKind, DEFAULT_LABEL_WIDTH, Editor, FormDesign, GroupLayout, LABEL_WIDTHS, LabelPosition,
+    MAX_TRACKS, POSITIONS, SEPARATOR_THICKNESS, SPACINGS, TRACK_POINTS, TRACK_SHARES, TrackSize,
+    flow_rows, free_place, grid_cells, rebase_free,
 };
 use gossia_core::{Kind, Path, Value};
 use gossia_i18n::tr;
@@ -22,7 +22,6 @@ use gossia_i18n::tr;
 use crate::app::GossiaApp;
 use crate::form::{DEFAULT_FORM, View, control_name, last_name};
 use crate::form_free::{Arrange, FormRects, GRID, Placement, arranged, last_rects};
-use crate::icons;
 use crate::view::{error_color, named};
 
 /// What layout mode keeps while it is on.
@@ -35,9 +34,6 @@ pub struct LayoutState {
     /// The other controls selected with Ctrl and a click, for the align
     /// tools; `selected` is the one they follow.
     pub also: Vec<Address>,
-    /// A column of the table of the selected control, when one is selected
-    /// rather than the control.
-    pub column: Option<String>,
     /// What the form was before each change: `None` is a form that was not
     /// stored, a generated one.
     pub undo: Vec<Option<FormDesign>>,
@@ -58,7 +54,6 @@ impl LayoutState {
             form: form.to_owned(),
             selected: None,
             also: Vec::new(),
-            column: None,
             undo: Vec::new(),
             redo: Vec::new(),
             merge: None,
@@ -78,10 +73,6 @@ pub(crate) enum ControlAction {
     /// Into the group above (`true`), or out of the group.
     Nest(Address, bool),
     Delete(Address),
-    /// Select a column of the table of a repeater, by its name.
-    SelectColumn(Address, String),
-    /// Move or show a column of the table of a repeater.
-    Column(Address, String, ColumnEdit),
     /// What was dragged, put down at a place in the list of a group (the top
     /// level for an empty address), counted as the list was before; in a
     /// Free group, at a point of its inside, which is the size given.
@@ -179,19 +170,6 @@ impl FieldSource {
             FieldSource::Context => tr!("Context"),
         }
     }
-}
-
-/// A change to the place of a column, or to whether it is shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ColumnEdit {
-    /// One place earlier (`true`) or later in the list of the table.
-    Step(bool),
-    /// To the left (`true`) or the right of the next column that is shown.
-    Move(bool),
-    Show(bool),
-    /// A width of its own, in points, as dragging the edge of its title
-    /// gives it.
-    Width(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,7 +288,6 @@ impl GossiaApp {
             layout.redo.clear();
             layout.merge = merge;
             if layout.selected != selection {
-                layout.column = None;
                 layout.also.clear();
             }
             layout.selected = selection;
@@ -355,7 +332,6 @@ impl GossiaApp {
         if let Some(layout) = self.form.layout.as_mut() {
             layout.selected = address;
             layout.also.clear();
-            layout.column = None;
             layout.merge = None;
         }
     }
@@ -366,7 +342,6 @@ impl GossiaApp {
         let Some(layout) = self.form.layout.as_mut() else {
             return;
         };
-        layout.column = None;
         layout.merge = None;
         if layout.selected.as_ref() == Some(&at) {
             layout.selected = (!layout.also.is_empty()).then(|| layout.also.remove(0));
@@ -390,23 +365,6 @@ impl GossiaApp {
             .chain(&layout.also)
             .cloned()
             .collect()
-    }
-
-    /// The column selected in layout mode: the repeater, and the column's name.
-    pub fn selected_column(&self) -> Option<(Address, String)> {
-        let at = self.selected_control()?;
-        let column = self.form.layout.as_ref()?.column.clone()?;
-        Some((at, column))
-    }
-
-    /// Selects a column of the table of a repeater in layout mode.
-    pub fn select_table_column(&mut self, at: Address, name: &str) {
-        if let Some(layout) = self.form.layout.as_mut() {
-            layout.selected = Some(at);
-            layout.also.clear();
-            layout.column = Some(name.to_owned());
-            layout.merge = None;
-        }
     }
 
     pub fn can_layout_undo(&self) -> bool {
@@ -446,7 +404,6 @@ impl GossiaApp {
         };
         layout.selected = None;
         layout.also.clear();
-        layout.column = None;
         layout.merge = None;
         let form = layout.form.clone();
         let current = self.stored_design(&form);
@@ -472,10 +429,6 @@ impl GossiaApp {
             }
             ControlAction::Delete(at) => {
                 self.edit_design(|d| d.remove(&at).map(|_| None));
-            }
-            ControlAction::SelectColumn(at, name) => self.select_table_column(at, &name),
-            ControlAction::Column(at, name, edit) => {
-                self.edit_column_place(&at, &name, edit);
             }
             ControlAction::Drop(item, parent, index, at_point) => {
                 if !drop_allowed(&item, &parent, index) {
@@ -822,8 +775,6 @@ impl GossiaApp {
         let Some(control) = control else {
             return false;
         };
-        // Its path is the whole path, so it goes after the stacked repeater
-        // whose items the selection is in, or that is selected.
         let design = self.design_of(&self.form_name());
         // On a canvas a whole path belongs on the header.
         if design.canvas {
@@ -849,135 +800,6 @@ impl GossiaApp {
     }
 
     // ------------------------------------------------------- the columns
-
-    /// The names of the columns of the table of the repeater at `at`, in the
-    /// order of the schema, if it is a table.
-    fn column_names(&self, design: &FormDesign, at: &[usize]) -> Option<Vec<String>> {
-        let control = design.get(at)?;
-        if control.lists_items() {
-            // For the first item of each repeater around.
-            let around = (1..at.len())
-                .filter(|&n| {
-                    design
-                        .get(&at[..n])
-                        .is_some_and(|c| c.kind == ControlKind::Repeater)
-                })
-                .count();
-            let state = self.calc().control_expression_at(
-                &self.sheet,
-                &self.form_name(),
-                at,
-                &vec![0; around],
-                ExprKind::Items,
-            );
-            let items = match state.and_then(|s| s.result) {
-                Some(Ok(Value::Array(items))) => items.iter().map(|n| n.value().clone()).collect(),
-                _ => Vec::new(),
-            };
-            return Some(crate::form::listed_names(control, &items));
-        }
-        let spec = self.calc().spec(&self.sheet)?;
-        let columns = crate::form::columns_of(spec, design, at)?;
-        let mut names: Vec<String> = columns.into_iter().map(|c| c.name).collect();
-        // And the columns of the design that show an expression.
-        for column in &control.table_columns {
-            if column.value.is_some() && !names.contains(&column.name) {
-                names.push(column.name.clone());
-            }
-        }
-        Some(names)
-    }
-
-    /// Changes the columns of the table of the repeater at `at`, as the
-    /// control arranges them. `change` returns whether it changed anything.
-    fn edit_columns(
-        &mut self,
-        merge: Option<String>,
-        at: &Address,
-        change: impl FnOnce(&mut Vec<ColumnDesign>) -> bool,
-    ) -> bool {
-        let design = self.design_of(&self.form_name());
-        let Some(names) = self.column_names(&design, at) else {
-            return false;
-        };
-        let at = at.clone();
-        self.edit_design_merging(merge, |d| {
-            let control = d.get_mut(&at)?;
-            let mut columns = control.arrange_columns(&names);
-            if !change(&mut columns) {
-                return None;
-            }
-            control.set_columns(columns, &names);
-            Some(Some(at))
-        })
-    }
-
-    /// Moves a column, or shows or hides it. The last column of the items
-    /// that is shown cannot be hidden.
-    pub(crate) fn edit_column_place(&mut self, at: &Address, name: &str, edit: ColumnEdit) -> bool {
-        self.edit_columns(None, at, |columns| {
-            let Some(i) = columns.iter().position(|c| c.name == name) else {
-                return false;
-            };
-            match edit {
-                ColumnEdit::Width(width) => {
-                    if columns[i].width == Some(width) {
-                        return false;
-                    }
-                    columns[i].width = Some(width);
-                    true
-                }
-                ColumnEdit::Show(on) => {
-                    let shown = columns
-                        .iter()
-                        .filter(|c| !c.hidden && !c.is_row_number())
-                        .count();
-                    let last = !columns[i].is_row_number() && !columns[i].hidden && shown == 1;
-                    if columns[i].hidden != on || (!on && last) {
-                        return false;
-                    }
-                    columns[i].hidden = !on;
-                    true
-                }
-                ColumnEdit::Step(up) | ColumnEdit::Move(up) => {
-                    let past_hidden = matches!(edit, ColumnEdit::Move(_));
-                    let target = if up {
-                        (0..i).rev().find(|&j| !past_hidden || !columns[j].hidden)
-                    } else {
-                        (i + 1..columns.len()).find(|&j| !past_hidden || !columns[j].hidden)
-                    };
-                    let Some(j) = target else {
-                        return false;
-                    };
-                    if up {
-                        columns[j..=i].rotate_right(1);
-                    } else {
-                        columns[i..=j].rotate_left(1);
-                    }
-                    true
-                }
-            }
-        })
-    }
-
-    /// Changes the properties of one column of the table at `at`. A column
-    /// that is selected stays selected.
-    pub fn set_column(
-        &mut self,
-        merge: Option<String>,
-        at: &Address,
-        column: ColumnDesign,
-    ) -> bool {
-        self.edit_columns(merge, at, |columns| {
-            match columns.iter_mut().find(|c| c.name == column.name) {
-                Some(slot) if *slot != column => {
-                    *slot = column;
-                    true
-                }
-                _ => false,
-            }
-        })
-    }
 
     // ------------------------------------------------------- the commands
 
@@ -1367,38 +1189,24 @@ impl GossiaApp {
         let form = self.form_name();
         let design = self.design_of(&form);
         let selected = self.selected_control();
-        let column = self.selected_column();
         ui.heading(tr!("Properties"));
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let column = column.and_then(|(at, name)| {
-                    let control = design.get(&at)?;
-                    let names = self.column_names(&design, &at)?;
-                    let column = control
-                        .arrange_columns(&names)
-                        .into_iter()
-                        .find(|c| c.name == name)?;
-                    Some((at, control.clone(), column))
-                });
-                if let Some((at, control, column)) = column {
-                    self.column_properties(ui, &at, &control, column);
-                } else {
-                    self.arrange_tools(ui);
-                    match selected
-                        .as_ref()
-                        .and_then(|at| design.get(at).map(|c| (at, c)))
-                    {
-                        Some((at, _)) if self.is_band(at) => self.band_properties(ui, at[0]),
-                        Some((at, _)) if design.canvas && at.len() == 1 => {
-                            self.section_properties(ui, &design, at[0]);
-                        }
-                        Some((at, control)) => self.control_properties(ui, &design, at, control),
-                        None if self.in_report() => self.report_properties(ui),
-                        None if design.canvas => self.canvas_properties(ui, &design),
-                        None => {
-                            ui.weak(tr!("Select a control on the form to change it."));
-                        }
+                self.arrange_tools(ui);
+                match selected
+                    .as_ref()
+                    .and_then(|at| design.get(at).map(|c| (at, c)))
+                {
+                    Some((at, _)) if self.is_band(at) => self.band_properties(ui, at[0]),
+                    Some((at, _)) if design.canvas && at.len() == 1 => {
+                        self.section_properties(ui, &design, at[0]);
+                    }
+                    Some((at, control)) => self.control_properties(ui, &design, at, control),
+                    None if self.in_report() => self.report_properties(ui),
+                    None if design.canvas => self.canvas_properties(ui, &design),
+                    None => {
+                        ui.weak(tr!("Select a control on the form to change it."));
                     }
                 }
                 ui.separator();
@@ -1422,7 +1230,6 @@ impl GossiaApp {
         ui.strong(control_name(control));
         let key = |property: &str| format!("{at:?}:{property}");
         let mut merge = None;
-        let mut column_edit = None;
         let mut tab_action: Option<(Address, bool)> = None;
         let mut placement = None;
         let kind = control.kind;
@@ -1431,8 +1238,8 @@ impl GossiaApp {
             ControlKind::Field | ControlKind::Group | ControlKind::Repeater
         );
 
-        // The stacked repeater whose items the control is designed in, and
-        // the type of those items: its path is relative to the item.
+        // The repeater section whose row the control is in, and the type of
+        // its items: its path is relative to the item.
         let item_ty = spec.as_ref().and_then(|spec| {
             let scope = design.item_scope(at)?;
             let array = design.get(&scope)?.bound_path()?;
@@ -1615,48 +1422,6 @@ impl GossiaApp {
                     ));
                 }
             }
-            ControlKind::Repeater => {
-                let expr = ExprKind::Items;
-                if expr_text(
-                    ui,
-                    expr_label(expr),
-                    &mut edited.items,
-                    expr_hint(expr),
-                    draft_id(at, None, expr),
-                ) {
-                    merge = Some(key(expr_property(expr)));
-                }
-                self.expression_error(ui, at, None, expr);
-                if edited.lists_items() {
-                    if option_text(ui, tr!("Item name"), &mut edited.item_name, "this", false) {
-                        merge = Some(key("item_name"));
-                    }
-                    if option_text(ui, tr!("List name"), &mut edited.list_name, "", false) {
-                        merge = Some(key("list_name"));
-                    }
-                    for name in [&edited.item_name, &edited.list_name].into_iter().flatten() {
-                        if !is_name(name.trim()) && !name.trim().is_empty() {
-                            ui.label(
-                                egui::RichText::new(format!("{name:?} is not a name: use letters, digits and _, not starting with a digit."))
-                                    .small()
-                                    .color(error_color(ui)),
-                            );
-                        }
-                    }
-                    ui.weak(tr!(
-                        "The items are read-only. The controls inside see each item as this \
-                         and by its item name, and the whole list by its list name."
-                    ));
-                }
-                if !edited.is_stacked()
-                    && ui.button(tr!("Add a column with an expression")).clicked()
-                {
-                    add_listed_column(
-                        self.column_names(design, at).unwrap_or_default(),
-                        &mut edited,
-                    );
-                }
-            }
             ControlKind::Label => {
                 ui.checkbox(&mut edited.template, tr!("Text is a template"))
                     .on_hover_text(tr!("Each {expression} in the text is filled in, as in a Python f-string: {total:,.2f}. Write {{ and }} for the braces themselves."));
@@ -1792,53 +1557,8 @@ impl GossiaApp {
                     merge = Some(key("border"));
                 }
             }
-            ControlKind::Repeater => {
-                ui.horizontal(|ui| {
-                    ui.label(tr!("Shown as"));
-                    let mut mode = edited.mode;
-                    let text = mode.map_or(tr!("Automatic"), RepeaterMode::label);
-                    let response = egui::ComboBox::from_id_salt("property_mode")
-                        .selected_text(text)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut mode, None, tr!("Automatic"));
-                            ui.selectable_value(
-                                &mut mode,
-                                Some(RepeaterMode::Table),
-                                RepeaterMode::Table.label(),
-                            );
-                            ui.selectable_value(
-                                &mut mode,
-                                Some(RepeaterMode::Stacked),
-                                RepeaterMode::Stacked.label(),
-                            );
-                        })
-                        .response;
-                    response.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::Role::ComboBox,
-                            true,
-                            tr!("How the array is shown"),
-                        )
-                    });
-                    edited.mode = mode;
-                });
-                self.item_design_buttons(ui, design, at, &mut edited, spec.as_ref());
-                column_edit = self.column_list(ui, design, at);
-                font_properties(
-                    ui,
-                    &mut edited.title_font,
-                    &mut edited.title_font_size,
-                    tr!("Title "),
-                    tr!("table title"),
-                );
-                font_properties(
-                    ui,
-                    &mut edited.header_font,
-                    &mut edited.header_font_size,
-                    tr!("Column title "),
-                    tr!("column titles"),
-                );
-            }
+            // A repeater is a section, with the section's property page.
+            ControlKind::Repeater => {}
             ControlKind::Label => {
                 let typed = if edited.is_template() {
                     expr_text(
@@ -1979,7 +1699,7 @@ impl GossiaApp {
                 let path = design.path_in_item(at, &edited, 0)?;
                 Some(spec.get(spec.resolve(&path)?.ty).clone())
             });
-            self.choices_note(ui, at, None, node_type.as_ref().map(|t| &t.kind));
+            self.choices_note(ui, at, node_type.as_ref().map(|t| &t.kind));
             // A field whose type names values (COBOL condition names) has
             // them as its choices when it has none of its own.
             let has_named = node_type.as_ref().is_some_and(|t| !t.choices.is_empty());
@@ -2054,8 +1774,6 @@ impl GossiaApp {
                 *d.get_mut(&at)? = to;
                 Some(Some(at))
             });
-        } else if let Some(action) = column_edit {
-            self.apply_control(action);
         } else if let Some((child, up)) = tab_action {
             // The group stays selected.
             let group = at.clone();
@@ -2094,316 +1812,6 @@ impl GossiaApp {
             self.place_controls(&placements, None);
         }
         ui.separator();
-    }
-
-    /// The columns of the table of a repeater, the row numbers among them, in
-    /// their order: whether each is shown, buttons that move it, and one that
-    /// opens its properties. Returns what was asked for.
-    fn column_list(
-        &self,
-        ui: &mut egui::Ui,
-        design: &FormDesign,
-        at: &Address,
-    ) -> Option<ControlAction> {
-        let control = design.get(at)?;
-        let names = self.column_names(design, at)?;
-        let columns = control.arrange_columns(&names);
-        let shown = columns
-            .iter()
-            .filter(|c| !c.hidden && !c.is_row_number())
-            .count();
-        let mut action = None;
-        ui.label(tr!("Columns of the table"));
-        let last = columns.len().saturating_sub(1);
-        egui::Grid::new("table_columns")
-            .num_columns(3)
-            .show(ui, |ui| {
-                for (i, column) in columns.iter().enumerate() {
-                    let name = column.name.clone();
-                    let title = if column.is_row_number() {
-                        "# (row numbers)".to_owned()
-                    } else {
-                        name.clone()
-                    };
-                    let mut on = !column.hidden;
-                    // The last column of the items that is shown stays shown.
-                    let can = column.hidden || column.is_row_number() || shown > 1;
-                    let response = ui.add_enabled(can, egui::Checkbox::new(&mut on, &title));
-                    let show_name = tr!("Show column {name}", name = name);
-                    response.widget_info(|| {
-                        egui::WidgetInfo::selected(egui::Role::CheckBox, can, on, show_name.clone())
-                    });
-                    if response.changed() {
-                        action = Some(ControlAction::Column(
-                            at.clone(),
-                            name.clone(),
-                            ColumnEdit::Show(on),
-                        ));
-                    }
-                    ui.horizontal(|ui| {
-                        let up = tr!("Move column {name} up", name = name);
-                        if icons::button(ui, i > 0, icons::ARROW_UP, "^", &up).clicked() {
-                            action = Some(ControlAction::Column(
-                                at.clone(),
-                                name.clone(),
-                                ColumnEdit::Step(true),
-                            ));
-                        }
-                        let down = tr!("Move column {name} down", name = name);
-                        if icons::button(ui, i < last, icons::ARROW_DOWN, "v", &down).clicked() {
-                            action = Some(ControlAction::Column(
-                                at.clone(),
-                                name.clone(),
-                                ColumnEdit::Step(false),
-                            ));
-                        }
-                    });
-                    let open = ui.button(tr!("Properties"));
-                    let open_name = tr!("Properties of column {name}", name = name);
-                    open.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::Role::Button, true, open_name.clone())
-                    });
-                    if open.clicked() {
-                        action = Some(ControlAction::SelectColumn(at.clone(), name.clone()));
-                    }
-                    ui.end_row();
-                }
-            });
-        ui.weak(tr!(
-            "A click on the title of a column on the form also selects it."
-        ));
-        action
-    }
-
-    /// The property page of a column of a table.
-    fn column_properties(
-        &mut self,
-        ui: &mut egui::Ui,
-        at: &Address,
-        control: &Control,
-        column: ColumnDesign,
-    ) {
-        let mut edited = column.clone();
-        let row_number = column.is_row_number();
-        ui.strong(crate::form::column_label(&column.name, control));
-        if ui.button(tr!("Back to the table")).clicked() {
-            self.select_control(Some(at.clone()));
-            return;
-        }
-        let key = |property: &str| format!("{at:?}:{}:{property}", column.name);
-        let mut merge = None;
-        if option_text(ui, tr!("Label"), &mut edited.label, &column.name, false) {
-            merge = Some(key("label"));
-        }
-        if option_text(ui, tr!("Help"), &mut edited.help, "", true) {
-            merge = Some(key("help"));
-        }
-        // As a control's width: automatic, or ticked and then a number of
-        // points. (A number box that started at 0 for automatic swallowed the
-        // first 24 points of a drag under the narrowest width.) An id of its
-        // own, since the first width makes the column a designed one, which
-        // changes the page above, and a drag must not be lost then.
-        ui.push_id(("column_width", at, &column.name), |ui| {
-            ui.horizontal(|ui| {
-                let mut fixed = edited.width.is_some();
-                let on = fixed;
-                let response = ui.checkbox(&mut fixed, tr!("Width"));
-                response.widget_info(|| {
-                    egui::WidgetInfo::selected(
-                        egui::Role::CheckBox,
-                        true,
-                        on,
-                        tr!("Fixed width of the column"),
-                    )
-                });
-                if fixed != on {
-                    edited.width = fixed.then_some(DEFAULT_COLUMN_WIDTH);
-                }
-                match edited.width.as_mut() {
-                    Some(width) => {
-                        let response = ui.add(
-                            egui::DragValue::new(width)
-                                .range(design::COLUMN_WIDTHS)
-                                .speed(1.0)
-                                .suffix(" pt"),
-                        );
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::Role::SpinButton,
-                                true,
-                                tr!("Width of the column"),
-                            )
-                        });
-                        if response.changed() {
-                            merge = Some(key("width"));
-                        }
-                    }
-                    None => {
-                        ui.weak(tr!("Automatic: as wide as its widest text"));
-                    }
-                }
-            })
-        });
-        alignment_choice(
-            ui,
-            &mut edited.title_align,
-            tr!("Title alignment"),
-            tr!("the title"),
-        );
-        alignment_choice(
-            ui,
-            &mut edited.align,
-            tr!("Cell alignment"),
-            tr!("the cells"),
-        );
-        if row_number {
-            row_numbering(ui, &mut edited);
-        }
-        let kind = (!row_number)
-            .then(|| {
-                let spec = self.calc().spec(&self.sheet)?;
-                let design = self.design_of(&self.form_name());
-                let columns = crate::form::columns_of(spec, &design, at)?;
-                let ty = columns.iter().find(|c| c.name == column.name)?.ty;
-                Some((spec.get(ty).kind.clone(), !spec.get(ty).choices.is_empty()))
-            })
-            .flatten();
-        let (kind, has_named) = match kind {
-            Some((kind, has_named)) => (Some(kind), has_named),
-            None => (None, false),
-        };
-        if !row_number {
-            ui.horizontal(|ui| {
-                ui.label(tr!("Editor"));
-                // A cell has one line: several lines count as one.
-                let mut editor = match edited.editor.unwrap_or(Editor::Auto) {
-                    Editor::Multiline => Editor::Text,
-                    e => e,
-                };
-                let response = egui::ComboBox::from_id_salt("property_column_editor")
-                    .selected_text(editor.label())
-                    .show_ui(ui, |ui| {
-                        for e in Editor::ALL.into_iter().filter(|e| *e != Editor::Multiline) {
-                            ui.selectable_value(&mut editor, e, e.label());
-                        }
-                    })
-                    .response;
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::Role::ComboBox,
-                        true,
-                        tr!("Editor of the column"),
-                    )
-                });
-                if Some(editor) != edited.editor.or(Some(Editor::Auto)) {
-                    edited.editor = (editor != Editor::Auto).then_some(editor);
-                }
-            });
-            ui.checkbox(&mut edited.read_only, tr!("Read only"));
-        }
-        if let Some(kind) = &kind
-            && format_properties(
-                ui,
-                kind,
-                &mut edited.thousands,
-                &mut edited.decimals,
-                &mut edited.date_format,
-                &mut edited.percent,
-                &mut edited.prefix,
-                &mut edited.suffix,
-                "column",
-            )
-        {
-            merge = Some(key("date_format"));
-        }
-        font_properties(
-            ui,
-            &mut edited.font,
-            &mut edited.font_size,
-            tr!("Cell "),
-            "cells",
-        );
-        emphasis_properties(ui, &mut edited.bold, &mut edited.italic, "cells");
-        // A column that shows an expression: in a table over an expression
-        // every column, in a table bound to an array one that is not a field
-        // of the items.
-        let computed = !row_number
-            && (control.lists_items() || {
-                let design = self.design_of(&self.form_name());
-                self.calc()
-                    .spec(&self.sheet)
-                    .and_then(|spec| crate::form::columns_of(spec, &design, at))
-                    .is_some_and(|columns| !columns.iter().any(|c| c.name == column.name))
-            });
-        if computed {
-            let fields = [
-                (ExprKind::Value, &mut edited.value),
-                (ExprKind::Visible, &mut edited.visible_when),
-                (ExprKind::TextColour, &mut edited.text_colour),
-                (ExprKind::FillColour, &mut edited.fill_colour),
-            ];
-            for (expr, value) in fields {
-                if expression_box(ui, expr, value, draft_id(at, Some(&column.name), expr)) {
-                    merge = Some(key(expr_property(expr)));
-                }
-                self.expression_error(ui, at, Some(&column.name), expr);
-            }
-            let names = self.calc().procedure_names();
-            procedure_choice(
-                ui,
-                tr!("Write procedure"),
-                tr!("Write procedure of the column"),
-                &mut edited.write_procedure,
-                &names,
-            );
-            ui.weak(tr!(
-                "Value runs for each row, with the item as this (and by the item name, in a \
-                 table over an expression); without one the cell is the field of the item of \
-                 this name. Without a write procedure the cells are read-only; with one, what \
-                 is typed into a cell is passed to it as name(form, ctx, value), with \
-                 ctx.index the row."
-            ));
-        } else if !row_number {
-            let fields = [
-                (ExprKind::Visible, &mut edited.visible_when),
-                (ExprKind::Enabled, &mut edited.enabled_when),
-                (ExprKind::TextColour, &mut edited.text_colour),
-                (ExprKind::FillColour, &mut edited.fill_colour),
-            ];
-            for (expr, value) in fields {
-                if expression_box(ui, expr, value, draft_id(at, Some(&column.name), expr)) {
-                    merge = Some(key(expr_property(expr)));
-                }
-                self.expression_error(ui, at, Some(&column.name), expr);
-            }
-            let expr = ExprKind::Choices;
-            if expr_text(
-                ui,
-                expr_label(expr),
-                &mut edited.choices,
-                expr_hint(expr),
-                draft_id(at, Some(&column.name), expr),
-            ) {
-                merge = Some(key(expr_property(expr)));
-            }
-            self.expression_error(ui, at, Some(&column.name), expr);
-            self.choices_note(ui, at, Some(&column.name), kind.as_ref());
-            if edited.choices.is_some() || has_named {
-                ui.checkbox(&mut edited.allow_other, allow_other())
-                    .on_hover_text(allow_other_help());
-            }
-            ui.weak(tr!(
-                "Visible when runs once, where the table is bound, and hides the whole \
-                 column. The others run for each row, with this as the cell and parent \
-                 as the row."
-            ));
-        }
-        ui.weak(tr!(
-            "Where the column is, and whether it is shown, are properties of the table."
-        ));
-        if edited != column {
-            self.set_column(merge, at, edited);
-        }
     }
 
     /// Under the field of an expression of the control at `at`, or of its
@@ -2549,25 +1957,14 @@ impl GossiaApp {
     /// (its first row): items that are not of a shape it takes, and on a node
     /// with an enumeration, how many items are left out because their code is
     /// not one of its values.
-    fn choices_note(
-        &self,
-        ui: &mut egui::Ui,
-        at: &Address,
-        column: Option<&str>,
-        kind: Option<&Kind>,
-    ) {
+    fn choices_note(&self, ui: &mut egui::Ui, at: &Address, kind: Option<&Kind>) {
         let calc = self.calc();
         let form = self.form_name();
-        let state = match column {
-            None => calc
-                .control_expression(&self.sheet, &form, at, ExprKind::Choices)
-                .or_else(|| {
-                    calc.control_expression_in(&self.sheet, &form, at, Some(0), ExprKind::Choices)
-                }),
-            Some(name) => {
-                calc.column_expression(&self.sheet, &form, at, name, Some(0), ExprKind::Choices)
-            }
-        };
+        let state = calc
+            .control_expression(&self.sheet, &form, at, ExprKind::Choices)
+            .or_else(|| {
+                calc.control_expression_in(&self.sheet, &form, at, Some(0), ExprKind::Choices)
+            });
         let Some(Ok(value)) = state.and_then(|s| s.result) else {
             return;
         };
@@ -2596,65 +1993,6 @@ impl GossiaApp {
                     }
                 }
             }
-        }
-    }
-
-    /// On the page of a repeater: designing its items, or going back to the
-    /// generated look. Designing shows the repeater stacked and starts from
-    /// the controls the generated form has for an item, which can then be
-    /// arranged as on the rest of the form.
-    fn item_design_buttons(
-        &self,
-        ui: &mut egui::Ui,
-        design: &FormDesign,
-        at: &Address,
-        edited: &mut Control,
-        spec: Option<&gossia_core::TypeSpec>,
-    ) {
-        // A repeater in an item shows its items as generated.
-        if design.item_scope(at).is_some() {
-            return;
-        }
-        let item_ty = spec.and_then(|spec| {
-            let resolved = spec.resolve(&edited.bound_path()?)?;
-            match &spec.get(resolved.ty).kind {
-                Kind::Array { items, .. } => Some((spec, *items)),
-                _ => None,
-            }
-        });
-        let Some((spec, item_ty)) = item_ty else {
-            return;
-        };
-        if edited.children.is_empty() {
-            let design_them = ui
-                .button(tr!("Design the items"))
-                .on_hover_text(
-                    tr!("Show each item with controls you arrange, as on the rest of the form, one item at a time"),
-                )
-                .clicked();
-            if design_them {
-                edited.mode = Some(RepeaterMode::Stacked);
-                edited.children = design::item_controls(spec, item_ty);
-            }
-            return;
-        }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(tr!("The items are designed."));
-            if ui
-                .button(tr!("Use the generated items"))
-                .on_hover_text(tr!(
-                    "Take away the design of the items: they are drawn from the schema"
-                ))
-                .clicked()
-            {
-                edited.children.clear();
-            }
-        });
-        if !edited.is_stacked() {
-            ui.colored_label(
-                error_color(ui),
-                tr!("The design of the items is used only when they are shown stacked."),
-            );
         }
     }
 
@@ -2842,11 +2180,6 @@ fn sibling_count(design: &FormDesign, at: &[usize]) -> usize {
     }
 }
 
-/// The sizes the property page offers, in points.
-/// The property that lets a field with choices take a code not in the list.
-/// The width a column is given when its width is ticked, in points.
-const DEFAULT_COLUMN_WIDTH: u32 = 80;
-
 fn allow_other() -> &'static str {
     tr!("Allow other values (write-in codes)")
 }
@@ -3030,52 +2363,6 @@ fn alignment_choice(ui: &mut egui::Ui, align: &mut Option<Alignment>, label: &st
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
         *align = chosen;
     });
-}
-
-/// How the row numbers are written, and the number of the first row. A start
-/// that is the numbering's own is stored as nothing.
-fn row_numbering(ui: &mut egui::Ui, edited: &mut ColumnDesign) {
-    use gossia_core::form::Numbering;
-    let mut numbering = edited.numbering.unwrap_or(Numbering::Index);
-    ui.horizontal(|ui| {
-        ui.label(tr!("Numbering"));
-        let response = egui::ComboBox::from_id_salt("property_numbering")
-            .selected_text(numbering.label())
-            .show_ui(ui, |ui| {
-                for n in Numbering::ALL {
-                    ui.selectable_value(&mut numbering, n, n.label());
-                }
-            })
-            .response;
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr!("Numbering of the rows"))
-        });
-    });
-    let mut start = edited
-        .start
-        .unwrap_or_else(|| edited.numbering.unwrap_or(Numbering::Index).default_start());
-    ui.horizontal(|ui| {
-        ui.label(tr!("Start at"));
-        let response = ui.add(egui::DragValue::new(&mut start).speed(0.1));
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::SpinButton, true, tr!("Number of the first row"))
-        });
-    });
-    // A start that was not given follows the numbering; one that was is kept.
-    let start = if edited.start.is_none()
-        && start == edited.numbering.unwrap_or(Numbering::Index).default_start()
-    {
-        numbering.default_start()
-    } else {
-        start
-    };
-    edited.numbering = (numbering != Numbering::Index).then_some(numbering);
-    edited.start = (start != numbering.default_start()).then_some(start);
-    let first: Vec<String> = (0..3).map(|i| edited.row_label(i)).collect();
-    ui.weak(tr!(
-        "The rows are numbered {first}, ...",
-        first = first.join(", ")
-    ));
 }
 
 /// The format of a number (percent, a prefix and suffix, a thousands
@@ -3470,25 +2757,6 @@ pub(crate) fn is_name(name: &str) -> bool {
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// Adds a column that shows an expression to a table over an expression,
-/// keeping the columns it shows.
-fn add_listed_column(names: Vec<String>, edited: &mut Control) {
-    let mut columns = edited.arrange_columns(&names);
-    let mut n = 1;
-    let name = loop {
-        let name = format!("column{n}");
-        if !columns.iter().any(|c| c.name == name) {
-            break name;
-        }
-        n += 1;
-    };
-    let mut column = ColumnDesign::named(&name);
-    column.value = Some("this".to_owned());
-    columns.push(column);
-    edited.table_columns = columns;
-    edited.show = None;
 }
 
 /// The name of an expression's field on the property page.

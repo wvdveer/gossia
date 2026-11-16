@@ -11,12 +11,10 @@ use gossia_i18n::tr;
 use std::collections::HashMap;
 
 use egui::{Align, Key, RichText, Sense, Stroke, StrokeKind};
-use egui_extras::{Column as TableColumn, TableBuilder};
 use gossia_calc::{Contexts, ExprKind, ExprState, REPORT_FORM, entry};
 use gossia_core::form::{
-    Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, ColumnDesign, Control, ControlKind,
-    DEFAULT_LABEL_WIDTH, Editor, Format, LabelPosition, RepeaterMode, TrackSize, flow_rows,
-    free_place, grid_cells, track_sizes,
+    Address, Alignment, CONTROL_HEIGHTS, CONTROL_WIDTHS, Control, ControlKind, DEFAULT_LABEL_WIDTH,
+    Editor, Format, LabelPosition, TrackSize, flow_rows, free_place, grid_cells, track_sizes,
 };
 use gossia_core::validate::validate_at;
 use gossia_core::{Kind, Node, Path, TypeId, TypeSpec, Value};
@@ -25,13 +23,11 @@ use crate::app::GossiaApp;
 use crate::form_exprs::{Choice, ChoiceList, Gate, choice_list};
 use crate::form_free::{FormRects, GridGeom, Placement, keep_rects, last_rects, snap_move};
 use crate::form_layout::{
-    ColumnEdit, ControlAction, DragItem, DropAt as DragAt, FormDialog, FreeDrop, LayoutState,
-    drop_allowed,
+    ControlAction, DragItem, DropAt as DragAt, FormDialog, FreeDrop, LayoutState, drop_allowed,
 };
 use crate::icons;
 use crate::rows::display;
 use crate::style::Typeface;
-use crate::table::{self, Column};
 use crate::view::{ROW_HEIGHT, computed_fill, error_color};
 
 /// The form every Data Tab has. It cannot be renamed or deleted.
@@ -88,8 +84,6 @@ pub struct Draft {
 pub struct FormState {
     /// Text being typed, by tab and node.
     pub drafts: HashMap<(String, Path), Draft>,
-    /// The item a stacked repeater shows, by tab and array.
-    pub steps: HashMap<(String, Path), usize>,
     /// The key being typed for a new entry of a map, by tab and map.
     pub new_keys: HashMap<(String, Path), String>,
     /// Scroll so that the control bound to this node is in view.
@@ -101,8 +95,8 @@ pub struct FormState {
     /// The caret of the text box that had the focus in the frame before, for
     /// the arrow keys.
     pub caret: Option<(egui::Id, usize)>,
-    /// Frames left to find the control of `scroll_to` (a stacked item has to
-    /// be stepped to first).
+    /// Frames left to find the control of `scroll_to` (a repeater section's
+    /// row has to be made current and scrolled to first).
     pub scroll_tries: u8,
     /// What is typed into the blank row of a repeater section, by tab and
     /// array: an item holding only what was typed. It belongs to the form,
@@ -130,12 +124,7 @@ pub(crate) enum FormAction {
     Create(Path),
     Select(Path),
     Add(Path),
-    /// Add an item holding the element named to an ordered list.
-    AddElement(Path, String),
     Delete(Path, usize),
-    Move(Path, usize, bool),
-    Sort(Path, String),
-    Step(Path, usize),
     AddEntry(Path, String),
     DeleteEntry(Path, String),
     /// A click on a button: its label, the procedure it runs, inside the
@@ -474,7 +463,6 @@ impl GossiaApp {
         self.form_bar(ui, &name);
         let design = self.design_of(&name);
         let layout = self.layout_selection(&name);
-        let column = self.form.layout.as_ref().and_then(|l| l.column.clone());
         let mut drafts = std::mem::take(&mut self.form.drafts);
         let mut new_keys = std::mem::take(&mut self.form.new_keys);
         let scroll_to = self.form.scroll_to.take();
@@ -505,8 +493,6 @@ impl GossiaApp {
                     layout,
                     look: None,
                     font: Font::default(),
-                    column,
-                    column_targets: Vec::new(),
                     at: Vec::new(),
                     drops: Vec::new(),
                     sized: false,
@@ -574,9 +560,8 @@ impl GossiaApp {
                 actions = painter.actions;
                 nav = painter.nav;
                 // A node with no control of its own: the nearest one above
-                // it that has, in the next frame (a stacked repeater may
-                // be stepping to its item first, or a repeater section
-                // scrolling to its row).
+                // it that has, in the next frame (a repeater section may be
+                // scrolling to its row first).
                 if let Some(missed) = painter.scroll_to
                     && tries > 0
                 {
@@ -585,7 +570,7 @@ impl GossiaApp {
                     // one and scrolling to it: look again for the node itself.
                     let stepping = actions
                         .iter()
-                        .any(|a| matches!(a, FormAction::Step(..) | FormAction::SetContext(..)));
+                        .any(|a| matches!(a, FormAction::SetContext(..)));
                     next_scroll = if stepping {
                         Some(missed)
                     } else {
@@ -648,39 +633,8 @@ impl GossiaApp {
                     self.pin_form_row(&array.index(before));
                 }
             }
-            FormAction::AddElement(list, element) => {
-                let before = self.array_len(&list);
-                self.insert_element(&list, None, &element);
-                if self.array_len(&list) > before {
-                    self.form
-                        .steps
-                        .insert((self.sheet.clone(), list.clone()), before);
-                    self.pin_form_row(&list.index(before));
-                }
-            }
             FormAction::Delete(array, index) => {
                 self.delete_node(&array.index(index));
-            }
-            FormAction::Move(array, index, up) => {
-                let length = self.array_len(&array);
-                let other = if up {
-                    index.checked_sub(1)
-                } else {
-                    Some(index + 1).filter(|&i| i < length)
-                };
-                if let Some(other) = other {
-                    let mut order: Vec<usize> = (0..length).collect();
-                    order.swap(index, other);
-                    self.reorder(
-                        &array,
-                        &order,
-                        if up { tr!("Move up") } else { tr!("Move down") },
-                    );
-                }
-            }
-            FormAction::Sort(array, column) => self.sort_table(&array, &column, None),
-            FormAction::Step(array, index) => {
-                self.form.steps.insert((sheet, array), index);
             }
             FormAction::AddEntry(map, key) => self.add_entry(&map, &key),
             FormAction::DeleteEntry(map, key) => {
@@ -749,10 +703,6 @@ impl GossiaApp {
                 self.set_node(array, value);
             }
         }
-        let last = self.array_len(array).saturating_sub(1);
-        self.form
-            .steps
-            .insert((self.sheet.clone(), array.clone()), last);
     }
 
     fn add_entry(&mut self, map: &Path, key: &str) {
@@ -899,12 +849,6 @@ struct Painter<'a> {
     look: Option<(Path, Look)>,
     /// The font of the group being drawn, which its controls inherit.
     font: Font,
-    /// In layout mode: the column selected in the table of the selected
-    /// control.
-    column: Option<String>,
-    /// In layout mode: the titles of the columns of the table being drawn,
-    /// which select the column when clicked.
-    column_targets: Vec<(String, egui::Rect, egui::Rect)>,
     /// Where the control being drawn is in the design, for the expressions
     /// of the columns of its table.
     at: Address,
@@ -935,10 +879,8 @@ struct Painter<'a> {
     /// The nodes whose controls were drawn, for finding the nearest one
     /// above a node that has none.
     seen: Vec<Path>,
-    /// In the design of the items of a stacked repeater bound to an array:
-    /// the item drawn. The paths of the controls there are relative to it.
-    /// None in the items of a repeater over an expression, where the paths
-    /// start again from the top of the tab.
+    /// In a row of a repeater section: the item drawn. The paths of the
+    /// controls there are relative to it.
     item: Option<Path>,
     /// In the design of the items of repeaters: the item drawn of each,
     /// outermost first, for the results of the expressions there.
@@ -1199,10 +1141,8 @@ struct Slot {
 }
 
 fn slots(list: &[Control], parent: &[usize]) -> Vec<Slot> {
-    // The control above takes others: a group, or a stacked repeater whose
-    // items are designed, at the top level (one in an item takes none).
-    let takes =
-        |c: &Control| c.kind == ControlKind::Group || (c.is_stacked() && !c.children.is_empty());
+    // The control above takes others: a group.
+    let takes = |c: &Control| c.kind == ControlKind::Group;
     (0..list.len())
         .map(|i| {
             let mut at = parent.to_vec();
@@ -1456,22 +1396,19 @@ impl Painter<'_> {
         self.at = slot.at.clone();
         let free = self.free_parent.take();
         let grid = self.grid_parent.take();
-        if c.kind == ControlKind::Group || (self.layout.is_some() && self.designs_items(c)) {
+        if c.kind == ControlKind::Group {
             self.group(ui, c, slot, free, grid);
         } else if self.layout.is_none() {
             self.leaf(ui, c);
         } else {
             // In layout mode a control is drawn as it will look, but cannot be
-            // used: a click selects it, and a click on the title of a column
-            // of its table selects the column.
-            self.column_targets.clear();
+            // used: a click selects it.
             let rect = ui
                 .scope(|ui| {
                     ui.add_enabled_ui(false, |ui| self.leaf(ui, c));
                 })
                 .response
                 .rect;
-            let columns = std::mem::take(&mut self.column_targets);
             let id = ui.scope_id().with(("control", slot.at.clone()));
             let target = ui.interact(rect, id, Sense::click_and_drag());
             self.rects.controls.insert(slot.at.clone(), rect);
@@ -1496,10 +1433,6 @@ impl Painter<'_> {
                 }
             }
             self.layout_target(ui, &target, rect, c, slot);
-            for (name, title, column) in columns {
-                self.column_target(ui, c, slot, &name, (title, column), rect);
-                self.column_edge(ui, slot, &name, column);
-            }
             self.handles(ui, rect, c, slot, free.as_ref());
         }
     }
@@ -1946,8 +1879,7 @@ impl Painter<'_> {
         slot: &Slot,
         free: Option<&FreeParent>,
     ) {
-        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
-            && self.column.is_none();
+        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at);
         if !selected {
             return;
         }
@@ -2024,115 +1956,6 @@ impl Painter<'_> {
         }
     }
 
-    /// The title of a column of a table in layout mode: a click selects the
-    /// column, and its menu moves or hides it.
-    /// In layout mode: the right edge of a column's title, which is dragged
-    /// to give the column a width of its own. A line shows where the edge
-    /// goes; letting go sets the width, one step of undo. (The table is drawn
-    /// disabled in layout mode, so its own handles do not work.)
-    fn column_edge(&mut self, ui: &mut egui::Ui, slot: &Slot, name: &str, column: egui::Rect) {
-        let gap = ui.spacing().item_spacing.x;
-        let edge = egui::Rect::from_x_y_ranges(
-            (column.right() - 3.0)..=(column.right() + gap + 3.0),
-            column.y_range(),
-        );
-        let id = ui.scope_id().with(("column_edge", slot.at.clone(), name));
-        let handle = ui.interact(edge, id, Sense::drag());
-        let label = tr!("Width of column {name}", name = name);
-        handle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Splitter, true, &label));
-        if handle.hovered() || handle.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
-        }
-        let pointer = ui.input(|i| i.pointer.interact_pos());
-        if handle.drag_started()
-            && let Some(p) = pointer
-        {
-            ui.data_mut(|d| d.insert_temp(id, p.x));
-        }
-        let origin: Option<f32> = ui.data(|d| d.get_temp(id));
-        let (Some(origin), Some(p)) = (origin, pointer) else {
-            return;
-        };
-        let width = (column.width() + p.x - origin).max(24.0);
-        if handle.dragged() {
-            ui.painter().vline(
-                column.left() + width,
-                column.y_range(),
-                Stroke::new(2.0, ui.visuals().selection.stroke.color),
-            );
-        }
-        if handle.drag_stopped() {
-            ui.data_mut(|d| d.remove::<f32>(id));
-            if (width - column.width()).abs() >= 1.0 {
-                self.actions.push(FormAction::Control(ControlAction::Column(
-                    slot.at.clone(),
-                    name.to_owned(),
-                    ColumnEdit::Width(width.round() as u32),
-                )));
-            }
-        }
-    }
-
-    fn column_target(
-        &mut self,
-        ui: &mut egui::Ui,
-        c: &Control,
-        slot: &Slot,
-        name: &str,
-        (title, _column): (egui::Rect, egui::Rect),
-        table: egui::Rect,
-    ) {
-        let id = ui.scope_id().with(("column", slot.at.clone(), name));
-        let target = ui.interact(title, id, Sense::click());
-        let label = column_label(name, c);
-        target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label.clone()));
-        if target.clicked() {
-            self.actions
-                .push(FormAction::Control(ControlAction::SelectColumn(
-                    slot.at.clone(),
-                    name.to_owned(),
-                )));
-        }
-        let selected = self.layout.as_ref().and_then(Option::as_ref) == Some(&slot.at)
-            && self.column.as_deref() == Some(name);
-        if selected {
-            // The whole column, from its title down to the end of the table.
-            let column = egui::Rect::from_min_max(
-                title.min,
-                egui::pos2(title.max.x, (table.max.y - 6.0).max(title.max.y)),
-            );
-            ui.painter().rect_stroke(
-                column,
-                3.0,
-                Stroke::new(1.5, ui.visuals().selection.stroke.color),
-                StrokeKind::Inside,
-            );
-        } else if target.hovered() {
-            ui.painter().rect_stroke(
-                title,
-                3.0,
-                Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
-                StrokeKind::Inside,
-            );
-        }
-        let at = slot.at.clone();
-        target.context_menu(|ui| {
-            let mut command = |ui: &mut egui::Ui, label: &str, edit: ColumnEdit| {
-                if ui.button(label).clicked() {
-                    self.actions.push(FormAction::Control(ControlAction::Column(
-                        at.clone(),
-                        name.to_owned(),
-                        edit,
-                    )));
-                    ui.close();
-                }
-            };
-            command(ui, tr!("Move column left"), ColumnEdit::Move(true));
-            command(ui, tr!("Move column right"), ColumnEdit::Move(false));
-            command(ui, tr!("Hide column"), ColumnEdit::Show(false));
-        });
-    }
-
     /// What selecting a control in layout mode looks like and does.
     fn layout_target(
         &mut self,
@@ -2144,7 +1967,7 @@ impl Painter<'_> {
     ) {
         // When a column of its table is selected, the column is outlined, not
         // the control.
-        let selected = self.is_selected(&slot.at) && self.column.is_none();
+        let selected = self.is_selected(&slot.at);
         let name = control_name(c);
         target.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
         self.select_on(ui, target, &slot.at);
@@ -2258,23 +2081,7 @@ impl Painter<'_> {
     ) {
         let layout = self.layout.is_some();
         let problem = self.problem_of(c);
-        let path = self
-            .path_of(c)
-            .filter(|_| problem.is_none() && !c.lists_items());
-        // A stacked repeater in layout mode: its controls are the design of
-        // its items, drawn for the item its stepper is at.
-        let item = match (&path, c.kind) {
-            (Some(array), ControlKind::Repeater) => {
-                let len = self
-                    .data
-                    .get(array)
-                    .and_then(|n| n.value().as_array())
-                    .map_or(0, <[Node]>::len);
-                let at = self.step_of(array, len);
-                Some((array.index(at), at))
-            }
-            _ => None,
-        };
+        let path = self.path_of(c).filter(|_| problem.is_none());
         let label = c.label.clone().or_else(|| {
             path.as_ref()
                 .and_then(last_name)
@@ -2318,16 +2125,6 @@ impl Painter<'_> {
             let outer = (this.sized, this.label_width);
             this.sized = false;
             this.label_width = c.label_width.or(this.label_width);
-            let outer_item = this.item.clone();
-            let outer_rows = this.rows.len();
-            if c.lists_items() {
-                // The design of the items of an expression, for its first.
-                this.item = None;
-                this.rows.push(0);
-            } else if let Some((path, at)) = &item {
-                this.item = Some(path.clone());
-                this.rows.push(*at);
-            }
             ui.scope(|ui| {
                 if let Some(gap) = c.spacing {
                     ui.spacing_mut().item_spacing = egui::vec2(gap as f32, gap as f32);
@@ -2367,8 +2164,6 @@ impl Painter<'_> {
                     });
                 }
             });
-            this.item = outer_item;
-            this.rows.truncate(outer_rows);
             (this.sized, this.label_width) = outer;
         };
         if !framed {
@@ -2578,8 +2373,14 @@ impl Painter<'_> {
             }
             ControlKind::Field if c.context.is_some() => self.context_field(ui, c),
             ControlKind::Field if c.shows_value() => self.value_field(ui, c),
-            ControlKind::Repeater if c.lists_items() => self.items_repeater(ui, c),
-            ControlKind::Field | ControlKind::Repeater => self.bound(ui, c),
+            ControlKind::Field => self.bound(ui, c),
+            // A repeater is a section of its own, drawn by the canvas; one
+            // anywhere else is a problem, drawn as its placeholder.
+            ControlKind::Repeater => {
+                if let Some(problem) = self.problem_of(c) {
+                    self.placeholder(ui, c, &problem);
+                }
+            }
             ControlKind::Group => {}
         }
     }
@@ -2623,35 +2424,17 @@ impl Painter<'_> {
                 choices: has_text(&c.choices)
                     .then(|| {
                         let app = self.app;
-                        choice_list(
-                            app.calc(),
-                            &app.sheet,
-                            self.form,
-                            &self.at,
-                            None,
-                            &self.rows,
-                        )
+                        choice_list(app.calc(), &app.sheet, self.form, &self.at, &self.rows)
                     })
                     .flatten(),
                 allow_other: c.allow_other,
             },
         ));
-        match (&self.spec.get(ty).kind, c.kind) {
-            (Kind::Array { .. }, _) => match c.height {
-                // In its height, scrolling.
-                Some(height) => {
-                    egui::ScrollArea::vertical()
-                        .id_salt(("form_repeater_height", path.to_string()))
-                        .max_height(height as f32)
-                        .min_scrolled_height(height as f32)
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| self.repeater_of(ui, &path, ty, &label, Some(c)));
-                }
-                None => self.repeater_of(ui, &path, ty, &label, Some(c)),
-            },
-            (Kind::Map { .. }, _) => self.map(ui, &path, ty, &label),
-            (Kind::Object { .. }, _) => self.object(ui, &path, ty, &label, resolved.required),
-            (Kind::Choice { .. }, _) => self.choice_item(ui, &path, ty, &label),
+        match &self.spec.get(ty).kind {
+            Kind::Array { .. } => self.repeater(ui, &path, ty, &label),
+            Kind::Map { .. } => self.map(ui, &path, ty, &label),
+            Kind::Object { .. } => self.object(ui, &path, ty, &label, resolved.required),
+            Kind::Choice { .. } => self.choice_item(ui, &path, ty, &label),
             _ => self.field(ui, &path, ty, &label, resolved.required),
         }
         self.look = None;
@@ -3501,568 +3284,23 @@ impl Painter<'_> {
 
     // ----------------------------------------------------------- repeaters
 
+    /// An array outside a repeater section, inside an object a control
+    /// shows: its name and how many items it has. A list of rows is a
+    /// repeater section of its own; tables and the stepper are gone from
+    /// forms (DESIGN.md, "Form canvases, 0.7.0").
     fn repeater(&mut self, ui: &mut egui::Ui, path: &Path, ty: TypeId, label: &str) {
-        self.repeater_of(ui, path, ty, label, None);
-    }
-
-    /// An array as a table or one item at a time, as its control says; with no
-    /// say, a table when the items are flat.
-    fn repeater_of(
-        &mut self,
-        ui: &mut egui::Ui,
-        path: &Path,
-        ty: TypeId,
-        label: &str,
-        control: Option<&Control>,
-    ) {
-        let Kind::Array { items: item_ty, .. } = &self.spec.get(ty).kind else {
-            return;
-        };
-        let item_ty = *item_ty;
-        let node = self.data.get(path);
-        let items: &[Node] = node.and_then(|n| n.value().as_array()).unwrap_or(&[]);
-        let can_add = self.app.can_reorder(path);
-        let columns = match control.and_then(|c| c.mode) {
-            Some(RepeaterMode::Stacked) => None,
-            _ => item_columns(self.spec, item_ty).map(|columns| arranged(control, columns)),
-        };
-        let shown = columns.as_ref().map(|_| self.table_shown(path, items));
-        ui.group(|ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                let title_font =
-                    control.and_then(|c| own_font(c.title_font, c.title_font_size, self.font));
-                let response = in_font(ui, title_font, |ui| ui.strong(label));
-                self.arrive(path, &response);
-                ui.label(RichText::new(count_text(items.len())).weak());
-                match self.spec.list_choices(ty) {
-                    // An ordered list asks which element.
-                    Some(fields) => {
-                        let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
-                        ui.add_enabled_ui(can_add, |ui| {
-                            ui.menu_button(tr!("New"), |ui| {
-                                for name in names {
-                                    if ui.button(&name).clicked() {
-                                        self.actions
-                                            .push(FormAction::AddElement(path.clone(), name));
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        });
-                    }
-                    None => {
-                        if ui
-                            .add_enabled(can_add, egui::Button::new(tr!("New")))
-                            .clicked()
-                        {
-                            self.actions.push(FormAction::Add(path.clone()));
-                        }
-                    }
-                }
-                if let Some(shown) = &shown {
-                    self.table_strip(ui, path, shown);
-                }
-            });
-            if let Some(help) = self.help(path, ty) {
-                ui.label(RichText::new(help).weak().small());
-            }
-            match columns {
-                // In layout mode an empty table still shows its columns.
-                Some(columns) if !items.is_empty() || self.layout.is_some() => {
-                    let header_font = control
-                        .and_then(|c| own_font(c.header_font, c.header_font_size, self.font));
-                    // A table wider than the form scrolls sideways on its own,
-                    // as the tabular pane does.
-                    egui::ScrollArea::horizontal()
-                        .id_salt(("form_table_scroll", path.to_string()))
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            let at = control.map(|_| self.at.clone());
-                            let shown = shown.unwrap_or_default();
-                            let table = FormTable {
-                                array: path,
-                                len: items.len(),
-                                columns: &columns,
-                                shown: &shown,
-                                at,
-                                header_font,
-                            };
-                            self.table(ui, table);
-                        });
-                }
-                Some(_) => {}
-                None => self.stacked(ui, path, item_ty, items.len(), control),
-            }
-        });
-    }
-
-    /// A table of the items of an array: its columns that are shown, in their
-    /// order, each with its own properties. `at` is the address of the
-    /// control the table is of: its columns can be selected in layout mode,
-    /// and out of it their expressions hide a column or colour a cell.
-    fn table(&mut self, ui: &mut egui::Ui, table: FormTable<'_>) {
-        let FormTable {
-            array,
-            len,
-            columns,
-            shown: view,
-            at,
-            header_font,
-        } = table;
-        let designed = at.is_some();
-        // The expressions of the columns, out of layout mode: a column whose
-        // *visible when* is false is left out; what the others say about the
-        // column as a whole goes to each of its cells.
-        let gated = at.clone().filter(|_| self.layout.is_none());
-        let mut shown = Vec::new();
-        let mut heads = Vec::new();
-        for (design, column) in columns {
-            let head = match (&gated, column) {
-                (Some(at), _) if !design.is_row_number() => crate::form_exprs::column_gate(
-                    self.app.calc(),
-                    &self.app.sheet,
-                    self.form,
-                    at,
-                    &design.name,
-                    None,
-                ),
-                _ => Gate::default(),
-            };
-            let by_hand = column.is_some() && view.hidden_columns.contains(&design.name);
-            if !head.hidden && !by_hand {
-                shown.push((design.clone(), column.clone()));
-                heads.push(head);
-            }
-        }
-        let columns = &shown[..];
-        // Out of layout mode a column's title has the commands of the
-        // tabular view: filter, hide.
-        let menus = self.layout.is_none();
-        let filterable: Vec<String> = self
-            .app
-            .columns_of(array)
-            .into_iter()
-            .filter(|c| !c.summary)
-            .map(|c| c.name)
-            .collect();
-        let filtered: Vec<bool> = columns
-            .iter()
-            .map(|(d, _)| self.app.filter_of(array, &d.name).is_some())
-            .collect();
-        let mut command: Option<crate::view::Action> = None;
-        let rows = &view.visible.rows;
-        let editable = self.app.can_reorder(array);
-        let sortable = editable
-            && columns
-                .iter()
-                .any(|(_, c)| c.as_ref().is_some_and(|c| !c.fields.is_empty()));
-        let inherited = self.font;
-        let fonts: Vec<Option<Font>> = columns
-            .iter()
-            .map(|(d, _)| column_font(d, inherited))
-            .collect();
-        let mut row_height = crate::style::row_height(ui);
-        for font in fonts.iter().flatten() {
-            row_height = row_height.max(crate::style::row_height_in(ui, font.typeface, font.size));
-        }
-        let header_height = match header_font {
-            Some(font) => crate::style::row_height_in(ui, font.typeface, font.size),
-            None => crate::style::row_height(ui),
-        };
-        let header_height = (header_height - 6.0).max(22.0);
-        // Every column can be made wider or narrower by dragging the edge of
-        // its title. The widths dragged to are kept with the table's state,
-        // which starts again when the design's widths change.
-        let design_widths: Vec<Option<u32>> = columns.iter().map(|(d, _)| d.width).collect();
-        let mut table = TableBuilder::new(ui)
-            .id_salt((
-                "form_table",
-                &self.app.sheet,
-                array.to_string(),
-                design_widths,
-            ))
-            .striped(true)
-            .vscroll(false)
-            .sense(Sense::click())
-            .cell_layout(egui::Layout::left_to_right(Align::Center));
-        for (design, column) in columns {
-            let shape = match (design.width, column) {
-                (Some(width), _) => TableColumn::initial(width as f32).at_least(24.0).clip(true),
-                (None, None) if design.is_row_number() => TableColumn::auto().at_least(32.0),
-                (None, _) => TableColumn::initial(140.0).at_least(60.0).clip(true),
-            };
-            table = table.column(shape.resizable(true));
-        }
-        // Each column's own place in the header row, without a wider title.
-        let mut drawn: Vec<(String, egui::Rect)> = Vec::new();
-        let mut sort = None;
-        let mut titles = Vec::new();
-        table
-            .header(header_height, |mut header| {
-                for ((design, column), &filtered) in columns.iter().zip(&filtered) {
-                    let mut max = egui::Rect::NOTHING;
-                    let (used, _) = header.col(|ui| {
-                        max = ui.max_rect();
-                        in_font(ui, header_font, |ui| {
-                            aligned(ui, design.title_align, |ui| {
-                                let title =
-                                    design.label.clone().unwrap_or_else(|| design.name.clone());
-                                let text = RichText::new(title).strong();
-                                let sorts = sortable && column.is_some();
-                                let menu = menus && column.is_some();
-                                let mut response = if sorts || menu {
-                                    ui.add(egui::Label::new(text).sense(Sense::CLICK))
-                                } else {
-                                    ui.label(text)
-                                };
-                                if filtered {
-                                    crate::table_view::filter_mark(ui);
-                                }
-                                let mut hover: Vec<String> = design.help.iter().cloned().collect();
-                                if sorts {
-                                    hover.push(tr!("Click to sort by this column").to_owned());
-                                }
-                                if menu {
-                                    hover.push(tr!("Right-click to filter or hide it").to_owned());
-                                }
-                                if !hover.is_empty() {
-                                    response = response.on_hover_text(hover.join("\n"));
-                                }
-                                if sorts && response.clicked() {
-                                    sort = Some(design.name.clone());
-                                }
-                                if menu {
-                                    let can_filter = filterable.contains(&design.name);
-                                    response.context_menu(|ui| {
-                                        command = column_menu(
-                                            ui,
-                                            array,
-                                            &design.name,
-                                            (sorts, can_filter, filtered),
-                                        )
-                                        .or(command.take());
-                                    });
-                                }
-                            });
-                        });
-                    });
-                    // The column, or its title where that is wider. (The response
-                    // of the cell reaches past the column, by the spacing.)
-                    titles.push((design.name.clone(), max.union(used)));
-                    drawn.push((design.name.clone(), max));
-                }
-            })
-            .body(|body| {
-                body.rows(row_height, rows.len(), |mut row| {
-                    let index = rows[row.index()];
-                    for (((design, column), font), head) in columns.iter().zip(&fonts).zip(&heads) {
-                        row.col(|ui| {
-                            // The cell in the font of its column, italic included.
-                            let outer = self.font;
-                            if let Some(own) = font {
-                                self.font = *own;
-                            }
-                            in_font(ui, *font, |ui| {
-                                aligned(ui, design.align, |ui| match column {
-                                    None if !design.is_row_number() => {
-                                        self.computed_cell(ui, at.as_deref(), design, index, head);
-                                    }
-                                    None => {
-                                        let label = ui.add(
-                                            egui::Label::new(
-                                                RichText::new(design.row_label(index)).weak(),
-                                            )
-                                            .sense(Sense::click()),
-                                        );
-                                        label.context_menu(|ui| {
-                                            self.row_menu(ui, array, index, len, editable);
-                                        });
-                                    }
-                                    Some(column) => {
-                                        let cell = column.cell_path(array, index);
-                                        let choices = at
-                                            .as_ref()
-                                            .filter(|_| has_text(&design.choices))
-                                            .and_then(|at| {
-                                                choice_list(
-                                                    self.app.calc(),
-                                                    &self.app.sheet,
-                                                    self.form,
-                                                    at,
-                                                    Some((&design.name, index)),
-                                                    &[],
-                                                )
-                                            });
-                                        let look = Look {
-                                            help: None,
-                                            editor: design.editor,
-                                            read_only: design.read_only,
-                                            masked: false,
-                                            align: design.align,
-                                            format: design.format(),
-                                            choices,
-                                            allow_other: design.allow_other,
-                                            ..Look::default()
-                                        };
-                                        let outer = self.look.replace((cell.clone(), look));
-                                        let gate = match &gated {
-                                            Some(at) => cell_gate(
-                                                self.app.calc(),
-                                                &self.app.sheet,
-                                                self.form,
-                                                at,
-                                                &design.name,
-                                                index,
-                                                head,
-                                            ),
-                                            None => Gate::default(),
-                                        };
-                                        let gate = gate.with_fixed(
-                                            design.text_colour.as_deref(),
-                                            design.fill_colour.as_deref(),
-                                        );
-                                        if gate == Gate::default() {
-                                            self.editor(
-                                                ui,
-                                                &cell,
-                                                column.ty,
-                                                column.required,
-                                                true,
-                                            );
-                                        } else {
-                                            self.styled(ui, &gate, true, |this, ui| {
-                                                this.editor(
-                                                    ui,
-                                                    &cell,
-                                                    column.ty,
-                                                    column.required,
-                                                    true,
-                                                );
-                                            });
-                                        }
-                                        self.look = outer;
-                                    }
-                                });
-                            });
-                            self.font = outer;
-                        });
-                    }
-                    // A right click on the row opens its menu.
-                    row.response().context_menu(|ui| {
-                        self.row_menu(ui, array, index, len, editable);
-                    });
-                });
-            });
-        if let Some(name) = sort {
-            self.actions.push(FormAction::Sort(array.clone(), name));
-        }
-        if let Some(command) = command {
-            self.actions.push(FormAction::Table(command));
-        }
-        if designed && self.layout.is_some() {
-            self.column_targets = titles
-                .into_iter()
-                .zip(drawn)
-                .map(|((name, title), (_, column))| (name, title, column))
-                .collect();
-        }
-    }
-
-    /// The commands of a table row, in its context menu.
-    fn row_menu(
-        &mut self,
-        ui: &mut egui::Ui,
-        array: &Path,
-        index: usize,
-        len: usize,
-        editable: bool,
-    ) {
-        if ui
-            .add_enabled(editable && index > 0, egui::Button::new(tr!("Move up")))
-            .clicked()
-        {
-            self.actions
-                .push(FormAction::Move(array.clone(), index, true));
-            ui.close();
-        }
-        if ui
-            .add_enabled(
-                editable && index + 1 < len,
-                egui::Button::new(tr!("Move down")),
-            )
-            .clicked()
-        {
-            self.actions
-                .push(FormAction::Move(array.clone(), index, false));
-            ui.close();
-        }
-        if ui
-            .add_enabled(editable, egui::Button::new(tr!("Delete row")))
-            .clicked()
-        {
-            self.actions.push(FormAction::Delete(array.clone(), index));
-            ui.close();
-        }
-        if self.layout.is_none() {
-            ui.separator();
-            if ui.button(tr!("Hide row")).clicked() {
-                self.actions
-                    .push(FormAction::Table(crate::view::Action::HideRow(
-                        array.clone(),
-                        index,
-                    )));
-                ui.close();
-            }
-        }
-    }
-
-    /// Which rows and columns of a table the user has left shown: the state
-    /// of the tabular view of the same array. In layout mode, all of them.
-    fn table_shown(&self, array: &Path, items: &[Node]) -> TableShown {
-        let all = TableShown {
-            visible: table::Visible {
-                rows: (0..items.len()).collect(),
-                total: items.len(),
-                ..table::Visible::default()
-            },
-            ..TableShown::default()
-        };
-        if self.layout.is_some() {
-            return all;
-        }
-        let Some(view) = self.app.view_of(array) else {
-            return all;
-        };
-        let columns = self.app.columns_of(array);
-        TableShown {
-            visible: table::visible(self.spec, items, &columns, view),
-            hidden_columns: view.hidden_columns.iter().cloned().collect(),
-            hidden_rows: self.app.hidden_rows(array),
-            filtered: !view.filters.is_empty(),
-        }
-    }
-
-    /// Beside the title of a table: how many rows are hidden or filtered,
-    /// and the commands that show them again.
-    fn table_strip(&mut self, ui: &mut egui::Ui, array: &Path, shown: &TableShown) {
-        use crate::view::Action;
-        let visible = &shown.visible;
-        if visible.hidden > 0 || visible.filtered > 0 {
-            ui.label(
-                RichText::new(format!(
-                    "{} shown ({} hidden, {} filtered)",
-                    visible.rows.len(),
-                    visible.hidden,
-                    visible.filtered
-                ))
-                .weak(),
-            );
-        }
-        let mut command = None;
-        if shown.filtered {
-            if ui.button(tr!("Clear all filters")).clicked() {
-                command = Some(Action::ClearAllFilters(array.clone()));
-            }
-            if ui
-                .button(tr!("Reapply filter"))
-                .on_hover_text(tr!(
-                    "Hide the rows edited since that no longer pass the filters"
-                ))
-                .clicked()
-            {
-                command = Some(Action::ReapplyFilters(array.clone()));
-            }
-        }
-        let hidden = shown.hidden_columns.len() + shown.hidden_rows.len();
-        if hidden > 0 {
-            ui.menu_button(tr!("Hidden ({hidden})", hidden = hidden), |ui| {
-                for column in &shown.hidden_columns {
-                    if ui
-                        .button(tr!("Show column {column}", column = column))
-                        .clicked()
-                    {
-                        command = Some(Action::ShowColumn(array.clone(), column.clone()));
-                        ui.close();
-                    }
-                }
-                for (index, id) in &shown.hidden_rows {
-                    if ui
-                        .button(tr!("Show row [{index}]", index = index))
-                        .clicked()
-                    {
-                        command = Some(Action::ShowRow(array.clone(), *id));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui.button(tr!("Show all")).clicked() {
-                    command = Some(Action::ShowAllHidden(array.clone()));
-                    ui.close();
-                }
-            });
-        }
-        if let Some(command) = command {
-            self.actions.push(FormAction::Table(command));
-        }
-    }
-
-    /// Items that are not flat, one at a time with a stepper.
-    /// Items that are not flat, or a repeater set to stacked: one item at a
-    /// time with a stepper. The item is drawn as the control's design of its
-    /// items says, or as generated.
-    fn stacked(
-        &mut self,
-        ui: &mut egui::Ui,
-        array: &Path,
-        item_ty: TypeId,
-        len: usize,
-        control: Option<&Control>,
-    ) {
-        if len == 0 {
-            return;
-        }
-        let at = self.step_of(array, len);
-        let editable = self.app.can_reorder(array);
-        // Going to a node inside another item: step to that item.
-        if let Some(wanted) = &self.scroll_to
-            && wanted.len() > array.len()
-            && wanted.segments().starts_with(array.segments())
-            && let gossia_core::Segment::Index(i) = wanted.segments()[array.len()]
-            && i != at
-            && i < len
-        {
-            self.actions.push(FormAction::Step(array.clone(), i));
-        }
+        let len = self
+            .node_at(path)
+            .and_then(|n| n.value().as_array())
+            .map_or(0, <[Node]>::len);
         ui.horizontal(|ui| {
-            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", tr!("Previous item")).clicked() {
-                self.actions.push(FormAction::Step(array.clone(), at - 1));
-            }
-            ui.label(format!("{} of {len}", at + 1));
-            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", tr!("Next item")).clicked()
-            {
-                self.actions.push(FormAction::Step(array.clone(), at + 1));
-            }
-            if ui
-                .add_enabled(editable, egui::Button::new(tr!("Delete")))
-                .clicked()
-            {
-                self.actions.push(FormAction::Delete(array.clone(), at));
-            }
+            let width = self.label_width.map_or(LABEL_WIDTH, |w| w as f32);
+            label_cell(ui, self.text(label), false, self.help(path, ty), width);
+            let response = ui
+                .label(RichText::new(count_text(len)).weak())
+                .on_hover_text(tr!("A list is shown in a repeater section of its own."));
+            self.arrive(path, &response);
         });
-        let item = array.index(at);
-        match control.filter(|c| self.designs_items(c)) {
-            Some(c) => {
-                let address = self.at.clone();
-                let outer = self.item.replace(item);
-                self.rows.push(at);
-                self.controls(ui, &c.children, &address);
-                self.rows.pop();
-                self.item = outer;
-                self.at = address;
-            }
-            None => self.node(ui, &item, item_ty, &tr!("Item {n}", n = at + 1), true),
-        }
     }
 
     // ------------------------------------------------- shown by expressions
@@ -4284,351 +3522,9 @@ impl Painter<'_> {
         }
     }
 
-    /// A repeater whose items an expression gives, read-only: a table of
-    /// their fields, or one item at a time in the design of its items.
-    fn items_repeater(&mut self, ui: &mut egui::Ui, c: &Control) {
-        let shown = shown_result(
-            self.app.calc().is_trusted(),
-            self.own_expression(ExprKind::Items),
-        );
-        let (items, problem): (Vec<Value>, Option<String>) = match shown {
-            Shown::Untrusted => (
-                Vec::new(),
-                Some(
-                    tr!("Items runs Python, so this workbook has to be trusted first.").to_owned(),
-                ),
-            ),
-            Shown::Value(Value::Array(items), _) => {
-                (items.iter().map(|n| n.value().clone()).collect(), None)
-            }
-            Shown::Value(Value::Null, _) | Shown::Waiting => (Vec::new(), None),
-            Shown::Value(other, _) => (
-                Vec::new(),
-                Some(tr!(
-                    "Items gave {value}, not a list.",
-                    value = display(&other)
-                )),
-            ),
-            Shown::Error(error) => (Vec::new(), Some(tr!("Items: {error}", error = error))),
-        };
-        ui.group(|ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                if let Some(label) = c.label.as_deref().filter(|l| !l.is_empty()) {
-                    let title_font = own_font(c.title_font, c.title_font_size, self.font);
-                    in_font(ui, title_font, |ui| ui.strong(label));
-                }
-                ui.label(RichText::new(count_text(items.len())).weak());
-            });
-            if let Some(problem) = problem {
-                ui.label(RichText::new(problem).small().color(error_color(ui)));
-            }
-            if c.is_stacked() {
-                self.items_stacked(ui, c, &items);
-            } else if !items.is_empty() {
-                self.items_table(ui, c, &items);
-            }
-        });
-    }
-
-    /// The items of an expression one at a time, each in the design of the
-    /// items, with a stepper. Where it is kept is the window's own.
-    fn items_stacked(&mut self, ui: &mut egui::Ui, c: &Control, items: &[Value]) {
-        if items.is_empty() {
-            return;
-        }
-        let id = ui.make_persistent_id(("form_items_step", self.at.clone(), self.rows.clone()));
-        let len = items.len();
-        let at = ui
-            .data(|d| d.get_temp::<usize>(id))
-            .unwrap_or(0)
-            .min(len - 1);
-        ui.horizontal(|ui| {
-            let mut step = at;
-            if icons::button(ui, at > 0, icons::CARET_LEFT, "<", tr!("Previous item")).clicked() {
-                step = at - 1;
-            }
-            ui.label(format!("{} of {len}", at + 1));
-            if icons::button(ui, at + 1 < len, icons::CARET_RIGHT, ">", tr!("Next item")).clicked()
-            {
-                step = at + 1;
-            }
-            if step != at {
-                ui.data_mut(|d| d.insert_temp(id, step));
-            }
-        });
-        if c.children.is_empty() {
-            ui.label(RichText::new(display(&items[at])).weak());
-            return;
-        }
-        let address = self.at.clone();
-        let outer = self.item.take();
-        self.rows.push(at);
-        self.controls(ui, &c.children, &address);
-        self.rows.pop();
-        self.item = outer;
-        self.at = address;
-    }
-
-    /// The items of an expression as a table: the columns of the design, or
-    /// with none, the fields of the first item. A column with an expression
-    /// shows what it comes to for each row.
-    fn items_table(&mut self, ui: &mut egui::Ui, c: &Control, items: &[Value]) {
-        let app = self.app;
-        let calc = app.calc();
-        let trusted = calc.is_trusted();
-        let at = self.at.clone();
-        let rows = self.rows.clone();
-        let columns: Vec<ColumnDesign> = {
-            c.arrange_columns(&listed_names(c, items))
-                .into_iter()
-                .filter(|d| !d.hidden)
-                .filter(|d| {
-                    let visible = calc.column_expression_at(
-                        &app.sheet,
-                        self.form,
-                        &at,
-                        &rows,
-                        &d.name,
-                        None,
-                        ExprKind::Visible,
-                    );
-                    match visible.and_then(|s| s.result) {
-                        Some(Ok(v)) if trusted => crate::form_exprs::truthy(&v),
-                        _ => true,
-                    }
-                })
-                .collect()
-        };
-        let header_font = own_font(c.header_font, c.header_font_size, self.font);
-        egui::ScrollArea::horizontal()
-            .id_salt(("form_items_table", at.clone(), rows.clone()))
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                egui::Grid::new(("form_items_grid", at.clone(), rows.clone()))
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for design in &columns {
-                            let title = design.label.clone().unwrap_or_else(|| design.name.clone());
-                            aligned(ui, design.title_align, |ui| {
-                                in_font(ui, header_font, |ui| ui.strong(title));
-                            });
-                        }
-                        ui.end_row();
-                        for (index, item) in items.iter().enumerate() {
-                            for design in &columns {
-                                if design.is_row_number() {
-                                    ui.label(RichText::new(design.row_label(index)).weak());
-                                    continue;
-                                }
-                                let gate = crate::form_exprs::column_gate_at(
-                                    calc,
-                                    &app.sheet,
-                                    self.form,
-                                    &at,
-                                    &rows,
-                                    &design.name,
-                                    Some(index),
-                                )
-                                .with_fixed(
-                                    design.text_colour.as_deref(),
-                                    design.fill_colour.as_deref(),
-                                );
-                                // A column with a write procedure is a box
-                                // that can be typed into.
-                                if has_text(&design.value) && design.write_procedure.is_some() {
-                                    let state = calc.column_expression_at(
-                                        &app.sheet,
-                                        self.form,
-                                        &at,
-                                        &rows,
-                                        &design.name,
-                                        Some(index),
-                                        ExprKind::Value,
-                                    );
-                                    let shown = shown_result(trusted, state);
-                                    let title =
-                                        design.label.clone().unwrap_or_else(|| design.name.clone());
-                                    let label = format!("{title} [{index}]");
-                                    let id = ui.make_persistent_id((
-                                        "listed_value_cell",
-                                        at.clone(),
-                                        rows.clone(),
-                                        &design.name,
-                                        index,
-                                    ));
-                                    let mut cell_rows = rows.clone();
-                                    cell_rows.push(index);
-                                    let draw = |this: &mut Self, ui: &mut egui::Ui| {
-                                        this.value_box(
-                                            ui,
-                                            ValueBox {
-                                                shown: &shown,
-                                                format: design.format(),
-                                                align: design.align,
-                                                label: &label,
-                                                write: design.write_procedure.as_deref(),
-                                                id,
-                                                width: 140.0,
-                                                rows: cell_rows.clone(),
-                                            },
-                                        );
-                                    };
-                                    if gate == Gate::default() {
-                                        draw(self, ui);
-                                    } else if !gate.hidden {
-                                        self.styled(ui, &gate, true, draw);
-                                    }
-                                    continue;
-                                }
-                                let mut number = false;
-                                let text = if has_text(&design.value) {
-                                    let state = calc.column_expression_at(
-                                        &app.sheet,
-                                        self.form,
-                                        &at,
-                                        &rows,
-                                        &design.name,
-                                        Some(index),
-                                        ExprKind::Value,
-                                    );
-                                    match shown_result(trusted, state) {
-                                        Shown::Untrusted => UNTRUSTED.to_owned(),
-                                        Shown::Value(v, _) => {
-                                            number = is_number(&v);
-                                            design
-                                                .format()
-                                                .apply(&v)
-                                                .unwrap_or_else(|| value_text(&v))
-                                        }
-                                        Shown::Waiting => String::new(),
-                                        Shown::Error(_) => "#ERROR!".to_owned(),
-                                    }
-                                } else {
-                                    gossia_calc::cell_of(item, &design.name)
-                                        .map(|v| {
-                                            number = is_number(&v);
-                                            design
-                                                .format()
-                                                .apply(&v)
-                                                .unwrap_or_else(|| value_text(&v))
-                                        })
-                                        .unwrap_or_default()
-                                };
-                                let align = design.align.or(number.then_some(Alignment::Right));
-                                aligned(ui, align, |ui| {
-                                    if gate == Gate::default() {
-                                        ui.label(text);
-                                    } else if !gate.hidden {
-                                        self.styled(ui, &gate, true, |_, ui| {
-                                            ui.label(text);
-                                        });
-                                    }
-                                });
-                            }
-                            ui.end_row();
-                        }
-                    });
-            });
-    }
-
-    /// A cell of a column that shows an expression, in a table bound to an
-    /// array: what it comes to for the row, written through the column's
-    /// write procedure when it has one.
-    fn computed_cell(
-        &mut self,
-        ui: &mut egui::Ui,
-        at: Option<&[usize]>,
-        design: &ColumnDesign,
-        index: usize,
-        head: &Gate,
-    ) {
-        let calc = self.app.calc();
-        let state = at.and_then(|at| {
-            calc.column_expression_at(
-                &self.app.sheet,
-                self.form,
-                at,
-                &self.rows,
-                &design.name,
-                Some(index),
-                ExprKind::Value,
-            )
-        });
-        let shown = shown_result(calc.is_trusted(), state);
-        let gate = match at.filter(|_| self.layout.is_none()) {
-            Some(at) => {
-                let mut gate = crate::form_exprs::column_gate_at(
-                    calc,
-                    &self.app.sheet,
-                    self.form,
-                    at,
-                    &self.rows,
-                    &design.name,
-                    Some(index),
-                );
-                gate.disabled |= head.disabled;
-                gate.pending |= head.pending;
-                gate.why.extend(head.why.iter().cloned());
-                gate
-            }
-            None => Gate::default(),
-        };
-        let gate = gate.with_fixed(design.text_colour.as_deref(), design.fill_colour.as_deref());
-        let title = design.label.clone().unwrap_or_else(|| design.name.clone());
-        let label = format!("{title} [{index}]");
-        let id = ui.make_persistent_id((
-            "value_cell",
-            at.map(<[usize]>::to_vec),
-            self.rows.clone(),
-            &design.name,
-            index,
-        ));
-        let mut rows = self.rows.clone();
-        rows.push(index);
-        let draw = |this: &mut Self, ui: &mut egui::Ui| {
-            let width = ui.available_width();
-            this.value_box(
-                ui,
-                ValueBox {
-                    shown: &shown,
-                    format: design.format(),
-                    align: design.align,
-                    label: &label,
-                    write: design.write_procedure.as_deref(),
-                    id,
-                    width,
-                    rows: rows.clone(),
-                },
-            );
-        };
-        if gate == Gate::default() {
-            draw(self, ui);
-        } else if !gate.hidden {
-            self.styled(ui, &gate, true, draw);
-        }
-    }
-
-    /// The item a stacked repeater of `len` items shows.
-    fn step_of(&self, array: &Path, len: usize) -> usize {
-        self.app
-            .form
-            .steps
-            .get(&self.key(array))
-            .copied()
-            .unwrap_or(0)
-            .min(len.saturating_sub(1))
-    }
-
-    /// Whether a control is a stacked repeater drawn by the design of its
-    /// items. Designed items nest.
-    fn designs_items(&self, c: &Control) -> bool {
-        c.is_stacked() && !c.children.is_empty()
-    }
-
-    /// The node a control shows: its path, or in the design of a stacked
-    /// repeater's items, its path in the item drawn (the item itself for a
-    /// control that is not bound).
+    /// The node a control shows: its path, or in a row of a repeater
+    /// section, its path in the item drawn (the item itself for a control
+    /// that is not bound).
     fn path_of(&self, c: &Control) -> Option<Path> {
         let own = self.own_path(c);
         match &self.item {
@@ -4650,7 +3546,7 @@ impl Painter<'_> {
     }
 
     /// Why a control cannot be drawn, its path read from the item drawn when
-    /// it is in the design of a stacked repeater's items.
+    /// it is in a row of a repeater section.
     fn problem_of(&self, c: &Control) -> Option<String> {
         match &self.item {
             None => design_problem(self.spec, c),
@@ -4724,26 +3620,6 @@ impl Painter<'_> {
     }
 }
 
-/// How a cell of a column is drawn: its row's expressions, with what the
-/// column's *visible when* said when it could not hide the column (an error,
-/// or not run yet).
-/// The columns a table over an expression can show: the fields of its first
-/// item (`value` for items that are not records), and the columns of its
-/// design that show an expression.
-pub(crate) fn listed_names(c: &Control, items: &[Value]) -> Vec<String> {
-    let mut names: Vec<String> = match items.first() {
-        Some(Value::Object(fields)) => fields.keys().cloned().collect(),
-        Some(_) => vec!["value".to_owned()],
-        None => Vec::new(),
-    };
-    for column in &c.table_columns {
-        if !column.is_row_number() && !names.contains(&column.name) {
-            names.push(column.name.clone());
-        }
-    }
-    names
-}
-
 /// The settings of the box of a value an expression gives.
 struct ValueBox<'a> {
     shown: &'a Shown,
@@ -4785,22 +3661,6 @@ fn shown_result(trusted: bool, state: Option<ExprState>) -> Shown {
         Some(Err(error)) => Shown::Error(error),
         None => Shown::Waiting,
     }
-}
-
-fn cell_gate(
-    calc: &gossia_calc::Calc,
-    tab: &str,
-    form: &str,
-    at: &[usize],
-    column: &str,
-    row: usize,
-    head: &Gate,
-) -> Gate {
-    let mut gate = crate::form_exprs::column_gate(calc, tab, form, at, column, Some(row));
-    gate.disabled |= head.disabled;
-    gate.pending |= head.pending;
-    gate.why.extend(head.why.iter().cloned());
-    gate
 }
 
 /// Phosphor's calendar, on the button that opens one.
@@ -4878,20 +3738,6 @@ impl Font {
     }
 }
 
-/// The font of a column that has one of its own, over the one it inherits.
-fn column_font(design: &ColumnDesign, inherited: Font) -> Option<Font> {
-    let own = design.font.is_some()
-        || design.font_size.is_some()
-        || design.bold.is_some()
-        || design.italic.is_some();
-    own.then(|| Font {
-        typeface: design.font.or(inherited.typeface),
-        size: design.font_size.or(inherited.size),
-        bold: design.bold.unwrap_or(inherited.bold),
-        italic: design.italic.unwrap_or(inherited.italic),
-    })
-}
-
 /// Lays out the text of a text box slanted, for a field in an italic font.
 fn italic_layouter(
     ui: &egui::Ui,
@@ -4908,187 +3754,6 @@ fn italic_layouter(
         section.format.italics = true;
     }
     ui.fonts_mut(|f| f.layout_job(job))
-}
-
-/// Draws in a font, if one is given.
-fn in_font<R>(ui: &mut egui::Ui, font: Option<Font>, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    match font {
-        None => add(ui),
-        Some(font) => {
-            ui.scope(|ui| {
-                font.apply(ui.style_mut());
-                add(ui)
-            })
-            .inner
-        }
-    }
-}
-
-/// Draws a cell's contents to its left, centre or right.
-fn aligned<R>(
-    ui: &mut egui::Ui,
-    align: Option<Alignment>,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
-    let layout = match align {
-        None | Some(Alignment::Left) => return add(ui),
-        Some(Alignment::Center) => {
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight)
-        }
-        Some(Alignment::Right) => egui::Layout::right_to_left(Align::Center),
-    };
-    ui.with_layout(layout, add).inner
-}
-
-/// The columns of a table of items of `item_ty`: its fields, or `value` for
-/// scalars. None for items that are not flat, which are stacked.
-/// A table of the items of an array, to draw.
-struct FormTable<'a> {
-    array: &'a Path,
-    /// The number of items.
-    len: usize,
-    columns: &'a [(ColumnDesign, Option<Column>)],
-    /// The rows and columns left shown.
-    shown: &'a TableShown,
-    /// The address of the control the table is of: its columns can be
-    /// selected in layout mode, and out of it their expressions hide a
-    /// column or colour a cell.
-    at: Option<Address>,
-    header_font: Option<Font>,
-}
-
-/// What of a table on a form is shown, by the filters and the hiding of the
-/// tabular view.
-#[derive(Default)]
-struct TableShown {
-    visible: table::Visible,
-    hidden_columns: Vec<String>,
-    hidden_rows: Vec<(usize, gossia_core::NodeId)>,
-    filtered: bool,
-}
-
-/// The menu of a column's title on a form: sorting, the filter, hiding.
-fn column_menu(
-    ui: &mut egui::Ui,
-    array: &Path,
-    name: &str,
-    (sorts, can_filter, filtered): (bool, bool, bool),
-) -> Option<crate::view::Action> {
-    use crate::view::Action;
-    let mut chosen = None;
-    let mut item = |ui: &mut egui::Ui, enabled: bool, label: &str, action: Action| {
-        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-            chosen = Some(action);
-            ui.close();
-        }
-    };
-    let (array, name) = (array.clone(), name.to_owned());
-    item(
-        ui,
-        sorts,
-        tr!("Sort ascending"),
-        Action::SortBy(array.clone(), name.clone(), Some(false)),
-    );
-    item(
-        ui,
-        sorts,
-        tr!("Sort descending"),
-        Action::SortBy(array.clone(), name.clone(), Some(true)),
-    );
-    ui.separator();
-    item(
-        ui,
-        can_filter,
-        tr!("Filter..."),
-        Action::FilterDialog(array.clone(), name.clone()),
-    );
-    item(
-        ui,
-        filtered,
-        tr!("Clear filter"),
-        Action::ClearFilter(array.clone(), name.clone()),
-    );
-    ui.separator();
-    item(
-        ui,
-        true,
-        tr!("Hide column"),
-        Action::HideColumn(array, name),
-    );
-    chosen
-}
-
-fn item_columns(spec: &TypeSpec, item_ty: TypeId) -> Option<Vec<Column>> {
-    match &spec.get(item_ty).kind {
-        Kind::Object { .. } => {
-            let columns = table::columns(spec, item_ty);
-            (!columns.is_empty() && columns.iter().all(|c| !c.summary)).then_some(columns)
-        }
-        // An ordered list of elements is shown one item at a time.
-        Kind::Array { .. } | Kind::Map { .. } | Kind::Choice { .. } => None,
-        _ => Some(vec![Column {
-            name: "value".to_owned(),
-            fields: Vec::new(),
-            ty: item_ty,
-            required: true,
-            summary: false,
-        }]),
-    }
-}
-
-/// The columns the table of the repeater at `at` can have, if it is a
-/// table. In the design of a stacked repeater's items its path is read from
-/// the first item.
-pub(crate) fn columns_of(
-    spec: &TypeSpec,
-    design: &gossia_core::form::FormDesign,
-    at: &[usize],
-) -> Option<Vec<Column>> {
-    let path = design.path_in_item(at, design.get(at)?, 0)?;
-    let resolved = spec.resolve(&path)?;
-    match &spec.get(resolved.ty).kind {
-        Kind::Array { items, .. } => item_columns(spec, *items),
-        _ => None,
-    }
-}
-
-/// The columns of a table that are shown, in their order, each with its
-/// design and the column of the items it is (None for the row numbers).
-fn arranged(
-    control: Option<&Control>,
-    columns: Vec<Column>,
-) -> Vec<(ColumnDesign, Option<Column>)> {
-    let mut names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
-    for design in control.map_or(&[][..], |c| &c.table_columns[..]) {
-        if has_text(&design.value) && !names.contains(&design.name) {
-            names.push(design.name.clone());
-        }
-    }
-    let designs = match control {
-        Some(control) => control.arrange_columns(&names),
-        None => Control::new(ControlKind::Repeater).arrange_columns(&names),
-    };
-    designs
-        .into_iter()
-        .filter(|d| !d.hidden)
-        .map(|d| {
-            let column = if d.is_row_number() {
-                None
-            } else {
-                columns.iter().find(|c| c.name == d.name).cloned()
-            };
-            (d, column)
-        })
-        .collect()
-}
-
-/// What a column is called to a screen reader and a test.
-pub(crate) fn column_label(name: &str, control: &Control) -> String {
-    tr!(
-        "Column {name} of {control}",
-        name = name,
-        control = control_name(control)
-    )
 }
 
 /// The name of the last step of a path, which labels a control by default.
@@ -5127,16 +3792,6 @@ pub(crate) fn control_name(control: &Control) -> String {
     } else {
         format!("{} {detail}", control.kind.label())
     }
-}
-
-/// A font that a control sets for a part of itself, over the one it inherits;
-/// None if it sets neither the typeface nor the size.
-fn own_font(typeface: Option<Typeface>, size: Option<u32>, inherited: Font) -> Option<Font> {
-    (typeface.is_some() || size.is_some()).then(|| Font {
-        typeface: typeface.or(inherited.typeface),
-        size: size.or(inherited.size),
-        ..inherited
-    })
 }
 
 #[path = "form_canvas.rs"]

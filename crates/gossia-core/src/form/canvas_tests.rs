@@ -408,6 +408,19 @@ fn an_add_delete_button_runs_the_colours_of_its_delete_configuration() {
     assert_eq!(field.colour_of(false), Some("'red'"));
 }
 
+#[test]
+fn a_list_is_a_repeater_section_not_a_field() {
+    let spec = spec();
+    let design = form(vec![field("items")], vec![]);
+    assert_eq!(
+        problems(&design, &spec),
+        vec!["a list goes in a repeater section of its own"]
+    );
+    // A map is still a field.
+    let design = form(vec![field("tags")], vec![]);
+    assert!(problems(&design, &spec).is_empty());
+}
+
 // ------------------------------------------------------------ marking rows
 
 fn rows_button(repeater: Option<&str>, action: RowsAction) -> Control {
