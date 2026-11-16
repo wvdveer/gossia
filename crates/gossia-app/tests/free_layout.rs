@@ -10,7 +10,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable};
 use gossia_app::GossiaApp;
 use gossia_app::form::View;
-use gossia_core::form::{Anchor, Control, GroupLayout};
+use gossia_core::form::{Alignment, Anchor, Control, ControlKind, GroupLayout};
 
 fn settle(harness: &mut Harness<'_, GossiaApp>) {
     assert!(
@@ -119,6 +119,44 @@ fn the_controls_of_a_free_group_are_drawn_at_their_places() {
         (lowest.y - origin.y - 120.0).abs() < 1.0,
         "{lowest:?} {origin:?}"
     );
+}
+
+#[test]
+fn a_template_label_is_selected_by_its_own_width_not_by_what_it_shows() {
+    let harness = free_form(|g| {
+        let mut label = Control::new(ControlKind::Label);
+        label.text = Some("{1}".to_owned());
+        label.template = true;
+        label.x = Some(0);
+        label.y = Some(200);
+        label.width = Some(150);
+        label.height = Some(40);
+        g.children.push(label);
+    });
+    let rect = harness.get(button("Label {1}")).rect();
+    assert!((rect.width() - 150.0).abs() < 1.0, "{rect:?}");
+    assert!((rect.height() - 40.0).abs() < 1.0, "{rect:?}");
+}
+
+#[test]
+fn a_label_with_a_width_puts_its_text_where_its_alignment_says() {
+    let harness = free_form(|g| {
+        let mut label = Control::new(ControlKind::Label);
+        label.text = Some("{'xyz'}".to_owned());
+        label.template = true;
+        label.x = Some(0);
+        label.y = Some(200);
+        label.width = Some(150);
+        label.align = Some(Alignment::Right);
+        g.children.push(label);
+    });
+    let target = harness.get(button("Label {'xyz'}")).rect();
+    let text = harness.get_by_label("xyz").rect();
+    assert!(
+        (text.right() - target.right()).abs() < 1.0,
+        "{text:?} {target:?}"
+    );
+    assert!(text.left() > target.left() + 100.0, "{text:?} {target:?}");
 }
 
 #[test]

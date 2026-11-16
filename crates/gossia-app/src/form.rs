@@ -1402,9 +1402,18 @@ impl Painter<'_> {
             self.leaf(ui, c);
         } else {
             // In layout mode a control is drawn as it will look, but cannot be
-            // used: a click selects it.
+            // used: a click selects it. A control with a width or a height of
+            // its own is selected by that box, not by what it shows now (a
+            // template label shows the first row's value).
+            let sized = self.sized;
             let rect = ui
                 .scope(|ui| {
+                    if sized {
+                        ui.set_min_width(ui.available_width());
+                    }
+                    if let Some(h) = c.height {
+                        ui.set_min_height(h as f32);
+                    }
                     ui.add_enabled_ui(false, |ui| self.leaf(ui, c));
                 })
                 .response
@@ -2268,11 +2277,21 @@ impl Painter<'_> {
 
     /// A control that is not a group.
     fn leaf(&mut self, ui: &mut egui::Ui, c: &Control) {
+        // A label in a box of its own width puts its text where its
+        // alignment says, in that box.
+        let across = match c.align {
+            Some(Alignment::Center) => Some(Align::Center),
+            Some(Alignment::Right) => Some(Align::Max),
+            _ => None,
+        };
+        if let (ControlKind::Label, true, Some(across)) = (c.kind, self.sized, across) {
+            ui.with_layout(egui::Layout::top_down(across), |ui| {
+                self.label_text(ui, c);
+            });
+            return;
+        }
         match c.kind {
-            ControlKind::Label if c.is_template() => self.template_label(ui, c),
-            ControlKind::Label => {
-                ui.label(self.text(c.text.clone().unwrap_or_default()));
-            }
+            ControlKind::Label => self.label_text(ui, c),
             ControlKind::Separator if c.vertical => {
                 let height = c.height.map_or(ROW_HEIGHT, |h| h as f32);
                 let mut stroke = ui.visuals().widgets.noninteractive.bg_stroke;
@@ -3319,6 +3338,15 @@ impl Painter<'_> {
 
     /// A label whose text is a template: filled in, or in a workbook that is
     /// not trusted, its fixed text with a mark for each expression.
+    /// A label's text: fixed, or its template filled in.
+    fn label_text(&mut self, ui: &mut egui::Ui, c: &Control) {
+        if c.is_template() {
+            self.template_label(ui, c);
+        } else {
+            ui.label(self.text(c.text.clone().unwrap_or_default()));
+        }
+    }
+
     fn template_label(&mut self, ui: &mut egui::Ui, c: &Control) {
         let text = c.text.clone().unwrap_or_default();
         match shown_result(
